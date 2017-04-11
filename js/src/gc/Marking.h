@@ -366,6 +366,9 @@ namespace gc {
 
 /*** Liveness ***/
 
+bool
+IsMarkedCell(const TenuredCell* const thingp);
+
 template <typename T>
 bool
 IsMarkedUnbarriered(T* thingp);

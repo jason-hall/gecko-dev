@@ -2202,46 +2202,12 @@ CheckIsMarkedThing(T* thingp)
 #endif
 }
 
-template <typename T>
 static bool
-IsMarkedInternalCommon(T* thingp)
+IsMarkedInternalCommon(void* thingp)
 {
-    CheckIsMarkedThing(thingp);
 	MM_EnvironmentBase *env = MM_EnvironmentBase::getEnvironment(Nursery::omrVMThread);
-	return ((MM_ParallelGlobalGC*)env->getExtensions()->getGlobalCollector())->getMarkingScheme()->isMarked((omrobjectptr_t)(*thingp));
+	return ((MM_ParallelGlobalGC*)env->getExtensions()->getGlobalCollector())->getMarkingScheme()->isMarked((omrobjectptr_t)(thingp));
 }
-
-template <typename T>
-static bool
-IsMarkedInternal(T** thingp)
-{
-    return IsMarkedInternalCommon(thingp);
-}
-
-template <>
-/* static */ bool
-IsMarkedInternal(JSObject** thingp)
-{
-    return IsMarkedInternalCommon(thingp);
-}
-
-template <typename S>
-struct IsMarkedFunctor : public IdentityDefaultAdaptor<S> {
-    template <typename T> S operator()(T* t, bool* rv) {
-        *rv = IsMarkedInternal(&t);
-        return js::gc::RewrapTaggedPointer<S, T>::wrap(t);
-    }
-};
-
-template <typename T>
-static bool
-IsMarkedInternal(T* thingp)
-{
-    bool rv = true;
-    *thingp = DispatchTyped(IsMarkedFunctor<T>(), *thingp, &rv);
-    return rv;
-}
-
 
 bool
 js::gc::IsAboutToBeFinalizedDuringSweep(TenuredCell& tenured)
@@ -2253,41 +2219,37 @@ template <typename T>
 static bool
 IsAboutToBeFinalizedInternal(T** thingp)
 {
-    return !IsMarkedInternal(thingp);
+    return !IsMarkedInternalCommon((void*)(*thingp));
 }
-
-template <typename S>
-struct IsAboutToBeFinalizedFunctor : public IdentityDefaultAdaptor<S> {
-    template <typename T> S operator()(T* t, bool* rv) {
-        *rv = IsAboutToBeFinalizedInternal(&t);
-        return js::gc::RewrapTaggedPointer<S, T>::wrap(t);
-    }
-};
 
 template <typename T>
 static bool
 IsAboutToBeFinalizedInternal(T* thingp)
 {
-    bool rv = false;
-    *thingp = DispatchTyped(IsAboutToBeFinalizedFunctor<T>(), *thingp, &rv);
-    return rv;
+    return !IsMarkedInternalCommon((void*)thingp);
 }
 
 namespace js {
 namespace gc {
 
+bool
+IsMarkedCell(const TenuredCell* const thingp)
+{
+	return IsMarkedUnbarriered(thingp);
+}
+
 template <typename T>
 bool
 IsMarkedUnbarriered(T* thingp)
 {
-    return IsMarkedInternal(ConvertToBase(thingp));
+    return IsMarkedInternalCommon((void *)thingp);
 }
 
 template <typename T>
 bool
 IsMarked(WriteBarrieredBase<T>* thingp)
 {
-    return IsMarkedInternal(ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
+    return IsMarkedInternalCommon((void *)thingp->unsafeUnbarrieredForTracing());
 }
 
 template <typename T>

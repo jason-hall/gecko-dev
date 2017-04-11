@@ -58,6 +58,9 @@ class ArenaCellSet;
 struct Chunk;
 #endif // ! OMR
 
+class TenuredCell;
+extern bool IsMarkedCell(const TenuredCell* const thingp);
+
 /*
  * This flag allows an allocation site to request a specific heap based upon the
  * estimated lifetime or lifetime requirements of objects allocated from that
@@ -658,7 +661,7 @@ TenuredCell::fromPointer(const void* ptr)
 bool
 TenuredCell::isMarked(uint32_t color /* = BLACK */) const
 {
-	return true;
+	return IsMarkedCell(this);
 }
 
 bool
@@ -670,6 +673,7 @@ TenuredCell::markIfUnmarked(uint32_t color /* = BLACK */) const
 void
 TenuredCell::unmark(uint32_t color) const
 {
+	MOZ_ASSERT(false);
 }
 
 void
