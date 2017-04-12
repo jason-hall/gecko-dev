@@ -58,7 +58,10 @@ Zone::~Zone()
 
 MOZ_MUST_USE bool
 Zone::init(bool isSystem) { 
-	return uniqueIds_.init() && gcWeakKeys.init();
+	return uniqueIds_.init() &&
+	    gcWeakKeys.init() &&
+		gcZoneGroupEdges.init() &&
+		typeDescrObjects.init();
 }
 
 JS_PUBLIC_API(void)
