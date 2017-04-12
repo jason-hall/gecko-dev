@@ -1146,7 +1146,7 @@ GetInitialHeap(NewObjectKind newKind, const Class* clasp)
     if (newKind == NurseryAllocatedProxy) {
         MOZ_ASSERT(clasp->isProxy());
         MOZ_ASSERT(clasp->hasFinalize());
-        MOZ_ASSERT(!CanNurseryAllocateFinalizedClass(clasp));
+        //MOZ_ASSERT(!CanNurseryAllocateFinalizedClass(clasp));
         return gc::DefaultHeap;
     }
     if (newKind != GenericObject)
