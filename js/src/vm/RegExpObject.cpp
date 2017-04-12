@@ -541,7 +541,7 @@ RegExpShared::~RegExpShared()
 void
 RegExpShared::trace(JSTracer* trc)
 {
-    if (trc->isMarkingTracer())
+    if (trc->isMarkingTracer() || trc->isOmrMarkingTracer())
         marked_ = true;
 
     TraceNullableEdge(trc, &source, "RegExpShared source");
@@ -866,7 +866,7 @@ RegExpShared::needsSweep(JSRuntime* rt)
             keep = false;
     }
 
-    MOZ_ASSERT(rt->isHeapMajorCollecting());
+    //MOZ_ASSERT(rt->isHeapMajorCollecting());
     if (keep || rt->gc.isHeapCompacting()) {
         clearMarked();
         return false;
