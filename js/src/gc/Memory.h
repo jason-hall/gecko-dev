@@ -8,11 +8,12 @@
 #define gc_Memory_h
 
 #include <stddef.h>
+#include <unistd.h>
 
 namespace js {
 namespace gc {
 
-inline size_t SystemPageSize() { return 0; }
+inline size_t SystemPageSize() { return getpagesize(); }
 
 // Allocate memory mapped content.
 // The offset must be aligned according to alignment requirement.
