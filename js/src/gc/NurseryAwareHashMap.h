@@ -17,13 +17,37 @@ template <typename T>
 class UnsafeBareReadBarriered : public ReadBarrieredBase<T>
 {
   public:
-	const T get() const {
+    UnsafeBareReadBarriered() : ReadBarrieredBase<T>(JS::GCPolicy<T>::initial()) {}
+    MOZ_IMPLICIT UnsafeBareReadBarriered(const T& v) : ReadBarrieredBase<T>(v) {}
+    explicit UnsafeBareReadBarriered(const UnsafeBareReadBarriered& v) : ReadBarrieredBase<T>(v) {}
+    UnsafeBareReadBarriered(UnsafeBareReadBarriered&& v)
+      : ReadBarrieredBase<T>(mozilla::Move(v))
+    {}
+
+    UnsafeBareReadBarriered& operator=(const UnsafeBareReadBarriered& v) {
+        this->value = v.value;
+        return *this;
+    }
+
+    UnsafeBareReadBarriered& operator=(const T& v) {
+        this->value = v;
+        return *this;
+    }
+
+    const T get() const {
+        if (!InternalBarrierMethods<T>::isMarkable(this->value))
+            return JS::GCPolicy<T>::initial();
         this->read();
         return this->value;
     }
-	T* unsafeGet() { return &this->value; }
-	
-	const T unbarrieredGet() const { return this->value; }
+
+    explicit operator bool() const {
+        return bool(this->value);
+    }
+
+    const T unbarrieredGet() const { return this->value; }
+    T* unsafeGet() { return &this->value; }
+    T const* unsafeGet() const { return &this->value; }
 };
 } // namespace detail
 
@@ -53,32 +77,38 @@ class NurseryAwareHashMap
     using Ptr = typename MapType::Ptr;
     using Range = typename MapType::Range;
 	
-    explicit NurseryAwareHashMap(AllocPolicy a = AllocPolicy()) {}
+    explicit NurseryAwareHashMap(AllocPolicy a = AllocPolicy()) : map(a) {}
 
-    MOZ_MUST_USE bool init(uint32_t len = 16) { return true; }
+    MOZ_MUST_USE bool init(uint32_t len = 16) { return map.init(len); }
 
-    bool empty() const { return true; }
-    Ptr lookup(const Lookup& l) const { return Ptr(); }
-    void remove(Ptr p) { }
-    Range all() const { return Range(); }
+    bool empty() const { return map.empty(); }
+    Ptr lookup(const Lookup& l) const { return map.lookup(l); }
+    void remove(Ptr p) { map.remove(p); }
+    Range all() const { return map.all(); }
     struct Enum : public MapType::Enum {
         explicit Enum(NurseryAwareHashMap& namap) : MapType::Enum(namap.map) {}
     };
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-        return 0;
+        return map.sizeOfExcludingThis(mallocSizeOf);
     }
     size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-        return 0;
+        return map.sizeOfIncludingThis(mallocSizeOf);
     }
 
     MOZ_MUST_USE bool put(const Key& k, const Value& v) {
-        return true;
+        auto p = map.lookupForAdd(k);
+        if (p) {
+            p->value() = v;
+            return true;
+        }
+        return map.add(p, k, v);
     }
 
     void sweepAfterMinorGC(JSTracer* trc) {
     }
 
     void sweep() {
+		map.sweep();
     }
 };
 
