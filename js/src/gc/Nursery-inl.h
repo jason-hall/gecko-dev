@@ -46,9 +46,7 @@ static inline T*
 ReallocateObjectBuffer(ExclusiveContext* cx, JSObject* obj, T* oldBuffer,
                        uint32_t oldCount, uint32_t newCount)
 {
-	T *newBuffer = (T *)AllocateObjectBuffer<T>(cx, newCount);
-	memcpy(newBuffer, oldBuffer, sizeof(T) * oldCount);
-    return newBuffer;
+    return (T*)realloc(oldBuffer, sizeof(T) * newCount);
 }
 
 } // namespace js
