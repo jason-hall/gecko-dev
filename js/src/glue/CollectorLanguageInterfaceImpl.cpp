@@ -209,6 +209,7 @@ MM_CollectorLanguageInterfaceImpl::detachVMThread(OMR_VM *omrVM, OMR_VMThread *o
 void
 MM_CollectorLanguageInterfaceImpl::markingScheme_masterSetupForGC(MM_EnvironmentBase *env)
 {
+	GetJSContextFromMainThread()->gc.incGcNumber();
 }
 
 void
@@ -621,6 +622,11 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 					((ObjectGroup *)thing)->maybeSweep(&oom);
 				} else if (kind == js::gc::AllocKind::SCRIPT /*|| kind == js::gc::AllocKind::LAZY_SCRIPT*/) {
 					((JSScript *)thing)->maybeSweepTypes(&oom);
+				} else if (((int)kind) >= (int)js::gc::AllocKind::OBJECT0 && ((int)kind) <= (int)js::gc::AllocKind::OBJECT16_BACKGROUND) {
+					JSObject *obj = (JSObject *)thing;
+					if (obj->is<js::NativeObject>() && !_markingScheme->isMarked(omrobjPtr)) {
+						obj->as<js::NativeObject>().deleteAllSlots();
+					}
 				}
 				omrobjPtr = objectIterator.nextObject();
 			}
@@ -652,3 +658,4 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 		}
 	}
 }
+

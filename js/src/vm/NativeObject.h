@@ -408,6 +408,13 @@ class NativeObject : public ShapedObject
     }
 
   public:
+	void deleteAllSlots() {
+		if (slots_ != 0) {
+			free(slots_);
+			slots_ = nullptr;
+		}
+	}
+  
     Shape* lastProperty() const {
         MOZ_ASSERT(shape_);
         return shape_;
