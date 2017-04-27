@@ -59,8 +59,6 @@ js::Nursery::allocateObject(JSContext* cx, size_t size, size_t numDynamic, const
 {
 	JSObject* obj = nullptr;
 	if (canGC) {
-		OMR_GC_SystemCollect(omrVMThread, 0);
-		cx->gc.incGcNumber();
 		obj = (JSObject *)OMR_GC_Allocate(Nursery::omrVMThread, 0, size, 0);
 	} else {
 		obj = (JSObject *)OMR_GC_AllocateNoGC(Nursery::omrVMThread, 0, size, 0);
