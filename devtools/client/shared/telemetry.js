@@ -3,39 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
- * Telemetry.
+ * This is the telemetry module to report metrics for tools.
  *
- * To add metrics for a tool:
- *
- * 1. Create count, flag, and exponential entries in
- *    toolkit/components/telemetry/Histograms.json. Each type is optional but it
- *    is best if all three can be included.
- *
- * 2. Add your chart entries to devtools/client/shared/telemetry.js
- *    (Telemetry.prototype._histograms):
- *    mytoolname: {
- *      histogram: "DEVTOOLS_MYTOOLNAME_OPENED_COUNT",
- *      timerHistogram: "DEVTOOLS_MYTOOLNAME_TIME_ACTIVE_SECONDS"
- *    },
- *
- * 3. Include this module at the top of your tool. Use:
- *      let Telemetry = require("devtools/client/shared/telemetry")
- *
- * 4. Create a telemetry instance in your tool's constructor:
- *      this._telemetry = new Telemetry();
- *
- * 5. When your tool is opened call:
- *      this._telemetry.toolOpened("mytoolname");
- *
- * 6. When your tool is closed call:
- *      this._telemetry.toolClosed("mytoolname");
- *
- * Note:
- * You can view telemetry stats for your local Firefox instance via
- * about:telemetry.
- *
- * You can view telemetry stats for large groups of Firefox users at
- * telemetry.mozilla.org.
+ * Comprehensive documentation is in docs/frontend/telemetry.md
  */
 
 "use strict";
@@ -87,6 +57,10 @@ Telemetry.prototype = {
       histogram: "DEVTOOLS_COMPUTEDVIEW_OPENED_COUNT",
       timerHistogram: "DEVTOOLS_COMPUTEDVIEW_TIME_ACTIVE_SECONDS"
     },
+    layoutview: {
+      histogram: "DEVTOOLS_LAYOUTVIEW_OPENED_COUNT",
+      timerHistogram: "DEVTOOLS_LAYOUTVIEW_TIME_ACTIVE_SECONDS"
+    },
     fontinspector: {
       histogram: "DEVTOOLS_FONTINSPECTOR_OPENED_COUNT",
       timerHistogram: "DEVTOOLS_FONTINSPECTOR_TIME_ACTIVE_SECONDS"
@@ -135,6 +109,10 @@ Telemetry.prototype = {
       histogram: "DEVTOOLS_STORAGE_OPENED_COUNT",
       timerHistogram: "DEVTOOLS_STORAGE_TIME_ACTIVE_SECONDS"
     },
+    dom: {
+      histogram: "DEVTOOLS_DOM_OPENED_COUNT",
+      timerHistogram: "DEVTOOLS_DOM_TIME_ACTIVE_SECONDS"
+    },
     paintflashing: {
       histogram: "DEVTOOLS_PAINTFLASHING_OPENED_COUNT",
       timerHistogram: "DEVTOOLS_PAINTFLASHING_TIME_ACTIVE_SECONDS"
@@ -145,7 +123,6 @@ Telemetry.prototype = {
     },
     "scratchpad-window": {
       histogram: "DEVTOOLS_SCRATCHPAD_WINDOW_OPENED_COUNT",
-      timerHistogram: "DEVTOOLS_SCRATCHPAD_WINDOW_TIME_ACTIVE_SECONDS"
     },
     responsive: {
       histogram: "DEVTOOLS_RESPONSIVE_OPENED_COUNT",
@@ -162,6 +139,12 @@ Telemetry.prototype = {
     },
     toolbareyedropper: {
       histogram: "DEVTOOLS_TOOLBAR_EYEDROPPER_OPENED_COUNT",
+    },
+    copyuniquecssselector: {
+      histogram: "DEVTOOLS_COPY_UNIQUE_CSS_SELECTOR_OPENED_COUNT",
+    },
+    copyfullcssselector: {
+      histogram: "DEVTOOLS_COPY_FULL_CSS_SELECTOR_OPENED_COUNT",
     },
     developertoolbar: {
       histogram: "DEVTOOLS_DEVELOPERTOOLBAR_OPENED_COUNT",
@@ -295,14 +278,19 @@ Telemetry.prototype = {
    *         Histogram in which the data is to be stored.
    * @param  {String} key
    *         The key within the single histogram.
-   * @param  value
-   *         Value to store.
+   * @param  [value]
+   *         Optional value to store.
    */
   logKeyed: function (histogramId, key, value) {
     if (histogramId) {
       try {
         let histogram = Services.telemetry.getKeyedHistogramById(histogramId);
-        histogram.add(key, value);
+
+        if (typeof value === "undefined") {
+          histogram.add(key);
+        } else {
+          histogram.add(key, value);
+        }
       } catch (e) {
         dump("Warning: An attempt was made to write to the " + histogramId +
              " histogram, which is not defined in Histograms.json\n");

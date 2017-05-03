@@ -9,6 +9,7 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ScriptSettings.h"
 #include "nsJSUtils.h"
+#include "nsIScriptError.h"
 #include "jsfriendapi.h"
 #include "jswrapper.h"
 #include "js/Proxy.h"
@@ -165,22 +166,24 @@ JavaScriptParent::trace(JSTracer* trc)
 JSObject*
 JavaScriptParent::scopeForTargetObjects()
 {
-    // CPWOWs from the child need to point into the parent's unprivileged junk
+    // CPOWs from the child need to point into the parent's unprivileged junk
     // scope so that a compromised child cannot compromise the parent. In
     // practice, this means that a child process can only (a) hold parent
     // objects alive and (b) invoke them if they are callable.
     return xpc::UnprivilegedJunkScope();
 }
 
-mozilla::ipc::IProtocol*
-JavaScriptParent::CloneProtocol(Channel* aChannel, ProtocolCloneContext* aCtx)
+void
+JavaScriptParent::afterProcessTask()
 {
-    ContentParent* contentParent = aCtx->GetContentParent();
-    nsAutoPtr<PJavaScriptParent> actor(contentParent->AllocPJavaScriptParent());
-    if (!actor || !contentParent->RecvPJavaScriptConstructor(actor)) {
-        return nullptr;
-    }
-    return actor.forget();
+    if (savedNextCPOWNumber_ == nextCPOWNumber_)
+        return;
+
+    savedNextCPOWNumber_ = nextCPOWNumber_;
+
+    MOZ_ASSERT(nextCPOWNumber_ > 0);
+    if (active())
+        Unused << SendDropTemporaryStrongReferences(nextCPOWNumber_ - 1);
 }
 
 PJavaScriptParent*
@@ -198,4 +201,13 @@ void
 mozilla::jsipc::ReleaseJavaScriptParent(PJavaScriptParent* parent)
 {
     static_cast<JavaScriptParent*>(parent)->decref();
+}
+
+void
+mozilla::jsipc::AfterProcessTask()
+{
+    for (auto* cp : ContentParent::AllProcesses(ContentParent::eLive)) {
+        if (PJavaScriptParent* p = LoneManagedOrNullAsserts(cp->ManagedPJavaScriptParent()))
+            static_cast<JavaScriptParent*>(p)->afterProcessTask();
+    }
 }

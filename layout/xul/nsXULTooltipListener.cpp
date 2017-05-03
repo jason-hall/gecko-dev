@@ -7,7 +7,7 @@
 
 #include "nsIDOMMouseEvent.h"
 #include "nsIDOMXULDocument.h"
-#include "nsIDOMXULElement.h"
+#include "nsXULElement.h"
 #include "nsIDocument.h"
 #include "nsGkAtoms.h"
 #include "nsMenuPopupFrame.h"
@@ -24,11 +24,13 @@
 #endif
 #include "nsIRootBox.h"
 #include "nsIBoxObject.h"
+#include "mozilla/ErrorResult.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/Event.h" // for nsIDOMEvent::InternalDOMEvent()
 #include "mozilla/dom/BoxObject.h"
+#include "mozilla/TextEvents.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -194,13 +196,16 @@ nsXULTooltipListener::MouseMove(nsIDOMEvent* aEvent)
     }
 
     mTooltipTimer = do_CreateInstance("@mozilla.org/timer;1");
+    mTooltipTimer->SetTarget(
+        sourceContent->OwnerDoc()->EventTargetFor(TaskCategory::Other));
     if (mTooltipTimer) {
       mTargetNode = do_GetWeakReference(eventTarget);
       if (mTargetNode) {
         nsresult rv =
-          mTooltipTimer->InitWithFuncCallback(sTooltipCallback, this,
+          mTooltipTimer->InitWithNamedFuncCallback(sTooltipCallback, this,
             LookAndFeel::GetInt(LookAndFeel::eIntID_TooltipDelay, 500),
-            nsITimer::TYPE_ONE_SHOT);
+            nsITimer::TYPE_ONE_SHOT,
+            "sTooltipCallback");
         if (NS_FAILED(rv)) {
           mTargetNode = nullptr;
           mSourceNode = nullptr;
@@ -227,11 +232,20 @@ nsXULTooltipListener::HandleEvent(nsIDOMEvent* aEvent)
   nsAutoString type;
   aEvent->GetType(type);
   if (type.EqualsLiteral("DOMMouseScroll") ||
-      type.EqualsLiteral("keydown") ||
       type.EqualsLiteral("mousedown") ||
       type.EqualsLiteral("mouseup") ||
       type.EqualsLiteral("dragstart")) {
     HideTooltip();
+    return NS_OK;
+  }
+
+  if (type.EqualsLiteral("keydown")) {
+    // Hide the tooltip if a non-modifier key is pressed.
+    WidgetKeyboardEvent* keyEvent = aEvent->WidgetEventPtr()->AsKeyboardEvent();
+    if (!keyEvent->IsModifierKeyEvent()) {
+      HideTooltip();
+    }
+
     return NS_OK;
   }
 
@@ -430,8 +444,11 @@ nsXULTooltipListener::ShowTooltip()
                                     this, true);
         doc->AddSystemEventListener(NS_LITERAL_STRING("mouseup"),
                                     this, true);
+#ifndef XP_WIN
+        // On Windows, key events don't close tooltips.
         doc->AddSystemEventListener(NS_LITERAL_STRING("keydown"),
                                     this, true);
+#endif
       }
       mSourceNode = nullptr;
     }
@@ -450,9 +467,9 @@ GetTreeCellCoords(nsITreeBoxObject* aTreeBox, nsIContent* aSourceNode,
 {
   int32_t junk;
   aTreeBox->GetCoordsForCellItem(aRow, aCol, EmptyCString(), aX, aY, &junk, &junk);
-  nsCOMPtr<nsIDOMXULElement> xulEl(do_QueryInterface(aSourceNode));
-  nsCOMPtr<nsIBoxObject> bx;
-  xulEl->GetBoxObject(getter_AddRefs(bx));
+  RefPtr<nsXULElement> xulEl = nsXULElement::FromContent(aSourceNode);
+  IgnoredErrorResult ignored;
+  nsCOMPtr<nsIBoxObject> bx = xulEl->GetBoxObject(ignored);
   int32_t myX, myY;
   bx->GetX(&myX);
   bx->GetY(&myY);
@@ -669,7 +686,9 @@ nsXULTooltipListener::DestroyTooltip()
       doc->RemoveSystemEventListener(NS_LITERAL_STRING("mousedown"), this,
                                      true);
       doc->RemoveSystemEventListener(NS_LITERAL_STRING("mouseup"), this, true);
+#ifndef XP_WIN
       doc->RemoveSystemEventListener(NS_LITERAL_STRING("keydown"), this, true);
+#endif
     }
 
     // remove the popuphidden listener from tooltip
@@ -712,10 +731,11 @@ nsXULTooltipListener::GetSourceTreeBoxObject(nsITreeBoxObject** aBoxObject)
 
   nsCOMPtr<nsIContent> sourceNode = do_QueryReferent(mSourceNode);
   if (mIsSourceTree && sourceNode) {
-    nsCOMPtr<nsIDOMXULElement> xulEl(do_QueryInterface(sourceNode->GetParent()));
+    RefPtr<nsXULElement> xulEl =
+      nsXULElement::FromContentOrNull(sourceNode->GetParent());
     if (xulEl) {
-      nsCOMPtr<nsIBoxObject> bx;
-      xulEl->GetBoxObject(getter_AddRefs(bx));
+      IgnoredErrorResult ignored;
+      nsCOMPtr<nsIBoxObject> bx = xulEl->GetBoxObject(ignored);
       nsCOMPtr<nsITreeBoxObject> obx(do_QueryInterface(bx));
       if (obx) {
         *aBoxObject = obx;

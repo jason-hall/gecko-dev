@@ -32,16 +32,21 @@
 
 struct JSRuntime;
 
-namespace JS {
-namespace shadow {
-struct Runtime;
-} // namespace shadow
-} // namespace JS
-
 namespace js {
 
 class AutoLockGC;
 class FreeOp;
+
+extern bool
+RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(JS::shadow::Zone* shadowZone);
+
+#ifdef DEBUG
+
+// Barriers can't be triggered during backend Ion compilation, which may run on
+// a helper thread.
+extern bool
+CurrentThreadIsIonCompiling();
+#endif
 
 // The return value indicates if anything was unmarked.
 extern bool
@@ -102,9 +107,12 @@ enum class AllocKind : uintptr_t {
     FAT_INLINE_STRING,
     STRING,
     EXTERNAL_STRING,
+    FAT_INLINE_ATOM,
+    ATOM,
     SYMBOL,
     JITCODE,
     SCOPE,
+    REGEXP_SHARED,
     LIMIT,
     LAST = LIMIT - 1
 };
@@ -112,36 +120,39 @@ enum class AllocKind : uintptr_t {
 // Macro to enumerate the different allocation kinds supplying information about
 // the trace kind, C++ type and allocation size.
 #define FOR_EACH_OBJECT_ALLOCKIND(D) \
- /* AllocKind              TraceKind    TypeName           SizedType */ \
-    D(FUNCTION,            Object,      JSObject,          JSFunction) \
-    D(FUNCTION_EXTENDED,   Object,      JSObject,          FunctionExtended) \
-    D(OBJECT0,             Object,      JSObject,          JSObject_Slots0) \
-    D(OBJECT0_BACKGROUND,  Object,      JSObject,          JSObject_Slots0) \
-    D(OBJECT2,             Object,      JSObject,          JSObject_Slots2) \
-    D(OBJECT2_BACKGROUND,  Object,      JSObject,          JSObject_Slots2) \
-    D(OBJECT4,             Object,      JSObject,          JSObject_Slots4) \
-    D(OBJECT4_BACKGROUND,  Object,      JSObject,          JSObject_Slots4) \
-    D(OBJECT8,             Object,      JSObject,          JSObject_Slots8) \
-    D(OBJECT8_BACKGROUND,  Object,      JSObject,          JSObject_Slots8) \
-    D(OBJECT12,            Object,      JSObject,          JSObject_Slots12) \
-    D(OBJECT12_BACKGROUND, Object,      JSObject,          JSObject_Slots12) \
-    D(OBJECT16,            Object,      JSObject,          JSObject_Slots16) \
-    D(OBJECT16_BACKGROUND, Object,      JSObject,          JSObject_Slots16)
+ /* AllocKind              TraceKind      TypeName           SizedType */ \
+    D(FUNCTION,            Object,        JSObject,          JSFunction) \
+    D(FUNCTION_EXTENDED,   Object,        JSObject,          FunctionExtended) \
+    D(OBJECT0,             Object,        JSObject,          JSObject_Slots0) \
+    D(OBJECT0_BACKGROUND,  Object,        JSObject,          JSObject_Slots0) \
+    D(OBJECT2,             Object,        JSObject,          JSObject_Slots2) \
+    D(OBJECT2_BACKGROUND,  Object,        JSObject,          JSObject_Slots2) \
+    D(OBJECT4,             Object,        JSObject,          JSObject_Slots4) \
+    D(OBJECT4_BACKGROUND,  Object,        JSObject,          JSObject_Slots4) \
+    D(OBJECT8,             Object,        JSObject,          JSObject_Slots8) \
+    D(OBJECT8_BACKGROUND,  Object,        JSObject,          JSObject_Slots8) \
+    D(OBJECT12,            Object,        JSObject,          JSObject_Slots12) \
+    D(OBJECT12_BACKGROUND, Object,        JSObject,          JSObject_Slots12) \
+    D(OBJECT16,            Object,        JSObject,          JSObject_Slots16) \
+    D(OBJECT16_BACKGROUND, Object,        JSObject,          JSObject_Slots16)
 
 #define FOR_EACH_NONOBJECT_ALLOCKIND(D) \
- /* AllocKind              TraceKind    TypeName           SizedType */ \
-    D(SCRIPT,              Script,      JSScript,          JSScript) \
-    D(LAZY_SCRIPT,         LazyScript,  js::LazyScript,    js::LazyScript) \
-    D(SHAPE,               Shape,       js::Shape,         js::Shape) \
-    D(ACCESSOR_SHAPE,      Shape,       js::AccessorShape, js::AccessorShape) \
-    D(BASE_SHAPE,          BaseShape,   js::BaseShape,     js::BaseShape) \
-    D(OBJECT_GROUP,        ObjectGroup, js::ObjectGroup,   js::ObjectGroup) \
-    D(FAT_INLINE_STRING,   String,      JSFatInlineString, JSFatInlineString) \
-    D(STRING,              String,      JSString,          JSString) \
-    D(EXTERNAL_STRING,     String,      JSExternalString,  JSExternalString) \
-    D(SYMBOL,              Symbol,      JS::Symbol,        JS::Symbol) \
-    D(JITCODE,             JitCode,     js::jit::JitCode,  js::jit::JitCode) \
-    D(SCOPE,               Scope,       js::Scope,         js::Scope)
+ /* AllocKind              TraceKind      TypeName           SizedType */ \
+    D(SCRIPT,              Script,        JSScript,          JSScript) \
+    D(LAZY_SCRIPT,         LazyScript,    js::LazyScript,    js::LazyScript) \
+    D(SHAPE,               Shape,         js::Shape,         js::Shape) \
+    D(ACCESSOR_SHAPE,      Shape,         js::AccessorShape, js::AccessorShape) \
+    D(BASE_SHAPE,          BaseShape,     js::BaseShape,     js::BaseShape) \
+    D(OBJECT_GROUP,        ObjectGroup,   js::ObjectGroup,   js::ObjectGroup) \
+    D(FAT_INLINE_STRING,   String,        JSFatInlineString, JSFatInlineString) \
+    D(STRING,              String,        JSString,          JSString) \
+    D(EXTERNAL_STRING,     String,        JSExternalString,  JSExternalString) \
+    D(FAT_INLINE_ATOM,     String,        js::FatInlineAtom, js::FatInlineAtom) \
+    D(ATOM,                String,        js::NormalAtom,    js::NormalAtom) \
+    D(SYMBOL,              Symbol,        JS::Symbol,        JS::Symbol) \
+    D(JITCODE,             JitCode,       js::jit::JitCode,  js::jit::JitCode) \
+    D(SCOPE,               Scope,         js::Scope,         js::Scope) \
+    D(REGEXP_SHARED,       RegExpShared,  js::RegExpShared,  js::RegExpShared)
 
 #define FOR_EACH_ALLOCKIND(D) \
     FOR_EACH_OBJECT_ALLOCKIND(D) \
@@ -177,17 +188,16 @@ struct Cell
     MOZ_ALWAYS_INLINE const TenuredCell& asTenured() const;
     MOZ_ALWAYS_INLINE TenuredCell& asTenured();
 
-    inline JSRuntime* runtimeFromMainThread() const;
-    inline JS::shadow::Runtime* shadowRuntimeFromMainThread() const;
+    inline JSRuntime* runtimeFromActiveCooperatingThread() const;
     inline JS::Zone* zone() const;
 
     // Note: Unrestricted access to the runtime of a GC thing from an arbitrary
     // thread can easily lead to races. Use this method very carefully.
     inline JSRuntime* runtimeFromAnyThread() const;
-    inline JS::shadow::Runtime* shadowRuntimeFromAnyThread() const;
 #ifdef OMR
-        inline JS::Zone* zoneFromAnyThread() const;
+    inline JS::Zone* zoneFromAnyThread() const;
 #endif // OMR
+
     // May be overridden by GC thing kinds that have a compartment pointer.
     inline JSCompartment* maybeCompartment() const { return nullptr; }
 
@@ -233,10 +243,6 @@ class TenuredCell : public Cell
     MOZ_ALWAYS_INLINE bool markIfUnmarked(uint32_t color = BLACK) const;
     MOZ_ALWAYS_INLINE void unmark(uint32_t color) const;
     MOZ_ALWAYS_INLINE void copyMarkBitsFrom(const TenuredCell* src);
-
-    // Note: this is in TenuredCell because JSObject subclasses are sometimes
-    // used tagged.
-    static MOZ_ALWAYS_INLINE bool isNullLike(const Cell* thing) { return !thing; }
 
     // Access to the arena.
 
@@ -379,11 +385,24 @@ class Arena
     size_t markOverflow : 1;
     size_t auxNextLink : JS_BITS_PER_WORD - 8 - 1 - 1 - 1;
 
-    /*
-     * If non-null, points to an ArenaCellSet that represents the set of cells
-     * in this arena that are in the nursery's store buffer.
-     */
-    ArenaCellSet* bufferedCells;
+  private:
+    union {
+        /*
+         * For arenas in zones other than the atoms zone, if non-null, points
+         * to an ArenaCellSet that represents the set of cells in this arena
+         * that are in the nursery's store buffer.
+         */
+        ArenaCellSet* bufferedCells_;
+
+        /*
+         * For arenas in the atoms zone, the starting index into zone atom
+         * marking bitmaps (see AtomMarking.h) of the things in this zone.
+         * Atoms never refer to nursery things, so no store buffer index is
+         * needed.
+         */
+        size_t atomBitmapStart_;
+    };
+  public:
 
     /*
      * The size of data should be |ArenaSize - offsetof(data)|, but the offset
@@ -394,6 +413,32 @@ class Arena
     uint8_t data[ArenaSize - ArenaHeaderSize];
 
     void init(JS::Zone* zoneArg, AllocKind kind);
+
+    // Sets |firstFreeSpan| to the Arena's entire valid range, and
+    // also sets the next span stored at |firstFreeSpan.last| as empty.
+    void setAsFullyUnused() {
+        AllocKind kind = getAllocKind();
+        firstFreeSpan.first = firstThingOffset(kind);
+        firstFreeSpan.last = lastThingOffset(kind);
+        FreeSpan* last = firstFreeSpan.nextSpanUnchecked(this);
+        last->initAsEmpty();
+    }
+
+    // Initialize an arena to its unallocated state. For arenas that were
+    // previously allocated for some zone, use release() instead.
+    void setAsNotAllocated() {
+        firstFreeSpan.initAsEmpty();
+        zone = nullptr;
+        allocKind = size_t(AllocKind::LIMIT);
+        hasDelayedMarking = 0;
+        allocatedDuringIncremental = 0;
+        markOverflow = 0;
+        auxNextLink = 0;
+        bufferedCells_ = nullptr;
+    }
+
+    // Return an allocated arena to its unallocated state.
+    inline void release();
 
     uintptr_t address() const {
         checkAddress();
@@ -423,6 +468,9 @@ class Arena
     static bool isAligned(uintptr_t thing, size_t thingSize) {
         return true;
     }
+
+    inline ArenaCellSet*& bufferedCells();
+    inline size_t& atomBitmapStart();
 
     template <typename T>
     size_t finalize(FreeOp* fop, AllocKind thingKind, size_t thingSize);
@@ -498,14 +546,31 @@ struct Chunk
  * Tracks the used sizes for owned heap data and automatically maintains the
  * memory usage relationship between GCRuntime and Zones.
  */
+#if 0 // OMRTODO: Track Heap Usage
 class HeapUsage
 {
+    /*
+     * A heap usage that contains our parent's heap usage, or null if this is
+     * the top-level usage container.
+     */
+    HeapUsage* const parent_;
+
+    /*
+     * The approximate number of bytes in use on the GC heap, to the nearest
+     * ArenaSize. This does not include any malloc data. It also does not
+     * include not-actively-used addresses that are still reserved at the OS
+     * level for GC usage. It is atomic because it is updated by both the active
+     * and GC helper threads.
+     */
+    mozilla::Atomic<size_t, mozilla::ReleaseAcquire> gcBytes_;
+
   public:
     explicit HeapUsage(HeapUsage* parent)
     {}
 
     size_t gcBytes() const { return 0; }
 };
+#endif .//0
 
 #ifndef OMR // Arenas
 
@@ -537,15 +602,9 @@ Cell::asTenured()
 // OMRTOO: Getting Runtime with context
 
 inline JSRuntime*
-Cell::runtimeFromMainThread() const
+Cell::runtimeFromActiveCooperatingThread() const
 {
     return reinterpret_cast<JS::shadow::Zone*>(zone())->runtimeFromMainThread();
-}
-
-inline JS::shadow::Runtime*
-Cell::shadowRuntimeFromMainThread() const
-{
-    return reinterpret_cast<JS::shadow::Runtime*>(runtimeFromMainThread());
 }
 
 inline JSRuntime*
@@ -565,12 +624,6 @@ Cell::zone() const
 {
     // OMRTODO: Use multiple zones obtained from a thread context
     return OmrGcHelper::zone;
-}
-
-inline JS::shadow::Runtime*
-Cell::shadowRuntimeFromAnyThread() const
-{
-    return reinterpret_cast<JS::shadow::Runtime*>(runtimeFromAnyThread());
 }
 
 inline uintptr_t
@@ -724,6 +777,33 @@ TenuredCell::isInsideZone(JS::Zone* zone) const
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::readBarrier(TenuredCell* thing)
 {
+#if 0 // OMRTODO: Writebarriers
+    MOZ_ASSERT(!CurrentThreadIsIonCompiling());
+    MOZ_ASSERT(thing);
+
+    // It would be good if barriers were never triggered during collection, but
+    // at the moment this can happen e.g. when rekeying tables containing
+    // read-barriered GC things after a moving GC.
+    //
+    // TODO: Fix this and assert we're not collecting if we're on the active
+    // thread.
+
+    JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
+    if (shadowZone->needsIncrementalBarrier()) {
+        // Barriers are only enabled on the active thread and are disabled while collecting.
+        MOZ_ASSERT(!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone));
+        Cell* tmp = thing;
+        TraceManuallyBarrieredGenericPointerEdge(shadowZone->barrierTracer(), &tmp, "read barrier");
+        MOZ_ASSERT(tmp == thing);
+    }
+
+    if (thing->isMarked(GRAY)) {
+        // There shouldn't be anything marked grey unless we're on the active thread.
+        MOZ_ASSERT(CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()));
+        if (!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone))
+            UnmarkGrayCellRecursively(thing, thing->getTraceKind());
+    }
+#endif // 0
 }
 
 void
@@ -732,6 +812,35 @@ AssertSafeToSkipBarrier(TenuredCell* thing);
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::writeBarrierPre(TenuredCell* thing)
 {
+#if 0 // OMRTODO: Writebarriers
+    MOZ_ASSERT(!CurrentThreadIsIonCompiling());
+    if (!thing)
+        return;
+
+#ifdef JS_GC_ZEAL
+    // When verifying pre barriers we need to switch on all barriers, even
+    // those on the Atoms Zone. Normally, we never enter a parse task when
+    // collecting in the atoms zone, so will filter out atoms below.
+    // Unfortuantely, If we try that when verifying pre-barriers, we'd never be
+    // able to handle off thread parse tasks at all as we switch on the verifier any
+    // time we're not doing GC. This would cause us to deadlock, as off thread parsing
+    // is meant to resume after GC work completes. Instead we filter out any
+    // off thread barriers that reach us and assert that they would normally not be
+    // possible.
+    if (!CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread())) {
+        AssertSafeToSkipBarrier(thing);
+        return;
+    }
+#endif
+
+    JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
+    if (shadowZone->needsIncrementalBarrier()) {
+        MOZ_ASSERT(!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone));
+        Cell* tmp = thing;
+        TraceManuallyBarrieredGenericPointerEdge(shadowZone->barrierTracer(), &tmp, "pre barrier");
+        MOZ_ASSERT(tmp == thing);
+    }
+#endif // 0
 }
 
 static MOZ_ALWAYS_INLINE void
@@ -764,6 +873,52 @@ static const int32_t ChunkLocationOffsetFromLastByte =
 #endif // ! OMR
 
 } /* namespace gc */
+
+namespace debug {
+
+// Utility functions meant to be called from an interactive debugger.
+enum class MarkInfo : int {
+    BLACK = js::gc::BLACK,
+    GRAY = js::gc::GRAY,
+    UNMARKED = -1,
+    NURSERY = -2,
+};
+
+// Get the mark color for a cell, in a way easily usable from a debugger.
+MOZ_NEVER_INLINE MarkInfo
+GetMarkInfo(js::gc::Cell* cell);
+
+// Sample usage from gdb:
+//
+//   (gdb) p $word = js::debug::GetMarkWordAddress(obj)
+//   $1 = (uintptr_t *) 0x7fa56d5fe360
+//   (gdb) p/x $mask = js::debug::GetMarkMask(obj, js::gc::GRAY)
+//   $2 = 0x200000000
+//   (gdb) watch *$word
+//   Hardware watchpoint 7: *$word
+//   (gdb) cond 7 *$word & $mask
+//   (gdb) cont
+//
+// Note that this is *not* a watchpoint on a single bit. It is a watchpoint on
+// the whole word, which will trigger whenever the word changes and the
+// selected bit is set after the change.
+//
+// So if the bit changing is the desired one, this is exactly what you want.
+// But if a different bit changes (either set or cleared), you may still stop
+// execution if the $mask bit happened to already be set. gdb does not expose
+// enough information to restrict the watchpoint to just a single bit.
+
+// Return the address of the word containing the mark bits for the given cell,
+// or nullptr if the cell is in the nursery.
+MOZ_NEVER_INLINE uintptr_t*
+GetMarkWordAddress(js::gc::Cell* cell);
+
+// Return the mask for the given cell and color, or 0 if the cell is in the
+// nursery.
+MOZ_NEVER_INLINE uintptr_t
+GetMarkMask(js::gc::Cell* cell, uint32_t color);
+
+} /* namespace debug */
 } /* namespace js */
 
 #endif /* gc_Heap_h */

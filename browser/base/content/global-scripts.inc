@@ -3,18 +3,22 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# If you update this list, you may need to add a mapping within the following
+# file so that ESLint works correctly:
+# tools/lint/eslint/eslint-plugin-mozilla/lib/environments/browser-window.js
+
 <script type="application/javascript" src="chrome://global/content/printUtils.js"/>
 <script type="application/javascript" src="chrome://global/content/viewZoomOverlay.js"/>
 <script type="application/javascript" src="chrome://browser/content/places/browserPlacesViews.js"/>
 <script type="application/javascript" src="chrome://browser/content/browser.js"/>
 <script type="application/javascript" src="chrome://browser/content/customizableui/panelUI.js"/>
-<script type="application/javascript" src="chrome://global/content/inlineSpellCheckUI.js"/>
 <script type="application/javascript" src="chrome://global/content/viewSourceUtils.js"/>
 
 <script type="application/javascript" src="chrome://browser/content/browser-addons.js"/>
+<script type="application/javascript" src="chrome://browser/content/browser-captivePortal.js"/>
 <script type="application/javascript" src="chrome://browser/content/browser-ctrlTab.js"/>
 <script type="application/javascript" src="chrome://browser/content/browser-customization.js"/>
-<script type="application/javascript" src="chrome://browser/content/browser-devedition.js"/>
+<script type="application/javascript" src="chrome://browser/content/browser-compacttheme.js"/>
 <script type="application/javascript" src="chrome://browser/content/browser-feeds.js"/>
 <script type="application/javascript" src="chrome://browser/content/browser-fullScreenAndPointerLock.js"/>
 <script type="application/javascript" src="chrome://browser/content/browser-fullZoom.js"/>

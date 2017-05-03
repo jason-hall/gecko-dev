@@ -10,20 +10,18 @@
 
 #include "nsCollationCID.h"
 #include "nsJSUtils.h"
-#include "nsIPlatformCharset.h"
-#include "nsILocaleService.h"
 #include "nsICollation.h"
+#include "nsNativeCharsetUtils.h"
 #include "nsUnicharUtils.h"
 #include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "mozilla/dom/EncodingUtils.h"
+#include "mozilla/intl/LocaleService.h"
 #include "mozilla/Preferences.h"
-#include "nsIUnicodeDecoder.h"
 
 #include "xpcpublic.h"
 
 using namespace JS;
-using mozilla::dom::EncodingUtils;
+using mozilla::intl::LocaleService;
 
 /**
  * JS locale callbacks implemented by XPCOM modules.  These are theoretically
@@ -126,21 +124,11 @@ private:
     nsresult rv;
 
     if (!mCollation) {
-      nsCOMPtr<nsILocaleService> localeService =
-        do_GetService(NS_LOCALESERVICE_CONTRACTID, &rv);
+      nsCOMPtr<nsICollationFactory> colFactory =
+        do_CreateInstance(NS_COLLATIONFACTORY_CONTRACTID, &rv);
 
       if (NS_SUCCEEDED(rv)) {
-        nsCOMPtr<nsILocale> locale;
-        rv = localeService->GetApplicationLocale(getter_AddRefs(locale));
-
-        if (NS_SUCCEEDED(rv)) {
-          nsCOMPtr<nsICollationFactory> colFactory =
-            do_CreateInstance(NS_COLLATIONFACTORY_CONTRACTID, &rv);
-
-          if (NS_SUCCEEDED(rv)) {
-            rv = colFactory->CreateCollation(locale, getter_AddRefs(mCollation));
-          }
-        }
+        rv = colFactory->CreateCollation(getter_AddRefs(mCollation));
       }
 
       if (NS_FAILED(rv)) {
@@ -170,64 +158,19 @@ private:
   bool
   ToUnicode(JSContext* cx, const char* src, MutableHandleValue rval)
   {
-    nsresult rv;
-
-    if (!mDecoder) {
-      // use app default locale
-      nsCOMPtr<nsILocaleService> localeService =
-        do_GetService(NS_LOCALESERVICE_CONTRACTID, &rv);
-      if (NS_SUCCEEDED(rv)) {
-        nsCOMPtr<nsILocale> appLocale;
-        rv = localeService->GetApplicationLocale(getter_AddRefs(appLocale));
-        if (NS_SUCCEEDED(rv)) {
-          nsAutoString localeStr;
-          rv = appLocale->
-               GetCategory(NS_LITERAL_STRING(NSILOCALE_TIME), localeStr);
-          MOZ_ASSERT(NS_SUCCEEDED(rv), "failed to get app locale info");
-
-          nsCOMPtr<nsIPlatformCharset> platformCharset =
-            do_GetService(NS_PLATFORMCHARSET_CONTRACTID, &rv);
-
-          if (NS_SUCCEEDED(rv)) {
-            nsAutoCString charset;
-            rv = platformCharset->GetDefaultCharsetForLocale(localeStr, charset);
-            if (NS_SUCCEEDED(rv)) {
-              mDecoder = EncodingUtils::DecoderForEncoding(charset);
-            }
-          }
-        }
-      }
-    }
-
-    int32_t srcLength = strlen(src);
-
-    if (mDecoder) {
-      int32_t unicharLength = srcLength;
-      char16_t* unichars =
-        (char16_t*)JS_malloc(cx, (srcLength + 1) * sizeof(char16_t));
-      if (unichars) {
-        rv = mDecoder->Convert(src, &srcLength, unichars, &unicharLength);
-        if (NS_SUCCEEDED(rv)) {
-          // terminate the returned string
-          unichars[unicharLength] = 0;
-
-          // nsIUnicodeDecoder::Convert may use fewer than srcLength PRUnichars
-          if (unicharLength + 1 < srcLength + 1) {
-            char16_t* shrunkUnichars =
-              (char16_t*)JS_realloc(cx, unichars,
-                                     (srcLength + 1) * sizeof(char16_t),
-                                     (unicharLength + 1) * sizeof(char16_t));
-            if (shrunkUnichars)
-              unichars = shrunkUnichars;
-          }
-          JSString* str = JS_NewUCString(cx, reinterpret_cast<char16_t*>(unichars), unicharLength);
-          if (str) {
-            rval.setString(str);
-            return true;
-          }
-        }
-        JS_free(cx, unichars);
-      }
+    // This code is only used by our prioprietary toLocaleFormat method
+    // and should be removed once we get rid of it.
+    // toLocaleFormat is used in non-ICU scenarios where we don't have
+    // access to any other date/time than the OS one, so we have to also
+    // use the OS locale for unicode conversions.
+    // See bug 1349470 for more details.
+    nsAutoString result;
+    NS_CopyNativeToUnicode(nsDependentCString(src), result);
+    JSString* ucstr =
+      JS_NewUCStringCopyN(cx, result.get(), result.Length());
+    if (ucstr) {
+      rval.setString(ucstr);
+      return true;
     }
 
     xpc::Throw(cx, NS_ERROR_OUT_OF_MEMORY);
@@ -241,7 +184,6 @@ private:
   }
 
   nsCOMPtr<nsICollation> mCollation;
-  nsCOMPtr<nsIUnicodeDecoder> mDecoder;
 #ifdef DEBUG
   PRThread* mThread;
 #endif
@@ -262,22 +204,10 @@ xpc_LocalizeContext(JSContext* cx)
 
   // No pref has been found, so get the default locale from the
   // application's locale.
-  nsCOMPtr<nsILocaleService> localeService =
-    do_GetService(NS_LOCALESERVICE_CONTRACTID);
-  if (!localeService)
-    return false;
+  nsAutoCString appLocaleStr;
+  LocaleService::GetInstance()->GetAppLocaleAsBCP47(appLocaleStr);
 
-  nsCOMPtr<nsILocale> appLocale;
-  nsresult rv = localeService->GetApplicationLocale(getter_AddRefs(appLocale));
-  if (NS_FAILED(rv))
-    return false;
-
-  nsAutoString localeStr;
-  rv = appLocale->GetCategory(NS_LITERAL_STRING(NSILOCALE_TIME), localeStr);
-  MOZ_ASSERT(NS_SUCCEEDED(rv), "failed to get app locale info");
-  NS_LossyConvertUTF16toASCII locale(localeStr);
-
-  return JS_SetDefaultLocale(cx, locale.get());
+  return JS_SetDefaultLocale(cx, appLocaleStr.get());
 }
 
 void

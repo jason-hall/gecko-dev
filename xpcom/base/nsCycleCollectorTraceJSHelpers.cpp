@@ -21,8 +21,9 @@ CycleCollectionNoteEdgeNameImpl(nsCycleCollectionTraversalCallback& aCallback,
 }
 
 void
-nsScriptObjectTracer::NoteJSChild(JS::GCCellPtr aGCThing, const char* aName,
-                                  void* aClosure)
+nsCycleCollectionParticipant::NoteJSChild(JS::GCCellPtr aGCThing,
+                                          const char* aName,
+                                          void* aClosure)
 {
   nsCycleCollectionTraversalCallback* cb =
     static_cast<nsCycleCollectionTraversalCallback*>(aClosure);
@@ -36,7 +37,7 @@ void
 TraceCallbackFunc::Trace(JS::Heap<JS::Value>* aPtr, const char* aName,
                          void* aClosure) const
 {
-  if (aPtr->unbarrieredGet().isMarkable()) {
+  if (aPtr->unbarrieredGet().isGCThing()) {
     mCallback(JS::GCCellPtr(aPtr->unbarrieredGet()), aName, aClosure);
   }
 }
@@ -72,8 +73,8 @@ void
 TraceCallbackFunc::Trace(JS::TenuredHeap<JSObject*>* aPtr, const char* aName,
                          void* aClosure) const
 {
-  if (aPtr->getPtr()) {
-    mCallback(JS::GCCellPtr(aPtr->getPtr()), aName, aClosure);
+  if (*aPtr) {
+    mCallback(JS::GCCellPtr(aPtr->unbarrieredGetPtr()), aName, aClosure);
   }
 }
 

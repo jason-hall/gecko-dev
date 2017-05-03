@@ -8,9 +8,9 @@
 #include "SandboxFilterUtil.h"
 
 #include "SandboxBrokerClient.h"
+#include "SandboxInfo.h"
 #include "SandboxInternal.h"
 #include "SandboxLogging.h"
-
 #include "mozilla/UniquePtr.h"
 
 #include <errno.h>
@@ -25,6 +25,8 @@
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
+#include <vector>
+#include <algorithm>
 
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
 #include "sandbox/linux/system_headers/linux_seccomp.h"
@@ -92,6 +94,16 @@ private:
   }
 #endif
 
+  static intptr_t SetNoNewPrivsTrap(ArgsRef& aArgs, void* aux) {
+    if (gSetSandboxFilter == nullptr) {
+      // Called after BroadcastSetThreadSandbox finished, therefore
+      // not our doing and not expected.
+      return BlockedSyscallTrap(aArgs, nullptr);
+    }
+    // Signal that the filter is already in place.
+    return -ETXTBSY;
+  }
+
 public:
   virtual ResultExpr InvalidSyscall() const override {
     return Trap(BlockedSyscallTrap, nullptr);
@@ -157,6 +169,7 @@ public:
       Arg<clockid_t> clk_id(0);
       return If(clk_id == CLOCK_MONOTONIC, Allow())
 #ifdef CLOCK_MONOTONIC_COARSE
+        // Used by SandboxReporter, among other things.
         .ElseIf(clk_id == CLOCK_MONOTONIC_COARSE, Allow())
 #endif
         .ElseIf(clk_id == CLOCK_PROCESS_CPUTIME_ID, Allow())
@@ -249,8 +262,16 @@ public:
 #endif
 
       // prctl
-    case __NR_prctl:
-      return PrctlPolicy();
+    case __NR_prctl: {
+      if (SandboxInfo::Get().Test(SandboxInfo::kHasSeccompTSync)) {
+        return PrctlPolicy();
+      }
+
+      Arg<int> option(0);
+      return If(option == PR_SET_NO_NEW_PRIVS,
+                Trap(SetNoNewPrivsTrap, nullptr))
+        .Else(PrctlPolicy());
+    }
 
       // NSPR can call this when creating a thread, but it will accept a
       // polite "no".
@@ -328,7 +349,9 @@ public:
 // this is the Android process permission model; on desktop,
 // namespaces and chroot() will be used.
 class ContentSandboxPolicy : public SandboxPolicyCommon {
+private:
   SandboxBrokerClient* mBroker;
+  std::vector<int> mSyscallWhitelist;
 
   // Trap handlers for filesystem brokering.
   // (The amount of code duplication here could be improved....)
@@ -383,14 +406,14 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
   static intptr_t StatTrap(ArgsRef aArgs, void* aux) {
     auto broker = static_cast<SandboxBrokerClient*>(aux);
     auto path = reinterpret_cast<const char*>(aArgs.args[0]);
-    auto buf = reinterpret_cast<struct stat*>(aArgs.args[1]);
+    auto buf = reinterpret_cast<statstruct*>(aArgs.args[1]);
     return broker->Stat(path, buf);
   }
 
   static intptr_t LStatTrap(ArgsRef aArgs, void* aux) {
     auto broker = static_cast<SandboxBrokerClient*>(aux);
     auto path = reinterpret_cast<const char*>(aArgs.args[0]);
-    auto buf = reinterpret_cast<struct stat*>(aArgs.args[1]);
+    auto buf = reinterpret_cast<statstruct*>(aArgs.args[1]);
     return broker->LStat(path, buf);
   }
 
@@ -398,7 +421,7 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
     auto broker = static_cast<SandboxBrokerClient*>(aux);
     auto fd = static_cast<int>(aArgs.args[0]);
     auto path = reinterpret_cast<const char*>(aArgs.args[1]);
-    auto buf = reinterpret_cast<struct stat*>(aArgs.args[2]);
+    auto buf = reinterpret_cast<statstruct*>(aArgs.args[2]);
     auto flags = static_cast<int>(aArgs.args[3]);
     if (fd != AT_FDCWD && path[0] != '/') {
       SANDBOX_LOG_ERROR("unsupported fd-relative fstatat(%d, \"%s\", %p, %d)",
@@ -415,6 +438,61 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
       : broker->LStat(path, buf);
   }
 
+  static intptr_t ChmodTrap(ArgsRef aArgs, void* aux) {
+    auto broker = static_cast<SandboxBrokerClient*>(aux);
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    auto mode = static_cast<mode_t>(aArgs.args[1]);
+    return broker->Chmod(path, mode);
+  }
+
+  static intptr_t LinkTrap(ArgsRef aArgs, void *aux) {
+    auto broker = static_cast<SandboxBrokerClient*>(aux);
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    auto path2 = reinterpret_cast<const char*>(aArgs.args[1]);
+    return broker->Link(path, path2);
+  }
+
+  static intptr_t SymlinkTrap(ArgsRef aArgs, void *aux) {
+    auto broker = static_cast<SandboxBrokerClient*>(aux);
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    auto path2 = reinterpret_cast<const char*>(aArgs.args[1]);
+    return broker->Symlink(path, path2);
+  }
+
+  static intptr_t RenameTrap(ArgsRef aArgs, void *aux) {
+    auto broker = static_cast<SandboxBrokerClient*>(aux);
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    auto path2 = reinterpret_cast<const char*>(aArgs.args[1]);
+    return broker->Rename(path, path2);
+  }
+
+  static intptr_t MkdirTrap(ArgsRef aArgs, void* aux) {
+    auto broker = static_cast<SandboxBrokerClient*>(aux);
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    auto mode = static_cast<mode_t>(aArgs.args[1]);
+    return broker->Mkdir(path, mode);
+  }
+
+  static intptr_t RmdirTrap(ArgsRef aArgs, void* aux) {
+    auto broker = static_cast<SandboxBrokerClient*>(aux);
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    return broker->Rmdir(path);
+  }
+
+  static intptr_t UnlinkTrap(ArgsRef aArgs, void* aux) {
+    auto broker = static_cast<SandboxBrokerClient*>(aux);
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    return broker->Unlink(path);
+  }
+
+  static intptr_t ReadlinkTrap(ArgsRef aArgs, void* aux) {
+    auto broker = static_cast<SandboxBrokerClient*>(aux);
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    auto buf = reinterpret_cast<char*>(aArgs.args[1]);
+    auto size = static_cast<size_t>(aArgs.args[2]);
+    return broker->Readlink(path, buf, size);
+  }
+
   static intptr_t GetPPidTrap(ArgsRef aArgs, void* aux) {
     // In a pid namespace, getppid() will return 0. We will return 0 instead
     // of the real parent pid to see what breaks when we introduce the
@@ -423,7 +501,10 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
   }
 
 public:
-  explicit ContentSandboxPolicy(SandboxBrokerClient* aBroker):mBroker(aBroker) { }
+  explicit ContentSandboxPolicy(SandboxBrokerClient* aBroker,
+                                const std::vector<int>& aSyscallWhitelist)
+    : mBroker(aBroker),
+      mSyscallWhitelist(aSyscallWhitelist) {}
   virtual ~ContentSandboxPolicy() { }
   virtual ResultExpr PrctlPolicy() const override {
     // Ideally this should be restricted to a whitelist, but content
@@ -496,6 +577,14 @@ public:
 #endif
 
   virtual ResultExpr EvaluateSyscall(int sysno) const override {
+    // Straight allow for anything that got overriden via prefs
+    if (std::find(mSyscallWhitelist.begin(), mSyscallWhitelist.end(), sysno)
+        != mSyscallWhitelist.end()) {
+      if (SandboxInfo::Get().Test(SandboxInfo::kVerbose)) {
+        SANDBOX_LOG_ERROR("Allowing syscall nr %d via whitelist", sysno);
+      }
+      return Allow();
+    }
     if (mBroker) {
       // Have broker; route the appropriate syscalls to it.
       switch (sysno) {
@@ -513,6 +602,22 @@ public:
         return Trap(LStatTrap, mBroker);
       CASES_FOR_fstatat:
         return Trap(StatAtTrap, mBroker);
+      case __NR_chmod:
+        return Trap(ChmodTrap, mBroker);
+      case __NR_link:
+        return Trap(LinkTrap, mBroker);
+      case __NR_mkdir:
+        return Trap(MkdirTrap, mBroker);
+      case __NR_symlink:
+        return Trap(SymlinkTrap, mBroker);
+      case __NR_rename:
+        return Trap(RenameTrap, mBroker);
+      case __NR_rmdir:
+        return Trap(RmdirTrap, mBroker);
+      case __NR_unlink:
+        return Trap(UnlinkTrap, mBroker);
+      case __NR_readlink:
+        return Trap(ReadlinkTrap, mBroker);
       }
     } else {
       // No broker; allow the syscalls directly.  )-:
@@ -524,6 +629,14 @@ public:
       CASES_FOR_stat:
       CASES_FOR_lstat:
       CASES_FOR_fstatat:
+      case __NR_chmod:
+      case __NR_link:
+      case __NR_mkdir:
+      case __NR_symlink:
+      case __NR_rename:
+      case __NR_rmdir:
+      case __NR_unlink:
+      case __NR_readlink:
         return Allow();
       }
     }
@@ -535,24 +648,16 @@ public:
 
       // Filesystem syscalls that need more work to determine who's
       // using them, if they need to be, and what we intend to about it.
-    case __NR_mkdir:
-    case __NR_rmdir:
     case __NR_getcwd:
     CASES_FOR_statfs:
     CASES_FOR_fstatfs:
-    case __NR_chmod:
-    case __NR_rename:
-    case __NR_symlink:
     case __NR_quotactl:
-    case __NR_link:
-    case __NR_unlink:
     CASES_FOR_fchown:
     case __NR_fchmod:
     case __NR_flock:
 #endif
       return Allow();
 
-    case __NR_readlink:
     case __NR_readlinkat:
 #ifdef DESKTOP
       // Bug 1290896
@@ -591,10 +696,8 @@ public:
     case __NR_mprotect:
     case __NR_brk:
     case __NR_madvise:
-#if !defined(MOZ_MEMORY)
-      // libc's realloc uses mremap (Bug 1286119).
+      // libc's realloc uses mremap (Bug 1286119); wasm does too (bug 1342385).
     case __NR_mremap:
-#endif
       return Allow();
 
     case __NR_sigaltstack:
@@ -645,9 +748,24 @@ public:
     CASES_FOR_getresgid:
       return Allow();
 
+    case __NR_prlimit64: {
+      // Allow only the getrlimit() use case.  (glibc seems to use
+      // only pid 0 to indicate the current process; pid == getpid()
+      // is equivalent and could also be allowed if needed.)
+      Arg<pid_t> pid(0);
+      // This is really a const struct ::rlimit*, but Arg<> doesn't
+      // work with pointers, only integer types.
+      Arg<uintptr_t> new_limit(2);
+      return If(AllOf(pid == 0, new_limit == 0), Allow())
+        .Else(InvalidSyscall());
+    }
+
     case __NR_umask:
     case __NR_kill:
     case __NR_wait4:
+#ifdef __NR_waitpid
+    case __NR_waitpid:
+#endif
 #ifdef __NR_arch_prctl
     case __NR_arch_prctl:
 #endif
@@ -729,9 +847,10 @@ public:
 };
 
 UniquePtr<sandbox::bpf_dsl::Policy>
-GetContentSandboxPolicy(SandboxBrokerClient* aMaybeBroker)
+GetContentSandboxPolicy(SandboxBrokerClient* aMaybeBroker,
+                        const std::vector<int>& aSyscallWhitelist)
 {
-  return UniquePtr<sandbox::bpf_dsl::Policy>(new ContentSandboxPolicy(aMaybeBroker));
+  return MakeUnique<ContentSandboxPolicy>(aMaybeBroker, aSyscallWhitelist);
 }
 #endif // MOZ_CONTENT_SANDBOX
 

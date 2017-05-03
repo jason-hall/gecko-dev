@@ -30,7 +30,7 @@ namespace dom {
 
 HTMLObjectElement::HTMLObjectElement(already_AddRefed<mozilla::dom::NodeInfo>& aNodeInfo,
                                      FromParser aFromParser)
-  : nsGenericHTMLFormElement(aNodeInfo),
+  : nsGenericHTMLFormElement(aNodeInfo, NS_FORM_OBJECT),
     mIsDoneAddingChildren(!aFromParser)
 {
   RegisterActivityObserver();
@@ -59,6 +59,12 @@ HTMLObjectElement::IsInteractiveHTMLContent(bool aIgnoreTabindex) const
          nsGenericHTMLFormElement::IsInteractiveHTMLContent(aIgnoreTabindex);
 }
 
+void
+HTMLObjectElement::AsyncEventRunning(AsyncEventDispatcher* aEvent)
+{
+  nsImageLoadingContent::AsyncEventRunning(aEvent);
+}
+
 bool
 HTMLObjectElement::IsDoneAddingChildren()
 {
@@ -73,7 +79,7 @@ HTMLObjectElement::DoneAddingChildren(bool aHaveNotified)
   // If we're already in a document, we need to trigger the load
   // Otherwise, BindToTree takes care of that.
   if (IsInComposedDoc()) {
-    StartObjectLoad(aHaveNotified);
+    StartObjectLoad(aHaveNotified, false);
   }
 }
 
@@ -160,10 +166,6 @@ HTMLObjectElement::OnFocusBlurPlugin(Element* aElement, bool aFocus)
     nsCOMPtr<nsIObjectLoadingContent> olc = do_QueryInterface(aElement);
     bool hasRunningPlugin = false;
     if (olc) {
-      // nsIObjectLoadingContent::GetHasRunningPlugin() fails when
-      // nsContentUtils::IsCallerChrome() returns false (which it can do even
-      // when we're processing a trusted focus event).  We work around this by
-      // calling nsObjectLoadingContent::HasRunningPlugin() directly.
       hasRunningPlugin =
         static_cast<nsObjectLoadingContent*>(olc.get())->HasRunningPlugin();
     }
@@ -308,7 +310,8 @@ HTMLObjectElement::SetAttr(int32_t aNameSpaceID, nsIAtom *aName,
   // a document, just in case that the caller wants to set additional
   // attributes before inserting the node into the document.
   if (aNotify && IsInComposedDoc() && mIsDoneAddingChildren &&
-      aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::data) {
+      aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::data &&
+      !BlockEmbedOrObjectContentLoading()) {
     return LoadObject(aNotify, true);
   }
 
@@ -325,7 +328,8 @@ HTMLObjectElement::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttribute,
 
   // See comment in SetAttr
   if (aNotify && IsInComposedDoc() && mIsDoneAddingChildren &&
-      aNameSpaceID == kNameSpaceID_None && aAttribute == nsGkAtoms::data) {
+      aNameSpaceID == kNameSpaceID_None && aAttribute == nsGkAtoms::data &&
+      !BlockEmbedOrObjectContentLoading()) {
     return LoadObject(aNotify, true);
   }
 
@@ -466,13 +470,13 @@ HTMLObjectElement::GetContentDocument(nsIDOMDocument **aContentDocument)
   NS_ENSURE_ARG_POINTER(aContentDocument);
 
   nsCOMPtr<nsIDOMDocument> domDoc =
-    do_QueryInterface(GetContentDocument(Some(nsContentUtils::SubjectPrincipal())));
+    do_QueryInterface(GetContentDocument(*nsContentUtils::SubjectPrincipal()));
   domDoc.forget(aContentDocument);
   return NS_OK;
 }
 
 nsPIDOMWindowOuter*
-HTMLObjectElement::GetContentWindow(const mozilla::Maybe<nsIPrincipal*>& aSubjectPrincipal)
+HTMLObjectElement::GetContentWindow(nsIPrincipal& aSubjectPrincipal)
 {
   nsIDocument* doc = GetContentDocument(aSubjectPrincipal);
   if (doc) {
@@ -503,7 +507,7 @@ HTMLObjectElement::ParseAttribute(int32_t aNamespaceID,
 
 void
 HTMLObjectElement::MapAttributesIntoRule(const nsMappedAttributes *aAttributes,
-                                         nsRuleData *aData)
+                                         GenericSpecifiedValues *aData)
 {
   nsGenericHTMLFormElement::MapImageAlignAttributeInto(aAttributes, aData);
   nsGenericHTMLFormElement::MapImageBorderAttributeInto(aAttributes, aData);
@@ -533,15 +537,16 @@ HTMLObjectElement::GetAttributeMappingFunction() const
 }
 
 void
-HTMLObjectElement::StartObjectLoad(bool aNotify)
+HTMLObjectElement::StartObjectLoad(bool aNotify, bool aForce)
 {
   // BindToTree can call us asynchronously, and we may be removed from the tree
   // in the interim
-  if (!IsInComposedDoc() || !OwnerDoc()->IsActive()) {
+  if (!IsInComposedDoc() || !OwnerDoc()->IsActive() ||
+      BlockEmbedOrObjectContentLoading()) {
     return;
   }
 
-  LoadObject(aNotify);
+  LoadObject(aNotify, aForce);
   SetIsNetworkCreated(false);
 }
 

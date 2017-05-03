@@ -5,6 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "nsPK11TokenDB.h"
 
+#include <string.h>
+
 #include "ScopedNSSTypes.h"
 #include "mozilla/Casting.h"
 #include "mozilla/Unused.h"
@@ -49,9 +51,7 @@ nsPK11Token::refreshTokenInfo(const nsNSSShutDownPreventionLock& /*proofOfLock*/
 
   // Set the Label field
   const char* ccLabel = mozilla::BitwiseCast<char*, CK_UTF8CHAR*>(tokInfo.label);
-  // TODO(Bug 1305930): Stop using PL_strnlen() if/when all our supported
-  //                    platforms provide strnlen().
-  mTokenLabel.Assign(ccLabel, PL_strnlen(ccLabel, sizeof(tokInfo.label)));
+  mTokenLabel.Assign(ccLabel, strnlen(ccLabel, sizeof(tokInfo.label)));
   mTokenLabel.Trim(" ", false, true);
 
   // Set the Manufacturer field
@@ -59,7 +59,7 @@ nsPK11Token::refreshTokenInfo(const nsNSSShutDownPreventionLock& /*proofOfLock*/
     mozilla::BitwiseCast<char*, CK_UTF8CHAR*>(tokInfo.manufacturerID);
   mTokenManufacturerID.Assign(
     ccManID,
-    PL_strnlen(ccManID, sizeof(tokInfo.manufacturerID)));
+    strnlen(ccManID, sizeof(tokInfo.manufacturerID)));
   mTokenManufacturerID.Trim(" ", false, true);
 
   // Set the Hardware Version field
@@ -78,7 +78,7 @@ nsPK11Token::refreshTokenInfo(const nsNSSShutDownPreventionLock& /*proofOfLock*/
   const char* ccSerial =
     mozilla::BitwiseCast<char*, CK_CHAR*>(tokInfo.serialNumber);
   mTokenSerialNum.Assign(ccSerial,
-                         PL_strnlen(ccSerial, sizeof(tokInfo.serialNumber)));
+                         strnlen(ccSerial, sizeof(tokInfo.serialNumber)));
   mTokenSerialNum.Trim(" ", false, true);
 
   return NS_OK;
@@ -359,6 +359,23 @@ nsPK11Token::ChangePassword(const nsACString& oldPassword,
 }
 
 NS_IMETHODIMP
+nsPK11Token::GetHasPassword(bool* hasPassword)
+{
+  NS_ENSURE_ARG_POINTER(hasPassword);
+
+  nsNSSShutDownPreventionLock locker;
+  if (isAlreadyShutDown()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  // PK11_NeedLogin returns true if the token is currently configured to require
+  // the user to log in (whether or not the user is actually logged in makes no
+  // difference).
+  *hasPassword = PK11_NeedLogin(mSlot.get()) && !PK11_NeedUserInit(mSlot.get());
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsPK11Token::IsHardwareToken(bool* _retval)
 {
   NS_ENSURE_ARG_POINTER(_retval);
@@ -448,6 +465,10 @@ nsPK11TokenDB::FindTokenByName(const nsACString& tokenName,
   nsNSSShutDownPreventionLock locker;
   if (isAlreadyShutDown()) {
     return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  if (tokenName.IsEmpty()) {
+    return NS_ERROR_ILLEGAL_VALUE;
   }
 
   UniquePK11SlotInfo slot(

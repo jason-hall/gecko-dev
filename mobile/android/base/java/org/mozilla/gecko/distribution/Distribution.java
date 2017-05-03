@@ -38,11 +38,13 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.mozilla.gecko.annotation.RobocopTarget;
 import org.mozilla.gecko.AppConstants;
+import org.mozilla.gecko.EventDispatcher;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoSharedPrefs;
 import org.mozilla.gecko.Telemetry;
 import org.mozilla.gecko.annotation.JNITarget;
 import org.mozilla.gecko.util.FileUtils;
+import org.mozilla.gecko.util.GeckoBundle;
 import org.mozilla.gecko.util.HardwareUtils;
 import org.mozilla.gecko.util.ThreadUtils;
 
@@ -61,6 +63,10 @@ import android.util.Log;
 @RobocopTarget
 public class Distribution {
     private static final String LOGTAG = "GeckoDistribution";
+
+    // We use "AndroidPreferences" for profile-scoped pref for backward compatibility(bug 1295675)
+    public static final String PREF_KEY_PROFILE_PREFERENCES = "AndroidPreferences";
+    public static final String PREF_KEY_APPLICATION_PREFERENCES = "ApplicationPreferences";
 
     private static final int STATE_UNKNOWN = 0;
     private static final int STATE_NONE = 1;
@@ -223,14 +229,23 @@ public class Distribution {
             public void run() {
                 boolean distributionSet = distribution.doInit();
                 if (distributionSet) {
-                    String preferencesJSON = "";
+                    GeckoBundle data = null;
                     try {
                         final File descFile = distribution.getDistributionFile("preferences.json");
-                        preferencesJSON = FileUtils.readStringFromFile(descFile);
+                        if (descFile == null) {
+                            // This can happen if we have a distribution directory, but no
+                            // preferences.json file.
+                            throw new IOException("preferences.json not found");
+                        }
+
+                        final String preferencesJSON = FileUtils.readStringFromFile(descFile);
+                        data = new GeckoBundle(1);
+                        data.putString("preferences", preferencesJSON);
+
                     } catch (IOException e) {
                         Log.e(LOGTAG, "Error getting distribution descriptor file.", e);
                     }
-                    GeckoAppShell.notifyObservers("Distribution:Set", preferencesJSON);
+                    EventDispatcher.getInstance().dispatch("Distribution:Set", data);
                 }
             }
         });
@@ -297,6 +312,14 @@ public class Distribution {
 
                 // This will bail if we aren't delayed, or we already have a distribution.
                 distribution.processDelayedReferrer(ref);
+
+                // On Android 5+ we might receive the referrer intent
+                // and never actually launch the browser, which is the usual signal
+                // for the distribution init process to complete.
+                // Attempt to init here to handle that case.
+                // Profile setup that relies on the distribution will occur
+                // when the browser is eventually launched, via `addOnDistributionReadyCallback`.
+                distribution.doInit();
             }
         });
     }
@@ -330,7 +353,7 @@ public class Distribution {
         runLateReadyQueue();
 
         // Make sure that changes to search defaults are applied immediately.
-        GeckoAppShell.notifyObservers("Distribution:Changed", "");
+        EventDispatcher.getInstance().dispatch("Distribution:Changed", null);
     }
 
     /**
@@ -391,10 +414,11 @@ public class Distribution {
     }
 
     /**
-     * Get the Android preferences from the preferences.json file, if any exist.
+     * Get the preferences from the preferences.json file, if any exist.
+     * There are two types of preferences : Application-scoped and profile-scoped (bug 1295675)
      * @return The preferences in a JSONObject, or an empty JSONObject if no preferences are defined.
      */
-    public JSONObject getAndroidPreferences() {
+    public JSONObject getPreferences(String key) {
         final File descFile = getDistributionFile("preferences.json");
         if (descFile == null) {
             // Logging and existence checks are handled in getDistributionFile.
@@ -404,11 +428,11 @@ public class Distribution {
         try {
             final JSONObject all = FileUtils.readJSONObjectFromFile(descFile);
 
-            if (!all.has("AndroidPreferences")) {
+            if (!all.has(key)) {
                 return new JSONObject();
             }
 
-            return all.getJSONObject("AndroidPreferences");
+            return all.getJSONObject(key);
 
         } catch (IOException e) {
             Log.e(LOGTAG, "Error getting distribution descriptor file.", e);
@@ -680,6 +704,28 @@ public class Distribution {
      */
     private boolean checkSystemDistribution() {
         return checkDirectories(getSystemDistributionDirectories(context));
+    }
+
+    /**
+     * @return true if we should wait for a system distribution to load.
+     * Not applicable to APK or OTA distributions.
+     */
+    public boolean shouldWaitForSystemDistribution() {
+        if (state == STATE_NONE) {
+            return false;
+        }
+        if (state == STATE_SET) {
+            return true;
+        }
+
+        final String[] directories = getSystemDistributionDirectories(context);
+        for (String path : directories) {
+            final File directory = new File(path);
+            if (directory.exists()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

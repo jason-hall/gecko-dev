@@ -19,35 +19,70 @@ NetworkEventMessage.displayName = "NetworkEventMessage";
 
 NetworkEventMessage.propTypes = {
   message: PropTypes.object.isRequired,
-  openNetworkPanel: PropTypes.func.isRequired,
+  serviceContainer: PropTypes.shape({
+    openNetworkPanel: PropTypes.func.isRequired,
+  }),
+  indent: PropTypes.number.isRequired,
 };
 
-function NetworkEventMessage(props) {
-  const { message, openNetworkPanel, emitNewMessage } = props;
-  const { actor, source, type, level, request, isXHR } = message;
+NetworkEventMessage.defaultProps = {
+  indent: 0,
+};
+
+function NetworkEventMessage({
+  indent,
+  message = {},
+  serviceContainer,
+}) {
+  const {
+    actor,
+    source,
+    type,
+    level,
+    request,
+    response: {
+      httpVersion,
+      status,
+      statusText,
+    },
+    isXHR,
+    timeStamp,
+    totalTime,
+  } = message;
 
   const topLevelClasses = [ "cm-s-mozilla" ];
+  let statusInfo;
 
-  function onUrlClick() {
-    openNetworkPanel(actor);
+  if (httpVersion && status && statusText && totalTime !== undefined) {
+    statusInfo = `[${httpVersion} ${status} ${statusText} ${totalTime}ms]`;
+  }
+
+  function openNetworkMonitor() {
+    serviceContainer.openNetworkPanel(actor);
   }
 
   const method = dom.span({className: "method" }, request.method);
   const xhr = isXHR
     ? dom.span({ className: "xhr" }, l10n.getStr("webConsoleXhrIndicator"))
     : null;
-  const url = dom.a({ className: "url", title: request.url, onClick: onUrlClick },
-        request.url.replace(/\?.+/, ""));
+  const url = dom.a({ className: "url", title: request.url, onClick: openNetworkMonitor },
+    request.url.replace(/\?.+/, ""));
+  const statusBody = statusInfo
+    ? dom.a({ className: "status", onClick: openNetworkMonitor }, statusInfo)
+    : null;
 
-  const messageBody = dom.span({}, method, xhr, url);
+  const messageBody = [method, xhr, url, statusBody];
 
   const childProps = {
     source,
     type,
     level,
+    indent,
     topLevelClasses,
+    timeStamp,
     messageBody,
-    emitNewMessage,
+    serviceContainer,
+    request,
   };
   return Message(childProps);
 }

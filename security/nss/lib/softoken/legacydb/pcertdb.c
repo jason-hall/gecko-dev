@@ -733,6 +733,12 @@ DecodeDBCertEntry(certDBEntryCert *entry, SECItem *dbentry)
         entry->derCert.len += lenoff;
     }
 
+    /* Is data long enough? */
+    if (dbentry->len < headerlen + entry->derCert.len) {
+        PORT_SetError(SEC_ERROR_BAD_DATABASE);
+        goto loser;
+    }
+
     /* copy the dercert */
     entry->derCert.data = pkcs11_copyStaticData(&dbentry->data[headerlen],
                                                 entry->derCert.len, entry->derCertSpace, sizeof(entry->derCertSpace));
@@ -743,6 +749,11 @@ DecodeDBCertEntry(certDBEntryCert *entry, SECItem *dbentry)
 
     /* copy the nickname */
     if (nnlen > 1) {
+        /* Is data long enough? */
+        if (dbentry->len < headerlen + entry->derCert.len + nnlen) {
+            PORT_SetError(SEC_ERROR_BAD_DATABASE);
+            goto loser;
+        }
         entry->nickname = (char *)pkcs11_copyStaticData(
             &dbentry->data[headerlen + entry->derCert.len], nnlen,
             (unsigned char *)entry->nicknameSpace,
@@ -2172,7 +2183,11 @@ EncodeDBSubjectEntry(certDBEntrySubject *entry, PLArenaPool *arena,
     buf[4] = 0;
     buf[5] = 0;
 
-    PORT_Memcpy(&buf[DB_SUBJECT_ENTRY_HEADER_LEN], entry->nickname, nnlen);
+    PORT_Assert(DB_SUBJECT_ENTRY_HEADER_LEN == 6);
+
+    if (entry->nickname) {
+        PORT_Memcpy(&buf[DB_SUBJECT_ENTRY_HEADER_LEN], entry->nickname, nnlen);
+    }
     tmpbuf = &buf[keyidoff];
     for (i = 0; i < ncerts; i++) {
         tmpbuf[0] = (PRUint8)(certKeys[i].len >> 8);
@@ -2190,8 +2205,10 @@ EncodeDBSubjectEntry(certDBEntrySubject *entry, PLArenaPool *arena,
         tmpbuf += certKeys[i].len;
     }
     for (i = 0; i < ncerts; i++) {
-        PORT_Memcpy(tmpbuf, keyIDs[i].data, keyIDs[i].len);
-        tmpbuf += keyIDs[i].len;
+        if (keyIDs[i].len) {
+            PORT_Memcpy(tmpbuf, keyIDs[i].data, keyIDs[i].len);
+            tmpbuf += keyIDs[i].len;
+        }
     }
 
     if (entry->emailAddrs) {

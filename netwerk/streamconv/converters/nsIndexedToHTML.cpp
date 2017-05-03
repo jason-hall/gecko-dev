@@ -3,8 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "DateTimeFormat.h"
 #include "nsIndexedToHTML.h"
 #include "mozilla/dom/EncodingUtils.h"
+#include "mozilla/intl/LocaleService.h"
 #include "nsNetUtil.h"
 #include "netCore.h"
 #include "nsStringStream.h"
@@ -17,13 +19,13 @@
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefLocalizedString.h"
-#include "nsIChromeRegistry.h"
-#include "nsIDateTimeFormat.h"
 #include "nsIStringBundle.h"
 #include "nsITextToSubURI.h"
 #include "nsXPIDLString.h"
 #include <algorithm>
 #include "nsIChannel.h"
+
+using mozilla::intl::LocaleService;
 
 NS_IMPL_ISUPPORTS(nsIndexedToHTML,
                   nsIDirIndexListener,
@@ -68,10 +70,6 @@ nsIndexedToHTML::Init(nsIStreamListener* aListener) {
     nsresult rv = NS_OK;
 
     mListener = aListener;
-
-    mDateTime = nsIDateTimeFormat::Create();
-    if (!mDateTime)
-      return NS_ERROR_FAILURE;
 
     nsCOMPtr<nsIStringBundleService> sbs =
         do_GetService(NS_STRINGBUNDLE_CONTRACTID, &rv);
@@ -566,14 +564,8 @@ nsIndexedToHTML::DoOnStartRequest(nsIRequest* request, nsISupports *aContext,
     }
 
     nsCString direction(NS_LITERAL_CSTRING("ltr"));
-    nsCOMPtr<nsIXULChromeRegistry> reg =
-      mozilla::services::GetXULChromeRegistryService();
-    if (reg) {
-      bool isRTL = false;
-      reg->IsLocaleRTL(NS_LITERAL_CSTRING("global"), &isRTL);
-      if (isRTL) {
-        direction.AssignLiteral("rtl");
-      }
+    if (LocaleService::GetInstance()->IsAppLocaleRTL()) {
+      direction.AssignLiteral("rtl");
     }
 
     buffer.AppendLiteral("</head>\n<body dir=\"");
@@ -665,7 +657,7 @@ nsIndexedToHTML::OnStopRequest(nsIRequest* request, nsISupports *aContext,
     }
 
     mParser->OnStopRequest(request, aContext, aStatus);
-    mParser = 0;
+    mParser = nullptr;
     
     return mListener->OnStopRequest(request, aContext, aStatus);
 }
@@ -707,6 +699,10 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
 
     // Adjust the length in case unescaping shortened the string.
     loc.Truncate(nsUnescapeCount(loc.BeginWriting()));
+
+    if (loc.IsEmpty()) {
+        return NS_ERROR_ILLEGAL_VALUE;
+    }
     if (loc.First() == char16_t('.'))
         pushBuffer.AppendLiteral(" class=\"hidden-object\"");
 
@@ -835,18 +831,16 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
         pushBuffer.AppendInt(static_cast<int64_t>(t));
         pushBuffer.AppendLiteral("\">");
         nsAutoString formatted;
-        mDateTime->FormatPRTime(nullptr,
-                                kDateFormatShort,
-                                kTimeFormatNone,
-                                t,
-                                formatted);
+        mozilla::DateTimeFormat::FormatPRTime(kDateFormatShort,
+                                              kTimeFormatNone,
+                                              t,
+                                              formatted);
         AppendNonAsciiToNCR(formatted, pushBuffer);
         pushBuffer.AppendLiteral("</td>\n <td>");
-        mDateTime->FormatPRTime(nullptr,
-                                kDateFormatNone,
-                                kTimeFormatSeconds,
-                                t,
-                                formatted);
+        mozilla::DateTimeFormat::FormatPRTime(kDateFormatNone,
+                                              kTimeFormatSeconds,
+                                              t,
+                                              formatted);
         // use NCR to show date in any doc charset
         AppendNonAsciiToNCR(formatted, pushBuffer);
     }

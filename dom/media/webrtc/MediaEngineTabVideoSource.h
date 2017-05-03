@@ -19,12 +19,17 @@ class MediaEngineTabVideoSource : public MediaEngineVideoSource, nsIDOMEventList
     NS_DECL_NSITIMERCALLBACK
     MediaEngineTabVideoSource();
 
-    void GetName(nsAString_internal&) const override;
-    void GetUUID(nsACString_internal&) const override;
+    void GetName(nsAString&) const override;
+    void GetUUID(nsACString&) const override;
+
+    bool GetScary() const override {
+      return true;
+    }
+
     nsresult Allocate(const dom::MediaTrackConstraints &,
                       const mozilla::MediaEnginePrefs&,
                       const nsString& aDeviceId,
-                      const nsACString& aOrigin,
+                      const mozilla::ipc::PrincipalInfo& aPrincipalInfo,
                       AllocationHandle** aOutHandle,
                       const char** aOutBadConstraint) override;
     nsresult Deallocate(AllocationHandle* aHandle) override;
@@ -72,6 +77,13 @@ class MediaEngineTabVideoSource : public MediaEngineVideoSource, nsIDOMEventList
     class InitRunnable : public Runnable {
     public:
       explicit InitRunnable(MediaEngineTabVideoSource *videoSource) : mVideoSource(videoSource) {}
+      NS_IMETHOD Run();
+      RefPtr<MediaEngineTabVideoSource> mVideoSource;
+    };
+
+    class DestroyRunnable : public Runnable {
+    public:
+      explicit DestroyRunnable(MediaEngineTabVideoSource* videoSource) : mVideoSource(videoSource) {}
       NS_IMETHOD Run();
       RefPtr<MediaEngineTabVideoSource> mVideoSource;
     };

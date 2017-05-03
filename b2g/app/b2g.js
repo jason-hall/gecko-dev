@@ -200,7 +200,6 @@ pref("privacy.item.syncAccount", true);
 
 // base url for the wifi geolocation network provider
 pref("geo.provider.use_mls", false);
-pref("geo.cell.scan", true);
 pref("geo.wifi.uri", "https://location.services.mozilla.com/v1/geolocate?key=%MOZILLA_API_KEY%");
 
 // base url for the stumbler
@@ -279,7 +278,6 @@ pref("ui.threedlightshadow", "#ece7e2");
 pref("ui.threedshadow", "#aea194");
 pref("ui.windowframe", "#efebe7");
 
-// Themable via mozSettings
 pref("ui.menu", "#f97c17");
 pref("ui.menutext", "#ffffff");
 pref("ui.infobackground", "#343e40");
@@ -326,7 +324,6 @@ pref("media.gonk.enabled", true);
 
 //Encrypted media extensions.
 pref("media.eme.enabled", true);
-pref("media.eme.apiVisible", true);
 // The default number of decoded video frames that are enqueued in
 // MediaDecoderReader's mVideoQueue.
 pref("media.video-queue.default-size", 3);
@@ -390,9 +387,6 @@ pref("dom.ipc.browser_frames.oop_by_default", false);
 pref("dom.meta-viewport.enabled", true);
 #endif
 
-// SMS/MMS
-pref("dom.sms.enabled", true);
-
 //The waiting time in network manager.
 pref("network.gonk.ms-release-mms-connection", 30000);
 
@@ -404,25 +398,14 @@ pref("dom.phonenumber.substringmatching.VE", 7);
 pref("dom.phonenumber.substringmatching.CL", 8);
 pref("dom.phonenumber.substringmatching.PE", 7);
 
-// NetworkStats
 #ifdef MOZ_WIDGET_GONK
-pref("dom.mozNetworkStats.enabled", true);
 pref("dom.webapps.firstRunWithSIM", true);
-#endif
-
-// ResourceStats
-#ifdef MOZ_WIDGET_GONK
-pref("dom.resource_stats.enabled", true);
 #endif
 
 #ifdef MOZ_B2G_RIL
 // SingleVariant
 pref("dom.mozApps.single_variant_sourcedir", "/persist/svoperapps");
 #endif
-
-// WebSettings
-pref("dom.mozSettings.enabled", true);
-pref("dom.mozPermissionSettings.enabled", true);
 
 // controls if we want camera support
 pref("device.camera.enabled", true);
@@ -463,16 +446,6 @@ pref("full-screen-api.ignore-widgets", true);
 
 pref("media.volume.steps", 10);
 
-#ifdef ENABLE_MARIONETTE
-//Enable/disable marionette server, set listening port
-pref("marionette.defaultPrefs.enabled", true);
-pref("marionette.defaultPrefs.port", 2828);
-#ifndef MOZ_WIDGET_GONK
-// On desktop builds, we need to force the socket to listen on localhost only
-pref("marionette.force-local", true);
-#endif
-#endif
-
 #ifdef MOZ_UPDATER
 // When we're applying updates, we can't let anything hang us on
 // quit+restart.  The user has no recourse.
@@ -510,9 +483,6 @@ pref("app.update.socket.maxErrors", 20);
 // Enable update logging for now, to diagnose growing pains in the
 // field.
 pref("app.update.log", true);
-
-// SystemUpdate API
-pref("dom.system_update.active", "@mozilla.org/updates/update-prompt;1");
 #else
 // Explicitly disable the shutdown watchdog.  It's enabled by default.
 // When the updater is disabled, we want to know about shutdown hangs.
@@ -542,7 +512,6 @@ pref("dom.webapps.useCurrentProfile", true);
 // Enable system message
 pref("dom.sysmsg.enabled", true);
 pref("media.plugins.enabled", false);
-pref("media.omx.enabled", true);
 pref("media.rtsp.enabled", true);
 pref("media.rtsp.video.enabled", true);
 
@@ -623,9 +592,6 @@ pref("hal.processPriorityManager.gonk.MASTER.OomScoreAdjust", 0);
 pref("hal.processPriorityManager.gonk.MASTER.KillUnderKB", 4096);
 pref("hal.processPriorityManager.gonk.MASTER.cgroup", "");
 
-pref("hal.processPriorityManager.gonk.PREALLOC.OomScoreAdjust", 67);
-pref("hal.processPriorityManager.gonk.PREALLOC.cgroup", "apps/bg_non_interactive");
-
 pref("hal.processPriorityManager.gonk.FOREGROUND_HIGH.OomScoreAdjust", 67);
 pref("hal.processPriorityManager.gonk.FOREGROUND_HIGH.KillUnderKB", 5120);
 pref("hal.processPriorityManager.gonk.FOREGROUND_HIGH.cgroup", "apps/critical");
@@ -703,12 +669,6 @@ pref("gonk.notifySoftLowMemUnderKB", 43008);
 // blocked on a poll(), and this pref has no effect.)
 pref("gonk.systemMemoryPressureRecoveryPollMS", 5000);
 
-// Enable pre-launching content processes for improved startup time
-// (hiding latency).
-pref("dom.ipc.processPrelaunch.enabled", true);
-// Wait this long before pre-launching a new subprocess.
-pref("dom.ipc.processPrelaunch.delayMs", 5000);
-
 pref("dom.ipc.reuse_parent_app", false);
 
 // When a process receives a system message, we hold a CPU wake lock on its
@@ -718,9 +678,6 @@ pref("dom.ipc.systemMessageCPULockTimeoutSec", 30);
 
 // Ignore the "dialog=1" feature in window.open.
 pref("dom.disable_window_open_dialog_feature", true);
-
-// Enable before keyboard events and after keyboard events.
-pref("dom.beforeAfterKeyboardEvent.enabled", true);
 
 // Screen reader support
 pref("accessibility.accessfu.activate", 2);
@@ -791,9 +748,6 @@ pref("memory.dump_reports_on_oom", false);
 pref("layout.framevisibility.numscrollportwidths", 1);
 pref("layout.framevisibility.numscrollportheights", 1);
 
-// Enable native identity (persona/browserid)
-pref("dom.identity.enabled", true);
-
 // Wait up to this much milliseconds when orientation changed
 pref("layers.orientation.sync.timeout", 1000);
 
@@ -845,13 +799,9 @@ pref("network.sntp.pools", // Servers separated by ';'.
 pref("network.sntp.port", 123);
 pref("network.sntp.timeout", 30); // In seconds.
 
-// Allow ADB to run for this many hours before disabling
-// (only applies when marionette is disabled)
+// Allow ADB to run for this many hours before disabling.
 // 0 disables the timer.
 pref("b2g.adb.timeout-hours", 12);
-
-// InputMethod so we can do soft keyboards
-pref("dom.mozInputMethod.enabled", true);
 
 // Absolute path to the devtool unix domain socket file used
 // to communicate with a usb cable via adb forward
@@ -879,27 +829,11 @@ pref("gfx.screen-mirroring.enabled", true);
 // The url of the page used to display network error details.
 pref("b2g.neterror.url", "net_error.html");
 
-// The origin used for the shared themes uri space.
-pref("b2g.theme.origin", "app://theme.gaiamobile.org");
-pref("dom.mozApps.themable", true);
-pref("dom.mozApps.selected_theme", "default_theme.gaiamobile.org");
-
-// Enable PAC generator for B2G.
-pref("network.proxy.pac_generator", true);
-
-// List of app origins to apply browsing traffic proxy setting, separated by
-// comma.  Specify '*' in the list to apply to all apps.
-pref("network.proxy.browsing.app_origins", "app://system.gaiamobile.org");
-
 // Enable Web Speech synthesis API
 pref("media.webspeech.synth.enabled", true);
 
 // Enable Web Speech recognition API
 pref("media.webspeech.recognition.enable", true);
-
-// Downloads API
-pref("dom.mozDownloads.enabled", true);
-pref("dom.downloads.max_retention_days", 7);
 
 // External Helper Application Handling
 //
@@ -946,7 +880,6 @@ pref("browser.autofocus", false);
 pref("dom.wakelock.enabled", true);
 
 // Enable webapps add-ons
-pref("dom.apps.customization.enabled", true);
 pref("dom.apps.reviewer_paths", "/reviewers/,/extension/reviewers/");
 
 // New implementation to unify touch-caret and selection-carets.
@@ -956,18 +889,10 @@ pref("layout.accessiblecaret.enabled", true);
 // by the spec in bug 921965.
 pref("layout.accessiblecaret.bar.enabled", true);
 
-// Hide the caret in cursor mode after 3 seconds.
-pref("layout.accessiblecaret.timeout_ms", 3000);
-
-// APZ on real devices supports long tap events.
-#ifdef MOZ_WIDGET_GONK
-pref("layout.accessiblecaret.use_long_tap_injector", false);
-#endif
-
 // Hide carets and text selection dialog during scrolling.
 pref("layout.accessiblecaret.always_show_when_scrolling", false);
 
-// Enable sync and mozId with Firefox Accounts.
+// Enable sync with Firefox Accounts.
 pref("services.sync.fxaccounts.enabled", true);
 pref("identity.fxaccounts.enabled", true);
 
@@ -980,32 +905,8 @@ pref("identity.fxaccounts.skipDeviceRegistration", true);
 // Enable mapped array buffer.
 pref("dom.mapped_arraybuffer.enabled", true);
 
-// SystemUpdate API
-pref("dom.system_update.enabled", true);
-
 // UDPSocket API
 pref("dom.udpsocket.enabled", true);
-
-// Enable TV Manager API
-pref("dom.tv.enabled", true);
-
-// Enable Inputport Manager API
-pref("dom.inputport.enabled", true);
-
-pref("dom.mozSettings.SettingsDB.debug.enabled", true);
-pref("dom.mozSettings.SettingsManager.debug.enabled", true);
-pref("dom.mozSettings.SettingsRequestManager.debug.enabled", true);
-pref("dom.mozSettings.SettingsService.debug.enabled", true);
-
-pref("dom.mozSettings.SettingsDB.verbose.enabled", false);
-pref("dom.mozSettings.SettingsManager.verbose.enabled", false);
-pref("dom.mozSettings.SettingsRequestManager.verbose.enabled", false);
-pref("dom.mozSettings.SettingsService.verbose.enabled", false);
-
-// Controlling whether we want to allow forcing some Settings
-// IndexedDB transactions to be opened as readonly or keep everything as
-// readwrite.
-pref("dom.mozSettings.allowForceReadOnly", false);
 
 // Comma separated list of activity names that can only be provided by
 // the system app in dev mode.
@@ -1016,7 +917,7 @@ pref("dom.activities.developer_mode_only", "import-app");
 pref("dom.serviceWorkers.enabled", false);
 pref("dom.push.enabled", false);
 
-#if defined(RELEASE_BUILD)
+#if defined(RELEASE_OR_BETA)
 // Bug 1278848: Enable service worker notifications on release B2G once
 // they're ready.
 pref("dom.webnotifications.serviceworker.enabled", false);
@@ -1029,13 +930,6 @@ pref("layers.compositor-lru-size", 10);
 
 // In B2G by deafult any AudioChannelAgent is muted when created.
 pref("dom.audiochannel.mutedByDefault", true);
-
-// The app origin of bluetooth app, which is responsible for listening pairing
-// requests.
-pref("dom.bluetooth.app-origin", "app://bluetooth.gaiamobile.org");
-
-// Enable W3C WebBluetooth API and disable B2G only GATT client API.
-pref("dom.bluetooth.webbluetooth.enabled", false);
 
 // Default device name for Presentation API
 pref("dom.presentation.device.name", "Firefox OS");

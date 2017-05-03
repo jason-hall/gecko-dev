@@ -14,8 +14,6 @@ DevToolsModules(
     'css-properties.js',
     'csscoverage.js',
     'device.js',
-    'director-manager.js',
-    'director-registry.js',
     'emulation.js',
     'environment.js',
     'eventlooplag.js',
@@ -34,8 +32,8 @@ DevToolsModules(
     'preference.js',
     'profiler.js',
     'promises.js',
+    'reflow.js',
     'script.js',
-    'settings.js',
     'source.js',
     'storage.js',
     'string.js',
@@ -44,6 +42,7 @@ DevToolsModules(
     'stylesheets.js',
     'timeline.js',
     'webaudio.js',
+    'webextension-inspected-window.js',
     'webgl.js',
     'worker.js'
 )

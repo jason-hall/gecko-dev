@@ -15,7 +15,12 @@
 #include "mozilla/dom/ipc/StructuredCloneData.h"
 #include "mozilla/ipc/FileDescriptorSetChild.h"
 #include "mozilla/ipc/InputStreamUtils.h"
-#include "mozilla/ipc/SendStream.h"
+#include "mozilla/ipc/IPCStreamAlloc.h"
+#include "mozilla/ipc/IPCStreamDestination.h"
+#include "mozilla/ipc/IPCStreamSource.h"
+#include "mozilla/ipc/PChildToParentStreamChild.h"
+#include "mozilla/ipc/PParentToChildStreamChild.h"
+#include "mozilla/dom/ipc/MemoryStreamChild.h"
 
 #include "nsPrintfCString.h"
 #include "xpcpublic.h"
@@ -44,7 +49,6 @@ nsIContentChild::AllocPBrowserChild(const TabId& aTabId,
                                     const IPCTabContext& aContext,
                                     const uint32_t& aChromeFlags,
                                     const ContentParentId& aCpID,
-                                    const bool& aIsForApp,
                                     const bool& aIsForBrowser)
 {
   // We'll happily accept any kind of IPCTabContext here; we don't need to
@@ -71,6 +75,44 @@ nsIContentChild::DeallocPBrowserChild(PBrowserChild* aIframe)
 {
   TabChild* child = static_cast<TabChild*>(aIframe);
   NS_RELEASE(child);
+  return true;
+}
+
+mozilla::ipc::IPCResult
+nsIContentChild::RecvPBrowserConstructor(PBrowserChild* aActor,
+                                         const TabId& aTabId,
+                                         const IPCTabContext& aContext,
+                                         const uint32_t& aChromeFlags,
+                                         const ContentParentId& aCpID,
+                                         const bool& aIsForBrowser)
+{
+  // This runs after AllocPBrowserChild() returns and the IPC machinery for this
+  // PBrowserChild has been set up.
+
+  auto tabChild = static_cast<TabChild*>(static_cast<TabChild*>(aActor));
+
+  if (NS_WARN_IF(NS_FAILED(tabChild->Init()))) {
+    return IPC_FAIL(tabChild, "TabChild::Init failed");
+  }
+
+  nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+  if (os) {
+    os->NotifyObservers(static_cast<nsITabChild*>(tabChild), "tab-child-created", nullptr);
+  }
+
+  return IPC_OK();
+}
+
+PMemoryStreamChild*
+nsIContentChild::AllocPMemoryStreamChild(const uint64_t& aSize)
+{
+  return new MemoryStreamChild();
+}
+
+bool
+nsIContentChild::DeallocPMemoryStreamChild(PMemoryStreamChild* aActor)
+{
+  delete aActor;
   return true;
 }
 
@@ -111,14 +153,27 @@ nsIContentChild::GetOrCreateActorForBlobImpl(BlobImpl* aImpl)
   return actor;
 }
 
-PSendStreamChild*
-nsIContentChild::AllocPSendStreamChild()
+PChildToParentStreamChild*
+nsIContentChild::AllocPChildToParentStreamChild()
 {
-  MOZ_CRASH("PSendStreamChild actors should be manually constructed!");
+  MOZ_CRASH("PChildToParentStreamChild actors should be manually constructed!");
 }
 
 bool
-nsIContentChild::DeallocPSendStreamChild(PSendStreamChild* aActor)
+nsIContentChild::DeallocPChildToParentStreamChild(PChildToParentStreamChild* aActor)
+{
+  delete aActor;
+  return true;
+}
+
+PParentToChildStreamChild*
+nsIContentChild::AllocPParentToChildStreamChild()
+{
+  return mozilla::ipc::AllocPParentToChildStreamChild();
+}
+
+bool
+nsIContentChild::DeallocPParentToChildStreamChild(PParentToChildStreamChild* aActor)
 {
   delete aActor;
   return true;
@@ -137,22 +192,27 @@ nsIContentChild::DeallocPFileDescriptorSetChild(PFileDescriptorSetChild* aActor)
   return true;
 }
 
-bool
+mozilla::ipc::IPCResult
 nsIContentChild::RecvAsyncMessage(const nsString& aMsg,
                                   InfallibleTArray<CpowEntry>&& aCpows,
                                   const IPC::Principal& aPrincipal,
                                   const ClonedMessageData& aData)
 {
+  NS_LossyConvertUTF16toASCII messageNameCStr(aMsg);
+  PROFILER_LABEL_DYNAMIC("nsIContentChild", "RecvAsyncMessage",
+                         js::ProfileEntry::Category::EVENTS,
+                         messageNameCStr.get());
+
+  CrossProcessCpowHolder cpows(this, aCpows);
   RefPtr<nsFrameMessageManager> cpm = nsFrameMessageManager::GetChildProcessManager();
   if (cpm) {
     ipc::StructuredCloneData data;
     ipc::UnpackClonedMessageDataForChild(aData, data);
 
-    CrossProcessCpowHolder cpows(this, aCpows);
     cpm->ReceiveMessage(static_cast<nsIContentFrameMessageManager*>(cpm.get()), nullptr,
                         aMsg, false, &data, &cpows, aPrincipal, nullptr);
   }
-  return true;
+  return IPC_OK();
 }
 
 } // namespace dom

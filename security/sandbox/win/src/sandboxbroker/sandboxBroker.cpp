@@ -9,6 +9,7 @@
 #include "base/win/windows_version.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Logging.h"
+#include "mozilla/NSPRLogModulesParser.h"
 #include "sandbox/win/src/sandbox.h"
 #include "sandbox/win/src/security_level.h"
 
@@ -20,6 +21,7 @@ sandbox::BrokerServices *SandboxBroker::sBrokerService = nullptr;
 static LazyLogModule sSandboxBrokerLog("SandboxBroker");
 
 #define LOG_E(...) MOZ_LOG(sSandboxBrokerLog, LogLevel::Error, (__VA_ARGS__))
+#define LOG_W(...) MOZ_LOG(sSandboxBrokerLog, LogLevel::Warning, (__VA_ARGS__))
 
 /* static */
 void
@@ -71,12 +73,53 @@ SandboxBroker::LaunchApp(const wchar_t *aPath,
   }
 #endif
 
+  // Enable the child process to write log files when setup
+  wchar_t const* logFileName = _wgetenv(L"MOZ_LOG_FILE");
+  char const* logFileModules = getenv("MOZ_LOG");
+  if (logFileName && logFileModules) {
+    bool rotate = false;
+    NSPRLogModulesParser(logFileModules,
+      [&rotate](const char* aName, LogLevel aLevel, int32_t aValue) mutable {
+        if (strcmp(aName, "rotate") == 0) {
+          // Less or eq zero means to turn rotate off.
+          rotate = aValue > 0;
+        }
+      }
+    );
+
+    if (rotate) {
+      wchar_t logFileNameWild[MAX_PATH + 2];
+      _snwprintf(logFileNameWild, sizeof(logFileNameWild), L"%s.?", logFileName);
+
+      mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
+                       sandbox::TargetPolicy::FILES_ALLOW_ANY, logFileNameWild);
+    } else {
+      mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
+                       sandbox::TargetPolicy::FILES_ALLOW_ANY, logFileName);
+    }
+  }
+
+  logFileName = _wgetenv(L"NSPR_LOG_FILE");
+  if (logFileName) {
+    mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
+                     sandbox::TargetPolicy::FILES_ALLOW_ANY, logFileName);
+  }
+
   // Ceate the sandboxed process
   PROCESS_INFORMATION targetInfo = {0};
   sandbox::ResultCode result;
-  result = sBrokerService->SpawnTarget(aPath, aArguments, mPolicy, &targetInfo);
+  sandbox::ResultCode last_warning = sandbox::SBOX_ALL_OK;
+  DWORD last_error = ERROR_SUCCESS;
+  result = sBrokerService->SpawnTarget(aPath, aArguments, mPolicy,
+                                       &last_warning, &last_error, &targetInfo);
   if (sandbox::SBOX_ALL_OK != result) {
+    LOG_E("Failed (ResultCode %d) to SpawnTarget with last_error=%d, last_warning=%d",
+          result, last_error, last_warning);
     return false;
+  } else if (sandbox::SBOX_ALL_OK != last_warning) {
+    // If there was a warning (but the result was still ok), log it and proceed.
+    LOG_W("Warning on SpawnTarget with last_error=%d, last_warning=%d",
+          last_error, last_warning);
   }
 
   // The sandboxed process is started in a suspended state, resume it now that
@@ -92,7 +135,8 @@ SandboxBroker::LaunchApp(const wchar_t *aPath,
 
 #if defined(MOZ_CONTENT_SANDBOX)
 void
-SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel)
+SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
+                                                 base::ChildPrivileges aPrivs)
 {
   MOZ_RELEASE_ASSERT(mPolicy, "mPolicy must be set before this call.");
 
@@ -127,13 +171,29 @@ SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel)
     delayedIntegrityLevel = sandbox::INTEGRITY_LEVEL_LOW;
   }
 
+  // If PRIVILEGES_FILEREAD required, don't allow settings that block reads.
+  if (aPrivs == base::ChildPrivileges::PRIVILEGES_FILEREAD) {
+    if (accessTokenLevel < sandbox::USER_NON_ADMIN) {
+      accessTokenLevel = sandbox::USER_NON_ADMIN;
+    }
+    if (delayedIntegrityLevel > sandbox::INTEGRITY_LEVEL_LOW) {
+      delayedIntegrityLevel = sandbox::INTEGRITY_LEVEL_LOW;
+    }
+  }
+
   sandbox::ResultCode result = mPolicy->SetJobLevel(jobLevel,
                                                     0 /* ui_exceptions */);
   MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
                      "Setting job level failed, have you set memory limit when jobLevel == JOB_NONE?");
 
-  result = mPolicy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
-                                  accessTokenLevel);
+  // If the delayed access token is not restricted we don't want the initial one
+  // to be either, because it can interfere with running from a network drive.
+  sandbox::TokenLevel initialAccessTokenLevel =
+    (accessTokenLevel == sandbox::USER_UNPROTECTED ||
+     accessTokenLevel == sandbox::USER_NON_ADMIN)
+    ? sandbox::USER_UNPROTECTED : sandbox::USER_RESTRICTED_SAME_ACCESS;
+
+  result = mPolicy->SetTokenLevel(initialAccessTokenLevel, accessTokenLevel);
   MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
                      "Lockdown level cannot be USER_UNPROTECTED or USER_LAST if initial level was USER_RESTRICTED_SAME_ACCESS");
 
@@ -169,6 +229,17 @@ SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel)
   MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
                      "Invalid flags for SetDelayedProcessMitigations.");
 
+  // We still have edge cases where the child at low integrity can't read some
+  // files, so add a rule to allow read access to everything when required.
+  if (aSandboxLevel == 1 ||
+      aPrivs == base::ChildPrivileges::PRIVILEGES_FILEREAD) {
+    result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
+                              sandbox::TargetPolicy::FILES_ALLOW_READONLY,
+                              L"*");
+    MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
+                       "With these static arguments AddRule should never fail, what happened?");
+  }
+
   // Add the policy for the client side of a pipe. It is just a file
   // in the \pipe\ namespace. We restrict it to pipes that start with
   // "chrome." so the sandboxed process cannot connect to system services.
@@ -203,6 +274,19 @@ SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel)
   result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_HANDLES,
                             sandbox::TargetPolicy::HANDLES_DUP_ANY,
                             L"Section");
+  MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
+                     "With these static arguments AddRule should never fail, what happened?");
+
+  // The content process needs to be able to duplicate semaphore handles,
+  // to the broker process and other child processes.
+  result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_HANDLES,
+                            sandbox::TargetPolicy::HANDLES_DUP_BROKER,
+                            L"Semaphore");
+  MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
+                     "With these static arguments AddRule should never fail, what happened?");
+  result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_HANDLES,
+                            sandbox::TargetPolicy::HANDLES_DUP_ANY,
+                            L"Semaphore");
   MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
                      "With these static arguments AddRule should never fail, what happened?");
 }
@@ -461,6 +545,27 @@ SandboxBroker::SetSecurityLevelForGMPlugin(SandboxLevel aLevel)
                             L"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\SideBySide\\PreferExternalManifest");
   SANDBOX_ENSURE_SUCCESS(result,
                          "With these static arguments AddRule should never fail, what happened?");
+
+  // The following rules were added to allow a GMP to be loaded when any
+  // AppLocker DLL rules are specified. If the rules specifically block the DLL
+  // then it will not load.
+  result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
+                            sandbox::TargetPolicy::FILES_ALLOW_READONLY,
+                            L"\\Device\\SrpDevice");
+  SANDBOX_ENSURE_SUCCESS(result,
+                         "With these static arguments AddRule should never fail, what happened?");
+  result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_REGISTRY,
+                            sandbox::TargetPolicy::REG_ALLOW_READONLY,
+                            L"HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\Srp\\GP\\");
+  SANDBOX_ENSURE_SUCCESS(result,
+                         "With these static arguments AddRule should never fail, what happened?");
+  // On certain Windows versions there is a double slash before GP in the path.
+  result = mPolicy->AddRule(sandbox::TargetPolicy::SUBSYS_REGISTRY,
+                            sandbox::TargetPolicy::REG_ALLOW_READONLY,
+                            L"HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\Srp\\\\GP\\");
+  SANDBOX_ENSURE_SUCCESS(result,
+                         "With these static arguments AddRule should never fail, what happened?");
+
 
   return true;
 }

@@ -9,8 +9,8 @@ import android.content.Context;
 import android.util.Log;
 import android.text.TextUtils;
 
-import com.keepsafe.switchboard.Preferences;
-import com.keepsafe.switchboard.SwitchBoard;
+import org.mozilla.gecko.switchboard.Preferences;
+import org.mozilla.gecko.switchboard.SwitchBoard;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -52,6 +52,21 @@ public class Experiments {
 
     // Show name of organization (EV cert) instead of full URL in URL bar (Bug 1249594).
     public static final String URLBAR_SHOW_EV_CERT_OWNER = "urlbar-show-ev-cert-owner";
+
+    // Play HLS videos in a VideoView (Bug 1313391)
+    public static final String HLS_VIDEO_PLAYBACK = "hls-video-playback";
+
+    // Make new activity stream panel available (to replace top sites) (Bug 1313316)
+    public static final String ACTIVITY_STREAM = "activity-stream";
+
+    // Show a setting in "experimental features" for enabling/disabling activity stream.
+    public static final String ACTIVITY_STREAM_SETTING = "activity-stream-setting";
+
+    // Enable Activity stream by default for users in the "opt out" group.
+    public static final String ACTIVITY_STREAM_OPT_OUT = "activity-stream-opt-out";
+
+    // Tabs tray: Arrange tabs in two columns in portrait mode
+    public static final String COMPACT_TABS = "compact-tabs";
 
     /**
      * Returns if a user is in certain local experiment.

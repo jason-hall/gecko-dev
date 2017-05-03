@@ -11,7 +11,7 @@
 
 #if defined(XP_WIN)
 # include "jswin.h"
-#elif defined(XP_LINUX)
+#elif defined(XP_UNIX) && !defined(XP_DARWIN)
 # include <signal.h>
 # include <sys/types.h>
 # include <unistd.h>
@@ -27,8 +27,8 @@
 #include "ds/SplayTree.h"
 
 #include "threading/LockGuard.h"
-#include "threading/Mutex.h"
 #include "threading/Thread.h"
+#include "vm/MutexIDs.h"
 
 namespace js {
 
@@ -60,7 +60,8 @@ class ProtectedRegionTree
     SplayTree<Region, Region> tree;
 
   public:
-    ProtectedRegionTree() : alloc(4096),
+    ProtectedRegionTree() : lock(mutexid::ProtectedRegionTree),
+                            alloc(4096),
                             tree(&alloc) {}
 
     ~ProtectedRegionTree() { MOZ_ASSERT(tree.empty()); }
@@ -94,8 +95,20 @@ static ProtectedRegionTree sProtectedRegions;
 bool
 MemoryProtectionExceptionHandler::isDisabled()
 {
-    // There isn't currently any reason to disable it.
+#if defined(XP_WIN) && defined(MOZ_ASAN)
+    // Under Windows ASan, WasmFaultHandler registers itself at 'last' priority
+    // in order to let ASan's ShadowExceptionHandler stay at 'first' priority.
+    // Unfortunately that results in spurious wasm faults passing through the
+    // MemoryProtectionExceptionHandler, which breaks its assumption that any
+    // faults it sees are fatal. Just disable this handler in that case, as the
+    // crash annotations provided here are not critical for ASan builds.
+    return true;
+#elif defined(RELEASE_OR_BETA)
+    // Disable the exception handler for Beta and Release builds.
+    return true;
+#else
     return false;
+#endif
 }
 
 void
@@ -127,7 +140,6 @@ ReportCrashIfDebug(const char* aStr)
     DWORD bytesWritten;
     BOOL ret = WriteFile(GetStdHandle(STD_ERROR_HANDLE), aStr,
                          strlen(aStr) + 1, &bytesWritten, nullptr);
-    ::__debugbreak();
 # elif defined(ANDROID)
     int ret = __android_log_write(ANDROID_LOG_FATAL, "MOZ_CRASH", aStr);
 # else
@@ -170,7 +182,7 @@ VectoredExceptionHandler(EXCEPTION_POINTERS* ExceptionInfo)
             // want to annotate the crash to make it stand out from the crowd.
             if (sProtectedRegions.isProtected(address)) {
                 ReportCrashIfDebug("Hit MOZ_CRASH(Tried to access a protected region!)\n");
-                MOZ_CRASH_ANNOTATE("Tried to access a protected region!");
+                MOZ_CRASH_ANNOTATE("MOZ_CRASH(Tried to access a protected region!)");
             }
         }
     }
@@ -210,7 +222,7 @@ MemoryProtectionExceptionHandler::uninstall()
     }
 }
 
-#elif defined(XP_LINUX)
+#elif defined(XP_UNIX) && !defined(XP_DARWIN)
 
 static struct sigaction sPrevSEGVHandler = {};
 
@@ -240,7 +252,7 @@ UnixExceptionHandler(int signum, siginfo_t* info, void* context)
             // want to annotate the crash to make it stand out from the crowd.
             if (sProtectedRegions.isProtected(address)) {
                 ReportCrashIfDebug("Hit MOZ_CRASH(Tried to access a protected region!)\n");
-                MOZ_CRASH_ANNOTATE("Tried to access a protected region!");
+                MOZ_CRASH_ANNOTATE("MOZ_CRASH(Tried to access a protected region!)");
             }
         }
     }
@@ -250,9 +262,13 @@ UnixExceptionHandler(int signum, siginfo_t* info, void* context)
     if (sPrevSEGVHandler.sa_flags & SA_SIGINFO)
         sPrevSEGVHandler.sa_sigaction(signum, info, context);
     else if (sPrevSEGVHandler.sa_handler == SIG_DFL || sPrevSEGVHandler.sa_handler == SIG_IGN)
-        raise(signum);
+        sigaction(SIGSEGV, &sPrevSEGVHandler, nullptr);
     else
         sPrevSEGVHandler.sa_handler(signum);
+
+    // If we reach here, we're returning to let the default signal handler deal
+    // with the exception. This is technically undefined behavior, but
+    // everything seems to do it, and it removes us from the crash stack.
 }
 
 bool
@@ -266,7 +282,7 @@ MemoryProtectionExceptionHandler::install()
 
     // Install our new exception handler and save the previous one.
     struct sigaction faultHandler = {};
-    faultHandler.sa_flags = SA_SIGINFO;
+    faultHandler.sa_flags = SA_SIGINFO | SA_NODEFER;
     faultHandler.sa_sigaction = UnixExceptionHandler;
     sigemptyset(&faultHandler.sa_mask);
     sExceptionHandlerInstalled = !sigaction(SIGSEGV, &faultHandler, &sPrevSEGVHandler);
@@ -505,6 +521,9 @@ struct ExceptionHandlerState
 
     /* Each Mach exception handler runs in its own thread. */
     Thread handlerThread;
+
+    /* Ensure that the exception handler thread is terminated before we quit. */
+    ~ExceptionHandlerState() { MemoryProtectionExceptionHandler::uninstall(); }
 };
 
 /* This choice of ID is arbitrary, but must not match our exception ID. */
@@ -560,7 +579,7 @@ MachExceptionHandler()
     // want to annotate the crash to make it stand out from the crowd.
     if (sProtectedRegions.isProtected(address)) {
         ReportCrashIfDebug("Hit MOZ_CRASH(Tried to access a protected region!)\n");
-        MOZ_CRASH_ANNOTATE("Tried to access a protected region!");
+        MOZ_CRASH_ANNOTATE("MOZ_CRASH(Tried to access a protected region!)");
     }
 
     // Forward to the previous handler which may be a debugger, the unix

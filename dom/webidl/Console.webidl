@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-[Exposed=(Window,Worker,WorkerDebugger),
+[Exposed=(Window,Worker,WorkerDebugger,Worklet),
  ClassString="Console",
  ProtoObjectHack]
 namespace console {
@@ -49,6 +49,7 @@ dictionary ConsoleEvent {
   (unsigned long long or DOMString) ID;
   (unsigned long long or DOMString) innerID;
   any originAttributes = null;
+  DOMString addonId = "";
   DOMString level = "";
   DOMString filename = "";
   unsigned long lineNumber = 0;
@@ -87,7 +88,6 @@ dictionary ConsoleStackEntry {
 
 dictionary ConsoleTimerStart {
   DOMString name = "";
-  double started = 0;
 };
 
 dictionary ConsoleTimerEnd {

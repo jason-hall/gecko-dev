@@ -4,7 +4,7 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 "use strict";
 
 // Test submitting display device changes on the device modal
-const { getDevices, addDevice } = require("devtools/client/shared/devices");
+const { getDevices } = require("devtools/client/shared/devices");
 
 const addedDevice = {
   "name": "Fake Phone RDM Test",
@@ -107,15 +107,16 @@ addRDMTask(TEST_URL, function* ({ ui }) {
     checkedVal + " is unchecked in the device modal.");
 
   // Let's add a dummy device to simulate featured flag changes for next test
-  addDevice(addedDevice);
+  addDeviceForTest(addedDevice);
 });
 
 addRDMTask(TEST_URL, function* ({ ui }) {
   let { store, document } = ui.toolWindow;
   let select = document.querySelector(".viewport-device-selector");
 
-  // Wait until the viewport has been added
-  yield waitUntilState(store, state => state.viewports.length == 1);
+  // Wait until the viewport has been added and the device list has been loaded
+  yield waitUntilState(store, state => state.viewports.length == 1
+    && state.devices.listState == Types.deviceListState.LOADED);
 
   openDeviceModal(ui);
 

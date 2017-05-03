@@ -3,8 +3,6 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-"use strict";
-
 /**
  * The Mochitest API documentation
  * @module mochitest
@@ -40,10 +38,13 @@ var { Toolbox } = require("devtools/client/framework/toolbox");
 const EXAMPLE_URL = "http://example.com/browser/devtools/client/debugger/new/test/mochitest/examples/";
 
 Services.prefs.setBoolPref("devtools.debugger.new-debugger-frontend", true);
+Services.prefs.clearUserPref("devtools.debugger.tabs")
+Services.prefs.clearUserPref("devtools.debugger.pending-selected-location")
+
 registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.debugger.new-debugger-frontend");
   delete window.resumeTest;
-})
+});
 
 // Wait until an action of `type` is dispatched. This is different
 // then `_afterDispatchDone` because it doesn't wait for async actions
@@ -163,23 +164,27 @@ function waitForState(dbg, predicate) {
  * @static
  */
 function waitForSources(dbg, ...sources) {
-  if(sources.length === 0) {
+  if (sources.length === 0) {
     return Promise.resolve();
   }
 
   info("Waiting on sources: " + sources.join(", "));
-  const {selectors: {getSources}, store} = dbg;
+  const { selectors: { getSources }, store } = dbg;
   return Promise.all(sources.map(url => {
     function sourceExists(state) {
       return getSources(state).some(s => {
-        return s.get("url").includes(url)
+        return s.get("url").includes(url);
       });
     }
 
-    if(!sourceExists(store.getState())) {
+    if (!sourceExists(store.getState())) {
       return waitForState(dbg, sourceExists);
     }
   }));
+}
+
+function waitForElement(dbg, selector) {
+  return waitUntil(() => findElementWithSelector(dbg, selector))
 }
 
 /**
@@ -227,8 +232,8 @@ function assertHighlightLocation(dbg, source, line) {
   // Check the highlight line
   const lineEl = findElement(dbg, "highlightLine");
   ok(lineEl, "Line is highlighted");
-  ok(isVisibleWithin(findElement(dbg, "codeMirror"), lineEl),
-     "Highlighted line is visible");
+  // ok(isVisibleWithin(findElement(dbg, "codeMirror"), lineEl),
+  //    "Highlighted line is visible");
   ok(dbg.win.cm.lineInfo(line - 1).wrapClass.includes("highlight-line"),
      "Line is highlighted");
 }
@@ -261,7 +266,7 @@ function waitForPaused(dbg) {
     yield waitForState(dbg, state => {
       const pause = dbg.selectors.getPause(state);
       // Make sure we have the paused state.
-      if(!pause) {
+      if (!pause) {
         return false;
       }
       // Make sure the source text is completely loaded for the
@@ -271,7 +276,7 @@ function waitForPaused(dbg) {
       return sourceText && !sourceText.get("loading");
     });
   });
-};
+}
 
 function createDebuggerContext(toolbox) {
   const win = toolbox.getPanel("jsdebugger").panelWin;
@@ -299,12 +304,12 @@ function createDebuggerContext(toolbox) {
  */
 function initDebugger(url, ...sources) {
   return Task.spawn(function* () {
+    Services.prefs.clearUserPref("devtools.debugger.tabs")
+    Services.prefs.clearUserPref("devtools.debugger.pending-selected-location")
     const toolbox = yield openNewTabAndToolbox(EXAMPLE_URL + url, "jsdebugger");
-    const dbg = createDebuggerContext(toolbox);
-    yield waitForSources(dbg, ...sources);
-    return dbg;
+    return createDebuggerContext(toolbox);
   });
-};
+}
 
 window.resumeTest = undefined;
 /**
@@ -330,7 +335,7 @@ function pauseTest() {
  * @static
  */
 function findSource(dbg, url) {
-  if(typeof url !== "string") {
+  if (typeof url !== "string") {
     // Support passing in a source object itelf all APIs that use this
     // function support both styles
     const source = url;
@@ -340,7 +345,7 @@ function findSource(dbg, url) {
   const sources = dbg.selectors.getSources(dbg.getState());
   const source = sources.find(s => s.get("url").includes(url));
 
-  if(!source) {
+  if (!source) {
     throw new Error("Unable to find source: " + url);
   }
 
@@ -363,7 +368,7 @@ function selectSource(dbg, url, line) {
   const hasText = !!dbg.selectors.getSourceText(dbg.getState(), source.id);
   dbg.actions.selectSource(source.id, { line });
 
-  if(!hasText) {
+  if (!hasText) {
     return waitForDispatch(dbg, "LOAD_SOURCE_TEXT");
   }
 }
@@ -449,7 +454,7 @@ function reload(dbg, ...sources) {
  */
 function navigate(dbg, url, ...sources) {
   dbg.client.navigate(url);
-  return waitForSources(dbg, ...sources)
+  return waitForSources(dbg, ...sources);
 }
 
 /**
@@ -466,7 +471,8 @@ function navigate(dbg, url, ...sources) {
 function addBreakpoint(dbg, source, line, col) {
   source = findSource(dbg, source);
   const sourceId = source.id;
-  return dbg.actions.addBreakpoint({ sourceId, line, col });
+  dbg.actions.addBreakpoint({ sourceId, line, col });
+  return waitForDispatch(dbg, "ADD_BREAKPOINT");
 }
 
 /**
@@ -496,7 +502,6 @@ function removeBreakpoint(dbg, sourceId, line, col) {
  */
 function togglePauseOnExceptions(dbg,
   pauseOnExceptions, ignoreCaughtExceptions) {
-
   const command = dbg.actions.pauseOnExceptions(
     pauseOnExceptions,
     ignoreCaughtExceptions
@@ -527,12 +532,20 @@ function invokeInTab(fnc) {
 }
 
 const isLinux = Services.appinfo.OS === "Linux";
+const cmdOrCtrl = isLinux ? { ctrlKey: true } : { metaKey: true };
 const keyMappings = {
+  sourceSearch: { code: "p", modifiers: cmdOrCtrl},
+  fileSearch: { code: "f", modifiers: cmdOrCtrl},
+  "Enter": { code: "VK_RETURN" },
+  "Up": { code: "VK_UP" },
+  "Down": { code: "VK_DOWN" },
+  "Tab": { code: "VK_TAB" },
+  "Escape": { code: "VK_ESCAPE" },
   pauseKey: { code: "VK_F8" },
   resumeKey: { code: "VK_F8" },
   stepOverKey: { code: "VK_F10" },
-  stepInKey: { code: "VK_F11", modifiers: { ctrlKey: isLinux } },
-  stepOutKey: { code: "VK_F11", modifiers: { ctrlKey: isLinux, shiftKey: true } }
+  stepInKey: { code: "VK_F11", modifiers: { ctrlKey: isLinux }},
+  stepOutKey: { code: "VK_F11", modifiers: { ctrlKey: isLinux, shiftKey: true }}
 };
 
 /**
@@ -546,6 +559,7 @@ const keyMappings = {
  */
 function pressKey(dbg, keyName) {
   let keyEvent = keyMappings[keyName];
+
   const { code, modifiers } = keyEvent;
   return EventUtils.synthesizeKey(
     code,
@@ -554,17 +568,30 @@ function pressKey(dbg, keyName) {
   );
 }
 
+function type(dbg, string) {
+  string.split("").forEach(char => {
+    EventUtils.synthesizeKey(char, {}, dbg.win);
+  });
+}
+
 function isVisibleWithin(outerEl, innerEl) {
   const innerRect = innerEl.getBoundingClientRect();
   const outerRect = outerEl.getBoundingClientRect();
+
   return innerRect.top > outerRect.top &&
     innerRect.bottom < outerRect.bottom;
 }
 
 const selectors = {
   callStackHeader: ".call-stack-pane ._header",
-  frame: index => `.frames ul li:nth-child(${index})`,
+  callStackBody: ".call-stack-pane .pane",
+  scopesHeader: ".scopes-pane ._header",
+  breakpointItem: i => `.breakpoints-list .breakpoint:nth-child(${i})`,
+  scopeNode: i => `.scopes-list .tree-node:nth-child(${i}) .object-label`,
+  frame: i => `.frames ul li:nth-child(${i})`,
+  frames: ".frames ul li",
   gutter: i => `.CodeMirror-code *:nth-child(${i}) .CodeMirror-linenumber`,
+  menuitem: i => `menupopup menuitem:nth-child(${i})`,
   pauseOnExceptions: ".pause-exceptions",
   breakpoint: ".CodeMirror-code > .new-breakpoint",
   highlightLine: ".CodeMirror-code > .highlight-line",
@@ -572,7 +599,13 @@ const selectors = {
   resume: ".resume.active",
   stepOver: ".stepOver.active",
   stepOut: ".stepOut.active",
-  stepIn: ".stepIn.active"
+  stepIn: ".stepIn.active",
+  toggleBreakpoints: ".breakpoints-toggle",
+  prettyPrintButton: ".prettyPrint",
+  sourceFooter: ".source-footer",
+  sourceNode: i => `.sources-list .tree-node:nth-child(${i})`,
+  sourceNodes: ".sources-list .tree-node",
+  sourceArrow: i => `.sources-list .tree-node:nth-child(${i}) .arrow`,
 };
 
 function getSelector(elementName, ...args) {
@@ -582,7 +615,7 @@ function getSelector(elementName, ...args) {
   }
 
   if (typeof selector == "function") {
-    selector = selector(...args)
+    selector = selector(...args);
   }
 
   return selector;
@@ -590,6 +623,10 @@ function getSelector(elementName, ...args) {
 
 function findElement(dbg, elementName, ...args) {
   const selector = getSelector(elementName, ...args);
+  return findElementWithSelector(dbg, selector);
+}
+
+function findElementWithSelector(dbg, selector) {
   return dbg.win.document.querySelector(selector);
 }
 
@@ -610,12 +647,32 @@ function findAllElements(dbg, elementName, ...args) {
  */
 function clickElement(dbg, elementName, ...args) {
   const selector = getSelector(elementName, ...args);
-  const doc = dbg.win.document;
   return EventUtils.synthesizeMouseAtCenter(
-    doc.querySelector(selector),
+    findElementWithSelector(dbg, selector),
     {},
     dbg.win
   );
+}
+
+function rightClickElement(dbg, elementName, ...args) {
+  const selector = getSelector(elementName, ...args);
+  const doc = dbg.win.document;
+  return EventUtils.synthesizeMouseAtCenter(
+    doc.querySelector(selector),
+    {type: "contextmenu"},
+    dbg.win
+  );
+}
+
+function selectMenuItem(dbg, index) {
+  // the context menu is in the toolbox window
+  const doc = dbg.toolbox.win.document;
+
+  // there are several context menus, we want the one with the menu-api
+  const popup = doc.querySelector("menupopup[menu-api=\"true\"]");
+
+  const item = popup.querySelector(`menuitem:nth-child(${index})`);
+  return EventUtils.synthesizeMouseAtCenter(item, {}, dbg.toolbox.win );
 }
 
 /**
@@ -627,5 +684,9 @@ function clickElement(dbg, elementName, ...args) {
  * @static
  */
 function toggleCallStack(dbg) {
-  return findElement(dbg, "callStackHeader").click()
+  return findElement(dbg, "callStackHeader").click();
+}
+
+function toggleScopes(dbg) {
+  return findElement(dbg, "scopesHeader").click();
 }

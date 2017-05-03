@@ -20,11 +20,19 @@ const CollapseButton = createClass({
   displayName: "CollapseButton",
 
   propTypes: {
+    onClick: PropTypes.func.isRequired,
     open: PropTypes.bool.isRequired,
+    title: PropTypes.string,
+  },
+
+  getDefaultProps: function () {
+    return {
+      title: l10n.getStr("messageToggleDetails")
+    };
   },
 
   render: function () {
-    const { open, onClick } = this.props;
+    const { open, onClick, title } = this.props;
 
     let classes = ["theme-twisty"];
 
@@ -35,7 +43,7 @@ const CollapseButton = createClass({
     return dom.a({
       className: classes.join(" "),
       onClick,
-      title: l10n.getStr("messageToggleDetails"),
+      title: title,
     });
   }
 });

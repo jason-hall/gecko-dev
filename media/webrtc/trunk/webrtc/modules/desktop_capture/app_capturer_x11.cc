@@ -28,9 +28,8 @@
 #include "webrtc/modules/desktop_capture/x11/shared_x_display.h"
 #include "webrtc/modules/desktop_capture/x11/x_error_trap.h"
 #include "webrtc/modules/desktop_capture/x11/x_server_pixel_buffer.h"
-#include "webrtc/system_wrappers/interface/logging.h"
+#include "webrtc/system_wrappers/include/logging.h"
 #include "webrtc/base/scoped_ptr.h"
-#include "webrtc/system_wrappers/interface/scoped_refptr.h"
 
 namespace webrtc {
 
@@ -84,6 +83,7 @@ public:
 
   // DesktopCapturer interface.
   virtual void Start(Callback* callback) override;
+  virtual void Stop() override;
   virtual void Capture(const DesktopRegion& region) override;
 
 protected:
@@ -110,8 +110,8 @@ private:
   // WebRtc Window mode
   WindowsCapturerProxy window_capturer_proxy_;
 
-  scoped_refptr<SharedXDisplay> x_display_;
-  DISALLOW_COPY_AND_ASSIGN(AppCapturerLinux);
+  rtc::scoped_refptr<SharedXDisplay> x_display_;
+  RTC_DISALLOW_COPY_AND_ASSIGN(AppCapturerLinux);
 };
 
 AppCapturerLinux::AppCapturerLinux(const DesktopCaptureOptions& options)
@@ -155,6 +155,10 @@ void AppCapturerLinux::Start(Callback* callback) {
   assert(callback);
 
   callback_ = callback;
+}
+
+void AppCapturerLinux::Stop() {
+  callback_ = NULL;
 }
 
 void AppCapturerLinux::Capture(const DesktopRegion& region) {

@@ -10,11 +10,6 @@
  * or pointers to it across thread boundaries.
  */
 
-// This must be the first include in the file in order for the
-// PL_ARENA_CONST_ALIGN_MASK macro to be effective.
-#define PL_ARENA_CONST_ALIGN_MASK  (sizeof(void*)-1)
-#include "plarena.h"
-
 #define READTYPE  int32_t
 #include "zlib.h"
 #include "nsISupportsUtils.h"
@@ -170,7 +165,6 @@ nsZipHandle::nsZipHandle()
   , mFileStart(nullptr)
   , mTotalLen(0)
 {
-  MOZ_COUNT_CTOR(nsZipHandle);
 }
 
 NS_IMPL_ADDREF(nsZipHandle)
@@ -344,7 +338,6 @@ nsZipHandle::~nsZipHandle()
   mFileData = nullptr;
   mMap = nullptr;
   mBuf = nullptr;
-  MOZ_COUNT_DTOR(nsZipHandle);
 }
 
 //***********************************************************
@@ -357,9 +350,6 @@ nsZipHandle::~nsZipHandle()
 nsresult nsZipArchive::OpenArchive(nsZipHandle *aZipHandle, PRFileDesc *aFd)
 {
   mFd = aZipHandle;
-
-  // Initialize our arena
-  PL_INIT_ARENA_POOL(&mArena, "ZipArena", ZIP_ARENABLOCKSIZE);
 
   //-- get table of contents for archive
   nsresult rv = BuildFileList(aFd);
@@ -409,8 +399,8 @@ nsresult nsZipArchive::Test(const char *aEntryName)
   }
 
   // test all items in archive
-  for (int i = 0; i < ZIP_TABSIZE; i++) {
-    for (currItem = mFiles[i]; currItem; currItem = currItem->next) {
+  for (auto* item : mFiles) {
+    for (currItem = item; currItem; currItem = currItem->next) {
       //-- don't test (synthetic) directory items
       if (currItem->IsDirectory())
         continue;
@@ -429,7 +419,7 @@ nsresult nsZipArchive::Test(const char *aEntryName)
 nsresult nsZipArchive::CloseArchive()
 {
   if (mFd) {
-    PL_FinishArenaPool(&mArena);
+    mArena.Clear();
     mFd = nullptr;
   }
 
@@ -509,7 +499,8 @@ nsresult nsZipArchive::ExtractFile(nsZipItem *item, const char *outname,
       nsZipArchive::sFileCorruptedReason = "nsZipArchive: Read() failed to return a buffer";
       rv = NS_ERROR_FILE_CORRUPTED;
       break;
-    } else if (count == 0) {
+    }
+    if (count == 0) {
       break;
     }
 
@@ -571,7 +562,7 @@ nsZipArchive::FindInit(const char * aPattern, nsZipFind **aFind)
 
       default:
         // undocumented return value from RegExpValid!
-        PR_ASSERT(false);
+        MOZ_ASSERT(false);
         return NS_ERROR_ILLEGAL_VALUE;
     }
 
@@ -668,9 +659,7 @@ static nsresult ResolveSymlink(const char *path)
 nsZipItem* nsZipArchive::CreateZipItem()
 {
   // Arena allocate the nsZipItem
-  void *mem;
-  PL_ARENA_ALLOCATE(mem, &mArena, sizeof(nsZipItem));
-  return (nsZipItem*)mem;
+  return (nsZipItem*)mArena.Allocate(sizeof(nsZipItem));
 }
 
 //---------------------------------------------
@@ -804,13 +793,13 @@ nsresult nsZipArchive::BuildSynthetics()
 MOZ_WIN_MEM_TRY_BEGIN
   // Create synthetic entries for any missing directories.
   // Do this when all ziptable has scanned to prevent double entries.
-  for (int i = 0; i < ZIP_TABSIZE; ++i)
+  for (auto* item : mFiles)
   {
-    for (nsZipItem* item = mFiles[i]; item != nullptr; item = item->next)
+    for (; item != nullptr; item = item->next)
     {
       if (item->isSynthetic)
         continue;
-    
+
       //-- add entries for directories in the current item's path
       //-- go from end to beginning, because then we can stop trying
       //-- to create diritems if we find that the diritem we want to
@@ -956,8 +945,6 @@ nsZipArchive::nsZipArchive()
 {
   zipLog.AddRef();
 
-  MOZ_COUNT_CTOR(nsZipArchive);
-
   // initialize the table to nullptr
   memset(mFiles, 0, sizeof(mFiles));
 }
@@ -968,8 +955,6 @@ NS_IMPL_RELEASE(nsZipArchive)
 nsZipArchive::~nsZipArchive()
 {
   CloseArchive();
-
-  MOZ_COUNT_DTOR(nsZipArchive);
 
   zipLog.Release();
 }

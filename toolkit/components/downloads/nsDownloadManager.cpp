@@ -1871,7 +1871,7 @@ nsDownloadManager::RetryDownload(nsDownload* dl)
 
   // referrer policy can be anything since referrer is nullptr
   rv = wbp->SavePrivacyAwareURI(dl->mSource, nullptr,
-                                nullptr, mozilla::net::RP_Default,
+                                nullptr, mozilla::net::RP_Unset,
                                 nullptr, nullptr,
                                 dl->mTarget, dl->mPrivate);
   if (NS_FAILED(rv)) {
@@ -2332,7 +2332,8 @@ NS_IMETHODIMP
 nsDownloadManager::OnVisit(nsIURI *aURI, int64_t aVisitID, PRTime aTime,
                            int64_t aSessionID, int64_t aReferringID,
                            uint32_t aTransitionType, const nsACString& aGUID,
-                           bool aHidden, uint32_t aVisitCount, uint32_t aTyped)
+                           bool aHidden, uint32_t aVisitCount, uint32_t aTyped,
+                           const nsAString& aLastKnowntTitle)
 {
   return NS_OK;
 }
@@ -2647,7 +2648,7 @@ NS_IMETHODIMP nsDownload::SetRedirects(nsIArray* aRedirects) {
   return NS_OK;
 }
 
-#ifdef MOZ_ENABLE_GIO
+#ifdef MOZ_WIDGET_GTK
 static void gio_set_metadata_done(GObject *source_obj, GAsyncResult *res, gpointer user_data)
 {
   GError *err = nullptr;
@@ -2764,7 +2765,8 @@ nsDownload::SetState(DownloadState aState)
                   message, !removeWhenDone,
                   mPrivate ? NS_LITERAL_STRING("private") : NS_LITERAL_STRING("non-private"),
                   mDownloadManager, EmptyString(), NS_LITERAL_STRING("auto"),
-                  EmptyString(), EmptyString(), nullptr, mPrivate);
+                  EmptyString(), EmptyString(), nullptr, mPrivate,
+                  false /* requireInteraction */);
             }
         }
       }
@@ -2815,7 +2817,7 @@ nsDownload::SetState(DownloadState aState)
 #endif
           }
 #endif
-#ifdef MOZ_ENABLE_GIO
+#ifdef MOZ_WIDGET_GTK
           // Use GIO to store the source URI for later display in the file manager.
           GFile* gio_file = g_file_new_for_path(NS_ConvertUTF16toUTF8(path).get());
           nsCString source_uri;

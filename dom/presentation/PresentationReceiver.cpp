@@ -10,6 +10,7 @@
 #include "mozilla/dom/Promise.h"
 #include "nsContentUtils.h"
 #include "nsIPresentationService.h"
+#include "nsPIDOMWindow.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
 #include "PresentationConnection.h"
@@ -30,6 +31,7 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(PresentationReceiver)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(PresentationReceiver)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
   NS_INTERFACE_MAP_ENTRY(nsIPresentationRespondingListener)
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
 /* static */ already_AddRefed<PresentationReceiver>
@@ -67,7 +69,7 @@ PresentationReceiver::Init()
 
 void PresentationReceiver::Shutdown()
 {
-  PRES_DEBUG("receiver shutdown:windowId[%d]\n", mWindowId);
+  PRES_DEBUG("receiver shutdown:windowId[%" PRId64 "]\n", mWindowId);
 
   // Unregister listener for incoming sessions.
   nsCOMPtr<nsIPresentationService> service =
@@ -91,7 +93,7 @@ NS_IMETHODIMP
 PresentationReceiver::NotifySessionConnect(uint64_t aWindowId,
                                            const nsAString& aSessionId)
 {
-  PRES_DEBUG("receiver session connect:id[%s], windowId[%x]\n",
+  PRES_DEBUG("receiver session connect:id[%s], windowId[%" PRIx64 "]\n",
              NS_ConvertUTF16toUTF8(aSessionId).get(), aWindowId);
 
   if (NS_WARN_IF(!mOwner)) {

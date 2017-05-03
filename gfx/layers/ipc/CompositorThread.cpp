@@ -53,14 +53,11 @@ CompositorThreadHolder::CompositorThreadHolder()
   : mCompositorThread(CreateCompositorThread())
 {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_COUNT_CTOR(CompositorThreadHolder);
 }
 
 CompositorThreadHolder::~CompositorThreadHolder()
 {
   MOZ_ASSERT(NS_IsMainThread());
-
-  MOZ_COUNT_DTOR(CompositorThreadHolder);
 
   DestroyCompositorThread(mCompositorThread);
 }
@@ -151,3 +148,9 @@ CompositorThreadHolder::IsInCompositorThread()
 
 } // namespace mozilla
 } // namespace layers
+
+bool
+NS_IsInCompositorThread()
+{
+  return mozilla::layers::CompositorThreadHolder::IsInCompositorThread();
+}

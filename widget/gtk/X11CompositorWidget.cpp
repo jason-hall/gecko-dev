@@ -15,13 +15,15 @@ namespace mozilla {
 namespace widget {
 
 X11CompositorWidget::X11CompositorWidget(const CompositorWidgetInitData& aInitData,
+                                         const CompositorOptions& aOptions,
                                          nsWindow* aWindow)
-      : mWidget(aWindow)
+      : CompositorWidget(aOptions)
+      , mWidget(aWindow)
 {
   // If we have a nsWindow, then grab the already existing display connection
   // If we don't, then use the init data to connect to the display
   if (aWindow) {
-    mXDisplay = (Display*)aWindow->GetNativeData(NS_NATIVE_COMPOSITOR_DISPLAY);
+    mXDisplay = aWindow->XDisplay();
   } else {
     mXDisplay = XOpenDisplay(aInitData.XDisplayString().get());
   }

@@ -21,9 +21,9 @@
 #include "nsIPrincipal.h"
 #include "nsIFileURL.h"
 
+#include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
-#include "mozilla/net/RemoteOpenFileChild.h"
 #include "nsITabChild.h"
 #include "private/pprio.h"
 #include "nsInputStreamPump.h"
@@ -194,14 +194,12 @@ nsJARInputThunk::IsNonBlocking(bool *nonBlocking)
 
 nsJARChannel::nsJARChannel()
     : mOpened(false)
-    , mAppURI(nullptr)
     , mContentDisposition(0)
     , mContentLength(-1)
     , mLoadFlags(LOAD_NORMAL)
     , mStatus(NS_OK)
     , mIsPending(false)
     , mIsUnsafe(true)
-    , mOpeningRemote(false)
     , mBlockRemoteFiles(false)
 {
     mBlockRemoteFiles = Preferences::GetBool("network.jar.block-remote-files", false);
@@ -225,7 +223,6 @@ NS_IMPL_ISUPPORTS_INHERITED(nsJARChannel,
                             nsIChannel,
                             nsIStreamListener,
                             nsIRequestObserver,
-                            nsIRemoteOpenFileListener,
                             nsIThreadRetargetableRequest,
                             nsIThreadRetargetableStreamListener,
                             nsIJARChannel)
@@ -329,7 +326,7 @@ nsJARChannel::CreateJarInput(nsIZipReaderCache *jarCache, nsJARInputThunk **resu
 nsresult
 nsJARChannel::LookupFile(bool aAllowAsync)
 {
-    LOG(("nsJARChannel::LookupFile [this=%x %s]\n", this, mSpec.get()));
+    LOG(("nsJARChannel::LookupFile [this=%p %s]\n", this, mSpec.get()));
 
     if (mJarFile)
         return NS_OK;
@@ -356,65 +353,7 @@ nsJARChannel::LookupFile(bool aAllowAsync)
         if (fileURL)
             fileURL->GetFile(getter_AddRefs(mJarFile));
     }
-    // if we're in child process and have special "remoteopenfile:://" scheme,
-    // create special nsIFile that gets file handle from parent when opened.
-    if (!mJarFile && !gJarHandler->IsMainProcess()) {
-        nsAutoCString scheme;
-        rv = mJarBaseURI->GetScheme(scheme);
-        if (NS_SUCCEEDED(rv) && scheme.EqualsLiteral("remoteopenfile")) {
-            RefPtr<RemoteOpenFileChild> remoteFile = new RemoteOpenFileChild();
-            rv = remoteFile->Init(mJarBaseURI, mAppURI);
-            NS_ENSURE_SUCCESS(rv, rv);
-            mJarFile = remoteFile;
 
-            nsIZipReaderCache *jarCache = gJarHandler->JarCache();
-            if (jarCache) {
-                bool cached = false;
-                rv = jarCache->IsCached(mJarFile, &cached);
-                if (NS_SUCCEEDED(rv) && cached) {
-                    // zipcache already has file mmapped: don't open on parent,
-                    // just return and proceed to cache hit in CreateJarInput().
-                    // When the file descriptor is needed, get it from JAR cache
-                    // if available, otherwise do the remote open to get a new
-                    // one.
-                    #if defined(XP_WIN) || defined(MOZ_WIDGET_COCOA)
-                    // Windows/OSX desktop builds skip remoting, we don't need
-                    // file descriptor here.
-                    return NS_OK;
-                    #else
-                    PRFileDesc *fd = nullptr;
-                    jarCache->GetFd(mJarFile, &fd);
-                    if (fd) {
-                        return SetRemoteNSPRFileDesc(fd);
-                    }
-                    #endif
-                }
-            }
-
-            if (!aAllowAsync) {
-                mJarFile = nullptr;
-                return NS_OK;
-            }
-
-            mOpeningRemote = true;
-
-            if (gJarHandler->RemoteOpenFileInProgress(remoteFile, this)) {
-                // JarHandler will trigger OnRemoteFileOpen() after the first
-                // request for this file completes and we'll get a JAR cache
-                // hit.
-                return NS_OK;
-            }
-
-            // Open file on parent: OnRemoteFileOpenComplete called when done
-            nsCOMPtr<nsITabChild> tabChild;
-            NS_QueryNotificationCallbacks(this, tabChild);
-            nsCOMPtr<nsILoadContext> loadContext;
-            NS_QueryNotificationCallbacks(this, loadContext);
-            rv = remoteFile->AsyncRemoteFileOpen(PR_RDONLY, this, tabChild,
-                                                 loadContext);
-            NS_ENSURE_SUCCESS(rv, rv);
-        }
-    }
     // try to handle a nested jar
     if (!mJarFile) {
         nsCOMPtr<nsIJARURI> jarURI = do_QueryInterface(mJarBaseURI);
@@ -473,24 +412,6 @@ nsJARChannel::FireOnProgress(uint64_t aProgress)
   MOZ_ASSERT(mProgressSink);
 
   mProgressSink->OnProgress(this, nullptr, aProgress, mContentLength);
-}
-
-nsresult
-nsJARChannel::SetRemoteNSPRFileDesc(PRFileDesc *fd)
-{
-    PROsfd osfd = dup(PR_FileDesc2NativeHandle(fd));
-    if (osfd == -1) {
-        return NS_ERROR_FAILURE;
-    }
-
-    RemoteOpenFileChild* remoteFile =
-        static_cast<RemoteOpenFileChild*>(mJarFile.get());
-    nsresult rv = remoteFile->SetNSPRFileDesc(PR_ImportFile(osfd));
-    if (NS_FAILED(rv)) {
-        close(osfd);
-    }
-
-    return rv;
 }
 
 //-----------------------------------------------------------------------------
@@ -602,11 +523,7 @@ nsJARChannel::SetOriginalURI(nsIURI *aURI)
 NS_IMETHODIMP
 nsJARChannel::GetURI(nsIURI **aURI)
 {
-    if (mAppURI) {
-        NS_IF_ADDREF(*aURI = mAppURI);
-    } else {
-        NS_IF_ADDREF(*aURI = mJarURI);
-    }
+    NS_IF_ADDREF(*aURI = mJarURI);
 
     return NS_OK;
 }
@@ -791,7 +708,7 @@ nsJARChannel::SetContentLength(int64_t aContentLength)
 NS_IMETHODIMP
 nsJARChannel::Open(nsIInputStream **stream)
 {
-    LOG(("nsJARChannel::Open [this=%x]\n", this));
+    LOG(("nsJARChannel::Open [this=%p]\n", this));
 
     NS_ENSURE_TRUE(!mOpened, NS_ERROR_IN_PROGRESS);
     NS_ENSURE_TRUE(!mIsPending, NS_ERROR_IN_PROGRESS);
@@ -840,7 +757,7 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
                 nsContentUtils::IsSystemPrincipal(mLoadInfo->LoadingPrincipal())),
                "security flags in loadInfo but asyncOpen2() not called");
 
-    LOG(("nsJARChannel::AsyncOpen [this=%x]\n", this));
+    LOG(("nsJARChannel::AsyncOpen [this=%p]\n", this));
 
     NS_ENSURE_ARG_POINTER(listener);
     NS_ENSURE_TRUE(!mOpened, NS_ERROR_IN_PROGRESS);
@@ -861,6 +778,8 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
         mIsPending = false;
         mListenerContext = nullptr;
         mListener = nullptr;
+        mCallbacks = nullptr;
+        mProgressSink = nullptr;
         return rv;
     }
 
@@ -872,6 +791,11 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
         // Check preferences to see if all remote jar support should be disabled
         if (mBlockRemoteFiles) {
             mIsUnsafe = true;
+            mIsPending = false;
+            mListenerContext = nullptr;
+            mListener = nullptr;
+            mCallbacks = nullptr;
+            mProgressSink = nullptr;
             return NS_ERROR_UNSAFE_CONTENT_TYPE;
         }
 
@@ -895,6 +819,8 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
             mIsPending = false;
             mListenerContext = nullptr;
             mListener = nullptr;
+            mCallbacks = nullptr;
+            mProgressSink = nullptr;
             return rv;
         }
         if (mLoadInfo && mLoadInfo->GetEnforceSecurity()) {
@@ -903,9 +829,8 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
         else {
             rv = channel->AsyncOpen(downloader, nullptr);
         }
-    } else if (mOpeningRemote) {
-        // nothing to do: already asked parent to open file.
-    } else {
+    }
+    else {
         rv = OpenLocalFile();
     }
 
@@ -913,6 +838,8 @@ nsJARChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctx)
         mIsPending = false;
         mListenerContext = nullptr;
         mListener = nullptr;
+        mCallbacks = nullptr;
+        mProgressSink = nullptr;
         return rv;
     }
 
@@ -929,7 +856,15 @@ nsJARChannel::AsyncOpen2(nsIStreamListener *aListener)
 {
   nsCOMPtr<nsIStreamListener> listener = aListener;
   nsresult rv = nsContentSecurityManager::doContentSecurityCheck(this, listener);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_FAILED(rv)) {
+      mIsPending = false;
+      mListenerContext = nullptr;
+      mListener = nullptr;
+      mCallbacks = nullptr;
+      mProgressSink = nullptr;
+      return rv;
+  }
+
   return AsyncOpen(listener, nullptr);
 }
 
@@ -940,20 +875,6 @@ NS_IMETHODIMP
 nsJARChannel::GetIsUnsafe(bool *isUnsafe)
 {
     *isUnsafe = mIsUnsafe;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsJARChannel::SetAppURI(nsIURI *aURI) {
-    NS_ENSURE_ARG_POINTER(aURI);
-
-    nsAutoCString scheme;
-    aURI->GetScheme(scheme);
-    if (!scheme.EqualsLiteral("app")) {
-        return NS_ERROR_INVALID_ARG;
-    }
-
-    mAppURI = aURI;
     return NS_OK;
 }
 
@@ -1032,8 +953,8 @@ nsJARChannel::OnDownloadComplete(MemoryDownloader* aDownloader,
             // send us a JAR file.  Check the server-supplied content type for
             // a JAR type.
             nsAutoCString header;
-            httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("Content-Type"),
-                                           header);
+            Unused << httpChannel->GetResponseHeader(
+              NS_LITERAL_CSTRING("Content-Type"), header);
             nsAutoCString contentType;
             nsAutoCString charset;
             NS_ParseResponseContentType(header, contentType, charset);
@@ -1090,57 +1011,13 @@ nsJARChannel::OnDownloadComplete(MemoryDownloader* aDownloader,
 }
 
 //-----------------------------------------------------------------------------
-// nsIRemoteOpenFileListener
-//-----------------------------------------------------------------------------
-nsresult
-nsJARChannel::OnRemoteFileOpenComplete(nsresult aOpenStatus)
-{
-    nsresult rv = aOpenStatus;
-
-    // NS_ERROR_ALREADY_OPENED here means we'll hit JAR cache in
-    // OpenLocalFile().
-    if (NS_SUCCEEDED(rv) || rv == NS_ERROR_ALREADY_OPENED) {
-        #if defined(XP_WIN) || defined(MOZ_WIDGET_COCOA)
-        // Windows/OSX desktop builds skip remoting, we don't need file
-        // descriptor here.
-        #else
-        // Set file descriptor from Jar cache into remote Jar file, if it
-        // has not been set previously.
-        mozilla::AutoFDClose fd;
-        nsresult rv2 = mJarFile->OpenNSPRFileDesc(PR_RDONLY, 0, &fd.rwget());
-        if (NS_FAILED(rv2)) {
-            nsIZipReaderCache *jarCache = gJarHandler->JarCache();
-            if (!jarCache) {
-                rv = NS_ERROR_FAILURE;
-            }
-            PRFileDesc *jar_fd = nullptr;
-            jarCache->GetFd(mJarFile, &jar_fd);
-            // If we failed to get fd here, an error rv would be returned
-            // by SetRemoteNSPRFileDesc(), which would then stop the
-            // channel by NotifyError().
-            rv = SetRemoteNSPRFileDesc(jar_fd);
-        }
-        #endif
-        if (NS_SUCCEEDED(rv) || rv == NS_ERROR_ALREADY_OPENED) {
-            rv = OpenLocalFile();
-        }
-    }
-
-    if (NS_FAILED(rv)) {
-        NotifyError(rv);
-    }
-
-    return NS_OK;
-}
-
-//-----------------------------------------------------------------------------
 // nsIStreamListener
 //-----------------------------------------------------------------------------
 
 NS_IMETHODIMP
 nsJARChannel::OnStartRequest(nsIRequest *req, nsISupports *ctx)
 {
-    LOG(("nsJARChannel::OnStartRequest [this=%x %s]\n", this, mSpec.get()));
+    LOG(("nsJARChannel::OnStartRequest [this=%p %s]\n", this, mSpec.get()));
 
     mRequest = req;
     nsresult rv = mListener->OnStartRequest(this, mListenerContext);
@@ -1152,27 +1029,27 @@ nsJARChannel::OnStartRequest(nsIRequest *req, nsISupports *ctx)
 NS_IMETHODIMP
 nsJARChannel::OnStopRequest(nsIRequest *req, nsISupports *ctx, nsresult status)
 {
-    LOG(("nsJARChannel::OnStopRequest [this=%x %s status=%x]\n",
-        this, mSpec.get(), status));
+    LOG(("nsJARChannel::OnStopRequest [this=%p %s status=%" PRIx32 "]\n",
+         this, mSpec.get(), static_cast<uint32_t>(status)));
 
     if (NS_SUCCEEDED(mStatus))
         mStatus = status;
 
     if (mListener) {
         mListener->OnStopRequest(this, mListenerContext, status);
-        mListener = 0;
-        mListenerContext = 0;
+        mListener = nullptr;
+        mListenerContext = nullptr;
     }
 
     if (mLoadGroup)
         mLoadGroup->RemoveRequest(this, nullptr, status);
 
-    mPump = 0;
+    mPump = nullptr;
     mIsPending = false;
 
     // Drop notification callbacks to prevent cycles.
-    mCallbacks = 0;
-    mProgressSink = 0;
+    mCallbacks = nullptr;
+    mProgressSink = nullptr;
 
     #if defined(XP_WIN) || defined(MOZ_WIDGET_COCOA)
     #else
@@ -1188,7 +1065,7 @@ nsJARChannel::OnDataAvailable(nsIRequest *req, nsISupports *ctx,
                                nsIInputStream *stream,
                                uint64_t offset, uint32_t count)
 {
-    LOG(("nsJARChannel::OnDataAvailable [this=%x %s]\n", this, mSpec.get()));
+    LOG(("nsJARChannel::OnDataAvailable [this=%p %s]\n", this, mSpec.get()));
 
     nsresult rv;
 

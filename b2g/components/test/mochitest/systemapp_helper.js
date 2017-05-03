@@ -1,6 +1,6 @@
 var Cu = Components.utils;
 
-const { Services } = Cu.import("resource://gre/modules/Services.jsm");
+const { Services } = Cu.import("resource://gre/modules/Services.jsm", {});
 
 // Load a duplicated copy of the jsm to prevent messing with the currently running one
 var scope = {};
@@ -80,15 +80,6 @@ function listener(event) {
 
 
 var steps = [
-  function waitForWebapps() {
-    // We are using webapps API later in this test and we need to ensure
-    // it is fully initialized before trying to use it
-    let { DOMApplicationRegistry } =  Cu.import('resource://gre/modules/Webapps.jsm', {});
-    DOMApplicationRegistry.registryReady.then(function () {
-      next();
-    });
-  },
-
   function earlyEvents() {
     // Immediately try to send events
     SystemAppProxy._sendCustomEvent("mozChromeEvent", { name: "first" }, true);
@@ -122,8 +113,7 @@ var steps = [
     SystemAppProxy.registerFrame(frame);
     assert.ok(true, "Frame created and registered");
 
-    frame.contentWindow.addEventListener("load", function onload() {
-      frame.contentWindow.removeEventListener("load", onload);
+    frame.contentWindow.addEventListener("load", function() {
       assert.ok(true, "Frame document loaded");
 
       // Declare that the iframe is now loaded.
@@ -137,7 +127,7 @@ var steps = [
 
       // Once pending events are received,
       // we will run checkEventDispatching from `listener` function
-    });
+    }, {once: true});
 
     frame.setAttribute("src", "data:text/html,system app");
   },

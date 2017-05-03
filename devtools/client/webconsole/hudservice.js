@@ -22,7 +22,7 @@ loader.lazyRequireGetter(this, "DebuggerClient", "devtools/shared/client/main", 
 loader.lazyRequireGetter(this, "showDoorhanger", "devtools/client/shared/doorhanger", true);
 loader.lazyRequireGetter(this, "viewSource", "devtools/client/shared/view-source");
 
-const STRINGS_URI = "devtools/locale/webconsole.properties";
+const STRINGS_URI = "devtools/client/locales/webconsole.properties";
 var l10n = new WebConsoleUtils.L10n(STRINGS_URI);
 
 const BROWSER_CONSOLE_WINDOW_FEATURES = "chrome,titlebar,toolbar,centerscreen,resizable,dialog=no";
@@ -213,15 +213,13 @@ HUD_SERVICE.prototype =
 
       let win = Services.ww.openWindow(null, Tools.webConsole.url, "_blank",
                                        BROWSER_CONSOLE_WINDOW_FEATURES, null);
-      win.addEventListener("DOMContentLoaded", function onLoad() {
-        win.removeEventListener("DOMContentLoaded", onLoad);
-
+      win.addEventListener("DOMContentLoaded", function () {
         // Set the correct Browser Console title.
         let root = win.document.documentElement;
         root.setAttribute("title", root.getAttribute("browserConsoleTitle"));
 
         deferred.resolve(win);
-      });
+      }, {once: true});
 
       return deferred.promise;
     }

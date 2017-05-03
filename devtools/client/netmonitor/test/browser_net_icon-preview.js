@@ -11,9 +11,16 @@ add_task(function* () {
   let { tab, monitor } = yield initNetMonitor(CONTENT_TYPE_WITHOUT_CACHE_URL);
   info("Starting test... ");
 
-  let { $, $all, EVENTS, ACTIVITY_TYPE, NetMonitorView, NetMonitorController } =
-    monitor.panelWin;
-  let { RequestsMenu } = NetMonitorView;
+  let { document, gStore, windowRequire } = monitor.panelWin;
+  let Actions = windowRequire("devtools/client/netmonitor/src/actions/index");
+  let { NetMonitorController } =
+    windowRequire("devtools/client/netmonitor/src/netmonitor-controller");
+  let {
+    ACTIVITY_TYPE,
+    EVENTS,
+  } = windowRequire("devtools/client/netmonitor/src/constants");
+
+  gStore.dispatch(Actions.batchEnable(false));
 
   let wait = waitForEvents();
   yield performRequests();
@@ -22,11 +29,11 @@ add_task(function* () {
   info("Checking the image thumbnail when all items are shown.");
   checkImageThumbnail();
 
-  RequestsMenu.sortBy("size");
+  gStore.dispatch(Actions.sortBy("contentSize"));
   info("Checking the image thumbnail when all items are sorted.");
   checkImageThumbnail();
 
-  RequestsMenu.filterOn("images");
+  gStore.dispatch(Actions.toggleRequestFilterType("images"));
   info("Checking the image thumbnail when only images are shown.");
   checkImageThumbnail();
 
@@ -42,7 +49,7 @@ add_task(function* () {
 
   function waitForEvents() {
     return promise.all([
-      waitForNetworkEvents(monitor, 7),
+      waitForNetworkEvents(monitor, CONTENT_TYPE_WITHOUT_CACHE_REQUESTS),
       monitor.panelWin.once(EVENTS.RESPONSE_IMAGE_THUMBNAIL_DISPLAYED)
     ]);
   }
@@ -59,11 +66,12 @@ add_task(function* () {
   }
 
   function checkImageThumbnail() {
-    is($all(".requests-menu-icon[type=thumbnail]").length, 1,
+    is(document.querySelectorAll(".requests-list-icon[data-type=thumbnail]").length, 1,
       "There should be only one image request with a thumbnail displayed.");
-    is($(".requests-menu-icon[type=thumbnail]").src, TEST_IMAGE_DATA_URI,
-      "The image requests-menu-icon thumbnail is displayed correctly.");
-    is($(".requests-menu-icon[type=thumbnail]").hidden, false,
-      "The image requests-menu-icon thumbnail should not be hidden.");
+    is(document.querySelector(".requests-list-icon[data-type=thumbnail]").src,
+      TEST_IMAGE_DATA_URI,
+      "The image requests-list-icon thumbnail is displayed correctly.");
+    is(document.querySelector(".requests-list-icon[data-type=thumbnail]").hidden, false,
+      "The image requests-list-icon thumbnail should not be hidden.");
   }
 });

@@ -7,8 +7,7 @@
  * Provides infrastructure for automated download components tests.
  */
 
-////////////////////////////////////////////////////////////////////////////////
-//// Globals
+// Globals
 
 XPCOMUtils.defineLazyModuleGetter(this, "Downloads",
                                   "resource://gre/modules/Downloads.jsm");
@@ -22,6 +21,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
                                   "resource://gre/modules/PlacesUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "HttpServer",
+    "resource://testing-common/httpd.js");
+
 const nsIDM = Ci.nsIDownloadManager;
 
 var gTestTargetFile = FileUtils.getFile("TmpD", ["dm-ui-test.file"]);
@@ -29,9 +31,10 @@ gTestTargetFile.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, FileUtils.PERMS_FILE);
 
 // Load mocking/stubbing library, sinon
 // docs: http://sinonjs.org/docs/
+/* global sinon:false */
 Services.scriptloader.loadSubScript("resource://testing-common/sinon-1.16.1.js");
 
-registerCleanupFunction(function () {
+registerCleanupFunction(function() {
   gTestTargetFile.remove(false);
 
   delete window.sinon;
@@ -39,17 +42,14 @@ registerCleanupFunction(function () {
   delete window.clearImmediate;
 });
 
-////////////////////////////////////////////////////////////////////////////////
-//// Asynchronous support subroutines
+// Asynchronous support subroutines
 
-function promiseOpenAndLoadWindow(aOptions)
-{
+function promiseOpenAndLoadWindow(aOptions) {
   return new Promise((resolve, reject) => {
     let win = OpenBrowserWindow(aOptions);
-    win.addEventListener("load", function onLoad() {
-      win.removeEventListener("load", onLoad);
+    win.addEventListener("load", function() {
       resolve(win);
-    });
+    }, {once: true});
   });
 }
 
@@ -67,8 +67,7 @@ function promiseOpenAndLoadWindow(aOptions)
  * @resolves to the received event
  * @rejects if a valid load event is not received within a meaningful interval
  */
-function promiseTabLoadEvent(tab, url, eventType="load")
-{
+function promiseTabLoadEvent(tab, url, eventType = "load") {
   let deferred = Promise.defer();
   info("Wait tab event: " + eventType);
 
@@ -97,8 +96,7 @@ function promiseTabLoadEvent(tab, url, eventType="load")
   return deferred.promise;
 }
 
-function promiseWindowClosed(win)
-{
+function promiseWindowClosed(win) {
   let promise = new Promise((resolve, reject) => {
     Services.obs.addObserver(function obs(subject, topic) {
       if (subject == win) {
@@ -112,15 +110,13 @@ function promiseWindowClosed(win)
 }
 
 
-function promiseFocus()
-{
+function promiseFocus() {
   let deferred = Promise.defer();
   waitForFocus(deferred.resolve);
   return deferred.promise;
 }
 
-function promisePanelOpened()
-{
+function promisePanelOpened() {
   let deferred = Promise.defer();
 
   if (DownloadsPanel.panel && DownloadsPanel.panel.state == "open") {
@@ -129,7 +125,7 @@ function promisePanelOpened()
 
   // Hook to wait until the panel is shown.
   let originalOnPopupShown = DownloadsPanel.onPopupShown;
-  DownloadsPanel.onPopupShown = function () {
+  DownloadsPanel.onPopupShown = function() {
     DownloadsPanel.onPopupShown = originalOnPopupShown;
     originalOnPopupShown.apply(this, arguments);
 
@@ -141,8 +137,7 @@ function promisePanelOpened()
   return deferred.promise;
 }
 
-function task_resetState()
-{
+function* task_resetState() {
   // Remove all downloads.
   let publicList = yield Downloads.getList(Downloads.PUBLIC);
   let downloads = yield publicList.getAll();
@@ -156,8 +151,7 @@ function task_resetState()
   yield promiseFocus();
 }
 
-function* task_addDownloads(aItems)
-{
+function* task_addDownloads(aItems) {
   let startTimeMs = Date.now();
 
   let publicList = yield Downloads.getList(Downloads.PUBLIC);
@@ -185,8 +179,7 @@ function* task_addDownloads(aItems)
   }
 }
 
-function task_openPanel()
-{
+function* task_openPanel() {
   yield promiseFocus();
 
   let promise = promisePanelOpened();
@@ -194,12 +187,12 @@ function task_openPanel()
   yield promise;
 }
 
-function setDownloadDir() {
+function* setDownloadDir() {
   let tmpDir = Services.dirsvc.get("TmpD", Ci.nsIFile);
   tmpDir.append("testsavedir");
   if (!tmpDir.exists()) {
     tmpDir.create(Ci.nsIFile.DIRECTORY_TYPE, 0o755);
-    registerCleanupFunction(function () {
+    registerCleanupFunction(function() {
       try {
         tmpDir.remove(true);
       } catch (e) {
@@ -208,12 +201,10 @@ function setDownloadDir() {
     });
   }
 
-  yield new Promise(resolve => {
-    SpecialPowers.pushPrefEnv({"set": [
-      ["browser.download.folderList", 2],
-      ["browser.download.dir", tmpDir, Ci.nsIFile],
-    ]}, resolve);
-  });
+  yield SpecialPowers.pushPrefEnv({"set": [
+    ["browser.download.folderList", 2],
+    ["browser.download.dir", tmpDir, Ci.nsIFile],
+  ]});
 }
 
 
@@ -279,8 +270,7 @@ function promiseAlertDialogOpen(buttonAction) {
         // The test listens for the "load" event which guarantees that the alert
         // class has already been added (it is added when "DOMContentLoaded" is
         // fired).
-        subj.addEventListener("load", function onLoad() {
-          subj.removeEventListener("load", onLoad);
+        subj.addEventListener("load", function() {
           if (subj.document.documentURI ==
               "chrome://global/content/commonDialog.xul") {
             Services.ww.unregisterNotification(onOpen);
@@ -293,7 +283,7 @@ function promiseAlertDialogOpen(buttonAction) {
             doc.getButton(buttonAction).click();
             resolve();
           }
-        });
+        }, {once: true});
       }
     });
   });

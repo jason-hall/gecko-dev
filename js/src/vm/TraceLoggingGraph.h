@@ -8,7 +8,7 @@
 #define TraceLoggingGraph_h
 
 #include "js/TypeDecls.h"
-#include "threading/Mutex.h"
+#include "vm/MutexIDs.h"
 #include "vm/TraceLoggingTypes.h"
 
 /*
@@ -80,12 +80,13 @@ class TraceLoggerGraphState
 
   public:
     TraceLoggerGraphState()
-      : numLoggers(0),
-        pid_(0),
-        out(nullptr)
+      : numLoggers(0)
+      , pid_(0)
+      , out(nullptr)
 #ifdef DEBUG
       , initialized(false)
 #endif
+      , lock(js::mutexid::TraceLoggerGraphState)
     {}
 
     bool init();
@@ -215,12 +216,12 @@ class TraceLoggerGraph
         return 100 * 1024 * 1024 / sizeof(TreeEntry);
     }
 
+    uint32_t nextTextId() { return nextTextId_; }
+
   private:
     bool failed = false;
     bool enabled = false;
-#ifdef DEBUG
-    uint32_t nextTextId = 0;
-#endif
+    uint32_t nextTextId_ = 0;
 
     FILE* dictFile = nullptr;
     FILE* treeFile = nullptr;

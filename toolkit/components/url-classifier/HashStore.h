@@ -132,13 +132,13 @@ private:
 // for addition and indices to removal. See Bug 1283009.
 class TableUpdateV4 : public TableUpdate {
 public:
-  struct PrefixString {
+  struct PrefixStdString {
   private:
     std::string mStorage;
     nsDependentCSubstring mString;
 
   public:
-    explicit PrefixString(std::string& aString)
+    explicit PrefixStdString(std::string& aString)
     {
       aString.swap(mStorage);
       mString.Rebind(mStorage.data(), mStorage.size());
@@ -147,40 +147,60 @@ public:
     const nsACString& GetPrefixString() const { return mString; };
   };
 
-  typedef nsClassHashtable<nsUint32HashKey, PrefixString> PrefixesStringMap;
+  typedef nsClassHashtable<nsUint32HashKey, PrefixStdString> PrefixStdStringMap;
   typedef nsTArray<int32_t> RemovalIndiceArray;
 
 public:
   explicit TableUpdateV4(const nsACString& aTable)
     : TableUpdate(aTable)
+    , mFullUpdate(false)
   {
   }
 
   bool Empty() const override
   {
-    return mPrefixesMap.IsEmpty() && mRemovalIndiceArray.IsEmpty();
+    return mPrefixesMap.IsEmpty() &&
+           mRemovalIndiceArray.IsEmpty() &&
+           mFullHashResponseMap.IsEmpty();
   }
 
-  PrefixesStringMap& Prefixes() { return mPrefixesMap; }
+  bool IsFullUpdate() const { return mFullUpdate; }
+  PrefixStdStringMap& Prefixes() { return mPrefixesMap; }
   RemovalIndiceArray& RemovalIndices() { return mRemovalIndiceArray; }
+  const nsACString& ClientState() const { return mClientState; }
+  const nsACString& Checksum() const { return mChecksum; }
+  const FullHashResponseMap& FullHashResponse() const { return mFullHashResponseMap; }
 
   // For downcasting.
   static const int TAG = 4;
 
+  void SetFullUpdate(bool aIsFullUpdate) { mFullUpdate = aIsFullUpdate; }
   void NewPrefixes(int32_t aSize, std::string& aPrefixes);
   void NewRemovalIndices(const uint32_t* aIndices, size_t aNumOfIndices);
+  void SetNewClientState(const nsACString& aState) { mClientState = aState; }
+  void NewChecksum(const std::string& aChecksum);
+  nsresult NewFullHashResponse(const nsACString& aPrefix,
+                               CachedFullHashResponse& aResponse);
 
 private:
   virtual int Tag() const override { return TAG; }
 
-  PrefixesStringMap mPrefixesMap;
+  bool mFullUpdate;
+  PrefixStdStringMap mPrefixesMap;
   RemovalIndiceArray mRemovalIndiceArray;
+  nsCString mClientState;
+  nsCString mChecksum;
+
+  // This is used to store response from fullHashes.find.
+  FullHashResponseMap mFullHashResponseMap;
 };
 
 // There is one hash store per table.
 class HashStore {
 public:
-  HashStore(const nsACString& aTableName, nsIFile* aRootStoreFile);
+  HashStore(const nsACString& aTableName,
+            const nsACString& aProvider,
+            nsIFile* aRootStoreFile);
   ~HashStore();
 
   const nsCString& TableName() const { return mTableName; }

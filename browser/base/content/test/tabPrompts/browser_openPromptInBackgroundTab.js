@@ -4,7 +4,7 @@ const ROOT = getRootDirectory(gTestPath).replace("chrome://mochitests/content/",
 let pageWithAlert = ROOT + "openPromptOffTimeout.html";
 
 registerCleanupFunction(function() {
-  Services.perms.removeAll(makeURI(pageWithAlert));
+  Services.perms.removeAll();
 });
 
 /*
@@ -15,7 +15,6 @@ registerCleanupFunction(function() {
  * checking the checkbox does actually enable that behaviour.
  */
 add_task(function*() {
-  yield SpecialPowers.pushPrefEnv({"set": [["browser.tabs.dontfocusfordialogs", true]]});
   let firstTab = gBrowser.selectedTab;
   // load page that opens prompt when page is hidden
   let openedTab = yield BrowserTestUtils.openNewForegroundTab(gBrowser, pageWithAlert, true);
@@ -50,6 +49,20 @@ add_task(function*() {
   let ps = Services.perms;
   is(ps.ALLOW_ACTION, ps.testPermission(makeURI(pageWithAlert), "focus-tab-by-prompt"),
      "Tab switching should now be allowed");
+
+  // Check if the control center shows the correct permission.
+  let shown = BrowserTestUtils.waitForEvent(gIdentityHandler._identityPopup, "popupshown");
+  gIdentityHandler._identityBox.click();
+  yield shown;
+  let labelText = SitePermissions.getPermissionLabel("focus-tab-by-prompt");
+  let permissionsList = document.getElementById("identity-popup-permission-list");
+  let label = permissionsList.querySelector(".identity-popup-permission-label");
+  is(label.textContent, labelText);
+  gIdentityHandler._identityPopup.hidePopup()
+
+  // Check if the identity icon signals granted permission.
+  ok(gIdentityHandler._identityBox.classList.contains("grantedPermissions"),
+    "identity-box signals granted permissions");
 
   let openedTabSelectedPromise = BrowserTestUtils.waitForAttribute("selected", openedTab, "true");
   // switch to other tab again

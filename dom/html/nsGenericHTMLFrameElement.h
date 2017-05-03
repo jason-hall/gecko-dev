@@ -36,6 +36,7 @@ public:
     , mIsPrerendered(false)
     , mBrowserFrameListenersRegistered(false)
     , mFrameLoaderCreationDisallowed(false)
+    , mReallyIsBrowser(false)
   {
   }
 
@@ -71,6 +72,8 @@ public:
 
   virtual int32_t TabIndexDefault() override;
 
+  virtual nsIMozBrowserFrame* GetAsMozBrowserFrame() override { return this; }
+
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsGenericHTMLFrameElement,
                                            nsGenericHTMLElement)
 
@@ -80,9 +83,13 @@ public:
   void SwapFrameLoaders(nsXULElement& aOtherLoaderOwner,
                         mozilla::ErrorResult& aError);
 
-  void SwapFrameLoaders(RefPtr<nsFrameLoader>& aOtherLoader,
+  void SwapFrameLoaders(nsIFrameLoaderOwner* aOtherLoaderOwner,
                         mozilla::ErrorResult& rv);
 
+  void PresetOpenerWindow(mozIDOMWindowProxy* aOpenerWindow,
+                          mozilla::ErrorResult& aRv);
+
+  static void InitStatics();
   static bool BrowserFramesEnabled();
 
   /**
@@ -102,12 +109,12 @@ protected:
   // it makes sense.
   void EnsureFrameLoader();
   nsresult LoadSrc();
-  nsIDocument*
-  GetContentDocument(const mozilla::Maybe<nsIPrincipal*>& aSubjectPrincipal);
+  nsIDocument* GetContentDocument(nsIPrincipal& aSubjectPrincipal);
   nsresult GetContentDocument(nsIDOMDocument** aContentDocument);
   already_AddRefed<nsPIDOMWindowOuter> GetContentWindow();
 
   RefPtr<nsFrameLoader> mFrameLoader;
+  nsCOMPtr<nsPIDOMWindowOuter> mOpenerWindow;
 
   /**
    * True when the element is created by the parser using the
@@ -119,6 +126,7 @@ protected:
   bool mIsPrerendered;
   bool mBrowserFrameListenersRegistered;
   bool mFrameLoaderCreationDisallowed;
+  bool mReallyIsBrowser;
 
   // This flag is only used by <iframe>. See HTMLIFrameElement::
   // FullscreenFlag() for details. It is placed here so that we
@@ -126,7 +134,7 @@ protected:
   bool mFullscreenFlag = false;
 
 private:
-  void GetManifestURLByType(nsIAtom *aAppType, nsAString& aOut);
+  void GetManifestURL(nsAString& aOut);
 };
 
 #endif // nsGenericHTMLFrameElement_h

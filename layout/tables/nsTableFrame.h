@@ -38,13 +38,6 @@ static inline bool IS_TABLE_CELL(nsIAtom* frameType) {
     nsGkAtoms::bcTableCellFrame == frameType;
 }
 
-static inline bool FrameHasBorderOrBackground(nsIFrame* f) {
-  return (f->StyleVisibility()->IsVisible() &&
-          (!f->StyleBackground()->IsTransparent() ||
-           f->StyleDisplay()->mAppearance ||
-           f->StyleBorder()->HasBorder()));
-}
-
 class nsDisplayTableItem : public nsDisplayItem
 {
 public:
@@ -327,24 +320,24 @@ public:
   virtual IntrinsicISizeOffsetData IntrinsicISizeOffsets() override;
 
   virtual mozilla::LogicalSize
-  ComputeSize(nsRenderingContext *aRenderingContext,
-              mozilla::WritingMode aWritingMode,
+  ComputeSize(nsRenderingContext*         aRenderingContext,
+              mozilla::WritingMode        aWM,
               const mozilla::LogicalSize& aCBSize,
-              nscoord aAvailableISize,
+              nscoord                     aAvailableISize,
               const mozilla::LogicalSize& aMargin,
               const mozilla::LogicalSize& aBorder,
               const mozilla::LogicalSize& aPadding,
-              ComputeSizeFlags aFlags) override;
+              ComputeSizeFlags            aFlags) override;
 
   virtual mozilla::LogicalSize
-  ComputeAutoSize(nsRenderingContext *aRenderingContext,
-                  mozilla::WritingMode aWritingMode,
+  ComputeAutoSize(nsRenderingContext*         aRenderingContext,
+                  mozilla::WritingMode        aWM,
                   const mozilla::LogicalSize& aCBSize,
-                  nscoord aAvailableISize,
+                  nscoord                     aAvailableISize,
                   const mozilla::LogicalSize& aMargin,
                   const mozilla::LogicalSize& aBorder,
                   const mozilla::LogicalSize& aPadding,
-                  bool aShrinkWrap) override;
+                  ComputeSizeFlags            aFlags) override;
 
   /**
    * A copy of nsFrame::ShrinkWidthToFit that calls a different
@@ -472,6 +465,10 @@ private:
 
 public:
   virtual nscoord GetLogicalBaseline(mozilla::WritingMode aWritingMode) const override;
+  bool GetNaturalBaselineBOffset(mozilla::WritingMode aWM,
+                                 BaselineSharingGroup aBaselineGroup,
+                                 nscoord*             aBaseline) const override;
+
   /** return the row span of a cell, taking into account row span magic at the bottom
     * of a table. The row span equals the number of rows spanned by aCell starting at
     * aStartRowIndex, and can be smaller if aStartRowIndex is greater than the row
@@ -604,6 +601,11 @@ public:
 
   virtual bool ComputeCustomOverflow(nsOverflowAreas& aOverflowAreas) override;
 
+  // Update the style of our table wrapper frame.
+  virtual void DoUpdateStyleOfOwnedAnonBoxes(
+    mozilla::ServoStyleSet& aStyleSet,
+    nsStyleChangeList& aChangeList,
+    nsChangeHint aHintForThisFrame) override;
 protected:
 
   /** protected constructor.
@@ -783,10 +785,10 @@ public:
   nsTableCellMap* GetCellMap() const;
 
   /** Iterate over the row groups and adjust the row indices of all rows
-    * whose index is >= aRowIndex.
-    * @param aRowIndex   - start adjusting with this index
-    * @param aAdjustment - shift the row index by this amount
-    */
+   * whose index is >= aRowIndex.
+   * @param aRowIndex   - start adjusting with this index
+   * @param aAdjustment - shift the row index by this amount
+   */
   void AdjustRowIndices(int32_t aRowIndex,
                         int32_t aAdjustment);
 
@@ -805,7 +807,8 @@ protected:
 
   void SetBorderCollapse(bool aValue);
 
-  BCPropertyData* GetBCProperty(bool aCreateIfNecessary = false) const;
+  BCPropertyData* GetBCProperty() const;
+  BCPropertyData* GetOrCreateBCProperty();
   void SetFullBCDamageArea();
   void CalcBCBorders();
 
@@ -847,6 +850,37 @@ public: /* ----- Cell Map public methods ----- */
 
 public:
 
+  /* ---------- Row index management methods ------------ */
+
+  /** Add the given index to the existing ranges of
+   *  deleted row indices and merge ranges if, with the addition of the new
+   *  index, they become consecutive.
+   *  @param aDeletedRowStoredIndex - index of the row that was deleted
+   *  Note - 'stored' index here refers to the index that was assigned to
+   *  the row before any remove row operations were performed i.e. the
+   *  value of mRowIndex and not the value returned by GetRowIndex()
+   */
+  void AddDeletedRowIndex(int32_t aDeletedRowStoredIndex);
+
+  /** Calculate the change that aStoredIndex must be increased/decreased by
+   *  to get new index.
+   *  Note that aStoredIndex is always the index of an undeleted row (since
+   *  rows that have already been deleted can never call this method).
+   *  @param aStoredIndex - The stored index value that must be adjusted
+   *  Note - 'stored' index here refers to the index that was assigned to
+   *  the row before any remove row operations were performed i.e. the
+   *  value of mRowIndex and not the value returned by GetRowIndex()
+   */
+  int32_t GetAdjustmentForStoredIndex(int32_t aStoredIndex);
+
+  /** Returns whether mDeletedRowIndexRanges is empty
+   */
+  bool IsDeletedRowIndexRangesEmpty() const {
+    return mDeletedRowIndexRanges.empty();
+  }
+
+public:
+
 #ifdef DEBUG
   void Dump(bool            aDumpRows,
             bool            aDumpCols,
@@ -877,6 +911,8 @@ protected:
     uint32_t mResizedColumns:1;        // have we resized columns since last reflow?
   } mBits;
 
+  std::map<int32_t, int32_t> mDeletedRowIndexRanges; // maintains ranges of row
+                                                     // indices of deleted rows
   nsTableCellMap*         mCellMap;            // maintains the relationships between rows, cols, and cells
   nsITableLayoutStrategy* mTableLayoutStrategy;// the layout strategy for this frame
   nsFrameList             mColGroups;          // the list of colgroup frames

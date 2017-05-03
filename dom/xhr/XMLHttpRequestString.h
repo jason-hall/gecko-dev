@@ -7,14 +7,13 @@
 #ifndef mozilla_dom_XMLHttpRequestString_h
 #define mozilla_dom_XMLHttpRequestString_h
 
+#include "mozilla/Mutex.h"
 #include "nsString.h"
 
 namespace mozilla {
-
-class Mutex;
-
 namespace dom {
 
+class DOMString;
 class XMLHttpRequestStringBuffer;
 class XMLHttpRequestStringSnapshot;
 class XMLHttpRequestStringWriterHelper;
@@ -118,7 +117,7 @@ public:
     return !mLength;
   }
 
-  MOZ_MUST_USE bool GetAsString(nsAString& aString) const;
+  MOZ_MUST_USE bool GetAsString(DOMString& aString) const;
 
 private:
   XMLHttpRequestStringSnapshot(const XMLHttpRequestStringSnapshot&) = delete;

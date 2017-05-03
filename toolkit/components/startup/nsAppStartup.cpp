@@ -458,11 +458,8 @@ nsAppStartup::Quit(uint32_t aMode)
     // No chance of the shutdown being cancelled from here on; tell people
     // we're shutting down for sure while all services are still available.
     if (obsService) {
-      NS_NAMED_LITERAL_STRING(shutdownStr, "shutdown");
-      NS_NAMED_LITERAL_STRING(restartStr, "restart");
       obsService->NotifyObservers(nullptr, "quit-application",
-        (mRestart || mRestartNotSameProfile) ?
-         restartStr.get() : shutdownStr.get());
+        (mRestart || mRestartNotSameProfile) ? u"restart" : u"shutdown");
     }
 
     if (!mRunning) {
@@ -611,7 +608,7 @@ nsAppStartup::CreateChromeWindow(nsIWebBrowserChrome *aParent,
                                  nsIWebBrowserChrome **_retval)
 {
   bool cancel;
-  return CreateChromeWindow2(aParent, aChromeFlags, 0, nullptr, &cancel, _retval);
+  return CreateChromeWindow2(aParent, aChromeFlags, nullptr, nullptr, &cancel, _retval);
 }
 
 
@@ -633,8 +630,8 @@ nsAppStartup::SetScreenId(uint32_t aScreenId)
 NS_IMETHODIMP
 nsAppStartup::CreateChromeWindow2(nsIWebBrowserChrome *aParent,
                                   uint32_t aChromeFlags,
-                                  uint32_t aContextFlags,
                                   nsITabParent *aOpeningTab,
+                                  mozIDOMWindowProxy* aOpener,
                                   bool *aCancel,
                                   nsIWebBrowserChrome **_retval)
 {
@@ -654,7 +651,7 @@ nsAppStartup::CreateChromeWindow2(nsIWebBrowserChrome *aParent,
     NS_ASSERTION(xulParent, "window created using non-XUL parent. that's unexpected, but may work.");
 
     if (xulParent)
-      xulParent->CreateNewWindow(aChromeFlags, aOpeningTab, getter_AddRefs(newWindow));
+      xulParent->CreateNewWindow(aChromeFlags, aOpeningTab, aOpener, getter_AddRefs(newWindow));
     // And if it fails, don't try again without a parent. It could fail
     // intentionally (bug 115969).
   } else { // try using basic methods:
@@ -671,13 +668,12 @@ nsAppStartup::CreateChromeWindow2(nsIWebBrowserChrome *aParent,
     appShell->CreateTopLevelWindow(0, 0, aChromeFlags,
                                    nsIAppShellService::SIZE_TO_CONTENT,
                                    nsIAppShellService::SIZE_TO_CONTENT,
-                                   aOpeningTab,
+                                   aOpeningTab, aOpener,
                                    getter_AddRefs(newWindow));
   }
 
   // if anybody gave us anything to work with, use it
   if (newWindow) {
-    newWindow->SetContextFlags(aContextFlags);
     nsCOMPtr<nsIInterfaceRequestor> thing(do_QueryInterface(newWindow));
     if (thing)
       CallGetInterface(thing.get(), _retval);
@@ -997,8 +993,8 @@ nsAppStartup::CreateInstanceWithProfile(nsIToolkitProfile* aProfile)
   }
 
   nsCOMPtr<nsIFile> execPath;
-  nsresult rv = NS_NewNativeLocalFile(NS_ConvertUTF16toUTF8(gAbsoluteArgv0Path),
-                                      true, getter_AddRefs(execPath));
+  nsresult rv = NS_NewLocalFile(gAbsoluteArgv0Path,
+                                true, getter_AddRefs(execPath));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }

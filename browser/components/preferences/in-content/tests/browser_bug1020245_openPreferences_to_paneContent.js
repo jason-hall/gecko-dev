@@ -8,11 +8,10 @@ registerCleanupFunction(function() {
 });
 
 add_task(function*() {
-  let prefs = yield openPreferencesViaOpenPreferencesAPI("paneContent");
-  is(prefs.selectedPane, "paneContent", "Content pane was selected");
-  prefs = yield openPreferencesViaOpenPreferencesAPI("advanced", "updateTab");
+  let prefs = yield openPreferencesViaOpenPreferencesAPI("panePrivacy");
+  is(prefs.selectedPane, "panePrivacy", "Privacy pane was selected");
+  prefs = yield openPreferencesViaOpenPreferencesAPI("advanced");
   is(prefs.selectedPane, "paneAdvanced", "Advanced pane was selected");
-  is(prefs.selectedAdvancedTab, "updateTab", "The update tab within the advanced prefs should be selected");
   prefs = yield openPreferencesViaHash("privacy");
   is(prefs.selectedPane, "panePrivacy", "Privacy pane is selected when hash is 'privacy'");
   prefs = yield openPreferencesViaOpenPreferencesAPI("nonexistant-category");
@@ -28,16 +27,14 @@ function openPreferencesViaHash(aPane) {
   gBrowser.selectedTab = gBrowser.addTab("about:preferences" + (aPane ? "#" + aPane : ""));
   let newTabBrowser = gBrowser.selectedBrowser;
 
-  newTabBrowser.addEventListener("Initialized", function PrefInit() {
-    newTabBrowser.removeEventListener("Initialized", PrefInit, true);
-    newTabBrowser.contentWindow.addEventListener("load", function prefLoad() {
-      newTabBrowser.contentWindow.removeEventListener("load", prefLoad);
+  newTabBrowser.addEventListener("Initialized", function() {
+    newTabBrowser.contentWindow.addEventListener("load", function() {
       let win = gBrowser.contentWindow;
       let selectedPane = win.history.state;
       gBrowser.removeCurrentTab();
-      deferred.resolve({selectedPane: selectedPane});
-    });
-  }, true);
+      deferred.resolve({selectedPane});
+    }, {once: true});
+  }, {capture: true, once: true});
 
   return deferred.promise;
 }

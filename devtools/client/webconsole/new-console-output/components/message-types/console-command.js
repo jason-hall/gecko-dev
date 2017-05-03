@@ -18,18 +18,28 @@ ConsoleCommand.displayName = "ConsoleCommand";
 ConsoleCommand.propTypes = {
   message: PropTypes.object.isRequired,
   autoscroll: PropTypes.bool.isRequired,
+  indent: PropTypes.number.isRequired,
+};
+
+ConsoleCommand.defaultProps = {
+  indent: 0,
 };
 
 /**
  * Displays input from the console.
  */
 function ConsoleCommand(props) {
+  const { autoscroll, indent, message } = props;
   const {
     source,
     type,
     level,
     messageText: messageBody,
-  } = props.message;
+  } = message;
+
+  const {
+    serviceContainer,
+  } = props;
 
   const childProps = {
     source,
@@ -37,7 +47,9 @@ function ConsoleCommand(props) {
     level,
     topLevelClasses: [],
     messageBody,
-    scrollToMessage: props.autoscroll,
+    scrollToMessage: autoscroll,
+    serviceContainer,
+    indent: indent,
   };
   return Message(childProps);
 }

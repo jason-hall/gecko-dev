@@ -15,7 +15,10 @@ const {
   isNodeValid,
   moveInfobar,
 } = require("./utils/markup");
-const { setIgnoreLayoutChanges } = require("devtools/shared/layout/utils");
+const {
+  setIgnoreLayoutChanges,
+  getCurrentZoom,
+ } = require("devtools/shared/layout/utils");
 const inspector = require("devtools/server/actors/inspector");
 const nodeConstants = require("devtools/shared/dom-node-constants");
 
@@ -100,6 +103,14 @@ function BoxModelHighlighter(highlighterEnv) {
    * regionFill property: `highlighter.regionFill.margin = "red";
    */
   this.regionFill = {};
+
+  this.onPageHide = this.onPageHide.bind(this);
+  this.onWillNavigate = this.onWillNavigate.bind(this);
+
+  this.highlighterEnv.on("will-navigate", this.onWillNavigate);
+
+  let { pageListenerTarget } = highlighterEnv;
+  pageListenerTarget.addEventListener("pagehide", this.onPageHide);
 }
 
 BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
@@ -111,7 +122,7 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
     let doc = this.win.document;
 
     let highlighterContainer = doc.createElement("div");
-    highlighterContainer.className = "highlighter-container";
+    highlighterContainer.className = "highlighter-container box-model";
 
     // Build the root wrapper, used to adapt to the page zoom.
     let rootWrapper = createNode(this.win, {
@@ -252,8 +263,15 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
    * Destroy the nodes. Remove listeners.
    */
   destroy: function () {
-    AutoRefreshHighlighter.prototype.destroy.call(this);
+    this.highlighterEnv.off("will-navigate", this.onWillNavigate);
+
+    let { pageListenerTarget } = this.highlighterEnv;
+    if (pageListenerTarget) {
+      pageListenerTarget.removeEventListener("pagehide", this.onPageHide);
+    }
+
     this.markup.destroy();
+    AutoRefreshHighlighter.prototype.destroy.call(this);
   },
 
   getElement: function (id) {
@@ -290,7 +308,7 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
    */
   _trackMutations: function () {
     if (isNodeValid(this.currentNode)) {
-      let win = this.currentNode.ownerDocument.defaultView;
+      let win = this.currentNode.ownerGlobal;
       this.currentNodeObserver = new win.MutationObserver(this.update);
       this.currentNodeObserver.observe(this.currentNode, {attributes: true});
     }
@@ -313,9 +331,11 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
     setIgnoreLayoutChanges(true);
 
     if (this._updateBoxModel()) {
-      // Show the infobar only if configured to do so and the node is an element.
-      if (!this.options.hideInfoBar &&
-          this.currentNode.nodeType === this.currentNode.ELEMENT_NODE) {
+      // Show the infobar only if configured to do so and the node is an element or a text
+      // node.
+      if (!this.options.hideInfoBar && (
+          this.currentNode.nodeType === this.currentNode.ELEMENT_NODE ||
+          this.currentNode.nodeType === this.currentNode.TEXT_NODE)) {
         this._showInfobar();
       } else {
         this._hideInfobar();
@@ -327,9 +347,13 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
       this._hide();
     }
 
-    setIgnoreLayoutChanges(false, this.currentNode.ownerDocument.documentElement);
+    setIgnoreLayoutChanges(false, this.highlighterEnv.window.document.documentElement);
 
     return shown;
+  },
+
+  _scrollUpdate: function () {
+    this._moveInfobar();
   },
 
   /**
@@ -342,7 +366,7 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
     this._hideBoxModel();
     this._hideInfobar();
 
-    setIgnoreLayoutChanges(false, this.currentNode.ownerDocument.documentElement);
+    setIgnoreLayoutChanges(false, this.highlighterEnv.window.document.documentElement);
   },
 
   /**
@@ -488,7 +512,7 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
     }
 
     // Un-zoom the root wrapper if the page was zoomed.
-    let rootId = this.ID_CLASS_PREFIX + "root";
+    let rootId = this.ID_CLASS_PREFIX + "elements";
     this.markup.scaleRootElement(this.currentNode, rootId);
 
     return true;
@@ -591,10 +615,10 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
     }
 
     // Move guide into place or hide it if no valid co-ordinate was found.
-    this._updateGuide("top", toShowY[0]);
-    this._updateGuide("right", toShowX[1]);
-    this._updateGuide("bottom", toShowY[1]);
-    this._updateGuide("left", toShowX[0]);
+    this._updateGuide("top", Math.round(toShowY[0]));
+    this._updateGuide("right", Math.round(toShowX[1]) - 1);
+    this._updateGuide("bottom", Math.round(toShowY[1] - 1));
+    this._updateGuide("left", Math.round(toShowX[0]));
   },
 
   _hideGuides: function () {
@@ -657,18 +681,20 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
                     ? "." + [...node.classList].join(".")
                     : "";
 
-    let pseudos = PSEUDO_CLASSES.filter(pseudo => {
-      return hasPseudoClassLock(node, pseudo);
-    }, this).join("");
+    let pseudos = this._getPseudoClasses(node).join("");
     if (pseudo) {
       // Display :after as ::after
       pseudos += ":" + pseudo;
     }
 
-    let rect = this._getOuterQuad("border").bounds;
-    let dim = parseFloat(rect.width.toPrecision(6)) +
+    // We want to display the original `width` and `height`, instead of the ones affected
+    // by any zoom. Since the infobar can be displayed also for text nodes, we can't
+    // access the computed style for that, and this is why we recalculate them here.
+    let zoom = getCurrentZoom(this.win);
+    let { width, height } = this._getOuterQuad("border").bounds;
+    let dim = parseFloat((width / zoom).toPrecision(6)) +
               " \u00D7 " +
-              parseFloat(rect.height.toPrecision(6));
+              parseFloat((height / zoom).toPrecision(6));
 
     this.getElement("infobar-tagname").setTextContent(displayName);
     this.getElement("infobar-id").setTextContent(id);
@@ -679,6 +705,15 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
     this._moveInfobar();
   },
 
+  _getPseudoClasses: function (node) {
+    if (node.nodeType !== nodeConstants.ELEMENT_NODE) {
+      // hasPseudoClassLock can only be used on Elements.
+      return [];
+    }
+
+    return PSEUDO_CLASSES.filter(pseudo => hasPseudoClassLock(node, pseudo));
+  },
+
   /**
    * Move the Infobar to the right place in the highlighter.
    */
@@ -687,6 +722,20 @@ BoxModelHighlighter.prototype = extend(AutoRefreshHighlighter.prototype, {
     let container = this.getElement("infobar-container");
 
     moveInfobar(container, bounds, this.win);
+  },
+
+  onPageHide: function ({ target }) {
+    // If a pagehide event is triggered for current window's highlighter, hide the
+    // highlighter.
+    if (target.defaultView === this.win) {
+      this.hide();
+    }
+  },
+
+  onWillNavigate: function ({ isTopLevel }) {
+    if (isTopLevel) {
+      this.hide();
+    }
   }
 });
 exports.BoxModelHighlighter = BoxModelHighlighter;

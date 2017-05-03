@@ -30,7 +30,8 @@
 #include "mozilla/ReflowOutput.h"
 #include "ImageContainer.h"
 #include "gfx2DGlue.h"
-
+#include "nsStyleConsts.h"
+#include "SVGImageContext.h"
 #include <limits>
 #include <algorithm>
 
@@ -65,7 +66,6 @@ struct nsOverflowAreas;
 namespace mozilla {
 enum class CSSPseudoElementType : uint8_t;
 class EventListenerManager;
-class SVGImageContext;
 struct IntrinsicSize;
 struct ContainerLayerParameters;
 class WritingMode;
@@ -117,6 +117,13 @@ enum class RelativeTo {
   ScrollFrame
 };
 
+// Flags to customize the behavior of nsLayoutUtils::DrawString.
+enum class DrawStringFlags {
+  eDefault         = 0x0,
+  eForceHorizontal = 0x1 // Forces the text to be drawn horizontally.
+};
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(DrawStringFlags)
+
 /**
  * nsLayoutUtils is a namespace class used for various helper
  * functions that are useful in multiple places in layout.  The goal
@@ -152,6 +159,8 @@ public:
   typedef mozilla::CSSRect CSSRect;
   typedef mozilla::ScreenMargin ScreenMargin;
   typedef mozilla::LayoutDeviceIntSize LayoutDeviceIntSize;
+  typedef mozilla::StyleGeometryBox StyleGeometryBox;
+  typedef mozilla::SVGImageContext SVGImageContext;
 
   /**
    * Finds previously assigned ViewID for the given content element, if any.
@@ -187,6 +196,11 @@ public:
    */
   static bool HasDisplayPort(nsIContent* aContent);
 
+  /**
+   * Check if the given element has a margins based displayport but is missing a
+   * displayport base rect that it needs to properly compute a displayport rect.
+   */
+  static bool IsMissingDisplayPortBaseRect(nsIContent* aContent);
 
   /**
    * Go through the IPC Channel and update displayport margins for content
@@ -281,7 +295,7 @@ public:
    * @return the ::before frame or nullptr if there isn't one
    */
   static nsIFrame* GetBeforeFrameForContent(nsIFrame* aGenConParentFrame,
-                                            nsIContent* aContent);
+                                            const nsIContent* aContent);
 
   /**
    * GetBeforeFrame returns the outermost ::before frame of the given frame, if
@@ -304,7 +318,7 @@ public:
    * @return the ::after frame or nullptr if there isn't one
    */
   static nsIFrame* GetAfterFrameForContent(nsIFrame* aGenConParentFrame,
-                                           nsIContent* aContent);
+                                           const nsIContent* aContent);
 
   /**
    * GetAfterFrame returns the outermost ::after frame of the given frame, if one
@@ -803,7 +817,11 @@ public:
     /**
      * When set, return only content in the same document as aFrame.
      */
-    IGNORE_CROSS_DOC = 0x04
+    IGNORE_CROSS_DOC = 0x04,
+    /**
+     * When set, return only content that is actually visible.
+     */
+    ONLY_VISIBLE = 0x08
   };
 
   /**
@@ -1030,7 +1048,7 @@ public:
   /**
    * Return whether any part of aTestRect is inside of the rounded
    * rectangle formed by aBounds and aRadii (which are indexed by the
-   * NS_CORNER_* constants in nsStyleConsts.h). This is precise.
+   * enum HalfCorner constants in gfx/2d/Types.h). This is precise.
    */
   static bool RoundedRectIntersectsRect(const nsRect& aRoundedRect,
                                         const nscoord aRadii[8],
@@ -1197,6 +1215,11 @@ public:
    */
   static void GetAllInFlowRects(nsIFrame* aFrame, nsIFrame* aRelativeTo,
                                 RectCallback* aCallback, uint32_t aFlags = 0);
+
+  static void GetAllInFlowRectsAndTexts(nsIFrame* aFrame, nsIFrame* aRelativeTo,
+                                        RectCallback* aCallback,
+                                        mozilla::dom::Sequence<nsString>* aTextList,
+                                        uint32_t aFlags = 0);
 
   /**
    * Computes the union of all rects returned by GetAllInFlowRects. If
@@ -1373,6 +1396,9 @@ public:
    * width, its 'width', 'min-width', and 'max-width' properties (or 'height'
    * variations if that's what matches aAxis) and its padding, border and margin
    * in the corresponding dimension.
+   * @param aMarginBoxMinSizeClamp make the result fit within this margin-box
+   * size by reducing the *content size* (flooring at zero).  This is used for:
+   * https://drafts.csswg.org/css-grid/#min-size-auto
    */
   enum class IntrinsicISizeType { MIN_ISIZE, PREF_ISIZE };
   static const auto MIN_ISIZE = IntrinsicISizeType::MIN_ISIZE;
@@ -1383,11 +1409,13 @@ public:
     MIN_INTRINSIC_ISIZE = 0x04, // use min-width/height instead of width/height
     ADD_PERCENTS = 0x08, // apply AddPercents also for MIN_ISIZE
   };
-  static nscoord IntrinsicForAxis(mozilla::PhysicalAxis aAxis,
-                                  nsRenderingContext*   aRenderingContext,
-                                  nsIFrame*             aFrame,
-                                  IntrinsicISizeType    aType,
-                                  uint32_t              aFlags = 0);
+  static nscoord
+  IntrinsicForAxis(mozilla::PhysicalAxis aAxis,
+                   nsRenderingContext*   aRenderingContext,
+                   nsIFrame*             aFrame,
+                   IntrinsicISizeType    aType,
+                   uint32_t              aFlags = 0,
+                   nscoord               aMarginBoxMinSizeClamp = NS_MAXSIZE);
   /**
    * Calls IntrinsicForAxis with aFrame's parent's inline physical axis.
    */
@@ -1402,8 +1430,9 @@ public:
    * given axis is vertical), and its padding, border, and margin in the
    * corresponding dimension.  If the 'min-' property is 'auto' (and 'overflow'
    * is 'visible') and the corresponding 'width'/'height' is definite it returns
-   * the "specified / transferred size" for:
+   * the "specified size" for:
    * https://drafts.csswg.org/css-grid/#min-size-auto
+   * Note that the "transferred size" is not handled here; use IntrinsicForAxis.
    * Note that any percentage in 'width'/'height' makes it count as indefinite.
    * If the 'min-' property is 'auto' and 'overflow' is not 'visible', then it
    * calculates the result as if the 'min-' computed value is zero.
@@ -1421,13 +1450,14 @@ public:
   /**
    * This function increases an initial intrinsic size, 'aCurrent', according
    * to the given 'aPercent', such that the size-increase makes up exactly
-   * 'aPercent' percent of the returned value.  If 'aPercent' is less than
-   * or equal to zero the original 'aCurrent' value is returned. If 'aPercent'
-   * is greater than or equal to 1.0 the value nscoord_MAX is returned.
+   * 'aPercent' percent of the returned value.  If 'aPercent' or 'aCurrent' are
+   * less than or equal to zero the original 'aCurrent' value is returned.
+   * If 'aPercent' is greater than or equal to 1.0 the value nscoord_MAX is
+   * returned.
    */
   static nscoord AddPercents(nscoord aCurrent, float aPercent)
   {
-    if (aPercent > 0.0f) {
+    if (aPercent > 0.0f && aCurrent > 0) {
       return MOZ_UNLIKELY(aPercent >= 1.0f) ? nscoord_MAX
         : NSToCoordRound(float(aCurrent) / (1.0f - aPercent));
     }
@@ -1442,14 +1472,6 @@ public:
    */
   static nscoord ComputeCBDependentValue(nscoord aPercentBasis,
                                          const nsStyleCoord& aCoord);
-
-  static nscoord ComputeISizeValue(
-                   nsRenderingContext* aRenderingContext,
-                   nsIFrame*           aFrame,
-                   nscoord             aContainingBlockISize,
-                   nscoord             aContentEdgeToBoxSizing,
-                   nscoord             aBoxSizingToMarginEdge,
-                   const nsStyleCoord& aCoord);
 
   static nscoord ComputeBSizeDependentValue(
                    nscoord              aContainingBlockBSize,
@@ -1521,21 +1543,6 @@ public:
   static void MarkIntrinsicISizesDirtyIfDependentOnBSize(nsIFrame* aFrame);
 
   /*
-   * Calculate the used values for 'width' and 'height' for a replaced element.
-   *
-   *   http://www.w3.org/TR/CSS21/visudet.html#min-max-widths
-   */
-  static mozilla::LogicalSize
-  ComputeSizeWithIntrinsicDimensions(mozilla::WritingMode aWM,
-                    nsRenderingContext* aRenderingContext, nsIFrame* aFrame,
-                    const mozilla::IntrinsicSize& aIntrinsicSize,
-                    nsSize aIntrinsicRatio,
-                    const mozilla::LogicalSize& aCBSize,
-                    const mozilla::LogicalSize& aMargin,
-                    const mozilla::LogicalSize& aBorder,
-                    const mozilla::LogicalSize& aPadding);
-
-  /*
    * Calculate the used values for 'width' and 'height' when width
    * and height are 'auto'. The tentWidth and tentHeight arguments should be
    * the result of applying the rules for computing intrinsic sizes and ratios.
@@ -1553,8 +1560,18 @@ public:
   static nscoord MinISizeFromInline(nsIFrame* aFrame,
                                     nsRenderingContext* aRenderingContext);
 
-  // Get a suitable foreground color for painting aProperty for aFrame.
-  static nscolor GetColor(nsIFrame* aFrame, nsCSSPropertyID aProperty);
+  // Get a suitable foreground color for painting aColor for aFrame.
+  static nscolor DarkenColorIfNeeded(nsIFrame* aFrame, nscolor aColor);
+
+  // Get a suitable foreground color for painting aField for aFrame.
+  // Type of aFrame is made a template parameter because nsIFrame is not
+  // a complete type in the header. Type-safety is not harmed given that
+  // DarkenColorIfNeeded requires an nsIFrame pointer.
+  template<typename Frame, typename T, typename S>
+  static nscolor GetColor(Frame* aFrame, T S::* aField) {
+    nscolor color = aFrame->GetVisitedDependentColor(aField);
+    return DarkenColorIfNeeded(aFrame, color);
+  }
 
   // Get a baseline y position in app units that is snapped to device pixels.
   static gfxFloat GetSnappedBaselineY(nsIFrame* aFrame, gfxContext* aContext,
@@ -1603,13 +1620,14 @@ public:
                                                  nsFontMetrics& aFontMetrics,
                                                  DrawTarget* aDrawTarget);
 
-  static void DrawString(const nsIFrame*       aFrame,
-                         nsFontMetrics&        aFontMetrics,
-                         nsRenderingContext*   aContext,
-                         const char16_t*      aString,
-                         int32_t               aLength,
-                         nsPoint               aPoint,
-                         nsStyleContext*       aStyleContext = nullptr);
+  static void DrawString(const nsIFrame*     aFrame,
+                         nsFontMetrics&      aFontMetrics,
+                         nsRenderingContext* aContext,
+                         const char16_t*     aString,
+                         int32_t             aLength,
+                         nsPoint             aPoint,
+                         nsStyleContext*     aStyleContext = nullptr,
+                         DrawStringFlags     aFlags = DrawStringFlags::eDefault);
 
   /**
    * Supports only LTR or RTL. Bidi (mixed direction) is not supported.
@@ -1720,6 +1738,34 @@ public:
    */
   static SamplingFilter GetSamplingFilterForFrame(nsIFrame* aFrame);
 
+  static inline void InitDashPattern(StrokeOptions& aStrokeOptions,
+                                     uint8_t aBorderStyle) {
+    if (aBorderStyle == NS_STYLE_BORDER_STYLE_DOTTED) {
+      static Float dot[] = { 1.f, 1.f };
+      aStrokeOptions.mDashLength = MOZ_ARRAY_LENGTH(dot);
+      aStrokeOptions.mDashPattern = dot;
+    } else if (aBorderStyle == NS_STYLE_BORDER_STYLE_DASHED) {
+      static Float dash[] = { 5.f, 5.f };
+      aStrokeOptions.mDashLength = MOZ_ARRAY_LENGTH(dash);
+      aStrokeOptions.mDashPattern = dash;
+    } else {
+      aStrokeOptions.mDashLength = 0;
+      aStrokeOptions.mDashPattern = nullptr;
+    }
+  }
+
+  /**
+   * Convert an nsRect to a gfxRect.
+   */
+  static gfxRect RectToGfxRect(const nsRect& aRect,
+                               int32_t aAppUnitsPerDevPixel);
+
+  static gfxPoint PointToGfxPoint(const nsPoint& aPoint,
+                                  int32_t aAppUnitsPerPixel) {
+    return gfxPoint(gfxFloat(aPoint.x) / aAppUnitsPerPixel,
+                    gfxFloat(aPoint.y) / aAppUnitsPerPixel);
+  }
+
   /* N.B. The only difference between variants of the Draw*Image
    * functions below is the type of the aImage argument.
    */
@@ -1762,7 +1808,8 @@ public:
                                         const nsPoint&      aAnchor,
                                         const nsRect&       aDirty,
                                         uint32_t            aImageFlags,
-                                        ExtendMode          aExtendMode);
+                                        ExtendMode          aExtendMode,
+                                        float               aOpacity);
 
   /**
    * Draw an image.
@@ -1787,35 +1834,8 @@ public:
                               const nsRect&       aFill,
                               const nsPoint&      aAnchor,
                               const nsRect&       aDirty,
-                              uint32_t            aImageFlags);
-
-  static inline void InitDashPattern(StrokeOptions& aStrokeOptions,
-                                     uint8_t aBorderStyle) {
-    if (aBorderStyle == NS_STYLE_BORDER_STYLE_DOTTED) {
-      static Float dot[] = { 1.f, 1.f };
-      aStrokeOptions.mDashLength = MOZ_ARRAY_LENGTH(dot);
-      aStrokeOptions.mDashPattern = dot;
-    } else if (aBorderStyle == NS_STYLE_BORDER_STYLE_DASHED) {
-      static Float dash[] = { 5.f, 5.f };
-      aStrokeOptions.mDashLength = MOZ_ARRAY_LENGTH(dash);
-      aStrokeOptions.mDashPattern = dash;
-    } else {
-      aStrokeOptions.mDashLength = 0;
-      aStrokeOptions.mDashPattern = nullptr;
-    }
-  }
-
-  /**
-   * Convert an nsRect to a gfxRect.
-   */
-  static gfxRect RectToGfxRect(const nsRect& aRect,
-                               int32_t aAppUnitsPerDevPixel);
-
-  static gfxPoint PointToGfxPoint(const nsPoint& aPoint,
-                                  int32_t aAppUnitsPerPixel) {
-    return gfxPoint(gfxFloat(aPoint.x) / aAppUnitsPerPixel,
-                    gfxFloat(aPoint.y) / aAppUnitsPerPixel);
-  }
+                              uint32_t            aImageFlags,
+                              float               aOpacity = 1.0);
 
   /**
    * Draw a whole image without scaling or tiling.
@@ -1851,10 +1871,14 @@ public:
    *   @param aImage            The image.
    *   @param aDest             The area that the image should fill.
    *   @param aDirty            Pixels outside this area may be skipped.
-   *   @param aSVGContext       If non-null, SVG-related rendering context
-   *                            such as overridden attributes on the image
-   *                            document's root <svg> node. Ignored for
-   *                            raster images.
+   *   @param aSVGContext       Optionally provides an SVGImageContext.
+   *                            Callers should pass an SVGImageContext with at
+   *                            least the viewport size set if aImage may be of
+   *                            type imgIContainer::TYPE_VECTOR, or pass
+   *                            Nothing() if it is of type
+   *                            imgIContainer::TYPE_RASTER (to save cycles
+   *                            constructing an SVGImageContext, since this
+   *                            argument will be ignored for raster images).
    *   @param aImageFlags       Image flags of the imgIContainer::FLAG_*
    *                            variety.
    *   @param aAnchor           If non-null, a point which we will ensure
@@ -1870,7 +1894,7 @@ public:
                                     const SamplingFilter aSamplingFilter,
                                     const nsRect&       aDest,
                                     const nsRect&       aDirty,
-                                    const mozilla::SVGImageContext* aSVGContext,
+                                    const mozilla::Maybe<SVGImageContext>& aSVGContext,
                                     uint32_t            aImageFlags,
                                     const nsPoint*      aAnchorPoint = nullptr,
                                     const nsRect*       aSourceArea = nullptr);
@@ -1950,7 +1974,7 @@ public:
    * given side.
    */
   static bool HasNonZeroCornerOnSide(const nsStyleCorners& aCorners,
-                                       mozilla::css::Side aSide);
+                                       mozilla::Side aSide);
 
   /**
    * Determine if a widget is likely to require transparency or translucency.
@@ -2230,13 +2254,6 @@ public:
                                         bool clear);
 
   /**
-   * Returns true if the frame has current (i.e. running or scheduled-to-run)
-   * animations or transitions for the property.
-   */
-  static bool HasCurrentAnimationOfProperty(const nsIFrame* aFrame,
-                                            nsCSSPropertyID aProperty);
-
-  /**
    * Returns true if the frame has any current CSS transitions.
    * A current transition is any transition that has not yet finished playing
    * including paused transitions.
@@ -2244,12 +2261,18 @@ public:
   static bool HasCurrentTransitions(const nsIFrame* aFrame);
 
   /**
-   * Returns true if the frame has current or in-effect (i.e. in before phase,
-   * running or filling) animations or transitions for the
-   * property.
+   * Returns true if |aFrame| has an animation of |aProperty| regardless of
+   * whether the property is overridden by !important rule.
    */
-  static bool HasRelevantAnimationOfProperty(const nsIFrame* aFrame,
-                                             nsCSSPropertyID aProperty);
+  static bool HasAnimationOfProperty(const nsIFrame* aFrame,
+                                     nsCSSPropertyID aProperty);
+
+  /**
+   * Returns true if |aFrame| has an animation of |aProperty| which is
+   * not overridden by !important rules.
+   */
+  static bool HasEffectiveAnimation(const nsIFrame* aFrame,
+                                    nsCSSPropertyID aProperty);
 
   /**
    * Checks if off-main-thread animations are enabled.
@@ -2313,14 +2336,6 @@ public:
    * 'true' value is enabled.
    */
   static bool IsTextAlignUnsafeValueEnabled();
-
-  /**
-   * Checks if CSS variables are currently enabled.
-   */
-  static bool CSSVariablesEnabled()
-  {
-    return sCSSVariablesEnabled;
-  }
 
   static bool InterruptibleReflowEnabled()
   {
@@ -2411,6 +2426,22 @@ public:
     return sFontSizeInflationDisabledInMasterProcess;
   }
 
+  /**
+   * See comment above "font.size.systemFontScale" in
+   * modules/libpref/init/all.js.
+   */
+  static float SystemFontScale() {
+    return sSystemFontScale / 100.0f;
+  }
+
+  static float MaxZoom() {
+    return sZoomMaxPercent / 100.0f;
+  }
+
+  static float MinZoom() {
+    return sZoomMinPercent / 100.0f;
+  }
+
   static bool SVGTransformBoxEnabled() {
     return sSVGTransformBoxEnabled;
   }
@@ -2428,6 +2459,18 @@ public:
 #else
     return false;
 #endif
+  }
+
+  static bool StyleAttrWithXMLBaseDisabled() {
+    return sStyleAttrWithXMLBaseDisabled;
+  }
+
+  static uint32_t IdlePeriodDeadlineLimit() {
+    return sIdlePeriodDeadlineLimit;
+  }
+
+  static uint32_t QuiescentFramesBeforeIdlePeriod() {
+    return sQuiescentFramesBeforeIdlePeriod;
   }
 
   /**
@@ -2651,6 +2694,14 @@ public:
   static float GetCurrentAPZResolutionScale(nsIPresShell* aShell);
 
   /**
+   * Returns true if we need to disable async scrolling for this particular
+   * element. Note that this does a partial disabling - the displayport still
+   * exists but uses a very small margin, and the compositor doesn't apply the
+   * async transform. However, the content may still be layerized.
+   */
+  static bool ShouldDisableApzForElement(nsIContent* aContent);
+
+  /**
    * Log a key/value pair for APZ testing during a paint.
    * @param aManager   The data will be written to the APZTestData associated
    *                   with this layer manager.
@@ -2857,6 +2908,22 @@ public:
    */
   static bool SupportsServoStyleBackend(nsIDocument* aDocument);
 
+  /*
+   * Checks whether a node is an invisible break.
+   * If not, returns the first frame on the next line if such a next line exists.
+   *
+   * @return  true if the node is an invisible break.
+   *          aNextLineFrame is returned null in this case.
+   *          false if the node causes a visible break or if the node is no break.
+   *
+   * @param   aNextLineFrame  assigned to first frame on the next line if such a
+   *                          next line exists, null otherwise.
+   */
+  static bool IsInvisibleBreak(nsINode* aNode, nsIFrame** aNextLineFrame = nullptr);
+
+  static nsRect ComputeGeometryBox(nsIFrame* aFrame,
+                                   StyleGeometryBox aGeometryBox);
+
 private:
   static uint32_t sFontSizeInflationEmPerLine;
   static uint32_t sFontSizeInflationMinTwips;
@@ -2865,14 +2932,19 @@ private:
   static uint32_t sFontSizeInflationMaxRatio;
   static bool sFontSizeInflationForceEnabled;
   static bool sFontSizeInflationDisabledInMasterProcess;
+  static uint32_t sSystemFontScale;
+  static uint32_t sZoomMaxPercent;
+  static uint32_t sZoomMinPercent;
   static bool sInvalidationDebuggingIsEnabled;
-  static bool sCSSVariablesEnabled;
   static bool sInterruptibleReflowEnabled;
   static bool sSVGTransformBoxEnabled;
   static bool sTextCombineUprightDigitsEnabled;
 #ifdef MOZ_STYLO
   static bool sStyloEnabled;
 #endif
+  static bool sStyleAttrWithXMLBaseDisabled;
+  static uint32_t sIdlePeriodDeadlineLimit;
+  static uint32_t sQuiescentFramesBeforeIdlePeriod;
 
   /**
    * Helper function for LogTestDataForPaint().

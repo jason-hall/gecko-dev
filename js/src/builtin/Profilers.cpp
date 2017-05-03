@@ -41,9 +41,7 @@ static char gLastError[2000];
 
 #if defined(__APPLE__) || defined(__linux__) || defined(MOZ_CALLGRIND)
 static void
-#ifdef __GNUC__
-__attribute__((format(printf,1,2)))
-#endif
+MOZ_FORMAT_PRINTF(1, 2)
 UnsafeError(const char* format, ...)
 {
     va_list args;
@@ -318,7 +316,7 @@ static bool
 GetMaxGCPauseSinceClear(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setNumber(uint32_t(cx->runtime()->gc.stats.getMaxGCPauseSinceClear()));
+    args.rval().setNumber(cx->runtime()->gc.stats().getMaxGCPauseSinceClear().ToMicroseconds());
     return true;
 }
 
@@ -326,7 +324,7 @@ static bool
 ClearMaxGCPauseAccumulator(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setNumber(uint32_t(cx->runtime()->gc.stats.clearMaxGCPauseAccumulator()));
+    args.rval().setNumber(cx->runtime()->gc.stats().clearMaxGCPauseAccumulator().ToMicroseconds());
     return true;
 }
 

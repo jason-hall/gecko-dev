@@ -30,6 +30,10 @@ protected:
                            const HttpChannelCreationArgs& aOpenArgs) override;
   virtual bool DeallocPHttpChannelChild(PHttpChannelChild*) override;
 
+  virtual PStunAddrsRequestChild* AllocPStunAddrsRequestChild() override;
+  virtual bool
+    DeallocPStunAddrsRequestChild(PStunAddrsRequestChild* aActor) override;
+
   virtual PAltDataOutputStreamChild* AllocPAltDataOutputStreamChild(const nsCString& type, PHttpChannelChild* channel) override;
   virtual bool DeallocPAltDataOutputStreamChild(PAltDataOutputStreamChild* aActor) override;
 
@@ -59,14 +63,10 @@ protected:
                                                 const nsCString& aFilter) override;
   virtual bool DeallocPUDPSocketChild(PUDPSocketChild*) override;
   virtual PDNSRequestChild* AllocPDNSRequestChild(const nsCString& aHost,
+                                                  const OriginAttributes& aOriginAttributes,
                                                   const uint32_t& aFlags,
                                                   const nsCString& aNetworkInterface) override;
   virtual bool DeallocPDNSRequestChild(PDNSRequestChild*) override;
-  virtual PRemoteOpenFileChild*
-    AllocPRemoteOpenFileChild(const SerializedLoadContext& aSerialized,
-                              const URIParams&,
-                              const OptionalURIParams&) override;
-  virtual bool DeallocPRemoteOpenFileChild(PRemoteOpenFileChild*) override;
   virtual PDataChannelChild* AllocPDataChannelChild(const uint32_t& channelId) override;
   virtual bool DeallocPDataChannelChild(PDataChannelChild* child) override;
   virtual PRtspControllerChild* AllocPRtspControllerChild() override;
@@ -83,22 +83,21 @@ protected:
   AllocPTransportProviderChild() override;
   virtual bool
   DeallocPTransportProviderChild(PTransportProviderChild* aActor) override;
-  virtual bool RecvAsyncAuthPromptForNestedFrame(const TabId& aNestedFrameId,
-                                                 const nsCString& aUri,
-                                                 const nsString& aRealm,
-                                                 const uint64_t& aCallbackId) override;
-  virtual bool RecvAppOfflineStatus(const uint32_t& aId, const bool& aOffline) override;
+  virtual mozilla::ipc::IPCResult RecvAsyncAuthPromptForNestedFrame(const TabId& aNestedFrameId,
+                                                                    const nsCString& aUri,
+                                                                    const nsString& aRealm,
+                                                                    const uint64_t& aCallbackId) override;
   virtual PWebSocketEventListenerChild*
     AllocPWebSocketEventListenerChild(const uint64_t& aInnerWindowID) override;
   virtual bool DeallocPWebSocketEventListenerChild(PWebSocketEventListenerChild*) override;
 
   /* Predictor Messsages */
-  virtual bool RecvPredOnPredictPrefetch(const URIParams& aURI,
-                                         const uint32_t& aHttpStatus) override;
-  virtual bool RecvPredOnPredictPreconnect(const URIParams& aURI) override;
-  virtual bool RecvPredOnPredictDNS(const URIParams& aURI) override;
+  virtual mozilla::ipc::IPCResult RecvPredOnPredictPrefetch(const URIParams& aURI,
+                                                            const uint32_t& aHttpStatus) override;
+  virtual mozilla::ipc::IPCResult RecvPredOnPredictPreconnect(const URIParams& aURI) override;
+  virtual mozilla::ipc::IPCResult RecvPredOnPredictDNS(const URIParams& aURI) override;
 
-  virtual bool RecvSpeculativeConnectRequest() override;
+  virtual mozilla::ipc::IPCResult RecvSpeculativeConnectRequest() override;
 };
 
 /**

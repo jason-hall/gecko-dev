@@ -70,7 +70,6 @@ CSS_PSEUDO_CLASS(empty, ":empty", 0, "")
 CSS_PSEUDO_CLASS(mozOnlyWhitespace, ":-moz-only-whitespace", 0, "")
 CSS_PSEUDO_CLASS(mozEmptyExceptChildrenWithLocalname, ":-moz-empty-except-children-with-localname", 0, "")
 CSS_PSEUDO_CLASS(lang, ":lang", 0, "")
-CSS_PSEUDO_CLASS(mozBoundElement, ":-moz-bound-element", 0, "")
 CSS_PSEUDO_CLASS(root, ":root", 0, "")
 CSS_PSEUDO_CLASS(any, ":-moz-any", 0, "")
 
@@ -120,7 +119,8 @@ CSS_PSEUDO_CLASS(mozWindowInactive, ":-moz-window-inactive", 0, "")
 
 // Matches any table elements that have a nonzero border attribute,
 // according to HTML integer attribute parsing rules.
-CSS_PSEUDO_CLASS(mozTableBorderNonzero, ":-moz-table-border-nonzero", 0, "")
+CSS_PSEUDO_CLASS(mozTableBorderNonzero, ":-moz-table-border-nonzero",
+                 CSS_PSEUDO_CLASS_ENABLED_IN_UA_SHEETS, "")
 
 // Matches HTML frame/iframe elements which are mozbrowser.
 CSS_PSEUDO_CLASS(mozBrowserFrame, ":-moz-browser-frame",
@@ -137,9 +137,6 @@ CSS_PSEUDO_CLASS(negation, ":not", 0, "")
 // :dir(ltr) and :dir(rtl) match elements whose resolved
 // directionality in the markup language is ltr or rtl respectively.
 CSS_STATE_DEPENDENT_PSEUDO_CLASS(dir, ":dir", 0, "",
-                                 NS_EVENT_STATE_LTR | NS_EVENT_STATE_RTL)
-// prefix version is deprecated and will be removed per bug 1270406.
-CSS_STATE_DEPENDENT_PSEUDO_CLASS(mozDir, ":-moz-dir", 0, "",
                                  NS_EVENT_STATE_LTR | NS_EVENT_STATE_RTL)
 
 CSS_STATE_PSEUDO_CLASS(link, ":link", 0, "", NS_EVENT_STATE_UNVISITED)
@@ -188,12 +185,6 @@ CSS_STATE_PSEUDO_CLASS(mozUserDisabled, ":-moz-user-disabled",
 CSS_STATE_PSEUDO_CLASS(mozSuppressed, ":-moz-suppressed",
                        CSS_PSEUDO_CLASS_ENABLED_IN_UA_SHEETS_AND_CHROME, "",
                        NS_EVENT_STATE_SUPPRESSED)
-CSS_STATE_PSEUDO_CLASS(mozTypeUnsupported, ":-moz-type-unsupported",
-                       CSS_PSEUDO_CLASS_ENABLED_IN_UA_SHEETS_AND_CHROME, "",
-                       NS_EVENT_STATE_TYPE_UNSUPPORTED)
-CSS_STATE_PSEUDO_CLASS(mozTypeUnsupportedPlatform, ":-moz-type-unsupported-platform",
-                       CSS_PSEUDO_CLASS_ENABLED_IN_UA_SHEETS_AND_CHROME, "",
-                       NS_EVENT_STATE_TYPE_UNSUPPORTED_PLATFORM)
 CSS_STATE_PSEUDO_CLASS(mozHandlerClickToPlay, ":-moz-handler-clicktoplay",
                        CSS_PSEUDO_CLASS_ENABLED_IN_UA_SHEETS_AND_CHROME, "",
                        NS_EVENT_STATE_TYPE_CLICK_TO_PLAY)

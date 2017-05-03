@@ -7,17 +7,17 @@ Support for running spidermonkey jobs via dedicated scripts
 
 from __future__ import absolute_import, print_function, unicode_literals
 
-import time
-from voluptuous import Schema, Required, Optional, Any
+from taskgraph.util.schema import Schema
+from voluptuous import Required, Optional, Any
 
 from taskgraph.transforms.job import run_job_using
 from taskgraph.transforms.job.common import (
     docker_worker_add_public_artifacts,
-    docker_worker_support_vcs_checkout,
+    support_vcs_checkout,
 )
 
 sm_run_schema = Schema({
-    Required('using'): Any('spidermonkey', 'spidermonkey-package'),
+    Required('using'): Any('spidermonkey', 'spidermonkey-package', 'spidermonkey-mozjs-crate'),
 
     # The SPIDERMONKEY_VARIANT
     Required('spidermonkey-variant'): basestring,
@@ -30,6 +30,7 @@ sm_run_schema = Schema({
 
 @run_job_using("docker-worker", "spidermonkey")
 @run_job_using("docker-worker", "spidermonkey-package")
+@run_job_using("docker-worker", "spidermonkey-mozjs-crate")
 def docker_worker_spidermonkey(config, job, taskdesc, schema=sm_run_schema):
     run = job['run']
 
@@ -47,11 +48,11 @@ def docker_worker_spidermonkey(config, job, taskdesc, schema=sm_run_schema):
 
     docker_worker_add_public_artifacts(config, job, taskdesc)
 
-    env = worker['env']
+    env = worker.setdefault('env', {})
     env.update({
         'MOZHARNESS_DISABLE': 'true',
         'SPIDERMONKEY_VARIANT': run['spidermonkey-variant'],
-        'MOZ_BUILD_DATE': time.strftime("%Y%m%d%H%M%S", time.gmtime(config.params['pushdate'])),
+        'MOZ_BUILD_DATE': config.params['moz_build_date'],
         'MOZ_SCM_LEVEL': config.params['level'],
     })
 
@@ -66,11 +67,13 @@ def docker_worker_spidermonkey(config, job, taskdesc, schema=sm_run_schema):
     if run.get('tooltool-manifest'):
         env['TOOLTOOL_MANIFEST'] = run['tooltool-manifest']
 
-    docker_worker_support_vcs_checkout(config, job, taskdesc)
+    support_vcs_checkout(config, job, taskdesc)
 
     script = "build-sm.sh"
     if run['using'] == 'spidermonkey-package':
         script = "build-sm-package.sh"
+    elif run['using'] == 'spidermonkey-mozjs-crate':
+        script = "build-sm-mozjs-crate.sh"
 
     worker['command'] = [
         '/home/worker/bin/run-task',

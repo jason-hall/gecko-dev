@@ -9,7 +9,10 @@ this.EXPORTED_SYMBOLS = ["FormData"];
 const Cu = Components.utils;
 const Ci = Components.interfaces;
 
-Cu.import("resource://gre/modules/XPathGenerator.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "XPathGenerator",
+				  "resource://gre/modules/XPathGenerator.jsm");
 
 /**
  * Returns whether the given URL very likely has input
@@ -82,11 +85,11 @@ function isValidCCNumber(value) {
  * and restore form data for a document and its subframes.
  */
 this.FormData = Object.freeze({
-  collect: function (frame) {
+  collect(frame) {
     return FormDataInternal.collect(frame);
   },
 
-  restoreTree: function (root, data) {
+  restoreTree(root, data) {
     FormDataInternal.restoreTree(root, data);
   }
 });
@@ -118,7 +121,7 @@ var FormDataInternal = {
    * @return object
    *         Form data encoded in an object.
    */
-  collect: function ({document: doc}) {
+  collect({document: doc}) {
     let formNodes = doc.evaluate(
       XPathGenerator.restorableFormNodes,
       doc,
@@ -232,7 +235,7 @@ var FormDataInternal = {
    * @param data (object)
    *        An object holding form data.
    */
-  restore: function ({document: doc}, data) {
+  restore({document: doc}, data) {
     // Don't restore any data for the given frame if the URL
     // stored in the form data doesn't match its current URL.
     if (!data.url || data.url != getDocumentURI(doc)) {
@@ -275,7 +278,7 @@ var FormDataInternal = {
    *        The function used to retrieve the input field belonging to a key
    *        in the given |data| object.
    */
-  restoreManyInputValues: function (data, retrieve) {
+  restoreManyInputValues(data, retrieve) {
     for (let key of Object.keys(data)) {
       let input = retrieve(key);
       if (input) {
@@ -293,7 +296,7 @@ var FormDataInternal = {
    * @param  aValue
    *         Value to set form element to.
    */
-  restoreSingleInputValue: function (aNode, aValue) {
+  restoreSingleInputValue(aNode, aValue) {
     let eventType;
 
     if (typeof aValue == "string" && aNode.type != "file") {
@@ -359,7 +362,7 @@ var FormDataInternal = {
    * @param node (DOMNode)
    * @param type (string)
    */
-  fireEvent: function (node, type) {
+  fireEvent(node, type) {
     let doc = node.ownerDocument;
     let event = doc.createEvent("UIEvents");
     event.initUIEvent(type, true, true, doc.defaultView, 0);
@@ -387,7 +390,7 @@ var FormDataInternal = {
    *          ]
    *        }
    */
-  restoreTree: function (root, data) {
+  restoreTree(root, data) {
     // Don't restore any data for the root frame and its subframes if there
     // is a URL stored in the form data and it doesn't match its current URL.
     if (data.url && data.url != getDocumentURI(root.document)) {

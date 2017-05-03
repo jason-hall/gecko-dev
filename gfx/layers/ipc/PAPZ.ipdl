@@ -46,8 +46,6 @@ sync protocol PAPZ
 
 parent:
 
-  async UpdateHitRegion(nsRegion aRegion);
-
   async __delete__();
 
 child:
@@ -65,6 +63,8 @@ child:
   async NotifyAPZStateChange(ScrollableLayerGuid aGuid, APZStateChange aChange, int aArg);
 
   async NotifyFlushComplete();
+
+  async NotifyAsyncScrollbarDragRejected(ViewID aScrollId);
 
   async Destroy();
 };

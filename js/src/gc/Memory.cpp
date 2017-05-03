@@ -14,6 +14,7 @@
 
 #if defined(XP_WIN)
 
+#include "mozilla/Sprintf.h"
 #include "jswin.h"
 #include <psapi.h>
 
@@ -504,7 +505,8 @@ static inline void*
 MapMemoryAt(void* desired, size_t length, int prot = PROT_READ | PROT_WRITE,
             int flags = MAP_PRIVATE | MAP_ANON, int fd = -1, off_t offset = 0)
 {
-#if defined(__ia64__) || (defined(__sparc64__) && defined(__NetBSD__)) || defined(__aarch64__)
+#if defined(__ia64__) || defined(__aarch64__) || \
+    (defined(__sparc__) && defined(__arch64__) && (defined(__NetBSD__) || defined(__linux__)))
     MOZ_ASSERT((0xffff800000000000ULL & (uintptr_t(desired) + length - 1)) == 0);
 #endif
     void* region = mmap(desired, length, prot, flags, fd, offset);
@@ -793,10 +795,6 @@ void*
 AllocateMappedContent(int fd, size_t offset, size_t length, size_t alignment)
 {
     MOZ_ASSERT(length && alignment);
-	
-	if (pageSize == 0) {
-		InitMemorySubsystem();
-	}
 
     // The allocation granularity and the requested offset
     // must both be divisible by the requested alignment.
@@ -851,10 +849,14 @@ void
 ProtectPages(void* p, size_t size)
 {
     MOZ_ASSERT(size % pageSize == 0);
+    MOZ_RELEASE_ASSERT(size > 0);
+    MOZ_RELEASE_ASSERT(p);
 #if defined(XP_WIN)
     DWORD oldProtect;
-    if (!VirtualProtect(p, size, PAGE_NOACCESS, &oldProtect))
-        MOZ_CRASH("VirtualProtect(PAGE_NOACCESS) failed");
+    if (!VirtualProtect(p, size, PAGE_NOACCESS, &oldProtect)) {
+        MOZ_CRASH_UNSAFE_PRINTF("VirtualProtect(PAGE_NOACCESS) failed! Error code: %lu",
+                                GetLastError());
+    }
     MOZ_ASSERT(oldProtect == PAGE_READWRITE);
 #else  // assume Unix
     if (mprotect(p, size, PROT_NONE))
@@ -866,10 +868,14 @@ void
 MakePagesReadOnly(void* p, size_t size)
 {
     MOZ_ASSERT(size % pageSize == 0);
+    MOZ_RELEASE_ASSERT(size > 0);
+    MOZ_RELEASE_ASSERT(p);
 #if defined(XP_WIN)
     DWORD oldProtect;
-    if (!VirtualProtect(p, size, PAGE_READONLY, &oldProtect))
-        MOZ_CRASH("VirtualProtect(PAGE_READONLY) failed");
+    if (!VirtualProtect(p, size, PAGE_READONLY, &oldProtect)) {
+        MOZ_CRASH_UNSAFE_PRINTF("VirtualProtect(PAGE_READONLY) failed! Error code: %lu",
+                                GetLastError());
+    }
     MOZ_ASSERT(oldProtect == PAGE_READWRITE);
 #else  // assume Unix
     if (mprotect(p, size, PROT_READ))
@@ -881,10 +887,14 @@ void
 UnprotectPages(void* p, size_t size)
 {
     MOZ_ASSERT(size % pageSize == 0);
+    MOZ_RELEASE_ASSERT(size > 0);
+    MOZ_RELEASE_ASSERT(p);
 #if defined(XP_WIN)
     DWORD oldProtect;
-    if (!VirtualProtect(p, size, PAGE_READWRITE, &oldProtect))
-        MOZ_CRASH("VirtualProtect(PAGE_READWRITE) failed");
+    if (!VirtualProtect(p, size, PAGE_READWRITE, &oldProtect)) {
+        MOZ_CRASH_UNSAFE_PRINTF("VirtualProtect(PAGE_READWRITE) failed! Error code: %lu",
+                                GetLastError());
+    }
     MOZ_ASSERT(oldProtect == PAGE_NOACCESS || oldProtect == PAGE_READONLY);
 #else  // assume Unix
     if (mprotect(p, size, PROT_READ | PROT_WRITE))

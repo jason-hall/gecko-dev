@@ -11,6 +11,7 @@
 #include "mozilla/layers/ImageBridgeParent.h" // for ImageBridgeParent
 #include "mozilla/layers/TextureHost.h"       // for TextureHost
 #include "mozilla/layers/TextureForwarder.h"
+#include "mozilla/layers/CompositableForwarder.h"
 
 namespace mozilla {
 namespace layers {
@@ -19,37 +20,20 @@ NS_IMPL_ISUPPORTS(GfxMemoryImageReporter, nsIMemoryReporter)
 
 mozilla::Atomic<ptrdiff_t> GfxMemoryImageReporter::sAmount(0);
 
+/* static */ uint32_t
+CompositableForwarder::GetMaxFileDescriptorsPerMessage() {
+#if defined(OS_POSIX)
+  static const uint32_t kMaxFileDescriptors = FileDescriptorSet::MAX_DESCRIPTORS_PER_MESSAGE;
+#else
+  // default number that works everywhere else
+  static const uint32_t kMaxFileDescriptors = 250;
+#endif
+  return kMaxFileDescriptors;
+}
+
 mozilla::ipc::SharedMemory::SharedMemoryType OptimalShmemType()
 {
   return ipc::SharedMemory::SharedMemoryType::TYPE_BASIC;
-}
-
-void
-HostIPCAllocator::SendFenceHandleIfPresent(PTextureParent* aTexture)
-{
-  RefPtr<TextureHost> texture = TextureHost::AsTextureHost(aTexture);
-  if (!texture) {
-    return;
-  }
-
-  if (!(texture->GetFlags() & TextureFlags::RECYCLE) &&
-     !texture->NeedsFenceHandle()) {
-    return;
-  }
-
-  uint64_t textureId = TextureHost::GetTextureSerial(aTexture);
-
-  // Send a ReleaseFence of CompositorOGL.
-  FenceHandle fence = texture->GetCompositorReleaseFence();
-  if (fence.IsValid()) {
-    mPendingAsyncMessage.push_back(OpDeliverFence(textureId, fence));
-  }
-
-  // Send a ReleaseFence that is set to TextureHost by HwcComposer2D.
-  fence = texture->GetAndResetReleaseFenceHandle();
-  if (fence.IsValid()) {
-    mPendingAsyncMessage.push_back(OpDeliverFence(textureId, fence));
-  }
 }
 
 void

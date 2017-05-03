@@ -164,12 +164,24 @@ EVENT(change,
       eFormChange,
       EventNameType_HTMLXUL,
       eBasicEventClass)
+EVENT(auxclick,
+      eMouseAuxClick,
+      EventNameType_All,
+      eMouseEventClass)
 EVENT(click,
       eMouseClick,
       EventNameType_All,
       eMouseEventClass)
+EVENT(close,
+      eClose,
+      EventNameType_HTML,
+      eBasicEventClass)
 EVENT(contextmenu,
       eContextMenu,
+      EventNameType_HTMLXUL,
+      eMouseEventClass)
+NON_IDL_EVENT(mouselongtap,
+      eMouseLongTap,
       EventNameType_HTMLXUL,
       eMouseEventClass)
 // Not supported yet
@@ -258,22 +270,6 @@ EVENT(mozkeyuponplugin,
       eKeyUpOnPlugin,
       EventNameType_None,
       eKeyboardEventClass)
-NON_IDL_EVENT(mozbrowserbeforekeydown,
-              eBeforeKeyDown,
-              EventNameType_None,
-              eBeforeAfterKeyboardEventClass)
-NON_IDL_EVENT(mozbrowserafterkeydown,
-              eAfterKeyDown,
-              EventNameType_None,
-              eBeforeAfterKeyboardEventClass)
-NON_IDL_EVENT(mozbrowserbeforekeyup,
-              eBeforeKeyUp,
-              EventNameType_None,
-              eBeforeAfterKeyboardEventClass)
-NON_IDL_EVENT(mozbrowserafterkeyup,
-              eAfterKeyUp,
-              EventNameType_None,
-              eBeforeAfterKeyboardEventClass)
 NON_IDL_EVENT(mozaccesskeynotfound,
               eAccessKeyNotFound,
               EventNameType_None,
@@ -499,6 +495,14 @@ FORWARDED_EVENT(focus,
                 eFocus,
                 EventNameType_HTMLXUL,
                 eFocusEventClass)
+FORWARDED_EVENT(focusin,
+                eFocusIn,
+                EventNameType_HTMLXUL,
+                eFocusEventClass)
+FORWARDED_EVENT(focusout,
+                eFocusOut,
+                EventNameType_HTMLXUL,
+                eFocusEventClass)
 FORWARDED_EVENT(load,
                 eLoad,
                 EventNameType_All,
@@ -603,6 +607,14 @@ WINDOW_ONLY_EVENT(devicelight,
                   eDeviceLight,
                   EventNameType_None,
                   eBasicEventClass)
+WINDOW_ONLY_EVENT(vrdisplayactivate,
+                  eVRDisplayActivate,
+                  EventNameType_None,
+                  eBasicEventClass)
+WINDOW_ONLY_EVENT(vrdisplaydeactivate,
+                  eVRDisplayDeactivate,
+                  EventNameType_None,
+                  eBasicEventClass)
 WINDOW_ONLY_EVENT(vrdisplayconnect,
                   eVRDisplayConnect,
                   EventNameType_None,
@@ -616,8 +628,8 @@ WINDOW_ONLY_EVENT(vrdisplaypresentchange,
                   EventNameType_None,
                   eBasicEventClass)
 // Install events as per W3C Manifest spec
-WINDOW_ONLY_EVENT(install,
-                  eInstall,
+WINDOW_ONLY_EVENT(appinstalled,
+                  eAppInstalled,
                   EventNameType_None,
                   eBasicEventClass)
 
@@ -739,11 +751,6 @@ NON_IDL_EVENT(warning,
               EventNameType_None,
               eBasicEventClass)
 
-NON_IDL_EVENT(speakerforcedchange,
-              eSpeakerForcedChange,
-              EventNameType_None,
-              eBasicEventClass)
-
 // Events that only have on* attributes on XUL elements
 
  // "text" event is legacy event for modifying composition string in EditorBase.
@@ -828,19 +835,6 @@ NON_IDL_EVENT(SVGScroll,
               EventNameType_None,
               eBasicEventClass)
 
-NON_IDL_EVENT(SVGZoom,
-              eSVGZoom,
-              EventNameType_None,
-              eSVGZoomEventClass)
-
-// Only map the ID to the real event name when MESSAGE_TO_EVENT is defined.
-#ifndef MESSAGE_TO_EVENT
-// This is a bit hackish, but SVG's event names are weird.
-NON_IDL_EVENT(zoom,
-              eSVGZoom,
-              EventNameType_SVGSVG,
-              eBasicEventClass)
-#endif
 // Only map the ID to the real event name when MESSAGE_TO_EVENT is defined.
 #ifndef MESSAGE_TO_EVENT
 NON_IDL_EVENT(begin,
@@ -885,7 +879,6 @@ NON_IDL_EVENT(MozScrolledAreaChanged,
               EventNameType_None,
               eScrollAreaEventClass)
 
-#ifdef MOZ_GAMEPAD
 NON_IDL_EVENT(gamepadbuttondown,
               eGamepadButtonDown,
               EventNameType_None,
@@ -906,7 +899,6 @@ NON_IDL_EVENT(gamepaddisconnected,
               eGamepadDisconnected,
               EventNameType_None,
               eBasicEventClass)
-#endif
 
 // Simple gesture events
 NON_IDL_EVENT(MozSwipeGestureMayStart,
@@ -975,8 +967,20 @@ NON_IDL_EVENT(MozEdgeUICompleted,
               eSimpleGestureEventClass)
 
 // CSS Transition & Animation events:
+EVENT(transitionstart,
+      eTransitionStart,
+      EventNameType_All,
+      eTransitionEventClass)
+EVENT(transitionrun,
+      eTransitionRun,
+      EventNameType_All,
+      eTransitionEventClass)
 EVENT(transitionend,
       eTransitionEnd,
+      EventNameType_All,
+      eTransitionEventClass)
+EVENT(transitioncancel,
+      eTransitionCancel,
       EventNameType_All,
       eTransitionEventClass)
 EVENT(animationstart,
@@ -989,6 +993,10 @@ EVENT(animationend,
       eAnimationEventClass)
 EVENT(animationiteration,
       eAnimationIteration,
+      EventNameType_All,
+      eAnimationEventClass)
+EVENT(animationcancel,
+      eAnimationCancel,
       EventNameType_All,
       eAnimationEventClass)
 
@@ -1085,4 +1093,3 @@ NON_IDL_EVENT(complete,
 #undef DOCUMENT_ONLY_EVENT
 #undef NON_IDL_EVENT
 #endif /* MESSAGE_TO_EVENT */
-

@@ -4,7 +4,6 @@
 
 Cu.import("resource://gre/modules/Preferences.jsm", this);
 Cu.import("resource://gre/modules/Promise.jsm", this);
-Cu.import("resource://gre/modules/Task.jsm", this);
 Cu.import("resource://gre/modules/TelemetryArchive.jsm", this);
 Cu.import("resource://gre/modules/TelemetryController.jsm", this);
 Cu.import("resource://gre/modules/TelemetryEnvironment.jsm", this);
@@ -26,19 +25,19 @@ XPCOMUtils.defineLazyGetter(this, "DATAREPORTING_PATH", function() {
   return OS.Path.join(OS.Constants.Path.profileDir, "datareporting");
 });
 
-var promiseValidateArchivedPings = Task.async(function*(aExpectedReasons) {
+var promiseValidateArchivedPings = async function(aExpectedReasons) {
   // The list of ping reasons which mark the session end (and must reset the subsession
   // count).
   const SESSION_END_PING_REASONS = new Set([ REASON_ABORTED_SESSION, REASON_SHUTDOWN ]);
 
-  let list = yield TelemetryArchive.promiseArchivedPingList();
+  let list = await TelemetryArchive.promiseArchivedPingList();
 
   // We're just interested in the "main" pings.
   list = list.filter(p => p.type == "main");
 
   Assert.equal(aExpectedReasons.length, list.length, "All the expected pings must be received.");
 
-  let previousPing = yield TelemetryArchive.promiseArchivedPingById(list[0].id);
+  let previousPing = await TelemetryArchive.promiseArchivedPingById(list[0].id);
   Assert.equal(aExpectedReasons.shift(), previousPing.payload.info.reason,
                "Telemetry should only get pings with expected reasons.");
   Assert.equal(previousPing.payload.info.previousSessionId, null,
@@ -54,7 +53,7 @@ var promiseValidateArchivedPings = Task.async(function*(aExpectedReasons) {
   let expectedPreviousSessionId = previousPing.payload.info.sessionId;
 
   for (let i = 1; i < list.length; i++) {
-    let currentPing = yield TelemetryArchive.promiseArchivedPingById(list[i].id);
+    let currentPing = await TelemetryArchive.promiseArchivedPingById(list[i].id);
     let currentInfo = currentPing.payload.info;
     let previousInfo = previousPing.payload.info;
     do_print("Archive entry " + i + " - id: " + currentPing.id + ", reason: " + currentInfo.reason);
@@ -82,7 +81,7 @@ var promiseValidateArchivedPings = Task.async(function*(aExpectedReasons) {
       expectedSubsessionCounter++;
     }
   }
-});
+};
 
 add_task(function* test_setup() {
   do_test_pending();
@@ -111,10 +110,12 @@ add_task(function* test_subsessionsChaining() {
   // Fake the clock data to manually trigger an aborted-session ping and a daily ping.
   // This is also helpful to make sure we get the archived pings in an expected order.
   let now = fakeNow(2009, 9, 18, 0, 0, 0);
+  let monotonicNow = fakeMonotonicNow(1000);
 
   let moveClockForward = (minutes) => {
-    now = futureDate(now, minutes * MILLISECONDS_PER_MINUTE);
-    fakeNow(now);
+    let ms = minutes * MILLISECONDS_PER_MINUTE;
+    now = fakeNow(futureDate(now, ms));
+    monotonicNow = fakeMonotonicNow(monotonicNow + ms);
   }
 
   // Keep track of the ping reasons we're expecting in this test.

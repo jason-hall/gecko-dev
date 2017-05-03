@@ -34,14 +34,14 @@ nsLeafFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
 
 /* virtual */
 LogicalSize
-nsLeafFrame::ComputeAutoSize(nsRenderingContext *aRenderingContext,
-                             WritingMode aWM,
-                             const LogicalSize& aCBSize,
-                             nscoord aAvailableISize,
-                             const LogicalSize& aMargin,
-                             const LogicalSize& aBorder,
-                             const LogicalSize& aPadding,
-                             bool aShrinkWrap)
+nsLeafFrame::ComputeAutoSize(nsRenderingContext* aRenderingContext,
+                             WritingMode         aWM,
+                             const LogicalSize&  aCBSize,
+                             nscoord             aAvailableISize,
+                             const LogicalSize&  aMargin,
+                             const LogicalSize&  aBorder,
+                             const LogicalSize&  aPadding,
+                             ComputeSizeFlags    aFlags)
 {
   const WritingMode wm = GetWritingMode();
   LogicalSize result(wm, GetIntrinsicISize(), GetIntrinsicBSize());
@@ -85,7 +85,7 @@ nsLeafFrame::DoReflow(nsPresContext* aPresContext,
   WritingMode wm = aReflowInput.GetWritingMode();
   aMetrics.SetSize(wm, aReflowInput.ComputedSizeWithBorderPadding());
 
-  aStatus = NS_FRAME_COMPLETE;
+  aStatus.Reset();
 
   NS_FRAME_TRACE(NS_FRAME_TRACE_CALLS,
                  ("exit nsLeafFrame::DoReflow: size=%d,%d",

@@ -21,6 +21,7 @@
 #include "nsIWeakReference.h"             // base class
 #include "nsNodeUtils.h"                  // class member nsNodeUtils::CloneNodeImpl
 #include "nsIHTMLCollection.h"
+#include "nsDataHashtable.h"
 
 class ContentUnbinder;
 class nsContentList;
@@ -33,7 +34,10 @@ class nsDOMStringMap;
 class nsIURI;
 
 namespace mozilla {
+class DeclarationBlock;
 namespace dom {
+struct CustomElementData;
+class DOMIntersectionObserver;
 class Element;
 } // namespace dom
 } // namespace mozilla
@@ -101,7 +105,6 @@ namespace mozilla {
 namespace dom {
 
 class ShadowRoot;
-class UndoManager;
 
 class FragmentOrElement : public nsIContent
 {
@@ -122,7 +125,7 @@ public:
                                  bool aNotify) override;
   virtual void RemoveChildAt(uint32_t aIndex, bool aNotify) override;
   virtual void GetTextContentInternal(nsAString& aTextContent,
-                                      mozilla::ErrorResult& aError) override;
+                                      mozilla::OOMReporter& aError) override;
   virtual void SetTextContentInternal(const nsAString& aTextContent,
                                       mozilla::ErrorResult& aError) override;
 
@@ -140,6 +143,7 @@ public:
   virtual nsresult AppendText(const char16_t* aBuffer, uint32_t aLength,
                               bool aNotify) override;
   virtual bool TextIsOnlyWhitespace() override;
+  virtual bool ThreadSafeTextIsOnlyWhitespace() const override;
   virtual bool HasTextForTranslation() override;
   virtual void AppendTextTo(nsAString& aResult) override;
   MOZ_MUST_USE
@@ -155,9 +159,6 @@ public:
   virtual nsIContent *GetXBLInsertionParent() const override;
   virtual void SetXBLInsertionParent(nsIContent* aContent) override;
   virtual bool IsLink(nsIURI** aURI) const override;
-
-  virtual CustomElementData *GetCustomElementData() const override;
-  virtual void SetCustomElementData(CustomElementData* aData) override;
 
   virtual void DestroyContent() override;
   virtual void SaveSubtreeState() override;
@@ -273,12 +274,6 @@ public:
     nsDOMStringMap* mDataset; // [Weak]
 
     /**
-     * The .undoManager property.
-     * @see nsGenericHTMLElement::GetUndoManager
-     */
-    RefPtr<UndoManager> mUndoManager;
-
-    /**
      * SMIL Overridde style rules (for SMIL animation of CSS properties)
      * @see nsIContent::GetSMILOverrideStyle
      */
@@ -287,7 +282,7 @@ public:
     /**
      * Holds any SMIL override style declaration for this element.
      */
-    RefPtr<mozilla::css::Declaration> mSMILOverrideStyleDeclaration;
+    RefPtr<mozilla::DeclarationBlock> mSMILOverrideStyleDeclaration;
 
     /**
      * An object implementing nsIDOMMozNamedAttrMap for this content (attributes)
@@ -348,6 +343,12 @@ public:
      * Web components custom element data.
      */
     RefPtr<CustomElementData> mCustomElementData;
+
+    /**
+     * Registered Intersection Observers on the element.
+     */
+    nsDataHashtable<nsRefPtrHashKey<DOMIntersectionObserver>, int32_t>
+      mRegisteredIntersectionObservers;
   };
 
 protected:

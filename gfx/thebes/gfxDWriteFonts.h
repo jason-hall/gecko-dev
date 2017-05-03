@@ -17,19 +17,24 @@
 #include "nsDataHashtable.h"
 #include "nsHashKeys.h"
 
+#include "mozilla/gfx/UnscaledFontDWrite.h"
+
 /**
  * \brief Class representing a font face for a font entry.
  */
 class gfxDWriteFont : public gfxFont 
 {
 public:
-    gfxDWriteFont(gfxFontEntry *aFontEntry,
+    gfxDWriteFont(const RefPtr<mozilla::gfx::UnscaledFontDWrite>& aUnscaledFont,
+                  gfxFontEntry *aFontEntry,
                   const gfxFontStyle *aFontStyle,
                   bool aNeedsBold = false,
                   AntialiasOption = kAntialiasDefault);
     ~gfxDWriteFont();
 
-    virtual gfxFont*
+    static void UpdateClearTypeUsage();
+
+    mozilla::UniquePtr<gfxFont>
     CopyWithAntialiasOption(AntialiasOption anAAOption) override;
 
     virtual uint32_t GetSpaceGlyph() override;
@@ -88,8 +93,6 @@ protected:
     bool GetForceGDIClassic();
 
     RefPtr<IDWriteFontFace> mFontFace;
-    RefPtr<IDWriteFont> mFont;
-    RefPtr<IDWriteFontFamily> mFontFamily;
     cairo_font_face_t *mCairoFontFace;
 
     Metrics *mMetrics;
@@ -104,6 +107,7 @@ protected:
     bool mUseSubpixelPositions;
     bool mAllowManualShowGlyphs;
     bool mAzureScaledFontIsCairo;
+    static bool mUseClearType;
 };
 
 #endif

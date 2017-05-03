@@ -20,15 +20,22 @@ namespace mozilla {
 namespace layers {
 class PTextureParent;
 }
+namespace dom {
+enum class GamepadMappingType : uint8_t;
+enum class GamepadHand : uint8_t;
+struct GamepadPoseState;
+}
 namespace gfx {
 class VRLayerParent;
 class VRDisplayHost;
+class VRControllerHost;
 
-enum class VRDisplayType : uint16_t {
+enum class VRDeviceType : uint16_t {
   Oculus,
   OpenVR,
   OSVR,
-  NumVRDisplayTypes
+  Puppet,
+  NumVRDeviceTypes
 };
 
 enum class VRDisplayCapabilityFlags : uint16_t {
@@ -73,9 +80,14 @@ enum class VRDisplayCapabilityFlags : uint16_t {
    */
   Cap_StageParameters = 1 << 7,
   /**
+   * Cap_MountDetection is set if the VRDisplay is capable of sensing when the
+   * user is wearing the device.
+   */
+  Cap_MountDetection = 1 << 8,
+  /**
    * Cap_All used for validity checking during IPC serialization
    */
-  Cap_All = (1 << 8) - 1
+  Cap_All = (1 << 9) - 1
 };
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(VRDisplayCapabilityFlags)
@@ -112,7 +124,7 @@ struct VRFieldOfView {
       leftDegrees == 0.0;
   }
 
-  Matrix4x4 ConstructProjectionMatrix(float zNear, float zFar, bool rightHanded);
+  Matrix4x4 ConstructProjectionMatrix(float zNear, float zFar, bool rightHanded) const;
 
   double upDegrees;
   double rightDegrees;
@@ -122,7 +134,7 @@ struct VRFieldOfView {
 
 struct VRDisplayInfo
 {
-  VRDisplayType GetType() const { return mType; }
+  VRDeviceType GetType() const { return mType; }
   uint32_t GetDisplayID() const { return mDisplayID; }
   const nsCString& GetDisplayName() const { return mDisplayName; }
   VRDisplayCapabilityFlags GetCapabilities() const { return mCapabilityFlags; }
@@ -131,6 +143,7 @@ struct VRDisplayInfo
   const Point3D& GetEyeTranslation(uint32_t whichEye) const { return mEyeTranslation[whichEye]; }
   const VRFieldOfView& GetEyeFOV(uint32_t whichEye) const { return mEyeFOV[whichEye]; }
   bool GetIsConnected() const { return mIsConnected; }
+  bool GetIsMounted() const { return mIsMounted; }
   bool GetIsPresenting() const { return mIsPresenting; }
   const Size& GetStageSize() const { return mStageSize; }
   const Matrix4x4& GetSittingToStandingTransform() const { return mSittingToStandingTransform; }
@@ -142,13 +155,14 @@ struct VRDisplayInfo
   };
 
   uint32_t mDisplayID;
-  VRDisplayType mType;
+  VRDeviceType mType;
   nsCString mDisplayName;
   VRDisplayCapabilityFlags mCapabilityFlags;
   VRFieldOfView mEyeFOV[VRDisplayInfo::NumEyes];
   Point3D mEyeTranslation[VRDisplayInfo::NumEyes];
   IntSize mEyeResolution;
   bool mIsConnected;
+  bool mIsMounted;
   bool mIsPresenting;
   Size mStageSize;
   Matrix4x4 mSittingToStandingTransform;
@@ -160,6 +174,7 @@ struct VRDisplayInfo
            mCapabilityFlags == other.mCapabilityFlags &&
            mEyeResolution == other.mEyeResolution &&
            mIsConnected == other.mIsConnected &&
+           mIsMounted == other.mIsMounted &&
            mIsPresenting == other.mIsPresenting &&
            mEyeFOV[0] == other.mEyeFOV[0] &&
            mEyeFOV[1] == other.mEyeFOV[1] &&
@@ -190,7 +205,43 @@ struct VRHMDSensorState {
   }
 };
 
-class VRDisplayManager {
+struct VRControllerInfo
+{
+  VRDeviceType GetType() const { return mType; }
+  uint32_t GetControllerID() const { return mControllerID; }
+  const nsCString& GetControllerName() const { return mControllerName; }
+  dom::GamepadMappingType GetMappingType() const { return mMappingType; }
+  dom::GamepadHand GetHand() const { return mHand; }
+  uint32_t GetNumButtons() const { return mNumButtons; }
+  uint32_t GetNumAxes() const { return mNumAxes; }
+  uint32_t GetNumHaptics() const { return mNumHaptics; }
+
+  uint32_t mControllerID;
+  VRDeviceType mType;
+  nsCString mControllerName;
+  dom::GamepadMappingType mMappingType;
+  dom::GamepadHand mHand;
+  uint32_t mNumButtons;
+  uint32_t mNumAxes;
+  uint32_t mNumHaptics;
+
+  bool operator==(const VRControllerInfo& other) const {
+    return mType == other.mType &&
+           mControllerID == other.mControllerID &&
+           mControllerName == other.mControllerName &&
+           mMappingType == other.mMappingType &&
+           mHand == other.mHand &&
+           mNumButtons == other.mNumButtons &&
+           mNumAxes == other.mNumAxes &&
+           mNumHaptics == other.mNumHaptics;
+  }
+
+  bool operator!=(const VRControllerInfo& other) const {
+    return !(*this == other);
+  }
+};
+
+class VRSystemManager {
 public:
   static uint32_t AllocateDisplayID();
 
@@ -198,15 +249,31 @@ protected:
   static Atomic<uint32_t> sDisplayBase;
 
 public:
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(VRDisplayManager)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(VRSystemManager)
 
-  virtual bool Init() = 0;
   virtual void Destroy() = 0;
+  virtual void Shutdown() = 0;
   virtual void GetHMDs(nsTArray<RefPtr<VRDisplayHost>>& aHMDResult) = 0;
+  virtual bool GetIsPresenting() = 0;
+  virtual void HandleInput() = 0;
+  virtual void GetControllers(nsTArray<RefPtr<VRControllerHost>>& aControllerResult) = 0;
+  virtual void ScanForControllers() = 0;
+  virtual void RemoveControllers() = 0;
+  virtual void VibrateHaptic(uint32_t aControllerIdx, uint32_t aHapticIndex,
+                             double aIntensity, double aDuration, uint32_t aPromiseID) = 0;
+  virtual void StopVibrateHaptic(uint32_t aControllerIdx) = 0;
+  void NewButtonEvent(uint32_t aIndex, uint32_t aButton, bool aPressed, bool aTouched,
+                      double aValue);
+  void NewAxisMove(uint32_t aIndex, uint32_t aAxis, double aValue);
+  void NewPoseState(uint32_t aIndex, const dom::GamepadPoseState& aPose);
+  void AddGamepad(const VRControllerInfo& controllerInfo);
+  void RemoveGamepad(uint32_t aIndex);
 
 protected:
-  VRDisplayManager() { }
-  virtual ~VRDisplayManager() { }
+  VRSystemManager() : mControllerCount(0) { }
+  virtual ~VRSystemManager() { }
+
+  uint32_t mControllerCount;
 };
 
 } // namespace gfx

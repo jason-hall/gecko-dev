@@ -5,16 +5,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/SystemGroup.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/ChannelDiverterChild.h"
 #include "mozilla/net/FTPChannelChild.h"
+#include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/TabChild.h"
+#include "nsContentUtils.h"
 #include "nsFtpProtocolHandler.h"
 #include "nsITabChild.h"
 #include "nsStringStream.h"
 #include "nsNetUtil.h"
 #include "base/compiler_specific.h"
-#include "mozilla/ipc/InputStreamUtils.h"
+#include "mozilla/ipc/IPCStreamUtils.h"
 #include "mozilla/ipc/URIUtils.h"
 #include "SerializedLoadContext.h"
 #include "mozilla/ipc/BackgroundUtils.h"
@@ -40,7 +44,7 @@ FTPChannelChild::FTPChannelChild(nsIURI* uri)
 , mFlushedForDiversion(false)
 , mSuspendSent(false)
 {
-  LOG(("Creating FTPChannelChild @%x\n", this));
+  LOG(("Creating FTPChannelChild @%p\n", this));
   // grab a reference to the handler to ensure that it doesn't go away.
   NS_ADDREF(gFtpHandler);
   SetURI(uri);
@@ -53,7 +57,7 @@ FTPChannelChild::FTPChannelChild(nsIURI* uri)
 
 FTPChannelChild::~FTPChannelChild()
 {
-  LOG(("Destroying FTPChannelChild @%x\n", this));
+  LOG(("Destroying FTPChannelChild @%p\n", this));
   gFtpHandler->Release();
 }
 
@@ -182,22 +186,23 @@ FTPChannelChild::AsyncOpen(::nsIStreamListener* listener, nsISupports* aContext)
   if (mLoadGroup)
     mLoadGroup->AddRequest(this, nullptr);
 
-  OptionalInputStreamParams uploadStream;
-  nsTArray<mozilla::ipc::FileDescriptor> fds;
-  SerializeInputStream(mUploadStream, uploadStream, fds);
-
-  MOZ_ASSERT(fds.IsEmpty());
+  mozilla::ipc::AutoIPCStream autoStream;
+  autoStream.Serialize(mUploadStream,
+                       static_cast<mozilla::dom::ContentChild*>(gNeckoChild->Manager()));
 
   FTPChannelOpenArgs openArgs;
   SerializeURI(nsBaseChannel::URI(), openArgs.uri());
   openArgs.startPos() = mStartPos;
   openArgs.entityID() = mEntityID;
-  openArgs.uploadStream() = uploadStream;
+  openArgs.uploadStream() = autoStream.TakeOptionalValue();
 
   nsCOMPtr<nsILoadInfo> loadInfo;
   GetLoadInfo(getter_AddRefs(loadInfo));
   rv = mozilla::ipc::LoadInfoToLoadInfoArgs(loadInfo, &openArgs.loadInfo());
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // This must happen before the constructor message is sent.
+  EnsureNeckoTarget();
 
   gNeckoChild->
     SendPFTPChannelConstructor(this, tabChild, IPC::SerializedLoadContext(this),
@@ -225,7 +230,7 @@ FTPChannelChild::OpenContentStream(bool async,
                                    nsIInputStream** stream,
                                    nsIChannel** channel)
 {
-  NS_RUNTIMEABORT("FTPChannel*Child* should never have OpenContentStream called!");
+  MOZ_CRASH("FTPChannel*Child* should never have OpenContentStream called!");
   return NS_OK;
 }
   
@@ -258,6 +263,12 @@ public:
                              mLastModified, mEntityID, mURI);
   }
 
+  already_AddRefed<nsIEventTarget> GetEventTarget()
+  {
+    MOZ_ASSERT(mChild);
+    nsCOMPtr<nsIEventTarget> target = mChild->GetNeckoTarget();
+    return target.forget();
+  }
 private:
   FTPChannelChild* mChild;
   nsresult mChannelStatus;
@@ -268,7 +279,7 @@ private:
   URIParams mURI;
 };
 
-bool
+mozilla::ipc::IPCResult
 FTPChannelChild::RecvOnStartRequest(const nsresult& aChannelStatus,
                                     const int64_t& aContentLength,
                                     const nsCString& aContentType,
@@ -289,7 +300,7 @@ FTPChannelChild::RecvOnStartRequest(const nsresult& aChannelStatus,
                                                  aContentLength, aContentType,
                                                  aLastModified, aEntityID,
                                                  aURI));
-  return true;
+  return IPC_OK();
 }
 
 void
@@ -364,6 +375,12 @@ public:
     mChild->DoOnDataAvailable(mChannelStatus, mData, mOffset, mCount);
   }
 
+  already_AddRefed<nsIEventTarget> GetEventTarget()
+  {
+    MOZ_ASSERT(mChild);
+    nsCOMPtr<nsIEventTarget> target = mChild->GetNeckoTarget();
+    return target.forget();
+  }
 private:
   FTPChannelChild* mChild;
   nsresult mChannelStatus;
@@ -372,7 +389,7 @@ private:
   uint32_t mCount;
 };
 
-bool
+mozilla::ipc::IPCResult
 FTPChannelChild::RecvOnDataAvailable(const nsresult& channelStatus,
                                      const nsCString& data,
                                      const uint64_t& offset,
@@ -387,7 +404,7 @@ FTPChannelChild::RecvOnDataAvailable(const nsresult& channelStatus,
                                                   offset, count),
                         mDivertingToParent);
 
-  return true;
+  return IPC_OK();
 }
 
 class MaybeDivertOnDataFTPEvent : public ChannelEvent
@@ -407,6 +424,12 @@ class MaybeDivertOnDataFTPEvent : public ChannelEvent
     mChild->MaybeDivertOnData(mData, mOffset, mCount);
   }
 
+  already_AddRefed<nsIEventTarget> GetEventTarget()
+  {
+    MOZ_ASSERT(mChild);
+    nsCOMPtr<nsIEventTarget> target = mChild->GetNeckoTarget();
+    return target.forget();
+  }
  private:
   FTPChannelChild* mChild;
   nsCString mData;
@@ -493,6 +516,10 @@ public:
     mChild->DoOnStopRequest(mChannelStatus, mErrorMsg, mUseUTF8);
   }
 
+  already_AddRefed<nsIEventTarget> GetEventTarget()
+  {
+    return do_GetMainThread();
+  }
 private:
   FTPChannelChild* mChild;
   nsresult mChannelStatus;
@@ -500,7 +527,7 @@ private:
   bool mUseUTF8;
 };
 
-bool
+mozilla::ipc::IPCResult
 FTPChannelChild::RecvOnStopRequest(const nsresult& aChannelStatus,
                                    const nsCString &aErrorMsg,
                                    const bool &aUseUTF8)
@@ -508,27 +535,26 @@ FTPChannelChild::RecvOnStopRequest(const nsresult& aChannelStatus,
   MOZ_RELEASE_ASSERT(!mFlushedForDiversion,
     "Should not be receiving any more callbacks from parent!");
 
-  LOG(("FTPChannelChild::RecvOnStopRequest [this=%p status=%x]\n",
-       this, aChannelStatus));
+  LOG(("FTPChannelChild::RecvOnStopRequest [this=%p status=%" PRIx32"]\n",
+       this, static_cast<uint32_t>(aChannelStatus)));
 
   mEventQ->RunOrEnqueue(new FTPStopRequestEvent(this, aChannelStatus, aErrorMsg,
                                                 aUseUTF8));
-  return true;
+  return IPC_OK();
 }
 
 class nsFtpChildAsyncAlert : public Runnable
 {
 public:
   nsFtpChildAsyncAlert(nsIPrompt *aPrompter, nsString aResponseMsg)
-    : mPrompter(aPrompter)
+    : Runnable("nsFtpChildAsyncAlert")
+    , mPrompter(aPrompter)
     , mResponseMsg(aResponseMsg)
   {
-    MOZ_COUNT_CTOR(nsFtpChildAsyncAlert);
   }
 protected:
   virtual ~nsFtpChildAsyncAlert()
   {
-    MOZ_COUNT_DTOR(nsFtpChildAsyncAlert);
   }
 public:
   NS_IMETHOD Run() override
@@ -556,6 +582,12 @@ class MaybeDivertOnStopFTPEvent : public ChannelEvent
     mChild->MaybeDivertOnStop(mChannelStatus);
   }
 
+  already_AddRefed<nsIEventTarget> GetEventTarget()
+  {
+    MOZ_ASSERT(mChild);
+    nsCOMPtr<nsIEventTarget> target = mChild->GetNeckoTarget();
+    return target.forget();
+  }
  private:
   FTPChannelChild* mChild;
   nsresult mChannelStatus;
@@ -574,8 +606,8 @@ FTPChannelChild::DoOnStopRequest(const nsresult& aChannelStatus,
                                  const nsCString &aErrorMsg,
                                  bool aUseUTF8)
 {
-  LOG(("FTPChannelChild::DoOnStopRequest [this=%p status=%x]\n",
-       this, aChannelStatus));
+  LOG(("FTPChannelChild::DoOnStopRequest [this=%p status=%" PRIx32 "]\n",
+       this, static_cast<uint32_t>(aChannelStatus)));
 
   if (mDivertingToParent) {
     MOZ_RELEASE_ASSERT(!mFlushedForDiversion,
@@ -611,7 +643,16 @@ FTPChannelChild::DoOnStopRequest(const nsresult& aChannelStatus,
           alertEvent = new nsFtpChildAsyncAlert(prompter,
                              NS_ConvertASCIItoUTF16(aErrorMsg));
         }
-        NS_DispatchToMainThread(alertEvent);
+
+        if (mNeckoTarget) {
+          mNeckoTarget->Dispatch(alertEvent.forget(),
+                                 nsIEventTarget::DISPATCH_NORMAL);
+        } else {
+          // In case |mNeckoTarget| is null, dispatch by SystemGroup.
+          SystemGroup::Dispatch("FTPAlertEvent",
+                                TaskCategory::Other,
+                                alertEvent.forget());
+        }
       }
     }
 
@@ -633,25 +674,32 @@ class FTPFailedAsyncOpenEvent : public ChannelEvent
   FTPFailedAsyncOpenEvent(FTPChannelChild* aChild, nsresult aStatus)
   : mChild(aChild), mStatus(aStatus) {}
   void Run() { mChild->DoFailedAsyncOpen(mStatus); }
+
+  already_AddRefed<nsIEventTarget> GetEventTarget()
+  {
+    MOZ_ASSERT(mChild);
+    nsCOMPtr<nsIEventTarget> target = mChild->GetNeckoTarget();
+    return target.forget();
+  }
  private:
   FTPChannelChild* mChild;
   nsresult mStatus;
 };
 
-bool
+mozilla::ipc::IPCResult
 FTPChannelChild::RecvFailedAsyncOpen(const nsresult& statusCode)
 {
-  LOG(("FTPChannelChild::RecvFailedAsyncOpen [this=%p status=%x]\n",
-       this, statusCode));
+  LOG(("FTPChannelChild::RecvFailedAsyncOpen [this=%p status=%" PRIx32 "]\n",
+       this, static_cast<uint32_t>(statusCode)));
   mEventQ->RunOrEnqueue(new FTPFailedAsyncOpenEvent(this, statusCode));
-  return true;
+  return IPC_OK();
 }
 
 void
 FTPChannelChild::DoFailedAsyncOpen(const nsresult& statusCode)
 {
-  LOG(("FTPChannelChild::DoFailedAsyncOpen [this=%p status=%x]\n",
-       this, statusCode));
+  LOG(("FTPChannelChild::DoFailedAsyncOpen [this=%p status=%" PRIx32 "]\n",
+       this, static_cast<uint32_t>(statusCode)));
   mStatus = statusCode;
 
   if (mLoadGroup)
@@ -685,18 +733,25 @@ class FTPFlushedForDiversionEvent : public ChannelEvent
   {
     mChild->FlushedForDiversion();
   }
+
+  already_AddRefed<nsIEventTarget> GetEventTarget()
+  {
+    MOZ_ASSERT(mChild);
+    nsCOMPtr<nsIEventTarget> target = mChild->GetNeckoTarget();
+    return target.forget();
+  }
  private:
   FTPChannelChild* mChild;
 };
 
-bool
+mozilla::ipc::IPCResult
 FTPChannelChild::RecvFlushedForDiversion()
 {
   LOG(("FTPChannelChild::RecvFlushedForDiversion [this=%p]\n", this));
   MOZ_ASSERT(mDivertingToParent);
 
   mEventQ->RunOrEnqueue(new FTPFlushedForDiversionEvent(this), true);
-  return true;
+  return IPC_OK();
 }
 
 void
@@ -713,7 +768,7 @@ FTPChannelChild::FlushedForDiversion()
   SendDivertComplete();
 }
 
-bool
+mozilla::ipc::IPCResult
 FTPChannelChild::RecvDivertMessages()
 {
   LOG(("FTPChannelChild::RecvDivertMessages [this=%p]\n", this));
@@ -723,9 +778,9 @@ FTPChannelChild::RecvDivertMessages()
   // DivertTo() has been called on parent, so we can now start sending queued
   // IPDL messages back to parent listener.
   if (NS_WARN_IF(NS_FAILED(Resume()))) {
-    return false;
+    return IPC_FAIL_NO_REASON(this);
   }
-  return true;
+  return IPC_OK();
 }
 
 class FTPDeleteSelfEvent : public ChannelEvent
@@ -734,15 +789,22 @@ class FTPDeleteSelfEvent : public ChannelEvent
   explicit FTPDeleteSelfEvent(FTPChannelChild* aChild)
   : mChild(aChild) {}
   void Run() { mChild->DoDeleteSelf(); }
+
+  already_AddRefed<nsIEventTarget> GetEventTarget()
+  {
+    MOZ_ASSERT(mChild);
+    nsCOMPtr<nsIEventTarget> target = mChild->GetNeckoTarget();
+    return target.forget();
+  }
  private:
   FTPChannelChild* mChild;
 };
 
-bool
+mozilla::ipc::IPCResult
 FTPChannelChild::RecvDeleteSelf()
 {
   mEventQ->RunOrEnqueue(new FTPDeleteSelfEvent(this));
-  return true;
+  return IPC_OK();
 }
 
 void
@@ -822,6 +884,9 @@ FTPChannelChild::ConnectParent(uint32_t id)
   if (iTabChild) {
     tabChild = static_cast<mozilla::dom::TabChild*>(iTabChild.get());
   }
+
+  // This must happen before the constructor message is sent.
+  EnsureNeckoTarget();
 
   // The socket transport in the chrome process now holds a logical ref to us
   // until OnStopRequest, or we do a redirect, or we hit an IPDL error.
@@ -925,6 +990,35 @@ FTPChannelChild::GetDivertingToParent(bool* aDiverting)
   NS_ENSURE_ARG_POINTER(aDiverting);
   *aDiverting = mDivertingToParent;
   return NS_OK;
+}
+
+void
+FTPChannelChild::EnsureNeckoTarget()
+{
+  if (mNeckoTarget) {
+    return;
+  }
+
+  nsCOMPtr<nsILoadInfo> loadInfo;
+  GetLoadInfo(getter_AddRefs(loadInfo));
+
+  mNeckoTarget = nsContentUtils::GetEventTargetByLoadInfo(loadInfo, TaskCategory::Network);
+  if (!mNeckoTarget) {
+    return;
+  }
+
+  gNeckoChild->SetEventTargetForActor(this, mNeckoTarget);
+}
+
+already_AddRefed<nsIEventTarget>
+FTPChannelChild::GetNeckoTarget()
+{
+  nsCOMPtr<nsIEventTarget> target = mNeckoTarget;
+
+  if (!target) {
+    target = do_GetMainThread();
+  }
+  return target.forget();
 }
 
 } // namespace net

@@ -7,17 +7,9 @@
 #ifndef gc_Heap_inl_h
 #define gc_Heap_inl_h
 
-#ifndef OMR
+#include "gc/Heap.h"
 
 #include "gc/StoreBuffer.h"
-
-inline void
-js::gc::Arena::init(JS::Zone* zoneArg, AllocKind kind)
-{
-    zone = zoneArg;
-    allocKind = size_t(kind);
-}
-
-#endif // ! OMR
+#include "gc/Zone.h"
 
 #endif

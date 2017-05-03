@@ -24,10 +24,10 @@
 class nsCString;
 class nsIIOService;
 class nsIStringBundle;
-class nsSystemPrincipal;
+class SystemPrincipal;
 
 namespace mozilla {
-class PrincipalOriginAttributes;
+class OriginAttributes;
 } // namespace mozilla
 
 /////////////////////////////
@@ -55,7 +55,7 @@ public:
     // Invoked exactly once, by XPConnect.
     static void InitStatics();
 
-    static nsSystemPrincipal*
+    static SystemPrincipal*
     SystemPrincipalSingletonConstructor();
 
     /**
@@ -67,9 +67,7 @@ public:
     static bool SecurityCompareURIs(nsIURI* aSourceURI, nsIURI* aTargetURI);
     static uint32_t SecurityHashURI(nsIURI* aURI);
 
-    static uint16_t AppStatusForPrincipal(nsIPrincipal *aPrin);
-
-    static nsresult 
+    static nsresult
     ReportError(JSContext* cx, const nsAString& messageTag,
                 nsIURI* aSource, nsIURI* aTarget);
 
@@ -113,9 +111,6 @@ private:
     inline void
     AddSitesToFileURIWhitelist(const nsCString& aSiteList);
 
-    // If aURI is a moz-extension:// URI, set mAddonId to the associated addon.
-    nsresult MaybeSetAddonIdFromURI(mozilla::PrincipalOriginAttributes& aAttrs, nsIURI* aURI);
-
     nsresult GetChannelResultPrincipal(nsIChannel* aChannel,
                                        nsIPrincipal** aPrincipal,
                                        bool aIgnoreSandboxing);
@@ -158,14 +153,5 @@ private:
     static nsIStringBundle *sStrBundle;
     static JSContext       *sContext;
 };
-
-namespace mozilla {
-
-void
-GetJarPrefix(uint32_t aAppid,
-             bool aInIsolatedMozBrowser,
-             nsACString& aJarPrefix);
-
-} // namespace mozilla
 
 #endif // nsScriptSecurityManager_h__

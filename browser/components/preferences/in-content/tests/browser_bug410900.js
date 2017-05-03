@@ -22,7 +22,7 @@ function test() {
               getService(Ci.nsIHandlerService);
   hserv.store(info);
 
-  openPreferencesViaOpenPreferencesAPI("applications", null, {leaveOpen: true}).then(
+  openPreferencesViaOpenPreferencesAPI("applications", {leaveOpen: true}).then(
       () => runTest(gBrowser.selectedBrowser.contentWindow)
   );
 }
@@ -36,7 +36,7 @@ function runTest(win) {
 
   var handlerAdded = false;
   for (let i = 0; i < items.length; i++) {
-    if (items[i].getAttribute('type') == "apppanetest")
+    if (items[i].getAttribute("type") == "apppanetest")
       handlerAdded = true;
   }
   ok(handlerAdded, "apppanetest protocol handler was successfully added");

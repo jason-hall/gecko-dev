@@ -1,25 +1,25 @@
 /*
  * Copyright (c) 2005-2007 Henri Sivonen
  * Copyright (c) 2007-2015 Mozilla Foundation
- * Portions of comments Copyright 2004-2010 Apple Computer, Inc., Mozilla 
+ * Portions of comments Copyright 2004-2010 Apple Computer, Inc., Mozilla
  * Foundation, and Opera Software ASA.
  *
- * Permission is hereby granted, free of charge, to any person obtaining a 
- * copy of this software and associated documentation files (the "Software"), 
- * to deal in the Software without restriction, including without limitation 
- * the rights to use, copy, modify, merge, publish, distribute, sublicense, 
- * and/or sell copies of the Software, and to permit persons to whom the 
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
  * Software is furnished to do so, subject to the following conditions:
  *
- * The above copyright notice and this permission notice shall be included in 
+ * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL 
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  * DEALINGS IN THE SOFTWARE.
  */
 
@@ -33,7 +33,7 @@
 
 #include "nsIAtom.h"
 #include "nsHtml5AtomTable.h"
-#include "nsString.h"
+#include "nsHtml5String.h"
 #include "nsIContent.h"
 #include "nsTraceRefcnt.h"
 #include "jArray.h"
@@ -106,8 +106,8 @@ class nsHtml5Tokenizer
   protected:
     int32_t cstart;
   private:
-    nsString* publicId;
-    nsString* systemId;
+    nsHtml5String publicId;
+    nsHtml5String systemId;
     autoJArray<char16_t,int32_t> strBuf;
     int32_t strBufLen;
     autoJArray<char16_t,int32_t> charRefBuf;
@@ -126,8 +126,8 @@ class nsHtml5Tokenizer
     nsHtml5AttributeName* attributeName;
   private:
     nsIAtom* doctypeName;
-    nsString* publicIdentifier;
-    nsString* systemIdentifier;
+    nsHtml5String publicIdentifier;
+    nsHtml5String systemIdentifier;
     nsHtml5HtmlAttributes* attributes;
     bool newAttributesEachTime;
     bool shouldSuspend;
@@ -141,7 +141,7 @@ class nsHtml5Tokenizer
   public:
     nsHtml5Tokenizer(nsHtml5TreeBuilder* tokenHandler, bool viewingXmlSource);
     void setInterner(nsHtml5AtomTable* interner);
-    void initLocation(nsString* newPublicId, nsString* newSystemId);
+    void initLocation(nsHtml5String newPublicId, nsHtml5String newSystemId);
     bool isViewingXmlSource();
     void setStateAndEndTagExpectation(int32_t specialTokenizerState, nsIAtom* endTagExpectation);
     void setStateAndEndTagExpectation(int32_t specialTokenizerState, nsHtml5ElementName* endTagExpectation);
@@ -162,21 +162,22 @@ class nsHtml5Tokenizer
       charRefBuf[charRefBufLen++] = c;
     }
 
-    inline void clearCharRefBufAndAppend(char16_t c)
-    {
-      charRefBuf[0] = c;
-      charRefBufLen = 1;
-    }
-
     void emitOrAppendCharRefBuf(int32_t returnState);
-    inline void clearStrBufAndAppend(char16_t c)
+    inline void clearStrBufAfterUse()
     {
-      strBuf[0] = c;
-      strBufLen = 1;
+      strBufLen = 0;
     }
 
-    inline void clearStrBuf()
+    inline void clearStrBufBeforeUse()
     {
+      MOZ_ASSERT(!strBufLen, "strBufLen not reset after previous use!");
+      strBufLen = 0;
+    }
+
+    inline void clearStrBufAfterOneHyphen()
+    {
+      MOZ_ASSERT(strBufLen == 1, "strBufLen length not one!");
+      MOZ_ASSERT(strBuf[0] == '-', "strBuf does not start with a hyphen!");
       strBufLen = 0;
     }
 
@@ -192,7 +193,8 @@ class nsHtml5Tokenizer
     }
 
   protected:
-    nsString* strBufToString();
+    nsHtml5String strBufToString();
+
   private:
     void strBufToDoctypeName();
     void emitStrBuf();
@@ -211,6 +213,7 @@ class nsHtml5Tokenizer
     inline void appendCharRefBufToStrBuf()
     {
       appendStrBuf(charRefBuf, 0, charRefBufLen);
+      charRefBufLen = 0;
     }
 
     void emitComment(int32_t provisionalHyphens, int32_t pos);
@@ -283,7 +286,8 @@ class nsHtml5Tokenizer
     }
 
   public:
-    bool internalEncodingDeclaration(nsString* internalCharset);
+    bool internalEncodingDeclaration(nsHtml5String internalCharset);
+
   private:
     void emitOrAppendTwo(const char16_t* val, int32_t returnState);
     void emitOrAppendOne(const char16_t* val, int32_t returnState);

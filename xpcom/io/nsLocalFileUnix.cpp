@@ -10,6 +10,7 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Sprintf.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -25,6 +26,7 @@
 #define USE_LINUX_QUOTACTL
 #include <sys/mount.h>
 #include <sys/quota.h>
+#include <sys/sysmacros.h>
 #ifndef BLOCK_SIZE
 #define BLOCK_SIZE 1024 /* kernel block size */
 #endif
@@ -77,16 +79,16 @@ static nsresult MacErrorMapper(OSErr inErr);
 using namespace mozilla;
 
 #define ENSURE_STAT_CACHE()                     \
-    PR_BEGIN_MACRO                              \
+    do {                                        \
         if (!FillStatCache())                   \
              return NSRESULT_FOR_ERRNO();       \
-    PR_END_MACRO
+    } while(0)
 
 #define CHECK_mPath()                           \
-    PR_BEGIN_MACRO                              \
+    do {                                        \
         if (mPath.IsEmpty())                    \
             return NS_ERROR_NOT_INITIALIZED;    \
-    PR_END_MACRO
+    } while(0)
 
 /* directory enumerator */
 class nsDirEnumeratorUnix final
@@ -826,7 +828,7 @@ nsLocalFile::CopyToNative(nsIFile* aNewParent, const nsACString& aNewName)
 #endif
 
     // actually create the file.
-    nsLocalFile* newFile = new nsLocalFile();
+    auto* newFile = new nsLocalFile();
     nsCOMPtr<nsIFile> fileRef(newFile); // release on exit
 
     rv = newFile->InitWithNativePath(newPathName);
@@ -960,13 +962,12 @@ nsLocalFile::CopyToNative(nsIFile* aNewParent, const nsACString& aNewName)
     if (bytesRead < 0) {
       if (saved_write_error != NS_OK) {
         return saved_write_error;
-      } else if (saved_read_error != NS_OK) {
+      }
+      if (saved_read_error != NS_OK) {
         return saved_read_error;
       }
 #if DEBUG
-      else {              // sanity check. Die and debug.
-        MOZ_ASSERT(0);
-      }
+      MOZ_ASSERT(0);
 #endif
     }
 
@@ -1039,7 +1040,7 @@ nsLocalFile::Remove(bool aRecursive)
   }
 
   if (aRecursive) {
-    nsDirEnumeratorUnix* dir = new nsDirEnumeratorUnix();
+    auto* dir = new nsDirEnumeratorUnix();
 
     nsCOMPtr<nsISimpleEnumerator> dirRef(dir); // release on exit
 
@@ -1286,7 +1287,8 @@ nsLocalFile::GetFileSizeOfLink(int64_t* aFileSize)
  * Fails when /proc/self/mountinfo or diven device don't exist.
  */
 static bool
-GetDeviceName(int aDeviceMajor, int aDeviceMinor, nsACString& aDeviceName)
+GetDeviceName(unsigned int aDeviceMajor, unsigned int aDeviceMinor,
+              nsACString& aDeviceName)
 {
   bool ret = false;
 
@@ -1296,7 +1298,7 @@ GetDeviceName(int aDeviceMajor, int aDeviceMinor, nsACString& aDeviceName)
   char mountinfoLine[kMountInfoLineLength];
   char deviceNum[kMountInfoLineLength];
 
-  snprintf(deviceNum, kMountInfoLineLength, "%d:%d", aDeviceMajor, aDeviceMinor);
+  SprintfLiteral(deviceNum, "%u:%u", aDeviceMajor, aDeviceMinor);
 
   FILE* f = fopen("/proc/self/mountinfo", "rt");
   if (!f) {
@@ -1556,8 +1558,8 @@ nsLocalFile::IsExecutable(bool* aResult)
       "jar"   // java application bundle
     };
     nsDependentSubstring ext = Substring(path, dotIdx + 1);
-    for (size_t i = 0; i < ArrayLength(executableExts); i++) {
-      if (ext.EqualsASCII(executableExts[i])) {
+    for (auto executableExt : executableExts) {
+      if (ext.EqualsASCII(executableExt)) {
         // Found a match.  Set result and quit.
         *aResult = true;
         return NS_OK;
@@ -1963,20 +1965,20 @@ nsLocalFile::Reveal()
 
   if (isDirectory) {
     return giovfs->ShowURIForInput(mPath);
-  } else if (NS_SUCCEEDED(giovfs->OrgFreedesktopFileManager1ShowItems(mPath))) {
-    return NS_OK;
-  } else {
-    nsCOMPtr<nsIFile> parentDir;
-    nsAutoCString dirPath;
-    if (NS_FAILED(GetParent(getter_AddRefs(parentDir)))) {
-      return NS_ERROR_FAILURE;
-    }
-    if (NS_FAILED(parentDir->GetNativePath(dirPath))) {
-      return NS_ERROR_FAILURE;
-    }
-
-    return giovfs->ShowURIForInput(dirPath);
   }
+  if (NS_SUCCEEDED(giovfs->OrgFreedesktopFileManager1ShowItems(mPath))) {
+    return NS_OK;
+  }
+  nsCOMPtr<nsIFile> parentDir;
+  nsAutoCString dirPath;
+  if (NS_FAILED(GetParent(getter_AddRefs(parentDir)))) {
+    return NS_ERROR_FAILURE;
+  }
+  if (NS_FAILED(parentDir->GetNativePath(dirPath))) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return giovfs->ShowURIForInput(dirPath);
 #elif defined(MOZ_WIDGET_COCOA)
   CFURLRef url;
   if (NS_SUCCEEDED(GetCFURL(&url))) {

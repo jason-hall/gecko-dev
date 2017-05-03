@@ -21,6 +21,7 @@
 #include "nsIFrame.h"
 #include "nsIScriptError.h"
 #include "nsLayoutUtils.h"
+#include "nsMathUtils.h"
 #include "SVGAnimationElement.h"
 #include "SVGAnimatedPreserveAspectRatio.h"
 #include "nsContentUtils.h"
@@ -178,8 +179,7 @@ SVGContentUtils::GetStrokeOptions(AutoStrokeOptions* aStrokeOptions,
     styleContext = aStyleContext;
   } else {
     styleContext =
-      nsComputedDOMStyle::GetStyleContextForElementNoFlush(aElement, nullptr,
-                                                           nullptr);
+      nsComputedDOMStyle::GetStyleContextNoFlush(aElement, nullptr, nullptr);
   }
 
   if (!styleContext) {
@@ -252,8 +252,7 @@ SVGContentUtils::GetStrokeWidth(nsSVGElement* aElement,
     styleContext = aStyleContext;
   } else {
     styleContext =
-      nsComputedDOMStyle::GetStyleContextForElementNoFlush(aElement, nullptr,
-                                                           nullptr);
+      nsComputedDOMStyle::GetStyleContextNoFlush(aElement, nullptr, nullptr);
   }
 
   if (!styleContext) {
@@ -275,9 +274,8 @@ SVGContentUtils::GetFontSize(Element *aElement)
   if (!aElement)
     return 1.0f;
 
-  RefPtr<nsStyleContext> styleContext = 
-    nsComputedDOMStyle::GetStyleContextForElementNoFlush(aElement,
-                                                         nullptr, nullptr);
+  RefPtr<nsStyleContext> styleContext =
+    nsComputedDOMStyle::GetStyleContextNoFlush(aElement, nullptr, nullptr);
   if (!styleContext) {
     // ReportToConsole
     NS_WARNING("Couldn't get style context for content in GetFontStyle");
@@ -303,8 +301,8 @@ SVGContentUtils::GetFontSize(nsStyleContext *aStyleContext)
   MOZ_ASSERT(presContext, "NULL pres context in GetFontSize");
 
   nscoord fontSize = aStyleContext->StyleFont()->mSize;
-  return nsPresContext::AppUnitsToFloatCSSPixels(fontSize) / 
-         presContext->TextZoom();
+  return nsPresContext::AppUnitsToFloatCSSPixels(fontSize) /
+         presContext->EffectiveTextZoom();
 }
 
 float
@@ -313,9 +311,8 @@ SVGContentUtils::GetFontXHeight(Element *aElement)
   if (!aElement)
     return 1.0f;
 
-  RefPtr<nsStyleContext> styleContext = 
-    nsComputedDOMStyle::GetStyleContextForElementNoFlush(aElement,
-                                                         nullptr, nullptr);
+  RefPtr<nsStyleContext> styleContext =
+    nsComputedDOMStyle::GetStyleContextNoFlush(aElement, nullptr, nullptr);
   if (!styleContext) {
     // ReportToConsole
     NS_WARNING("Couldn't get style context for content in GetFontStyle");
@@ -324,7 +321,7 @@ SVGContentUtils::GetFontXHeight(Element *aElement)
 
   return GetFontXHeight(styleContext);
 }
-  
+
 float
 SVGContentUtils::GetFontXHeight(nsIFrame *aFrame)
 {
@@ -351,7 +348,7 @@ SVGContentUtils::GetFontXHeight(nsStyleContext *aStyleContext)
 
   nscoord xHeight = fontMetrics->XHeight();
   return nsPresContext::AppUnitsToFloatCSSPixels(xHeight) /
-         presContext->TextZoom();
+         presContext->EffectiveTextZoom();
 }
 nsresult
 SVGContentUtils::ReportToConsole(nsIDocument* doc,
@@ -509,7 +506,7 @@ SVGContentUtils::RectilinearGetStrokeBounds(const Rect& aRect,
 double
 SVGContentUtils::ComputeNormalizedHypotenuse(double aWidth, double aHeight)
 {
-  return sqrt((aWidth*aWidth + aHeight*aHeight)/2);
+  return NS_hypot(aWidth, aHeight) / M_SQRT2;
 }
 
 float
@@ -860,39 +857,4 @@ bool
 SVGContentUtils::ShapeTypeHasNoCorners(const nsIContent* aContent) {
   return aContent && aContent->IsAnyOfSVGElements(nsGkAtoms::circle,
                                                   nsGkAtoms::ellipse);
-}
-
-gfxMatrix
-SVGContentUtils::PrependLocalTransformsTo(
-  const gfxMatrix &aMatrix,
-  SVGTransformTypes aWhich,
-  const gfx::Matrix* aAnimateMotionTransform,
-  const nsSVGAnimatedTransformList* aTransforms)
-{
-  gfxMatrix result(aMatrix);
-
-  if (aWhich == eChildToUserSpace) {
-    // We don't have anything to prepend.
-    // eChildToUserSpace is not the common case, which is why we return
-    // 'result' to benefit from NRVO rather than returning aMatrix before
-    // creating 'result'.
-    return result;
-  }
-
-  MOZ_ASSERT(aWhich == eAllTransforms || aWhich == eUserSpaceToParent,
-             "Unknown TransformTypes");
-
-  // animateMotion's resulting transform is supposed to apply *on top of*
-  // any transformations from the |transform| attribute. So since we're
-  // PRE-multiplying, we need to apply the animateMotion transform *first*.
-  if (aAnimateMotionTransform) {
-    result.PreMultiply(ThebesMatrix(*aAnimateMotionTransform));
-  }
-
-  if (aTransforms) {
-    result.PreMultiply(
-      aTransforms->GetAnimValue().GetConsolidationMatrix());
-  }
-
-  return result;
 }

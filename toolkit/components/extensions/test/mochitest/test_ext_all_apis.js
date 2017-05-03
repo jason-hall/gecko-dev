@@ -39,6 +39,8 @@ let expectedCommonApis = [
   // If you want to add a new powerful test API, please see bug 1287233.
   "test.assertEq",
   "test.assertFalse",
+  "test.assertRejects",
+  "test.assertThrows",
   "test.assertTrue",
   "test.fail",
   "test.log",
@@ -63,6 +65,7 @@ let expectedBackgroundApis = [
   "extension.isAllowedFileSchemeAccess",
   "extension.isAllowedIncognitoAccess",
   // Note: extensionTypes is not visible in Chrome.
+  "extensionTypes.CSSOrigin",
   "extensionTypes.ImageFormat",
   "extensionTypes.RunAt",
   "management.ExtensionDisabledReason",
@@ -70,13 +73,23 @@ let expectedBackgroundApis = [
   "management.ExtensionType",
   "management.getSelf",
   "management.uninstallSelf",
+  "permissions.getAll",
+  "permissions.contains",
+  "permissions.request",
+  "permissions.remove",
   "runtime.getBackgroundPage",
   "runtime.getBrowserInfo",
   "runtime.getPlatformInfo",
+  "runtime.onConnectExternal",
+  "runtime.onInstalled",
+  "runtime.onMessageExternal",
+  "runtime.onStartup",
   "runtime.onUpdateAvailable",
   "runtime.openOptionsPage",
   "runtime.reload",
   "runtime.setUninstallURL",
+  "types.LevelOfControl",
+  "types.SettingScope",
 ];
 
 function sendAllApis() {
@@ -105,7 +118,7 @@ function sendAllApis() {
       let val = obj[key];
       if (typeof val == "object" && val !== null && mayRecurse(key, val)) {
         diveDeeper(`${path}.${key}`, val);
-      } else {
+      } else if (val !== undefined) {
         results.push(`${path}.${key}`);
       }
     }

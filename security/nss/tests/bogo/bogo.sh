@@ -25,7 +25,7 @@ bogo_init()
   BORING=${BORING:=boringssl}
   if [ ! -d "$BORING" ]; then
     git clone -q https://boringssl.googlesource.com/boringssl "$BORING"
-    git -C "$BORING" checkout -q e34bcc91c07c0bf65ecc53a814d51f5246007150
+    git -C "$BORING" checkout -q bbfe603519bc54fbc4c8dd87efe1ed385df550b4
   fi
 
   SCRIPTNAME="bogo.sh"
@@ -39,16 +39,13 @@ bogo_cleanup()
   . common/cleanup.sh
 }
 
-# Need to add go to the PATH.
-export PATH=$PATH:/usr/lib/go-1.6/bin
-
 cd "$(dirname "$0")"
 SOURCE_DIR="$PWD"/../..
 bogo_init
 (cd "$BORING"/ssl/test/runner;
  GOPATH="$PWD" go test -pipe -shim-path "${BINDIR}"/nss_bogo_shim \
 	 -loose-errors -allow-unimplemented \
-	 -shim-config "${SOURCE_DIR}/external_tests/nss_bogo_shim/config.json") \
+	 -shim-config "${SOURCE_DIR}/gtests/nss_bogo_shim/config.json") \
 	 2>bogo.errors | tee bogo.log
 html_msg "${PIPESTATUS[0]}" 0 "Bogo" "Run successfully"
 grep -i 'FAILED\|Assertion failure' bogo.errors

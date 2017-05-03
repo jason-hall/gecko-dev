@@ -83,5 +83,19 @@ function* testProbe(aProbe) {
    `Spinner probe should now have a value in some bucket`);
 }
 
+add_task(function* setup() {
+  yield SpecialPowers.pushPrefEnv({
+    set: [
+      ["dom.ipc.processCount", 1],
+      // We can interrupt JS to paint now, which is great for
+      // users, but bad for testing spinners. We temporarily
+      // disable that feature for this test so that we can
+      // easily get ourselves into a predictable tab spinner
+      // state.
+      ["browser.tabs.remote.force-paint", false],
+    ]
+  });
+});
+
 add_task(testProbe.bind(null, "FX_TAB_SWITCH_SPINNER_VISIBLE_MS"));
 add_task(testProbe.bind(null, "FX_TAB_SWITCH_SPINNER_VISIBLE_LONG_MS"));

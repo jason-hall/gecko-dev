@@ -74,7 +74,7 @@
       {
         switch (aAction) {
           case kRemoveElm:
-            aNode.parentNode.removeChild(aNode);
+            aNode.remove();
             break;
 
           case kHideElm:
@@ -328,8 +328,8 @@
 
       this.invoke = function removeGrandChildrenNHideParent_invoke()
       {
-        this.child1.parentNode.removeChild(this.child1);
-        this.child2.parentNode.removeChild(this.child2);
+        this.child1.remove();
+        this.child2.remove();
         this.parent.hidden = true;
       }
 
@@ -419,8 +419,8 @@
       this.lb = getAccessible("t5_lb");
 
       this.eventSeq = [
-        new invokerChecker(EVENT_HIDE, this.o),
         new invokerChecker(EVENT_HIDE, this.b),
+        new invokerChecker(EVENT_HIDE, this.o),
         new invokerChecker(EVENT_REORDER, "t5"),
         new unexpectedInvokerChecker(EVENT_HIDE, this.ofc),
         new unexpectedInvokerChecker(EVENT_REORDER, this.o),
@@ -539,8 +539,8 @@
         new invokerChecker(EVENT_HIDE, getNode('t8_c1_child')),
         new invokerChecker(EVENT_HIDE, 't8_c2_moved'),
         new invokerChecker(EVENT_SHOW, 't8_c2_moved'),
+        new invokerChecker(EVENT_REORDER, 't8_c2'),
         new invokerChecker(EVENT_REORDER, 't8_c1'),
-        new invokerChecker(EVENT_REORDER, 't8_c2')
       ];
 
       this.invoke = function test8_invoke()
@@ -578,13 +578,13 @@
     {
       this.eventSeq = [
         new invokerChecker(EVENT_HIDE, getNode('t9_c1_child')),
+        new invokerChecker(EVENT_HIDE, getNode('t9_c2_child')),
         new invokerChecker(EVENT_HIDE, 't9_c3_moved'),
         new invokerChecker(EVENT_HIDE, 't9_c2_moved'),
         new invokerChecker(EVENT_SHOW, 't9_c2_moved'),
-        new invokerChecker(EVENT_REORDER, 't9_c1'),
-        new invokerChecker(EVENT_HIDE, getNode('t9_c2_child')),
-        new invokerChecker(EVENT_REORDER, 't9_c2'),
         new invokerChecker(EVENT_REORDER, 't9_c3'),
+        new invokerChecker(EVENT_REORDER, 't9_c2'),
+        new invokerChecker(EVENT_REORDER, 't9_c1'),
         new unexpectedInvokerChecker(EVENT_SHOW, 't9_c3_moved')
       ];
 
@@ -624,12 +624,12 @@
     {
       this.eventSeq = [
         new invokerChecker(EVENT_HIDE, getNode('t10_c1_child')),
+        new invokerChecker(EVENT_HIDE, getNode('t10_c2_child')),
         new invokerChecker(EVENT_HIDE, getNode('t10_c2_moved')),
         new invokerChecker(EVENT_HIDE, getNode('t10_c3_moved')),
         new invokerChecker(EVENT_SHOW, getNode('t10_c2_moved')),
-        new invokerChecker(EVENT_REORDER, 't10_c1'),
-        new invokerChecker(EVENT_HIDE, getNode('t10_c2_child')),
         new invokerChecker(EVENT_REORDER, 't10_c2'),
+        new invokerChecker(EVENT_REORDER, 't10_c1'),
         new invokerChecker(EVENT_REORDER, 't10_c3')
       ];
 
@@ -650,10 +650,48 @@
       };
     }
 
+    /**
+     * Move a node by aria-owns from right to left in the tree, and then
+     * move its parent too by aria-owns. No hide event should be fired for
+     * original node.
+     */
+    function test11()
+    {
+      this.eventSeq = [
+        new invokerChecker(EVENT_HIDE, getNode('t11_c1_child')),
+        new invokerChecker(EVENT_HIDE, getNode('t11_c2')),
+        new orderChecker(),
+        new asyncInvokerChecker(EVENT_SHOW, 't11_c2_child'),
+        new asyncInvokerChecker(EVENT_SHOW, 't11_c2'),
+        new orderChecker(),
+        new invokerChecker(EVENT_REORDER, 't11'),
+        new unexpectedInvokerChecker(EVENT_HIDE, 't11_c2_child'),
+        new unexpectedInvokerChecker(EVENT_REORDER, 't11_c1'),
+        new unexpectedInvokerChecker(EVENT_REORDER, 't11_c2'),
+        new unexpectedInvokerChecker(EVENT_REORDER, 't11_c3')
+      ];
+
+      this.invoke = function test11_invoke()
+      {
+        // Remove a node from 't11_c1' container to give the event tree a
+        // desired structure (the 't11_c1' container node goes first in
+        // the event tree),
+        getNode('t11_c1_child').remove();
+        // then move 't11_c2_moved' from 't11_c2' to 't11_c1', and then move
+        // 't11_c2' to 't11_c3'.
+        getNode('t11_c1').setAttribute('aria-owns', 't11_c2_child');
+        getNode('t11_c3').setAttribute('aria-owns', 't11_c2');
+      };
+
+      this.getID = function test11_getID() {
+        return "Move a node by aria-owns to left within the tree";
+      };
+    }
+
     ////////////////////////////////////////////////////////////////////////////
     // Do tests.
 
-    //gA11yEventDumpToConsole = true; // debug stuff
+    gA11yEventDumpToConsole = true; // debug stuff
     //enableLogging("eventTree");
 
     var gQueue = null;
@@ -686,6 +724,7 @@
       gQueue.push(new test8());
       gQueue.push(new test9());
       gQueue.push(new test10());
+      gQueue.push(new test11());
 
       gQueue.invoke(); // Will call SimpleTest.finish();
     }
@@ -814,6 +853,12 @@
     <div id="t10_c3">
       <div id="t10_c3_moved"></div>
     </div>
+  </div>
+
+  <div id="t11">
+    <div id="t11_c1"><div id="t11_c1_child"></div></div>
+    <div id="t11_c2"><div id="t11_c2_child"></div></div>
+    <div id="t11_c3"></div>
   </div>
 </body>
 </html>

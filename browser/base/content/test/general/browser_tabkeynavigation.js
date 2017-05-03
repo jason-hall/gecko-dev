@@ -61,7 +61,7 @@ add_task(function* test() {
     gBrowser.selectedTab = tab1;
     browser1.focus();
 
-    let ltr = window.getComputedStyle(gBrowser.mTabBox, "").direction == "ltr";
+    let ltr = window.getComputedStyle(gBrowser.mTabBox).direction == "ltr";
     let advanceKey = ltr ? "VK_RIGHT" : "VK_LEFT";
     let reverseKey = ltr ? "VK_LEFT" : "VK_RIGHT";
 
@@ -109,7 +109,7 @@ add_task(function* test() {
     // XXX Currently, Command + "{" and "}" don't work if keydown event is
     //     consumed because following keypress event isn't fired.
 
-    let ltr = window.getComputedStyle(gBrowser.mTabBox, "").direction == "ltr";
+    let ltr = window.getComputedStyle(gBrowser.mTabBox).direction == "ltr";
     let advanceKey = ltr ? "}" : "{";
     let reverseKey = ltr ? "{" : "}";
 
@@ -140,7 +140,6 @@ add_task(function* test() {
     is(gBrowser.tabs.length, 3,
       "The count of tabs should be 3 since tab2 should be closed");
 
-    let activeWindow = gBrowser.getBrowserForTab(gBrowser.selectedTab).contentWindow;
     // NOTE: keypress event shouldn't be fired since the keydown event should
     //       be consumed by tab2.
       EventUtils.synthesizeKey("VK_F4", { type: "keyup", ctrlKey: true });

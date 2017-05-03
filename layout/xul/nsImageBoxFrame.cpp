@@ -30,7 +30,6 @@
 #include "nsIURL.h"
 #include "nsILoadGroup.h"
 #include "nsContainerFrame.h"
-#include "prprf.h"
 #include "nsCSSRendering.h"
 #include "nsIDOMHTMLImageElement.h"
 #include "nsNameSpaceManager.h"
@@ -52,6 +51,8 @@
 #include "mozilla/BasicEvents.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/Maybe.h"
+#include "SVGImageContext.h"
+#include "Units.h"
 
 #define ONLOAD_CALLED_TOO_EARLY 1
 
@@ -96,10 +97,10 @@ nsImageBoxFrameEvent::Run()
 
 // Fire off an event that'll asynchronously call the image elements
 // onload handler once handled. This is needed since the image library
-// can't decide if it wants to call it's observer methods
+// can't decide if it wants to call its observer methods
 // synchronously or asynchronously. If an image is loaded from the
 // cache the notifications come back synchronously, but if the image
-// is loaded from the netswork the notifications come back
+// is loaded from the network the notifications come back
 // asynchronously.
 
 void
@@ -109,8 +110,12 @@ FireImageDOMEvent(nsIContent* aContent, EventMessage aMessage)
                "invalid message");
 
   nsCOMPtr<nsIRunnable> event = new nsImageBoxFrameEvent(aContent, aMessage);
-  if (NS_FAILED(NS_DispatchToCurrentThread(event)))
+  nsresult rv = aContent->OwnerDoc()->Dispatch("nsImageBoxFrameEvent",
+                                               TaskCategory::Other,
+                                               event.forget());
+  if (NS_FAILED(rv)) {
     NS_WARNING("failed to dispatch image event");
+  }
 }
 
 //
@@ -226,6 +231,12 @@ nsImageBoxFrame::UpdateImage()
   if (mUseSrcAttr) {
     nsIDocument* doc = mContent->GetComposedDoc();
     if (doc) {
+      nsContentPolicyType contentPolicyType;
+      nsCOMPtr<nsIPrincipal> loadingPrincipal;
+      nsContentUtils::GetContentPolicyTypeForUIImageLoading(mContent,
+                                                            getter_AddRefs(loadingPrincipal),
+                                                            contentPolicyType);
+
       nsCOMPtr<nsIURI> baseURI = mContent->GetBaseURI();
       nsCOMPtr<nsIURI> uri;
       nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(uri),
@@ -233,10 +244,11 @@ nsImageBoxFrame::UpdateImage()
                                                 doc,
                                                 baseURI);
       if (uri) {
-        nsresult rv = nsContentUtils::LoadImage(uri, mContent, doc, mContent->NodePrincipal(),
+        nsresult rv = nsContentUtils::LoadImage(uri, mContent, doc, loadingPrincipal,
                                                 doc->GetDocumentURI(), doc->GetReferrerPolicy(),
                                                 mListener, mLoadFlags,
-                                                EmptyString(), getter_AddRefs(mImageRequest));
+                                                EmptyString(), getter_AddRefs(mImageRequest),
+                                                contentPolicyType);
 
         if (NS_SUCCEEDED(rv) && mImageRequest) {
           nsLayoutUtils::RegisterImageRequestIfAnimated(presContext,
@@ -248,7 +260,7 @@ nsImageBoxFrame::UpdateImage()
   } else {
     // Only get the list-style-image if we aren't being drawn
     // by a native theme.
-    uint8_t appearance = StyleDisplay()->mAppearance;
+    uint8_t appearance = StyleDisplay()->UsedAppearance();
     if (!(appearance && nsBox::gTheme &&
           nsBox::gTheme->ThemeSupportsWidget(nullptr, this, appearance))) {
       // get the list-style-image
@@ -264,7 +276,7 @@ nsImageBoxFrame::UpdateImage()
     mIntrinsicSize.SizeTo(0, 0);
   } else {
     // We don't want discarding or decode-on-draw for xul images.
-    mImageRequest->StartDecoding();
+    mImageRequest->StartDecoding(imgIContainer::FLAG_NONE);
     mImageRequest->LockImage();
   }
 
@@ -397,12 +409,15 @@ nsImageBoxFrame::PaintImage(nsRenderingContext& aRenderingContext,
                                                 anchorPoint.ptr());
   }
 
+  Maybe<SVGImageContext> svgContext;
+  SVGImageContext::MaybeInitAndStoreContextPaint(svgContext, this, imgCon);
 
   return nsLayoutUtils::DrawSingleImage(
            *aRenderingContext.ThebesContext(),
            PresContext(), imgCon,
            nsLayoutUtils::GetSamplingFilterForFrame(this),
-           dest, dirty, nullptr, aFlags,
+           dest, dirty,
+           svgContext, aFlags,
            anchorPoint.ptrOr(nullptr),
            hasSubRect ? &mSubRect : nullptr);
 }
@@ -410,7 +425,11 @@ nsImageBoxFrame::PaintImage(nsRenderingContext& aRenderingContext,
 void nsDisplayXULImage::Paint(nsDisplayListBuilder* aBuilder,
                               nsRenderingContext* aCtx)
 {
-  uint32_t flags = imgIContainer::FLAG_NONE;
+  // Even though we call StartDecoding when we get a new image we pass
+  // FLAG_SYNC_DECODE_IF_FAST here for the case where the size we draw at is not
+  // the intrinsic size of the image and we aren't likely to implement predictive
+  // decoding at the correct size for this class like nsImageFrame has.
+  uint32_t flags = imgIContainer::FLAG_SYNC_DECODE_IF_FAST;
   if (aBuilder->ShouldSyncDecodeImages())
     flags |= imgIContainer::FLAG_SYNC_DECODE;
   if (aBuilder->IsPaintingToWindow())
@@ -513,8 +532,8 @@ nsImageBoxFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
 
   // If we're using a native theme implementation, we shouldn't draw anything.
   const nsStyleDisplay* disp = StyleDisplay();
-  if (disp->mAppearance && nsBox::gTheme &&
-      nsBox::gTheme->ThemeSupportsWidget(nullptr, this, disp->mAppearance))
+  if (disp->UsedAppearance() && nsBox::gTheme &&
+      nsBox::gTheme->ThemeSupportsWidget(nullptr, this, disp->UsedAppearance()))
     return;
 
   // If list-style-image changes, we have a new image.

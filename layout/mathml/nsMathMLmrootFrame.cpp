@@ -7,6 +7,7 @@
 #include "nsPresContext.h"
 #include "nsRenderingContext.h"
 #include <algorithm>
+#include "gfxMathTable.h"
 
 using namespace mozilla;
 
@@ -116,8 +117,8 @@ nsMathMLmrootFrame::GetRadicalXOffsets(nscoord aIndexWidth, nscoord aSqrWidth,
   gfxFont* mathFont = aFontMetrics->GetThebesFontGroup()->GetFirstMathFont();
   if (mathFont) {
     indexRadicalKern =
-      mathFont->GetMathConstant(gfxFontEntry::RadicalKernAfterDegree,
-                                oneDevPixel);
+      mathFont->MathTable()->Constant(gfxMathTable::RadicalKernAfterDegree,
+                                      oneDevPixel);
     indexRadicalKern = -indexRadicalKern;
   }
   if (indexRadicalKern > aIndexWidth) {
@@ -133,8 +134,8 @@ nsMathMLmrootFrame::GetRadicalXOffsets(nscoord aIndexWidth, nscoord aSqrWidth,
     // add some kern before the radical index
     nscoord indexRadicalKernBefore = 0;
     indexRadicalKernBefore =
-      mathFont->GetMathConstant(gfxFontEntry::RadicalKernBeforeDegree,
-                                oneDevPixel);
+      mathFont->MathTable()->Constant(gfxMathTable::RadicalKernBeforeDegree,
+                                      oneDevPixel);
     dxIndex += indexRadicalKernBefore;
     dxSqr += indexRadicalKernBefore;
   } else {
@@ -195,7 +196,7 @@ nsMathMLmrootFrame::Reflow(nsPresContext*          aPresContext,
                                        childFrame, availSize);
     ReflowChild(childFrame, aPresContext,
                      childDesiredSize, childReflowInput, childStatus);
-    //NS_ASSERTION(NS_FRAME_IS_COMPLETE(childStatus), "bad status");
+    //NS_ASSERTION(childStatus.IsComplete(), "bad status");
     if (0 == count) {
       // base 
       baseFrame = childFrame;
@@ -215,7 +216,7 @@ nsMathMLmrootFrame::Reflow(nsPresContext*          aPresContext,
     // report an error, encourage people to get their markups in order
     ReportChildCountError();
     ReflowError(drawTarget, aDesiredSize);
-    aStatus = NS_FRAME_COMPLETE;
+    aStatus.Reset();
     NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
     // Call DidReflow() for the child frames we successfully did reflow.
     DidReflowChildren(mFrames.FirstChild(), childFrame);
@@ -295,8 +296,8 @@ nsMathMLmrootFrame::Reflow(nsPresContext*          aPresContext,
   float raiseIndexPercent = 0.6f;
   gfxFont* mathFont = fm->GetThebesFontGroup()->GetFirstMathFont();
   if (mathFont) {
-    raiseIndexPercent =
-      mathFont->GetMathConstant(gfxFontEntry::RadicalDegreeBottomRaisePercent);
+    raiseIndexPercent = mathFont->MathTable()->
+      Constant(gfxMathTable::RadicalDegreeBottomRaisePercent);
   }
   nscoord raiseIndexDelta = NSToCoordRound(raiseIndexPercent *
                                            (bmSqr.ascent + bmSqr.descent));
@@ -353,7 +354,7 @@ nsMathMLmrootFrame::Reflow(nsPresContext*          aPresContext,
   mReference.x = 0;
   mReference.y = aDesiredSize.BlockStartAscent();
 
-  aStatus = NS_FRAME_COMPLETE;
+  aStatus.Reset();
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowInput, aDesiredSize);
 }
 

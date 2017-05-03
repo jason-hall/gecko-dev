@@ -63,8 +63,8 @@ Decoder::Decoder(RasterImage* aImage)
   , mReachedTerminalState(false)
   , mDecodeDone(false)
   , mError(false)
-  , mDecodeAborted(false)
   , mShouldReportError(false)
+  , mFinalizeFrames(true)
 { }
 
 Decoder::~Decoder()
@@ -78,7 +78,7 @@ Decoder::~Decoder()
   if (mImage && !NS_IsMainThread()) {
     // Dispatch mImage to main thread to prevent it from being destructed by the
     // decode thread.
-    NS_ReleaseOnMainThread(mImage.forget());
+    NS_ReleaseOnMainThreadSystemGroup(mImage.forget());
   }
 }
 
@@ -191,46 +191,39 @@ Decoder::CompleteDecode()
     PostError();
   }
 
-  // If this was a metadata decode and we never got a size, the decode failed.
-  if (IsMetadataDecode() && !HasSize()) {
-    PostError();
+  if (IsMetadataDecode()) {
+    // If this was a metadata decode and we never got a size, the decode failed.
+    if (!HasSize()) {
+      PostError();
+    }
+    return;
   }
 
-  // If the implementation left us mid-frame, finish that up.
-  if (mInFrame && !HasError()) {
+  // If the implementation left us mid-frame, finish that up. Note that it may
+  // have left us transparent.
+  if (mInFrame) {
+    PostHasTransparency();
     PostFrameStop();
   }
 
-  // If PostDecodeDone() has not been called, and this decoder wasn't aborted
-  // early because of low-memory conditions or losing a race with another
-  // decoder, we need to send teardown notifications (and report an error to the
-  // console later).
-  if (!IsMetadataDecode() && !mDecodeDone && !WasAborted()) {
+  // If PostDecodeDone() has not been called, we may need to send teardown
+  // notifications if it is unrecoverable.
+  if (!mDecodeDone) {
+    // We should always report an error to the console in this case.
     mShouldReportError = true;
 
-    // Even if we encountered an error, we're still usable if we have at least
-    // one complete frame.
     if (GetCompleteFrameCount() > 0) {
-      // We're usable, so do exactly what we should have when the decoder
-      // completed.
-
-      // Not writing to the entire frame may have left us transparent.
+      // We're usable if we have at least one complete frame, so do exactly
+      // what we should have when the decoder completed.
       PostHasTransparency();
-
-      if (mInFrame) {
-        PostFrameStop();
-      }
       PostDecodeDone();
     } else {
       // We're not usable. Record some final progress indicating the error.
-      if (!IsMetadataDecode()) {
-        mProgress |= FLAG_DECODE_COMPLETE;
-      }
-      mProgress |= FLAG_HAS_ERROR;
+      mProgress |= FLAG_DECODE_COMPLETE | FLAG_HAS_ERROR;
     }
   }
 
-  if (mDecodeDone && !IsMetadataDecode()) {
+  if (mDecodeDone) {
     MOZ_ASSERT(HasError() || mCurrentFrame, "Should have an error or a frame");
 
     // If this image wasn't animated and isn't a transient image, mark its frame
@@ -271,7 +264,6 @@ Decoder::FinalStatus() const
 {
   return DecoderFinalStatus(IsMetadataDecode(),
                             GetDecodeDone(),
-                            WasAborted(),
                             HasError(),
                             ShouldReportError());
 }
@@ -343,7 +335,8 @@ Decoder::AllocateFrameInternal(uint32_t aFrameNum,
   NotNull<RefPtr<imgFrame>> frame = WrapNotNull(new imgFrame());
   bool nonPremult = bool(mSurfaceFlags & SurfaceFlags::NO_PREMULTIPLY_ALPHA);
   if (NS_FAILED(frame->InitForDecoder(aOutputSize, aFrameRect, aFormat,
-                                      aPaletteDepth, nonPremult))) {
+                                      aPaletteDepth, nonPremult,
+                                      aFrameNum > 0))) {
     NS_WARNING("imgFrame::Init should succeed");
     return RawAccessFrameRef();
   }
@@ -389,7 +382,12 @@ Decoder::AllocateFrameInternal(uint32_t aFrameNum,
 nsresult Decoder::InitInternal() { return NS_OK; }
 nsresult Decoder::BeforeFinishInternal() { return NS_OK; }
 nsresult Decoder::FinishInternal() { return NS_OK; }
-nsresult Decoder::FinishWithErrorInternal() { return NS_OK; }
+
+nsresult Decoder::FinishWithErrorInternal()
+{
+  MOZ_ASSERT(!mInFrame);
+  return NS_OK;
+}
 
 /*
  * Progress Notifications
@@ -459,7 +457,7 @@ Decoder::PostFrameStop(Opacity aFrameOpacity
   mFinishedNewFrame = true;
 
   mCurrentFrame->Finish(aFrameOpacity, aDisposalMethod, aTimeout,
-                        aBlendMethod, aBlendRect);
+                        aBlendMethod, aBlendRect, mFinalizeFrames);
 
   mProgress |= FLAG_FRAME_COMPLETE;
 
@@ -517,8 +515,12 @@ Decoder::PostError()
 {
   mError = true;
 
-  if (mInFrame && mCurrentFrame) {
+  if (mInFrame) {
+    MOZ_ASSERT(mCurrentFrame);
+    MOZ_ASSERT(mFrameCount > 0);
     mCurrentFrame->Abort();
+    mInFrame = false;
+    --mFrameCount;
   }
 }
 

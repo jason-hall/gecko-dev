@@ -15,9 +15,6 @@
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
 
-#define PL_ARENA_CONST_ALIGN_MASK 3
-#include "plarena.h"
-
 #ifdef _WIN32
   #include "windows.h"
 #endif /* _WIN32 */
@@ -25,10 +22,13 @@
 #include "plstr.h"
 #include "PLDHashTable.h"
 #include "plbase64.h"
+#include "mozilla/ArenaAllocator.h"
+#include "mozilla/ArenaAllocatorExtensions.h"
 #include "mozilla/Logging.h"
-#include "prprf.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/ServoStyleSet.h"
 #include "mozilla/dom/PContent.h"
+#include "mozilla/dom/ContentPrefs.h"
 #include "nsQuickSort.h"
 #include "nsString.h"
 #include "nsPrintfCString.h"
@@ -68,7 +68,7 @@ matchPrefEntry(const PLDHashEntryHdr* entry, const void* key)
 }
 
 PLDHashTable*       gHashTable;
-static PLArenaPool  gPrefNameArena;
+static ArenaAllocator<8192,4> gPrefNameArena;
 
 static struct CallbackNode* gCallbacks = nullptr;
 static bool         gIsAnyPrefLocked = false;
@@ -91,27 +91,12 @@ static PLDHashTableOps     pref_HashTableOps = {
 #define PR_ALIGN_OF_WORD PR_ALIGN_OF_POINTER
 #endif
 
-// making PrefName arena 8k for nice allocation
-#define PREFNAME_ARENA_SIZE 8192
-
 #define WORD_ALIGN_MASK (PR_ALIGN_OF_WORD - 1)
 
 // sanity checking
 #if (PR_ALIGN_OF_WORD & WORD_ALIGN_MASK) != 0
 #error "PR_ALIGN_OF_WORD must be a power of 2!"
 #endif
-
-// equivalent to strdup() - does no error checking,
-// we're assuming we're only called with a valid pointer
-static char *ArenaStrDup(const char* str, PLArenaPool* aArena)
-{
-    void* mem;
-    uint32_t len = strlen(str);
-    PL_ARENA_ALLOCATE(mem, aArena, len+1);
-    if (mem)
-        memcpy(mem, str, len+1);
-    return static_cast<char*>(mem);
-}
 
 static PrefsDirtyFunc gDirtyCallback = nullptr;
 
@@ -164,9 +149,6 @@ void PREF_Init()
         gHashTable = new PLDHashTable(&pref_HashTableOps,
                                       sizeof(PrefHashEntry),
                                       PREF_HASHTABLE_INITIAL_LENGTH);
-
-        PL_INIT_ARENA_POOL(&gPrefNameArena, "PrefNameArena",
-                           PREFNAME_ARENA_SIZE);
     }
 }
 
@@ -196,7 +178,7 @@ void PREF_CleanupPrefs()
     if (gHashTable) {
         delete gHashTable;
         gHashTable = nullptr;
-        PL_FinishArenaPool(&gPrefNameArena);
+        gPrefNameArena.Clear();
     }
 }
 
@@ -480,13 +462,11 @@ pref_CompareStrings(const void *v1, const void *v2, void *unused)
     {
         if (!s2)
             return 0;
-        else
-            return -1;
+        return -1;
     }
-    else if (!s2)
+    if (!s2)
         return 1;
-    else
-        return strcmp(s1, s2);
+    return strcmp(s1, s2);
 }
 
 bool PREF_HasUserPref(const char *pref_name)
@@ -736,13 +716,68 @@ static PrefTypeFlags pref_SetValue(PrefValue* existingValue, PrefTypeFlags flags
     }
     return flags;
 }
+#ifdef DEBUG
+static pref_initPhase gPhase = START;
+
+static bool gWatchingPref = false;
+
+void
+pref_SetInitPhase(pref_initPhase phase)
+{
+    gPhase = phase;
+}
+
+pref_initPhase
+pref_GetInitPhase()
+{
+    return gPhase;
+}
+
+void
+pref_SetWatchingPref(bool watching)
+{
+    gWatchingPref = watching;
+}
+
+
+struct StringComparator
+{
+    const char* mKey;
+    explicit StringComparator(const char* aKey) : mKey(aKey) {}
+    int operator()(const char* string) const {
+        return strcmp(mKey, string);
+    }
+};
+
+bool
+inInitArray(const char* key)
+{
+    size_t prefsLen;
+    size_t found;
+    const char** list = mozilla::dom::ContentPrefs::GetContentPrefs(&prefsLen);
+    return BinarySearchIf(list, 0, prefsLen,
+                          StringComparator(key), &found);
+}
+#endif
 
 PrefHashEntry* pref_HashTableLookup(const char *key)
 {
 #ifndef MOZ_B2G
-    MOZ_ASSERT(NS_IsMainThread());
+    MOZ_ASSERT(NS_IsMainThread() || mozilla::ServoStyleSet::IsInServoTraversal());
 #endif
-
+    MOZ_ASSERT((!XRE_IsContentProcess() || gPhase != START),
+               "pref access before commandline prefs set");
+    /* If you're hitting this assertion, you've added a pref access to start up.
+     * Consider moving it later or add it to the whitelist in ContentPrefs.cpp
+     * and get review from a DOM peer
+     */
+#ifdef DEBUG
+    if (XRE_IsContentProcess() && gPhase <= END_INIT_PREFS &&
+        !gWatchingPref && !inInitArray(key)) {
+      MOZ_CRASH_UNSAFE_PRINTF("accessing non-init pref %s before the rest of the prefs are sent",
+                              key);
+    }
+#endif
     return static_cast<PrefHashEntry*>(gHashTable->Search(key));
 }
 
@@ -764,7 +799,7 @@ nsresult pref_HashPref(const char *key, PrefValue value, PrefType type, uint32_t
 
         // initialize the pref entry
         pref->prefFlags.Reset().SetPrefType(type);
-        pref->key = ArenaStrDup(key, &gPrefNameArena);
+        pref->key = ArenaStrdup(key, gPrefNameArena);
         memset(&pref->defaultPref, 0, sizeof(pref->defaultPref));
         memset(&pref->userPref, 0, sizeof(pref->userPref));
     } else if (pref->prefFlags.HasDefault() && !pref->prefFlags.IsPrefType(type)) {
@@ -825,7 +860,7 @@ nsresult pref_HashPref(const char *key, PrefValue value, PrefType type, uint32_t
 size_t
 pref_SizeOfPrivateData(MallocSizeOf aMallocSizeOf)
 {
-    size_t n = PL_SizeOfArenaPoolExcludingPool(&gPrefNameArena, aMallocSizeOf);
+    size_t n = gPrefNameArena.SizeOfExcludingThis(aMallocSizeOf);
     for (struct CallbackNode* node = gCallbacks; node; node = node->next) {
         n += aMallocSizeOf(node);
         n += aMallocSizeOf(node->domain);

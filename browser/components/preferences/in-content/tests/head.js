@@ -32,10 +32,9 @@ function is_element_hidden(aElement, aMsg) {
 function open_preferences(aCallback) {
   gBrowser.selectedTab = gBrowser.addTab("about:preferences");
   let newTabBrowser = gBrowser.getBrowserForTab(gBrowser.selectedTab);
-  newTabBrowser.addEventListener("Initialized", function () {
-    newTabBrowser.removeEventListener("Initialized", arguments.callee, true);
+  newTabBrowser.addEventListener("Initialized", function() {
     aCallback(gBrowser.contentWindow);
-  }, true);
+  }, {capture: true, once: true});
 }
 
 function openAndLoadSubDialog(aURL, aFeatures = null, aParams = null, aClosingCallback = null) {
@@ -102,7 +101,7 @@ function waitForEvent(aSubject, aEventName, aTimeoutMs, aTarget) {
     eventDeferred.reject(new Error(aEventName + " event timeout at " + stack));
   }, timeoutMs);
 
-  var listener = function (aEvent) {
+  var listener = function(aEvent) {
     if (aTarget && aTarget !== aEvent.target)
         return;
 
@@ -116,34 +115,30 @@ function waitForEvent(aSubject, aEventName, aTimeoutMs, aTarget) {
     aSubject.removeEventListener(aEventName, listener);
     return aEventOrError;
   }
-  aSubject.addEventListener(aEventName, listener, false);
+  aSubject.addEventListener(aEventName, listener);
   return eventDeferred.promise.then(cleanup, cleanup);
 }
 
-function openPreferencesViaOpenPreferencesAPI(aPane, aAdvancedTab, aOptions) {
+function openPreferencesViaOpenPreferencesAPI(aPane, aOptions) {
   let deferred = Promise.defer();
   gBrowser.selectedTab = gBrowser.addTab("about:blank");
-  openPreferences(aPane, aAdvancedTab ? {advancedTab: aAdvancedTab} : undefined);
+  openPreferences(aPane);
   let newTabBrowser = gBrowser.selectedBrowser;
 
-  newTabBrowser.addEventListener("Initialized", function PrefInit() {
-    newTabBrowser.removeEventListener("Initialized", PrefInit, true);
-    newTabBrowser.contentWindow.addEventListener("load", function prefLoad() {
-      newTabBrowser.contentWindow.removeEventListener("load", prefLoad);
+  newTabBrowser.addEventListener("Initialized", function() {
+    newTabBrowser.contentWindow.addEventListener("load", function() {
       let win = gBrowser.contentWindow;
       let selectedPane = win.history.state;
-      let doc = win.document;
-      let selectedAdvancedTab = aAdvancedTab && doc.getElementById("advancedPrefs").selectedTab.id;
       if (!aOptions || !aOptions.leaveOpen)
         gBrowser.removeCurrentTab();
-      deferred.resolve({selectedPane: selectedPane, selectedAdvancedTab: selectedAdvancedTab});
-    });
-  }, true);
+      deferred.resolve({selectedPane});
+    }, {once: true});
+  }, {capture: true, once: true});
 
   return deferred.promise;
 }
 
-function waitForCondition(aConditionFn, aMaxTries=50, aCheckInterval=100) {
+function waitForCondition(aConditionFn, aMaxTries = 50, aCheckInterval = 100) {
   return new Promise((resolve, reject) => {
     function tryNow() {
       tries++;
@@ -162,4 +157,64 @@ function waitForCondition(aConditionFn, aMaxTries=50, aCheckInterval=100) {
     let tries = 0;
     tryAgain();
   });
+}
+
+function promiseWindowDialogOpen(buttonAction, url) {
+  return new Promise(resolve => {
+    Services.ww.registerNotification(function onOpen(subj, topic, data) {
+      if (topic == "domwindowopened" && subj instanceof Ci.nsIDOMWindow) {
+        subj.addEventListener("load", function onLoad() {
+          if (subj.document.documentURI == url) {
+            Services.ww.unregisterNotification(onOpen);
+            let doc = subj.document.documentElement;
+            doc.getButton(buttonAction).click();
+            resolve();
+          }
+        }, {once: true});
+      }
+    });
+  });
+}
+
+function promiseAlertDialogOpen(buttonAction) {
+  return promiseWindowDialogOpen(buttonAction, "chrome://global/content/commonDialog.xul");
+}
+
+function addPersistentStoragePerm(origin) {
+  let uri = NetUtil.newURI(origin);
+  let principal = Services.scriptSecurityManager.createCodebasePrincipal(uri, {});
+  Services.perms.addFromPrincipal(principal, "persistent-storage", Ci.nsIPermissionManager.ALLOW_ACTION);
+}
+
+function promiseSiteDataManagerSitesUpdated() {
+  return TestUtils.topicObserved("sitedatamanager:sites-updated", () => true);
+}
+
+function openSiteDataSettingsDialog() {
+  let doc = gBrowser.selectedBrowser.contentDocument;
+  let settingsBtn = doc.getElementById("siteDataSettings");
+  let dialogOverlay = doc.getElementById("dialogOverlay");
+  let dialogLoadPromise = promiseLoadSubDialog("chrome://browser/content/preferences/siteDataSettings.xul");
+  let dialogInitPromise = TestUtils.topicObserved("sitedata-settings-init", () => true);
+  let fullyLoadPromise = Promise.all([ dialogLoadPromise, dialogInitPromise ]).then(() => {
+    is(dialogOverlay.style.visibility, "visible", "The Settings dialog should be visible");
+  });
+  settingsBtn.doCommand();
+  return fullyLoadPromise;
+}
+
+function assertSitesListed(doc, origins) {
+  let frameDoc = doc.getElementById("dialogFrame").contentDocument;
+  let removeBtn = frameDoc.getElementById("removeSelected");
+  let removeAllBtn = frameDoc.getElementById("removeAll");
+  let sitesList = frameDoc.getElementById("sitesList");
+  let totalSitesNumber = sitesList.getElementsByTagName("richlistitem").length;
+  is(totalSitesNumber, origins.length, "Should list the right sites number");
+  origins.forEach(origin => {
+    let site = sitesList.querySelector(`richlistitem[data-origin="${origin}"]`);
+    let host = site.getAttribute("host");
+    ok(origin.includes(host), `Should list the site of ${origin}`);
+  });
+  is(removeBtn.disabled, false, "Should enable the removeSelected button");
+  is(removeAllBtn.disabled, false, "Should enable the removeAllBtn button");
 }

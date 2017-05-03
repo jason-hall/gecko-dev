@@ -129,7 +129,8 @@ class CPOWProxyHandler : public BaseProxyHandler
     virtual bool isArray(JSContext* cx, HandleObject obj,
                          IsArrayAnswer* answer) const override;
     virtual const char* className(JSContext* cx, HandleObject proxy) const override;
-    virtual bool regexp_toShared(JSContext* cx, HandleObject proxy, RegExpGuard* g) const override;
+    virtual bool regexp_toShared(JSContext* cx, HandleObject proxy,
+                                 MutableHandle<RegExpShared*> shared) const override;
     virtual void finalize(JSFreeOp* fop, JSObject* proxy) const override;
     virtual void objectMoved(JSObject* proxy, const JSObject* old) const override;
     virtual bool isCallable(JSObject* obj) const override;
@@ -431,7 +432,7 @@ WrapperOwner::DOMQI(JSContext* cx, JS::HandleObject proxy, JS::CallArgs& args)
         RootedObject idobj(cx, &id.toObject());
         nsCOMPtr<nsIJSID> jsid;
 
-        nsresult rv = UnwrapArg<nsIJSID>(idobj, getter_AddRefs(jsid));
+        nsresult rv = UnwrapArg<nsIJSID>(cx, idobj, getter_AddRefs(jsid));
         if (NS_SUCCEEDED(rv)) {
             MOZ_ASSERT(jsid, "bad wrapJS");
             const nsID* idptr = jsid->GetID();
@@ -717,7 +718,6 @@ WrapperOwner::hasInstance(JSContext* cx, HandleObject proxy, MutableHandleValue 
         return false;
 
     ReturnStatus status;
-    JSVariant result;
     if (!SendHasInstance(objId, vVar, &status, bp))
         return ipcfail(cx);
 
@@ -855,13 +855,14 @@ WrapperOwner::getPrototypeIfOrdinary(JSContext* cx, HandleObject proxy, bool* is
 }
 
 bool
-CPOWProxyHandler::regexp_toShared(JSContext* cx, HandleObject proxy, RegExpGuard* g) const
+CPOWProxyHandler::regexp_toShared(JSContext* cx, HandleObject proxy,
+                                  MutableHandle<RegExpShared*> shared) const
 {
-    FORWARD(regexp_toShared, (cx, proxy, g));
+    FORWARD(regexp_toShared, (cx, proxy, shared));
 }
 
 bool
-WrapperOwner::regexp_toShared(JSContext* cx, HandleObject proxy, RegExpGuard* g)
+WrapperOwner::regexp_toShared(JSContext* cx, HandleObject proxy, MutableHandle<RegExpShared*> shared)
 {
     ObjectId objId = idOf(proxy);
 
@@ -881,7 +882,7 @@ WrapperOwner::regexp_toShared(JSContext* cx, HandleObject proxy, RegExpGuard* g)
     if (!regexp)
         return false;
 
-    return js::RegExpToSharedNonInline(cx, regexp, g);
+    return js::RegExpToSharedNonInline(cx, regexp, shared);
 }
 
 void
@@ -1168,7 +1169,7 @@ WrapperOwner::toObjectVariant(JSContext* cx, JSObject* objArg, ObjectVariant* ob
 }
 
 JSObject*
-WrapperOwner::fromObjectVariant(JSContext* cx, ObjectVariant objVar)
+WrapperOwner::fromObjectVariant(JSContext* cx, const ObjectVariant& objVar)
 {
     if (objVar.type() == ObjectVariant::TRemoteObject) {
         return fromRemoteObjectVariant(cx, objVar.get_RemoteObject());
@@ -1178,7 +1179,7 @@ WrapperOwner::fromObjectVariant(JSContext* cx, ObjectVariant objVar)
 }
 
 JSObject*
-WrapperOwner::fromRemoteObjectVariant(JSContext* cx, RemoteObject objVar)
+WrapperOwner::fromRemoteObjectVariant(JSContext* cx, const RemoteObject& objVar)
 {
     ObjectId objId = ObjectId::deserialize(objVar.serializedId());
     RootedObject obj(cx, findCPOWById(objId));
@@ -1203,6 +1204,8 @@ WrapperOwner::fromRemoteObjectVariant(JSContext* cx, RemoteObject objVar)
         if (!cpows_.add(objId, obj))
             return nullptr;
 
+        nextCPOWNumber_ = objId.serialNumber() + 1;
+
         // Incref once we know the decref will be called.
         incref();
 
@@ -1222,7 +1225,7 @@ WrapperOwner::fromRemoteObjectVariant(JSContext* cx, RemoteObject objVar)
 }
 
 JSObject*
-WrapperOwner::fromLocalObjectVariant(JSContext* cx, LocalObject objVar)
+WrapperOwner::fromLocalObjectVariant(JSContext* cx, const LocalObject& objVar)
 {
     ObjectId id = ObjectId::deserialize(objVar.serializedId());
     Rooted<JSObject*> obj(cx, findObjectById(cx, id));

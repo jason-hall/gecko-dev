@@ -2,16 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-registerCleanupFunction(function() {
-  gBrowser.removeCurrentTab();
-});
-
-function promiseReloadFrame(aFrameId) {
-  return ContentTask.spawn(gBrowser.selectedBrowser, aFrameId, function*(aFrameId) {
-    content.wrappedJSObject.document.getElementById(aFrameId).contentWindow.location.reload();
-  });
-}
-
 var gTests = [
 
 {
@@ -34,8 +24,8 @@ var gTests = [
     });
     yield expectObserverCalled("getUserMedia:response:allow");
     yield expectObserverCalled("recording-device-events");
-    is((yield getMediaCaptureState()), "CameraAndMicrophone",
-       "expected camera and microphone to be shared");
+    Assert.deepEqual((yield getMediaCaptureState()), {audio: true, video: true},
+                     "expected camera and microphone to be shared");
 
     yield indicator;
     yield checkSharingUI({audio: true, video: true});
@@ -58,14 +48,14 @@ var gTests = [
     });
     yield expectObserverCalled("getUserMedia:response:allow");
     yield expectObserverCalled("recording-device-events");
-    is((yield getMediaCaptureState()), "CameraAndMicrophone",
-       "expected camera and microphone to be shared");
+    Assert.deepEqual((yield getMediaCaptureState()), {audio: true, video: true},
+                     "expected camera and microphone to be shared");
 
     yield indicator;
     yield checkSharingUI({video: true, audio: true});
 
     let Perms = Services.perms;
-    let uri = Services.io.newURI("https://example.com/", null, null);
+    let uri = Services.io.newURI("https://example.com/");
     is(Perms.testExactPermission(uri, "microphone"), Perms.ALLOW_ACTION,
                                  "microphone persistently allowed");
     is(Perms.testExactPermission(uri, "camera"), Perms.ALLOW_ACTION,
@@ -99,21 +89,19 @@ var gTests = [
     });
     yield expectObserverCalled("getUserMedia:response:allow");
     yield expectObserverCalled("recording-device-events");
-    is((yield getMediaCaptureState()), "CameraAndMicrophone",
-       "expected camera and microphone to be shared");
+    Assert.deepEqual((yield getMediaCaptureState()), {audio: true, video: true},
+                     "expected camera and microphone to be shared");
 
     yield indicator;
     yield checkSharingUI({video: true, audio: true});
 
     info("reloading the frame");
-    promise = promiseObserverCalled("recording-device-events");
+    let promises = [promiseObserverCalled("recording-device-stopped"),
+                    promiseObserverCalled("recording-device-events"),
+                    promiseObserverCalled("recording-window-ended")];
     yield promiseReloadFrame("frame1");
-    yield promise;
+    yield Promise.all(promises);
 
-    if ((yield promiseTodoObserverNotCalled("recording-device-events")) == 1) {
-      todo(false, "Got the 'recording-device-events' notification twice, likely because of bug 962719");
-    }
-    yield expectObserverCalled("recording-window-ended");
     yield expectNoObserverCalled();
     yield checkNotSharing();
   }
@@ -158,7 +146,8 @@ var gTests = [
     });
     yield expectObserverCalled("getUserMedia:response:allow");
     yield expectObserverCalled("recording-device-events");
-    is((yield getMediaCaptureState()), "Microphone", "microphone to be shared");
+    Assert.deepEqual((yield getMediaCaptureState()), {audio: true},
+                     "expected microphone to be shared");
 
     yield indicator;
     yield checkSharingUI({video: false, audio: true});
@@ -175,8 +164,8 @@ var gTests = [
     });
     yield expectObserverCalled("getUserMedia:response:allow");
     yield expectObserverCalled("recording-device-events");
-    is((yield getMediaCaptureState()), "CameraAndMicrophone",
-       "expected camera and microphone to be shared");
+    Assert.deepEqual((yield getMediaCaptureState()), {audio: true, video: true},
+                     "expected camera and microphone to be shared");
 
     yield checkSharingUI({video: true, audio: true});
     yield expectNoObserverCalled();
@@ -188,9 +177,6 @@ var gTests = [
 
     yield expectObserverCalled("recording-window-ended");
     yield checkSharingUI({video: false, audio: true});
-    if ((yield promiseTodoObserverNotCalled("recording-device-events")) == 1) {
-      todo(false, "Got the 'recording-device-events' notification twice, likely because of bug 962719");
-    }
     yield expectNoObserverCalled();
 
     yield closeStream(false, "frame1");
@@ -214,62 +200,18 @@ var gTests = [
     });
     yield expectObserverCalled("getUserMedia:response:allow");
     yield expectObserverCalled("recording-device-events");
-    is((yield getMediaCaptureState()), "CameraAndMicrophone",
-       "expected camera and microphone to be shared");
+    Assert.deepEqual((yield getMediaCaptureState()), {audio: true, video: true},
+                     "expected camera and microphone to be shared");
 
     yield indicator;
     yield checkSharingUI({video: true, audio: true});
 
-    info("reloading the web page");
-    promise = promiseObserverCalled("recording-device-events");
-    content.location.reload();
-    yield promise;
-
-    if ((yield promiseTodoObserverNotCalled("recording-device-events")) == 1) {
-      todo(false, "Got the 'recording-device-events' notification twice, likely because of bug 962719");
-    }
-    yield expectObserverCalled("recording-window-ended");
-    yield expectNoObserverCalled();
-    yield checkNotSharing();
+    yield reloadAndAssertClosedStreams();
   }
 }
 
 ];
 
-function test() {
-  waitForExplicitFinish();
-
-  let tab = gBrowser.addTab();
-  gBrowser.selectedTab = tab;
-  let browser = tab.linkedBrowser;
-
-  browser.messageManager.loadFrameScript(CONTENT_SCRIPT_HELPER, true);
-
-  browser.addEventListener("load", function onload() {
-    browser.removeEventListener("load", onload, true);
-
-    is(PopupNotifications._currentNotifications.length, 0,
-       "should start the test without any prior popup notification");
-
-    Task.spawn(function* () {
-      yield SpecialPowers.pushPrefEnv({"set": [[PREF_PERMISSION_FAKE, true]]});
-
-      for (let test of gTests) {
-        info(test.desc);
-        yield test.run();
-
-        // Cleanup before the next test
-        yield expectNoObserverCalled();
-      }
-    }).then(finish, ex => {
-     Cu.reportError(ex);
-     ok(false, "Unexpected Exception: " + ex);
-     finish();
-    });
-  }, true);
-  let rootDir = getRootDirectory(gTestPath);
-  rootDir = rootDir.replace("chrome://mochitests/content/",
-                            "https://example.com/");
-  let url = rootDir + "get_user_media.html";
-  content.location = 'data:text/html,<iframe id="frame1" src="' + url + '"></iframe><iframe id="frame2" src="' + url + '"></iframe>'
-}
+add_task(async function test() {
+  await runTests(gTests, { relativeURI: "get_user_media_in_frame.html" });
+});

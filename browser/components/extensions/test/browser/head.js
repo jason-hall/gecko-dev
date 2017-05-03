@@ -10,12 +10,30 @@
  *          promisePopupShown promisePopupHidden
  *          openContextMenu closeContextMenu
  *          openExtensionContextMenu closeExtensionContextMenu
- *          imageBuffer getListStyleImage getPanelForNode
- *          awaitExtensionPanel
+ *          openActionContextMenu openSubmenu closeActionContextMenu
+ *          openTabContextMenu closeTabContextMenu
+ *          imageBuffer imageBufferFromDataURI
+ *          getListStyleImage getPanelForNode
+ *          awaitExtensionPanel awaitPopupResize
+ *          promiseContentDimensions alterContent
+ *          promisePrefChangeObserved openContextMenuInFrame
  */
 
-var {AppConstants} = Cu.import("resource://gre/modules/AppConstants.jsm");
-var {CustomizableUI} = Cu.import("resource:///modules/CustomizableUI.jsm");
+const {AppConstants} = Cu.import("resource://gre/modules/AppConstants.jsm", {});
+const {CustomizableUI} = Cu.import("resource:///modules/CustomizableUI.jsm", {});
+
+// We run tests under two different configurations, from browser.ini and
+// browser-remote.ini. When running from browser-remote.ini, the tests are
+// copied to the sub-directory "test-oop-extensions", which we detect here, and
+// use to select our configuration.
+if (gTestPath.includes("test-oop-extensions")) {
+  SpecialPowers.pushPrefEnv({set: [
+    ["extensions.webextensions.remote", true],
+  ]});
+  // We don't want to reset this at the end of the test, so that we don't have
+  // to spawn a new extension child process for each test unit.
+  SpecialPowers.setIntPref("dom.ipc.keepProcessesAlive.extension", 1);
+}
 
 // Bug 1239884: Our tests occasionally hit a long GC pause at unpredictable
 // times in debug builds, which results in intermittent timeouts. Until we have
@@ -39,21 +57,25 @@ var focusWindow = Task.async(function* focusWindow(win) {
   }
 
   let promise = new Promise(resolve => {
-    win.addEventListener("focus", function listener() {
-      win.removeEventListener("focus", listener, true);
+    win.addEventListener("focus", function() {
       resolve();
-    }, true);
+    }, {capture: true, once: true});
   });
 
   win.focus();
   yield promise;
 });
 
+function imageBufferFromDataURI(encodedImageData) {
+  let decodedImageData = atob(encodedImageData);
+  return Uint8Array.from(decodedImageData, byte => byte.charCodeAt(0)).buffer;
+}
+
 let img = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQImWNgYGBgAAAABQABh6FO1AAAAABJRU5ErkJggg==";
-var imageBuffer = Uint8Array.from(atob(img), byte => byte.charCodeAt(0)).buffer;
+var imageBuffer = imageBufferFromDataURI(img);
 
 function getListStyleImage(button) {
-  let style = button.ownerDocument.defaultView.getComputedStyle(button);
+  let style = button.ownerGlobal.getComputedStyle(button);
 
   let match = /^url\("(.*)"\)$/.exec(style.listStyleImage);
 
@@ -84,6 +106,64 @@ function promisePopupHidden(popup) {
   });
 }
 
+function promisePossiblyInaccurateContentDimensions(browser) {
+  return ContentTask.spawn(browser, null, function* () {
+    function copyProps(obj, props) {
+      let res = {};
+      for (let prop of props) {
+        res[prop] = obj[prop];
+      }
+      return res;
+    }
+
+    return {
+      window: copyProps(content,
+        ["innerWidth", "innerHeight", "outerWidth", "outerHeight",
+         "scrollX", "scrollY", "scrollMaxX", "scrollMaxY"]),
+      body: copyProps(content.document.body,
+        ["clientWidth", "clientHeight", "scrollWidth", "scrollHeight"]),
+      root: copyProps(content.document.documentElement,
+        ["clientWidth", "clientHeight", "scrollWidth", "scrollHeight"]),
+      isStandards: content.document.compatMode !== "BackCompat",
+    };
+  });
+}
+
+function delay(ms = 0) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function promiseContentDimensions(browser) {
+  // For remote browsers, each resize operation requires an asynchronous
+  // round-trip to resize the content window. Since there's a certain amount of
+  // unpredictability in the timing, mainly due to the unpredictability of
+  // reflows, we need to wait until the content window dimensions match the
+  // <browser> dimensions before returning data.
+
+  let dims = await promisePossiblyInaccurateContentDimensions(browser);
+  while (browser.clientWidth !== dims.window.innerWidth ||
+         browser.clientHeight !== dims.window.innerHeight) {
+    await delay(50);
+    dims = await promisePossiblyInaccurateContentDimensions(browser);
+  }
+
+  return dims;
+}
+
+async function awaitPopupResize(browser) {
+  await BrowserTestUtils.waitForEvent(browser, "WebExtPopupResized",
+                                      event => event.detail === "delayed");
+
+  return promiseContentDimensions(browser);
+}
+
+function alterContent(browser, task, arg = null) {
+  return Promise.all([
+    ContentTask.spawn(browser, arg, task),
+    awaitPopupResize(browser),
+  ]).then(([, dims]) => dims);
+}
+
 function getPanelForNode(node) {
   while (node.localName != "panel") {
     node = node.parentNode;
@@ -91,21 +171,22 @@ function getPanelForNode(node) {
   return node;
 }
 
-var awaitExtensionPanel = Task.async(function* (extension, win = window, filename = "popup.html") {
-  let {target} = yield BrowserTestUtils.waitForEvent(win.document, "load", true, (event) => {
-    return event.target.location && event.target.location.href.endsWith(filename);
-  });
-
-  let browser = target.defaultView
-                      .QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDocShell)
-                      .chromeEventHandler;
-
-  if (browser.matches(".webextension-preload-browser")) {
-    let event = yield BrowserTestUtils.waitForEvent(browser, "SwapDocShells");
-    browser = event.detail;
+var awaitBrowserLoaded = browser => ContentTask.spawn(browser, null, () => {
+  if (content.document.readyState !== "complete") {
+    return ContentTaskUtils.waitForEvent(this, "load", true).then(() => {});
   }
+});
 
-  yield promisePopupShown(getPanelForNode(browser));
+var awaitExtensionPanel = Task.async(function* (extension, win = window, awaitLoad = true) {
+  let {originalTarget: browser} = yield BrowserTestUtils.waitForEvent(
+    win.document, "WebExtPopupLoaded", true,
+    event => event.detail.extension.id === extension.id);
+
+  yield Promise.all([
+    promisePopupShown(getPanelForNode(browser)),
+
+    awaitLoad && awaitBrowserLoaded(browser, awaitLoad),
+  ]);
 
   return browser;
 });
@@ -151,19 +232,30 @@ function closeBrowserAction(extension, win = window) {
   return Promise.resolve();
 }
 
-function* openContextMenu(selector = "#img1") {
+async function openContextMenuInFrame(frameId) {
   let contentAreaContextMenu = document.getElementById("contentAreaContextMenu");
   let popupShownPromise = BrowserTestUtils.waitForEvent(contentAreaContextMenu, "popupshown");
-  yield BrowserTestUtils.synthesizeMouseAtCenter(selector, {type: "contextmenu"}, gBrowser.selectedBrowser);
-  yield popupShownPromise;
+  let doc = gBrowser.selectedBrowser.contentDocument;
+  let frame = doc.getElementById(frameId);
+  EventUtils.synthesizeMouseAtCenter(frame.contentDocument.body, {type: "contextmenu"}, frame.contentWindow);
+  await popupShownPromise;
   return contentAreaContextMenu;
 }
 
-function* closeContextMenu() {
+async function openContextMenu(selector = "#img1") {
+  let contentAreaContextMenu = document.getElementById("contentAreaContextMenu");
+  let popupShownPromise = BrowserTestUtils.waitForEvent(contentAreaContextMenu, "popupshown");
+  await BrowserTestUtils.synthesizeMouseAtCenter(selector, {type: "mousedown", button: 2}, gBrowser.selectedBrowser);
+  await BrowserTestUtils.synthesizeMouseAtCenter(selector, {type: "contextmenu"}, gBrowser.selectedBrowser);
+  await popupShownPromise;
+  return contentAreaContextMenu;
+}
+
+async function closeContextMenu() {
   let contentAreaContextMenu = document.getElementById("contentAreaContextMenu");
   let popupHiddenPromise = BrowserTestUtils.waitForEvent(contentAreaContextMenu, "popuphidden");
   contentAreaContextMenu.hidePopup();
-  yield popupHiddenPromise;
+  await popupHiddenPromise;
 }
 
 function* openExtensionContextMenu(selector = "#img1") {
@@ -182,11 +274,58 @@ function* openExtensionContextMenu(selector = "#img1") {
   return extensionMenu;
 }
 
-function* closeExtensionContextMenu(itemToSelect) {
+function* closeExtensionContextMenu(itemToSelect, modifiers = {}) {
   let contentAreaContextMenu = document.getElementById("contentAreaContextMenu");
   let popupHiddenPromise = BrowserTestUtils.waitForEvent(contentAreaContextMenu, "popuphidden");
-  EventUtils.synthesizeMouseAtCenter(itemToSelect, {});
+  EventUtils.synthesizeMouseAtCenter(itemToSelect, modifiers);
   yield popupHiddenPromise;
+}
+
+function* openChromeContextMenu(menuId, target, win = window) {
+  const node = win.document.querySelector(target);
+  const menu = win.document.getElementById(menuId);
+  const shown = BrowserTestUtils.waitForEvent(menu, "popupshown");
+  EventUtils.synthesizeMouseAtCenter(node, {type: "contextmenu"}, win);
+  yield shown;
+  return menu;
+}
+
+function* openSubmenu(submenuItem, win = window) {
+  const submenu = submenuItem.firstChild;
+  const shown = BrowserTestUtils.waitForEvent(submenu, "popupshown");
+  EventUtils.synthesizeMouseAtCenter(submenuItem, {}, win);
+  yield shown;
+  return submenu;
+}
+
+function closeChromeContextMenu(menuId, itemToSelect, win = window) {
+  const menu = win.document.getElementById(menuId);
+  const hidden = BrowserTestUtils.waitForEvent(menu, "popuphidden");
+  if (itemToSelect) {
+    EventUtils.synthesizeMouseAtCenter(itemToSelect, {}, win);
+  } else {
+    menu.hidePopup();
+  }
+  return hidden;
+}
+
+function openActionContextMenu(extension, kind, win = window) {
+  // See comment from clickPageAction below.
+  SetPageProxyState("valid");
+  const id = `#${makeWidgetId(extension.id)}-${kind}-action`;
+  return openChromeContextMenu("toolbar-context-menu", id, win);
+}
+
+function closeActionContextMenu(itemToSelect, win = window) {
+  return closeChromeContextMenu("toolbar-context-menu", itemToSelect, win);
+}
+
+function openTabContextMenu(win = window) {
+  return openChromeContextMenu("tabContextMenu", ".tabbrowser-tab[selected]", win);
+}
+
+function closeTabContextMenu(itemToSelect, win = window) {
+  return closeChromeContextMenu("tabContextMenu", itemToSelect, win);
 }
 
 function getPageActionPopup(extension, win = window) {
@@ -220,4 +359,12 @@ function closePageAction(extension, win = window) {
   }
 
   return Promise.resolve();
+}
+
+function promisePrefChangeObserved(pref) {
+  return new Promise((resolve, reject) =>
+    Preferences.observe(pref, function prefObserver() {
+      Preferences.ignore(pref, prefObserver);
+      resolve();
+    }));
 }

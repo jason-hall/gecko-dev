@@ -13,7 +13,6 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "nsIInputStream.h"
-#define gfxToolkitPlatform gfxAndroidPlatform
 
 #include "nsXULAppAPI.h"
 #include <dirent.h>
@@ -51,6 +50,7 @@
 #include <sys/stat.h>
 
 using namespace mozilla;
+using namespace mozilla::gfx;
 
 static LazyLogModule sFontInfoLog("fontInfoLog");
 
@@ -85,7 +85,8 @@ public:
 
         NS_ASSERTION(!aFontEntry->mFilename.IsEmpty(),
                      "can't use AutoFTFace for fonts without a filename");
-        FT_Library ft = gfxToolkitPlatform::GetPlatform()->GetFTLibrary();
+        FT_Library ft = gfxPlatform::GetPlatform()->GetFTLibrary();
+        MOZ_ASSERT(ft);
 
         // A relative path (no initial "/") means this is a resource in
         // omnijar, not an installed font on the device.
@@ -237,7 +238,20 @@ FT2FontEntry::CreateFontInstance(const gfxFontStyle *aFontStyle, bool aNeedsBold
     if (!scaledFont) {
         return nullptr;
     }
-    gfxFont *font = new gfxFT2Font(scaledFont, this, aFontStyle, aNeedsBold);
+
+    RefPtr<UnscaledFontFreeType> unscaledFont =
+        static_cast<UnscaledFontFreeType*>(mUnscaledFont.get());
+    if (!unscaledFont) {
+        unscaledFont =
+            mFilename.IsEmpty() ?
+                new UnscaledFontFreeType(mFTFace) :
+                new UnscaledFontFreeType(mFilename.BeginReading(),
+                                         mFTFontIndex);
+        mUnscaledFont = unscaledFont;
+    }
+
+    gfxFont *font = new gfxFT2Font(unscaledFont, scaledFont, this,
+                                   aFontStyle, aNeedsBold);
     cairo_scaled_font_destroy(scaledFont);
     return font;
 }
@@ -256,7 +270,7 @@ FT2FontEntry::CreateFontEntry(const nsAString& aFontName,
     // eventually deleted.
     FT_Face face;
     FT_Error error =
-        FT_New_Memory_Face(gfxToolkitPlatform::GetPlatform()->GetFTLibrary(),
+        FT_New_Memory_Face(gfxPlatform::GetPlatform()->GetFTLibrary(),
                            aFontData, aLength, 0, &face);
     if (error != FT_Err_Ok) {
         free((void*)aFontData);
@@ -974,7 +988,7 @@ gfxFT2FontList::AppendFacesFromFontFile(const nsCString& aFileName,
         return;
     }
 
-    FT_Library ftLibrary = gfxAndroidPlatform::GetPlatform()->GetFTLibrary();
+    FT_Library ftLibrary = gfxPlatform::GetPlatform()->GetFTLibrary();
     FT_Face dummy;
     if (FT_Err_Ok == FT_New_Face(ftLibrary, aFileName.get(), -1, &dummy)) {
         LOG(("reading font info via FreeType for %s", aFileName.get()));
@@ -1126,7 +1140,7 @@ gfxFT2FontList::AppendFacesFromOmnijarEntry(nsZipArchive* aArchive,
         return;
     }
 
-    FT_Library ftLibrary = gfxAndroidPlatform::GetPlatform()->GetFTLibrary();
+    FT_Library ftLibrary = gfxPlatform::GetPlatform()->GetFTLibrary();
 
     FT_Face dummy;
     if (FT_Err_Ok != FT_New_Memory_Face(ftLibrary, buf.get(), bufSize, 0, &dummy)) {
@@ -1231,15 +1245,8 @@ gfxFT2FontList::FindFonts()
 
     if (mFontFamilies.Count() == 0) {
         // if we can't find/read the font directory, we are doomed!
-        NS_RUNTIMEABORT("Could not read the system fonts directory");
+        MOZ_CRASH("Could not read the system fonts directory");
     }
-
-#ifdef MOZ_WIDGET_GONK
-    // Look for fonts in /system/fonts/hidden and preload them to the
-    // user-font cache as data: URIs
-    root.AppendLiteral("/hidden");
-    FindFontsInDir(root, mFontNameCache.get(), FT2FontFamily::kHidden);
-#endif
 
     // Look for fonts stored in omnijar, unless we're on a low-memory
     // device where we don't want to spend the RAM to decompress them.
@@ -1564,9 +1571,7 @@ gfxFontFamily*
 gfxFT2FontList::GetDefaultFontForPlatform(const gfxFontStyle* aStyle)
 {
     gfxFontFamily *ff = nullptr;
-#ifdef MOZ_WIDGET_GONK
-    ff = FindFamily(NS_LITERAL_STRING("Fira Sans"));
-#elif defined(MOZ_WIDGET_ANDROID)
+#if defined(MOZ_WIDGET_ANDROID)
     ff = FindFamily(NS_LITERAL_STRING("Roboto"));
     if (!ff) {
         ff = FindFamily(NS_LITERAL_STRING("Droid Sans"));

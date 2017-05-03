@@ -56,7 +56,7 @@ SearchProvider.prototype = {
 
   uninit() {
     try {
-      Services.obs.removeObserver(this, CURRENT_ENGINE, true);
+      Services.obs.removeObserver(this, CURRENT_ENGINE);
     } catch (e) {
       Cu.reportError(e);
     }
@@ -72,7 +72,7 @@ SearchProvider.prototype = {
 
   manageEngines(browser) {
     const browserWin = browser.ownerGlobal;
-    browserWin.openPreferences("paneSearch");
+    browserWin.openPreferences("paneGeneral");
   },
 
   asyncGetState: Task.async(function*() {

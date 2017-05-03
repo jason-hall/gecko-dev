@@ -117,7 +117,7 @@ ContentEventHandler::InitBasic()
 
   // If text frame which has overflowing selection underline is dirty,
   // we need to flush the pending reflow here.
-  mPresShell->FlushPendingNotifications(Flush_Layout);
+  mPresShell->FlushPendingNotifications(FlushType::Layout);
 
   // Flushing notifications can cause mPresShell to be destroyed (bug 577963).
   NS_ENSURE_TRUE(!mPresShell->IsDestroying(), NS_ERROR_FAILURE);
@@ -776,13 +776,18 @@ ContentEventHandler::AppendFontRanges(FontRangeArray& aFontRanges,
   }
 
   int32_t baseOffset = aBaseOffset;
-  nsTextFrame* curr = do_QueryFrame(frame);
-  MOZ_ASSERT(curr, "Not a text frame");
+#ifdef DEBUG
+  {
+    nsTextFrame* text = do_QueryFrame(frame);
+    MOZ_ASSERT(text, "Not a text frame");
+  }
+#endif
+  auto* curr = static_cast<nsTextFrame*>(frame);
   while (curr) {
     int32_t frameXPStart = std::max(curr->GetContentOffset(), aXPStartOffset);
     int32_t frameXPEnd = std::min(curr->GetContentEnd(), aXPEndOffset);
     if (frameXPStart >= frameXPEnd) {
-      curr = static_cast<nsTextFrame*>(curr->GetNextContinuation());
+      curr = curr->GetNextContinuation();
       continue;
     }
 
@@ -791,11 +796,11 @@ ContentEventHandler::AppendFontRanges(FontRangeArray& aFontRanges,
 
     nsTextFrame* next = nullptr;
     if (frameXPEnd < aXPEndOffset) {
-      next = static_cast<nsTextFrame*>(curr->GetNextContinuation());
+      next = curr->GetNextContinuation();
       while (next && next->GetTextRun(nsTextFrame::eInflated) == textRun) {
         frameXPEnd = std::min(next->GetContentEnd(), aXPEndOffset);
         next = frameXPEnd < aXPEndOffset ?
-          static_cast<nsTextFrame*>(next->GetNextContinuation()) : nullptr;
+          next->GetNextContinuation() : nullptr;
       }
     }
 
@@ -1313,7 +1318,7 @@ ContentEventHandler::OnQuerySelectedText(WidgetQueryContentEvent* aEvent)
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsINode> anchorNode, focusNode;
-  int32_t anchorOffset, focusOffset;
+  int32_t anchorOffset = 0, focusOffset = 0;
   if (mSelection->RangeCount()) {
     // If there is only one selection range, the anchor/focus node and offset
     // are the information of the range.  Therefore, we have the direction
@@ -1813,7 +1818,7 @@ ContentEventHandler::OnQueryTextRectArray(WidgetQueryContentEvent* aEvent)
   // charRect).
   nsRect lastCharRect;
   // lastFrame is base frame of lastCharRect.
-  nsIFrame* lastFrame;
+  nsIFrame* lastFrame = nullptr;
   while (offset < kEndOffset) {
     nsCOMPtr<nsIContent> lastTextContent;
     rv = SetRangeFromFlatTextOffset(range, offset, 1, lineBreakType, true,

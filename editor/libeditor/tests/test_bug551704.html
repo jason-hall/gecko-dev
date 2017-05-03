@@ -89,7 +89,7 @@ SimpleTest.waitForFocus(function() {
     is(range.startOffset, 0, "The start offset should be zero");
 
     continueTest();
-  }, false);
+  });
   iframe.src = "data:text/html,foo";
   document.getElementById("content").appendChild(iframe);
 });
@@ -111,7 +111,7 @@ function continueTest() {
     } else {
       var type = typeABCDEF;
     }
-    var expectedHTML = "abc<br>def<br>";
+    var expectedHTML = "<div>abc</div><div>def<br></div>";
     var expectedText = "abc\ndef";
     testLineBreak(div, type, expectedText, expectedHTML, doNextTest);
   }

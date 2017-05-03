@@ -19,7 +19,8 @@
 #include "webrtc/modules/desktop_capture/app_capturer.h"
 
 #include "webrtc/modules/desktop_capture/desktop_frame.h"
-#include "webrtc/system_wrappers/interface/logging.h"
+#include "webrtc/system_wrappers/include/logging.h"
+#include "webrtc/base/constructormagic.h"
 
 namespace webrtc {
 
@@ -37,13 +38,14 @@ class AppCapturerMac : public AppCapturer {
 
   // DesktopCapturer interface.
   virtual void Start(Callback* callback) override;
+  virtual void Stop() override;
   virtual void Capture(const DesktopRegion& region) override;
 
  private:
   Callback* callback_;
   ProcessId process_id_;
 
-  DISALLOW_COPY_AND_ASSIGN(AppCapturerMac);
+  RTC_DISALLOW_COPY_AND_ASSIGN(AppCapturerMac);
 };
 
 AppCapturerMac::AppCapturerMac()
@@ -76,6 +78,10 @@ void AppCapturerMac::Start(Callback* callback) {
   assert(callback);
 
   callback_ = callback;
+}
+
+void AppCapturerMac::Stop() {
+  callback_ = NULL;
 }
 
 void AppCapturerMac::Capture(const DesktopRegion& region) {

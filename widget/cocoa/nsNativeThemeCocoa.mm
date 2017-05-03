@@ -311,7 +311,7 @@ static BOOL IsToolbarStyleContainer(nsIFrame* aFrame)
                                   nsGkAtoms::statusbar))
     return YES;
 
-  switch (aFrame->StyleDisplay()->mAppearance) {
+  switch (aFrame->StyleDisplay()->UsedAppearance()) {
     case NS_THEME_TOOLBAR:
     case NS_THEME_STATUSBAR:
       return YES;
@@ -512,6 +512,15 @@ static BOOL IsActive(nsIFrame* aFrame, BOOL aIsToolbarControl)
   if (aIsToolbarControl)
     return [NativeWindowForFrame(aFrame) isMainWindow];
   return FrameIsInActiveWindow(aFrame);
+}
+
+static bool IsInSourceList(nsIFrame* aFrame) {
+  for (nsIFrame* frame = aFrame->GetParent(); frame; frame = frame->GetParent()) {
+    if (frame->StyleDisplay()->UsedAppearance() == NS_THEME_MAC_SOURCE_LIST) {
+      return true;
+    }
+  }
+  return false;
 }
 
 NS_IMPL_ISUPPORTS_INHERITED(nsNativeThemeCocoa, nsNativeTheme, nsITheme)
@@ -2752,7 +2761,7 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
       BOOL isHorizontal = (aWidgetType == NS_THEME_SCROLLBARTHUMB_HORIZONTAL);
       BOOL isRolledOver = IsParentScrollbarRolledOver(aFrame);
       nsIFrame* scrollbarFrame = GetParentScrollbarFrame(aFrame);
-      bool isSmall = (scrollbarFrame && scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
+      bool isSmall = (scrollbarFrame && scrollbarFrame->StyleDisplay()->UsedAppearance() == NS_THEME_SCROLLBAR_SMALL);
       if (isOverlay && !isRolledOver) {
         if (isHorizontal) {
           macRect.origin.y += 4;
@@ -2802,7 +2811,7 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
       if (!isOverlay || IsParentScrollbarRolledOver(aFrame)) {
         BOOL isHorizontal = (aWidgetType == NS_THEME_SCROLLBARTRACK_HORIZONTAL);
         nsIFrame* scrollbarFrame = GetParentScrollbarFrame(aFrame);
-        bool isSmall = (scrollbarFrame && scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
+        bool isSmall = (scrollbarFrame && scrollbarFrame->StyleDisplay()->UsedAppearance() == NS_THEME_SCROLLBAR_SMALL);
         const BOOL isOnTopOfDarkBackground = IsDarkBackground(aFrame);
         RenderWithCoreUI(macRect, cgContext,
                 [NSDictionary dictionaryWithObjectsAndKeys:
@@ -2887,6 +2896,31 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
         CGContextDrawLinearGradient(cgContext, backgroundGradient, start, end, 0);
         CGGradientRelease(backgroundGradient);
         CGColorSpaceRelease(rgb);
+      }
+    }
+      break;
+
+    case NS_THEME_MAC_SOURCE_LIST_SELECTION:
+    case NS_THEME_MAC_ACTIVE_SOURCE_LIST_SELECTION: {
+      // If we're in XUL tree, we need to rely on the source list's clear
+      // background display item. If we cleared the background behind the
+      // selections, the source list would not pick up the right font
+      // smoothing background. So, to simplify a bit, we only support vibrancy
+      // if we're in a source list.
+      if (VibrancyManager::SystemSupportsVibrancy() && IsInSourceList(aFrame)) {
+        ThemeGeometryType type = ThemeGeometryTypeForWidget(aFrame, aWidgetType);
+        DrawVibrancyBackground(cgContext, macRect, aFrame, type);
+      } else {
+        BOOL isActiveSelection =
+          aWidgetType == NS_THEME_MAC_ACTIVE_SOURCE_LIST_SELECTION;
+        RenderWithCoreUI(macRect, cgContext,
+          [NSDictionary dictionaryWithObjectsAndKeys:
+            [NSNumber numberWithBool:isActiveSelection], @"focus",
+            [NSNumber numberWithBool:YES], @"is.flipped",
+            @"kCUIVariantGradientSideBarSelection", @"kCUIVariantKey",
+            (FrameIsInActiveWindow(aFrame) ? @"normal" : @"inactive"), @"state",
+            @"gradient", @"widget",
+            nil]);
       }
     }
       break;
@@ -3348,7 +3382,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext,
       if (!scrollbarFrame)
         return NS_ERROR_FAILURE;
 
-      bool isSmall = (scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
+      bool isSmall = (scrollbarFrame->StyleDisplay()->UsedAppearance() == NS_THEME_SCROLLBAR_SMALL);
       bool isHorizontal = (aWidgetType == NS_THEME_SCROLLBARTHUMB_HORIZONTAL);
       int32_t& minSize = isHorizontal ? aResult->width : aResult->height;
       minSize = isSmall ? kSmallScrollbarThumbMinSize : kRegularScrollbarThumbMinSize;
@@ -3365,7 +3399,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext,
       if (nsLookAndFeel::UseOverlayScrollbars()) {
         nsIFrame* scrollbarFrame = GetParentScrollbarFrame(aFrame);
         if (scrollbarFrame &&
-            scrollbarFrame->StyleDisplay()->mAppearance ==
+            scrollbarFrame->StyleDisplay()->UsedAppearance() ==
               NS_THEME_SCROLLBAR_SMALL) {
           aResult->SizeTo(14, 14);
         }
@@ -3383,7 +3417,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext,
       nsIFrame *scrollbarFrame = GetParentScrollbarFrame(aFrame);
       if (!scrollbarFrame) return NS_ERROR_FAILURE;
 
-      int32_t themeMetric = (scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL) ?
+      int32_t themeMetric = (scrollbarFrame->StyleDisplay()->UsedAppearance() == NS_THEME_SCROLLBAR_SMALL) ?
                             kThemeMetricSmallScrollBarWidth :
                             kThemeMetricScrollBarWidth;
       SInt32 scrollbarWidth = 0;
@@ -3399,7 +3433,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext,
       if (aFrame) {
         nsIFrame* scrollbarFrame = GetParentScrollbarFrame(aFrame);
         if (scrollbarFrame &&
-            scrollbarFrame->StyleDisplay()->mAppearance ==
+            scrollbarFrame->StyleDisplay()->UsedAppearance() ==
             NS_THEME_SCROLLBAR_SMALL) {
           // XXX We're interested in the width of non-disappearing scrollbars
           // to leave enough space for a dropmarker in non-native styled
@@ -3424,7 +3458,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsPresContext* aPresContext,
       if (!scrollbarFrame) return NS_ERROR_FAILURE;
 
       // Since there is no NS_THEME_SCROLLBARBUTTON_UP_SMALL we need to ask the parent what appearance style it has.
-      int32_t themeMetric = (scrollbarFrame->StyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL) ?
+      int32_t themeMetric = (scrollbarFrame->StyleDisplay()->UsedAppearance() == NS_THEME_SCROLLBAR_SMALL) ?
                             kThemeMetricSmallScrollBarWidth :
                             kThemeMetricScrollBarWidth;
       SInt32 scrollbarWidth = 0;
@@ -3615,6 +3649,8 @@ nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* a
     case NS_THEME_TREEITEM:
     case NS_THEME_TREELINE:
     case NS_THEME_MAC_SOURCE_LIST:
+    case NS_THEME_MAC_SOURCE_LIST_SELECTION:
+    case NS_THEME_MAC_ACTIVE_SOURCE_LIST_SELECTION:
 
     case NS_THEME_RANGE:
 
@@ -3756,6 +3792,12 @@ nsNativeThemeCocoa::NeedToClearBackgroundBehindWidget(nsIFrame* aFrame,
 {
   switch (aWidgetType) {
     case NS_THEME_MAC_SOURCE_LIST:
+    // If we're in a XUL tree, we don't want to clear the background behind the
+    // selections below, since that would make our source list to not pick up
+    // the right font smoothing background. But since we don't call this method
+    // in nsTreeBodyFrame::BuildDisplayList, we never get here.
+    case NS_THEME_MAC_SOURCE_LIST_SELECTION:
+    case NS_THEME_MAC_ACTIVE_SOURCE_LIST_SELECTION:
     case NS_THEME_MAC_VIBRANCY_LIGHT:
     case NS_THEME_MAC_VIBRANCY_DARK:
     case NS_THEME_TOOLTIP:
@@ -3786,6 +3828,8 @@ nsNativeThemeCocoa::WidgetProvidesFontSmoothingBackgroundColor(nsIFrame* aFrame,
 {
   switch (aWidgetType) {
     case NS_THEME_MAC_SOURCE_LIST:
+    case NS_THEME_MAC_SOURCE_LIST_SELECTION:
+    case NS_THEME_MAC_ACTIVE_SOURCE_LIST_SELECTION:
     case NS_THEME_MAC_VIBRANCY_LIGHT:
     case NS_THEME_MAC_VIBRANCY_DARK:
     case NS_THEME_TOOLTIP:
@@ -3794,7 +3838,10 @@ nsNativeThemeCocoa::WidgetProvidesFontSmoothingBackgroundColor(nsIFrame* aFrame,
     case NS_THEME_CHECKMENUITEM:
     case NS_THEME_DIALOG:
     {
-      if (aWidgetType == NS_THEME_DIALOG && !IsWindowSheet(aFrame)) {
+      if ((aWidgetType == NS_THEME_DIALOG && !IsWindowSheet(aFrame)) ||
+          ((aWidgetType == NS_THEME_MAC_SOURCE_LIST_SELECTION ||
+            aWidgetType == NS_THEME_MAC_ACTIVE_SOURCE_LIST_SELECTION) &&
+            !IsInSourceList(aFrame))) {
         return false;
       }
       ChildView* childView = ChildViewForFrame(aFrame);
@@ -3844,6 +3891,12 @@ nsNativeThemeCocoa::ThemeGeometryTypeForWidget(nsIFrame* aFrame, uint8_t aWidget
       return IsWindowSheet(aFrame) ? eThemeGeometryTypeSheet : eThemeGeometryTypeUnknown;
     case NS_THEME_MAC_SOURCE_LIST:
       return eThemeGeometryTypeSourceList;
+    case NS_THEME_MAC_SOURCE_LIST_SELECTION:
+      return IsInSourceList(aFrame) ? eThemeGeometryTypeSourceListSelection
+                                    : eThemeGeometryTypeUnknown;
+    case NS_THEME_MAC_ACTIVE_SOURCE_LIST_SELECTION:
+      return IsInSourceList(aFrame) ? eThemeGeometryTypeActiveSourceListSelection
+                                    : eThemeGeometryTypeUnknown;
     default:
       return eThemeGeometryTypeUnknown;
   }

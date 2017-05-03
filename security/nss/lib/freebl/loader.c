@@ -814,7 +814,7 @@ BL_Unload(void)
     char *disableUnload = NULL;
     vector = NULL;
     disableUnload = PR_GetEnvSecure("NSS_DISABLE_UNLOAD");
-    if (!disableUnload) {
+    if (blLib && !disableUnload) {
 #ifdef DEBUG
         PRStatus status = PR_UnloadLibrary(blLib);
         PORT_Assert(PR_SUCCESS == status);
@@ -2115,4 +2115,12 @@ ChaCha20Poly1305_Open(const ChaCha20Poly1305Context *ctx,
     return (vector->p_ChaCha20Poly1305_Open)(
         ctx, output, outputLen, maxOutputLen, input, inputLen,
         nonce, nonceLen, ad, adLen);
+}
+
+int
+EC_GetPointSize(const ECParams *params)
+{
+    if (!vector && PR_SUCCESS != freebl_RunLoaderOnce())
+        return SECFailure;
+    return (vector->p_EC_GetPointSize)(params);
 }

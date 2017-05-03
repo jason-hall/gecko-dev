@@ -2,6 +2,8 @@
 
 Components.utils.import("resource://gre/modules/Schemas.jsm");
 
+const global = this;
+
 let schemaJson = [
   {
     namespace: "noAllowedContexts",
@@ -66,14 +68,16 @@ let schemaJson = [
     },
   },
 ];
+
 add_task(function* testRestrictions() {
   let url = "data:," + JSON.stringify(schemaJson);
   yield Schemas.load(url);
   let results = {};
   let localWrapper = {
+    cloneScope: global,
     shouldInject(ns, name, allowedContexts) {
-      name = name === null ? ns : ns + "." + name;
-      results[name] = allowedContexts.join();
+      name = ns ? ns + "." + name : name;
+      results[name] = allowedContexts.join(",");
       return true;
     },
     getImplementation() {
@@ -88,8 +92,17 @@ add_task(function* testRestrictions() {
   Schemas.inject(root, localWrapper);
 
   function verify(path, expected) {
+    let obj = root;
+    for (let thing of path.split(".")) {
+      try {
+        obj = obj[thing];
+      } catch (e) {
+        // Blech.
+      }
+    }
+
     let result = results[path];
-    do_check_eq(result, expected);
+    equal(result, expected, path);
   }
 
   verify("noAllowedContexts", "");
@@ -129,7 +142,7 @@ add_task(function* testRestrictions() {
 
   // This is a constant, so it does not matter that getImplementation does not
   // return an implementation since the API injector should take care of it.
-  do_check_eq(root.noAllowedContexts.prop3, 1);
+  equal(root.noAllowedContexts.prop3, 1);
 
   Assert.throws(() => root.noAllowedContexts.prop1,
                 /undefined/,

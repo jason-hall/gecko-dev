@@ -14,8 +14,10 @@
 using namespace mozilla::layers;
 
 namespace mozilla {
-PRLogModuleInfo* gVideoFrameContainerLog;
+static LazyLogModule gVideoFrameContainerLog("VideoFrameContainer");
 #define CONTAINER_LOG(type, msg) MOZ_LOG(gVideoFrameContainerLog, type, msg)
+
+#define NS_DispatchToMainThread(...) CompileError_UseAbstractMainThreadInstead
 
 VideoFrameContainer::VideoFrameContainer(dom::HTMLMediaElement* aElement,
                                          already_AddRefed<ImageContainer> aContainer)
@@ -24,13 +26,12 @@ VideoFrameContainer::VideoFrameContainer(dom::HTMLMediaElement* aElement,
     mBlackImage(nullptr),
     mFrameID(0),
     mIntrinsicSizeChanged(false), mImageSizeChanged(false),
-    mPendingPrincipalHandle(PRINCIPAL_HANDLE_NONE), mFrameIDForPendingPrincipalHandle(0)
+    mPendingPrincipalHandle(PRINCIPAL_HANDLE_NONE),
+    mFrameIDForPendingPrincipalHandle(0),
+    mMainThread(aElement->AbstractMainThread())
 {
   NS_ASSERTION(aElement, "aElement must not be null");
   NS_ASSERTION(mImageContainer, "aContainer must not be null");
-  if (!gVideoFrameContainerLog) {
-    gVideoFrameContainerLog = PR_NewLogModule("VideoFrameContainer");
-  }
 }
 
 VideoFrameContainer::~VideoFrameContainer()
@@ -81,7 +82,8 @@ SetImageToBlackPixel(PlanarYCbCrImage* aImage)
 class VideoFrameContainerInvalidateRunnable : public Runnable {
 public:
   explicit VideoFrameContainerInvalidateRunnable(VideoFrameContainer* aVideoFrameContainer)
-    : mVideoFrameContainer(aVideoFrameContainer)
+    : Runnable("VideoFrameContainerInvalidateRunnable")
+    , mVideoFrameContainer(aVideoFrameContainer)
   {}
   NS_IMETHOD Run()
   {
@@ -174,7 +176,7 @@ void VideoFrameContainer::SetCurrentFrames(const VideoSegment& aSegment)
   SetCurrentFramesLocked(mLastPlayedVideoFrame.GetIntrinsicSize(), images);
   nsCOMPtr<nsIRunnable> event =
     new VideoFrameContainerInvalidateRunnable(this);
-  NS_DispatchToMainThread(event.forget());
+  mMainThread->Dispatch(event.forget());
 
   images.ClearAndRetainStorage();
 }
@@ -245,11 +247,16 @@ void VideoFrameContainer::SetCurrentFramesLocked(const gfx::IntSize& aIntrinsicS
     mLastPrincipalHandle = mPendingPrincipalHandle;
     mPendingPrincipalHandle = PRINCIPAL_HANDLE_NONE;
     mFrameIDForPendingPrincipalHandle = 0;
-    NS_DispatchToMainThread(NS_NewRunnableFunction([self, principalHandle]() {
-      if (self->mElement) {
-        self->mElement->PrincipalHandleChangedForVideoFrameContainer(self, principalHandle);
-      }
-    }));
+    mMainThread->Dispatch(
+      NS_NewRunnableFunction(
+        "PrincipalHandleChangedForVideoFrameContainer",
+        [self, principalHandle]() {
+          if (self->mElement) {
+            self->mElement->PrincipalHandleChangedForVideoFrameContainer(self, principalHandle);
+          }
+        }
+      )
+    );
   }
 
   if (aImages.IsEmpty()) {
@@ -360,3 +367,5 @@ void VideoFrameContainer::InvalidateWithFlags(uint32_t aFlags)
 }
 
 } // namespace mozilla
+
+#undef NS_DispatchToMainThread

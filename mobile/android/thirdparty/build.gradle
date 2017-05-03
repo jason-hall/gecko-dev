@@ -25,7 +25,6 @@ android {
             manifest.srcFile 'AndroidManifest.xml'
             java {
                 srcDir '.'
-                srcDir "${topsrcdir}/mobile/android/geckoview/src/thirdparty/java"
 
                 if (!mozconfig.substs.MOZ_INSTALL_TRACKING) {
                     exclude 'com/adjust/**'
@@ -53,3 +52,7 @@ idea {
         }
     }
 }
+
+// Bug 1353055 - Strip 'vars' debugging information to agree with moz.build.
+apply from: "${topsrcdir}/mobile/android/gradle/debug_level.gradle"
+android.libraryVariants.all configureVariantDebugLevel

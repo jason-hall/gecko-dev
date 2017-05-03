@@ -7,21 +7,20 @@ add_task(function* () {
 
   // add a test provider that waits for load
   let afterLoadProvider = {
-    getLinks: function(callback) {
+    getLinks(callback) {
       this.callback = callback;
     },
-    addObserver: function() {},
+    addObserver() {},
   };
   NewTabUtils.links.addProvider(afterLoadProvider);
 
   // wait until about:newtab loads before calling provider callback
-  let tab = yield BrowserTestUtils.openNewForegroundTab(gBrowser, "about:newtab");
+  yield BrowserTestUtils.openNewForegroundTab(gBrowser, "about:newtab");
 
   afterLoadProvider.callback([]);
 
   yield ContentTask.spawn(gBrowser.selectedBrowser, {}, function* () {
-    let {_cellMargin, _cellHeight, _cellWidth, node} = content.gGrid;
-    Assert.notEqual(_cellMargin, null, "grid has a computed cell margin");
+    let {_cellHeight, _cellWidth, node} = content.gGrid;
     Assert.notEqual(_cellHeight, null, "grid has a computed cell height");
     Assert.notEqual(_cellWidth, null, "grid has a computed cell width");
     let {height, maxHeight, maxWidth} = node.style;

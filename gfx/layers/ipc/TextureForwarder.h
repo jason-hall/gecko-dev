@@ -9,11 +9,14 @@
 
 #include <stdint.h>                     // for int32_t, uint64_t
 #include "gfxTypes.h"
-#include "mozilla/layers/ISurfaceAllocator.h"  // for ISurfaceAllocator
 #include "mozilla/layers/LayersTypes.h"  // for LayersBackend
 #include "mozilla/layers/TextureClient.h"  // for TextureClient
+#include "mozilla/layers/KnowsCompositor.h"
 
 namespace mozilla {
+namespace ipc {
+class IShmemAllocator;
+}
 namespace layers {
 
 /**
@@ -32,10 +35,9 @@ public:
  * shmem.
  */
 class LayersIPCChannel : public LayersIPCActor
-                       , public ShmemAllocator {
+                       , public mozilla::ipc::IShmemAllocator {
 public:
-  NS_IMETHOD_(MozExternalRefCountType) AddRef(void) = 0;
-  NS_IMETHOD_(MozExternalRefCountType) Release(void) = 0;
+  NS_INLINE_DECL_PURE_VIRTUAL_REFCOUNTING
 
   virtual bool IsSameProcess() const = 0;
 
@@ -48,6 +50,7 @@ public:
   virtual FixedSizeSmallShmemSectionAllocator* GetTileLockAllocator() { return nullptr; }
 
   virtual void CancelWaitForRecycle(uint64_t aTextureId) = 0;
+
 protected:
   virtual ~LayersIPCChannel() {}
 };
@@ -67,69 +70,6 @@ public:
     LayersBackend aLayersBackend,
     TextureFlags aFlags,
     uint64_t aSerial) = 0;
-};
-
-/**
- * An abstract interface for classes that are tied to a specific Compositor across
- * IPDL and uses TextureFactoryIdentifier to describe this Compositor.
- */
-class KnowsCompositor {
-public:
-  NS_IMETHOD_(MozExternalRefCountType) AddRef(void) = 0;
-  NS_IMETHOD_(MozExternalRefCountType) Release(void) = 0;
-
-  KnowsCompositor()
-    : mSerial(++sSerialCounter)
-  {}
-
-  void IdentifyTextureHost(const TextureFactoryIdentifier& aIdentifier);
-
-  SyncObject* GetSyncObject() { return mSyncObject; }
-
-  int32_t GetMaxTextureSize() const
-  {
-    return mTextureFactoryIdentifier.mMaxTextureSize;
-  }
-
-  /**
-   * Returns the type of backend that is used off the main thread.
-   * We only don't allow changing the backend type at runtime so this value can
-   * be queried once and will not change until Gecko is restarted.
-   */
-  LayersBackend GetCompositorBackendType() const
-  {
-    return mTextureFactoryIdentifier.mParentBackend;
-  }
-
-  bool SupportsTextureBlitting() const
-  {
-    return mTextureFactoryIdentifier.mSupportsTextureBlitting;
-  }
-
-  bool SupportsPartialUploads() const
-  {
-    return mTextureFactoryIdentifier.mSupportsPartialUploads;
-  }
-
-  const TextureFactoryIdentifier& GetTextureFactoryIdentifier() const
-  {
-    return mTextureFactoryIdentifier;
-  }
-
-  int32_t GetSerial() { return mSerial; }
-
-  /**
-   * Helpers for finding other related interface. These are infallible.
-   */
-  virtual TextureForwarder* GetTextureForwarder() = 0;
-  virtual LayersIPCActor* GetLayersIPCActor() = 0;
-
-protected:
-  TextureFactoryIdentifier mTextureFactoryIdentifier;
-  RefPtr<SyncObject> mSyncObject;
-
-  const int32_t mSerial;
-  static mozilla::Atomic<int32_t> sSerialCounter;
 };
 
 } // namespace layers

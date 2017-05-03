@@ -131,8 +131,6 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     static bool byteLengthGetterImpl(JSContext* cx, const CallArgs& args);
     static bool fun_slice_impl(JSContext* cx, const CallArgs& args);
 
-    static const ClassOps classOps_;
-
   public:
     static const uint8_t DATA_SLOT = 0;
     static const uint8_t BYTE_LENGTH_SLOT = 1;
@@ -231,11 +229,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     };
 
     static const Class class_;
-
-    static const Class protoClass;
-    static const JSFunctionSpec jsfuncs[];
-    static const JSFunctionSpec jsstaticfuncs[];
-    static const JSPropertySpec jsstaticprops[];
+    static const Class protoClass_;
 
     static bool byteLengthGetter(JSContext* cx, unsigned argc, Value* vp);
 
@@ -260,18 +254,14 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
     // initialize()d to become a real, content-visible ArrayBufferObject.
     static ArrayBufferObject* createEmpty(JSContext* cx);
 
-    static bool createDataViewForThisImpl(JSContext* cx, const CallArgs& args);
-    static bool createDataViewForThis(JSContext* cx, unsigned argc, Value* vp);
-
     template<typename T>
     static bool createTypedArrayFromBufferImpl(JSContext* cx, const CallArgs& args);
-
     template<typename T>
     static bool createTypedArrayFromBuffer(JSContext* cx, unsigned argc, Value* vp);
 
-    static void copyData(Handle<ArrayBufferObject*> toBuffer,
-                         Handle<ArrayBufferObject*> fromBuffer,
-                         uint32_t fromIndex, uint32_t count);
+    static void copyData(Handle<ArrayBufferObject*> toBuffer, uint32_t toIndex,
+                         Handle<ArrayBufferObject*> fromBuffer, uint32_t fromIndex,
+                         uint32_t count);
 
     static void trace(JSTracer* trc, JSObject* obj);
     static void objectMoved(JSObject* obj, const JSObject* old);
@@ -346,7 +336,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared
 
     // WebAssembly support:
     static ArrayBufferObject* createForWasm(JSContext* cx, uint32_t initialSize,
-                                            mozilla::Maybe<uint32_t> maxSize);
+                                            const mozilla::Maybe<uint32_t>& maxSize);
     static MOZ_MUST_USE bool prepareForAsmJS(JSContext* cx, Handle<ArrayBufferObject*> buffer,
                                              bool needGuard);
     size_t wasmMappedSize() const;
@@ -440,7 +430,7 @@ class ArrayBufferViewObject : public JSObject
 
     // By construction we only need unshared variants here.  See
     // comments in ArrayBufferObject.cpp.
-    uint8_t* dataPointerUnshared();
+    uint8_t* dataPointerUnshared(const JS::AutoRequireNoGC&);
     void setDataPointerUnshared(uint8_t* data);
 
     static void trace(JSTracer* trc, JSObject* obj);
@@ -457,6 +447,15 @@ bool IsArrayBuffer(HandleObject obj);
 bool IsArrayBuffer(JSObject* obj);
 ArrayBufferObject& AsArrayBuffer(HandleObject obj);
 ArrayBufferObject& AsArrayBuffer(JSObject* obj);
+
+/*
+ * Ditto for ArrayBufferObjectMaybeShared.
+ */
+bool IsArrayBufferMaybeShared(HandleValue v);
+bool IsArrayBufferMaybeShared(HandleObject obj);
+bool IsArrayBufferMaybeShared(JSObject* obj);
+ArrayBufferObjectMaybeShared& AsArrayBufferMaybeShared(HandleObject obj);
+ArrayBufferObjectMaybeShared& AsArrayBufferMaybeShared(JSObject* obj);
 
 extern uint32_t JS_FASTCALL
 ClampDoubleToUint8(const double x);
@@ -552,7 +551,6 @@ class InnerViewTable
     typedef Vector<ArrayBufferViewObject*, 1, SystemAllocPolicy> ViewVector;
 
     friend class ArrayBufferObject;
-    friend class WeakCacheBase<InnerViewTable>;
 
   private:
     struct MapGCPolicy {
@@ -613,30 +611,19 @@ class InnerViewTable
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
 };
 
-template <>
-class WeakCacheBase<InnerViewTable>
+template <typename Wrapper>
+class MutableWrappedPtrOperations<InnerViewTable, Wrapper>
+    : public WrappedPtrOperations<InnerViewTable, Wrapper>
 {
     InnerViewTable& table() {
-        return static_cast<JS::WeakCache<InnerViewTable>*>(this)->get();
-    }
-    const InnerViewTable& table() const {
-        return static_cast<const JS::WeakCache<InnerViewTable>*>(this)->get();
+        return static_cast<Wrapper*>(this)->get();
     }
 
   public:
-    InnerViewTable::ViewVector* maybeViewsUnbarriered(ArrayBufferObject* obj) {
-        return table().maybeViewsUnbarriered(obj);
-    }
-    void removeViews(ArrayBufferObject* obj) { table().removeViews(obj); }
-    void sweepAfterMinorGC() { table().sweepAfterMinorGC(); }
-    bool needsSweepAfterMinorGC() const { return table().needsSweepAfterMinorGC(); }
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
         return table().sizeOfExcludingThis(mallocSizeOf);
     }
 };
-
-extern JSObject*
-InitArrayBufferClass(JSContext* cx, HandleObject obj);
 
 } // namespace js
 

@@ -79,13 +79,11 @@ protected:
   void FlushSkinCaches();
   void FlushAllCaches();
 
-  // Update the selected locale used by the chrome registry, and fire a
-  // notification about this change
-  virtual nsresult UpdateSelectedLocale() = 0;
-
-  static void LogMessage(const char* aMsg, ...);
+  static void LogMessage(const char* aMsg, ...)
+    MOZ_FORMAT_PRINTF(1, 2);
   static void LogMessageWithContext(nsIURI* aURL, uint32_t aLineNumber, uint32_t flags,
-                                    const char* aMsg, ...);
+                                    const char* aMsg, ...)
+    MOZ_FORMAT_PRINTF(4, 5);
 
   virtual nsIURI* GetBaseURIFromPackage(const nsCString& aPackage,
                                         const nsCString& aProvider,
@@ -93,13 +91,13 @@ protected:
   virtual nsresult GetFlagsFromPackage(const nsCString& aPackage,
                                        uint32_t* aFlags) = 0;
 
-  nsresult SelectLocaleFromPref(nsIPrefBranch* prefs);
-
   static nsresult RefreshWindow(nsPIDOMWindowOuter* aWindow);
   static nsresult GetProviderAndPath(nsIURL* aChromeURL,
                                      nsACString& aProvider, nsACString& aPath);
 
   bool GetDirectionForLocale(const nsACString& aLocale);
+
+  void SanitizeForBCP47(nsACString& aLocale);
 
 public:
   static already_AddRefed<nsChromeRegistry> GetSingleton();

@@ -15,8 +15,7 @@
 // soundtouch happens to be always included in lgpllibs
 #include "soundtouch/SoundTouch.h"
 
-namespace mozilla
-{
+namespace mozilla {
 
 template <int V> class FFmpegDecoderModule
 {
@@ -94,7 +93,7 @@ FFVPXRuntimeLinker::Init()
     sFFVPXLib.mAVCodecLib = MozAVLink(libname);
     PR_FreeLibraryName(libname);
   }
-  if (sFFVPXLib.Link()) {
+  if (sFFVPXLib.Link() == FFmpegLibWrapper::LinkResult::Success) {
     sLinkStatus = LinkStatus_SUCCEEDED;
     return true;
   }

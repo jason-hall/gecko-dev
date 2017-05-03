@@ -31,7 +31,7 @@
 #include "nriceresolver.h"
 #include "nrinterfaceprioritizer.h"
 #include "gtest_ringbuffer_dumper.h"
-#include "rlogringbuffer.h"
+#include "rlogconnector.h"
 #include "runnable_utils.h"
 #include "stunserver.h"
 #include "nr_socket_prsock.h"
@@ -63,10 +63,10 @@ static unsigned int kDefaultTimeout = 7000;
 //TODO(nils@mozilla.com): This should get replaced with some non-external
 //solution like discussed in bug 860775.
 const std::string kDefaultStunServerHostname(
-    (char *)"global.stun.twilio.com");
+    (char *)"stun.l.google.com");
 const std::string kBogusStunServerHostname(
     (char *)"stun-server-nonexistent.invalid");
-const uint16_t kDefaultStunServerPort=3478;
+const uint16_t kDefaultStunServerPort=19305;
 const std::string kBogusIceCandidate(
     (char *)"candidate:0 2 UDP 2113601790 192.168.178.20 50769 typ");
 
@@ -141,9 +141,9 @@ public:
         WrapRunnableNM(&NrIceCtx::internal_DeinitializeGlobal),
         NS_DISPATCH_SYNC);
 
-    // NB: NrIceCtx::internal_DeinitializeGlobal destroys the RLogRingBuffer
+    // NB: NrIceCtx::internal_DeinitializeGlobal destroys the RLogConnector
     // singleton.
-    RLogRingBuffer::CreateInstance();
+    RLogConnector::CreateInstance();
 
     test_utils_->sts_target()->Dispatch(
         WrapRunnableNM(&TestStunServer::GetInstance, AF_INET),
@@ -171,7 +171,7 @@ public:
     test_utils_->sts_target()->Dispatch(
         WrapRunnableNM(&TestStunTcpServer::ShutdownInstance), NS_DISPATCH_SYNC);
 
-    RLogRingBuffer::DestroyInstance();
+    RLogConnector::DestroyInstance();
 
     MtransportTest::TearDown();
   }
@@ -236,7 +236,7 @@ static std::string IsLoopbackCandidate(const std::string& candidate) {
 
 static std::string IsIpv4Candidate(const std::string& candidate) {
   std::vector<std::string> tokens = split(candidate, ' ');
-  if (tokens.at(4).find(":") == std::string::npos) {
+  if (tokens.at(4).find(':') == std::string::npos) {
     return candidate;
   }
   return std::string();
@@ -256,8 +256,8 @@ static std::string SabotageHostCandidateAndDropReflexive(
 }
 
 bool ContainsSucceededPair(const std::vector<NrIceCandidatePair>& pairs) {
-  for (size_t i = 0; i < pairs.size(); ++i) {
-    if (pairs[i].state == NrIceCandidatePair::STATE_SUCCEEDED) {
+  for (const auto& pair : pairs) {
+    if (pair.state == NrIceCandidatePair::STATE_SUCCEEDED) {
       return true;
     }
   }
@@ -386,14 +386,16 @@ class IceTestPeer : public sigslot::has_slots<> {
               bool allow_link_local = false,
               NrIceCtx::Policy ice_policy = NrIceCtx::ICE_POLICY_ALL) :
       name_(name),
-      ice_ctx_(NrIceCtxHandler::Create(name, offerer, allow_loopback,
+      ice_ctx_(NrIceCtxHandler::Create(name, allow_loopback,
                                        enable_tcp, allow_link_local,
                                        ice_policy)),
+      offerer_(offerer),
       candidates_(),
       shutting_down_(false),
       gathering_complete_(false),
       ready_ct_(0),
-      ice_complete_(false),
+      ice_connected_(false),
+      ice_failed_(false),
       ice_reached_checking_(false),
       received_(0),
       sent_(0),
@@ -616,8 +618,8 @@ class IceTestPeer : public sigslot::has_slots<> {
     std::vector<std::string> candidates_in =
       ice_ctx_->ctx()->GetStream(stream)->GetCandidates();
 
-    for (size_t i=0; i < candidates_in.size(); i++) {
-      std::string candidate(FilterCandidate(candidates_in[i]));
+    for (const auto& a_candidate : candidates_in) {
+      std::string candidate(FilterCandidate(a_candidate));
       if (!candidate.empty()) {
         std::cerr << name_ << " Returning candidate: "
                            << candidate << std::endl;
@@ -644,7 +646,7 @@ class IceTestPeer : public sigslot::has_slots<> {
     std::vector<std::string> candidates = GetCandidates(stream);
 
     int host_net = 0;
-    for (auto c : candidates) {
+    for (const auto& c : candidates) {
       if (c.find("typ host") != std::string::npos) {
         nr_transport_addr addr;
         std::vector<std::string> tokens = split(c, ' ');
@@ -684,7 +686,8 @@ class IceTestPeer : public sigslot::has_slots<> {
         NS_DISPATCH_SYNC);
     return result;
   }
-  bool ice_complete() { return ice_complete_; }
+  bool ice_connected() { return ice_connected_; }
+  bool ice_failed() { return ice_failed_; }
   bool ice_reached_checking() { return ice_reached_checking_; }
   size_t received() { return received_; }
   size_t sent() { return sent_; }
@@ -713,7 +716,8 @@ class IceTestPeer : public sigslot::has_slots<> {
     // take care of some local bookkeeping
     ready_ct_ = 0;
     gathering_complete_ = false;
-    ice_complete_ = false;
+    ice_connected_ = false;
+    ice_failed_ = false;
     ice_reached_checking_ = false;
     remote_ = nullptr;
   }
@@ -751,7 +755,8 @@ class IceTestPeer : public sigslot::has_slots<> {
     remote_ = remote;
 
     trickle_mode_ = trickle_mode;
-    ice_complete_ = false;
+    ice_connected_ = false;
+    ice_failed_ = false;
     ice_reached_checking_ = false;
     res = ice_ctx_->ctx()->ParseGlobalAttributes(remote->GetGlobalAttributes());
     ASSERT_TRUE(NS_SUCCEEDED(res));
@@ -766,8 +771,8 @@ class IceTestPeer : public sigslot::has_slots<> {
         std::vector<std::string> candidates =
             remote->GetCandidates(i);
 
-        for (size_t j=0; j<candidates.size(); ++j) {
-          std::cerr << name_ << " Adding remote candidate: " + candidates[j] << std::endl;
+        for (const auto& candidate : candidates) {
+          std::cerr << name_ << " Adding remote candidate: " + candidate << std::endl;
         }
         res = aStream->ParseAttributes(candidates);
         ASSERT_TRUE(NS_SUCCEEDED(res));
@@ -787,8 +792,10 @@ class IceTestPeer : public sigslot::has_slots<> {
     }
 
     if (start) {
+      ice_ctx_->ctx()->SetControlling(
+          offerer_ ? NrIceCtx::ICE_CONTROLLING : NrIceCtx::ICE_CONTROLLED);
       // Now start checks
-      res = ice_ctx_->ctx()->StartChecks();
+      res = ice_ctx_->ctx()->StartChecks(offerer_);
       ASSERT_TRUE(NS_SUCCEEDED(res));
     }
   }
@@ -813,8 +820,8 @@ class IceTestPeer : public sigslot::has_slots<> {
     std::vector<SchedulableTrickleCandidate*>& candidates =
       ControlTrickle(stream);
 
-    for (auto i = candidates.begin(); i != candidates.end(); ++i) {
-      (*i)->Schedule(0);
+    for (auto& candidate : candidates) {
+      candidate->Schedule(0);
     }
   }
 
@@ -827,10 +834,10 @@ class IceTestPeer : public sigslot::has_slots<> {
     std::vector<std::string> candidates =
       remote_->GetCandidates(stream);
 
-    for (size_t j=0; j<candidates.size(); j++) {
+    for (const auto& candidate : candidates) {
       controlled_trickle_candidates_[stream].push_back(
           new SchedulableTrickleCandidate(
-              this, stream, candidates[j], test_utils_));
+              this, stream, candidate, test_utils_));
     }
 
     return controlled_trickle_candidates_[stream];
@@ -976,11 +983,9 @@ class IceTestPeer : public sigslot::has_slots<> {
   void Shutdown() {
     std::cerr << name_ << " Shutdown" << std::endl;
     shutting_down_ = true;
-    for (auto s = controlled_trickle_candidates_.begin();
-         s != controlled_trickle_candidates_.end();
-         ++s) {
-      for (auto cand = s->second.begin(); cand != s->second.end(); ++cand) {
-        delete *cand;
+    for (auto& controlled_trickle_candidate : controlled_trickle_candidates_) {
+      for (auto& cand : controlled_trickle_candidate.second) {
+        delete cand;
       }
     }
 
@@ -1000,9 +1005,15 @@ class IceTestPeer : public sigslot::has_slots<> {
   void StartChecks() {
     nsresult res;
 
+    test_utils_->sts_target()->Dispatch(
+        WrapRunnableRet(&res, ice_ctx_->ctx(), &NrIceCtx::SetControlling,
+                        offerer_ ?
+                          NrIceCtx::ICE_CONTROLLING : NrIceCtx::ICE_CONTROLLED),
+        NS_DISPATCH_SYNC);
     // Now start checks
     test_utils_->sts_target()->Dispatch(
-        WrapRunnableRet(&res, ice_ctx_->ctx(), &NrIceCtx::StartChecks),
+        WrapRunnableRet(&res, ice_ctx_->ctx(), &NrIceCtx::StartChecks,
+                        offerer_),
         NS_DISPATCH_SYNC);
     ASSERT_TRUE(NS_SUCCEEDED(res));
   }
@@ -1032,8 +1043,8 @@ class IceTestPeer : public sigslot::has_slots<> {
       std::vector<std::string> candidates =
           ice_ctx_->ctx()->GetStream(i)->GetCandidates();
 
-      for(size_t j=0; j<candidates.size(); ++j) {
-        std::cerr << candidates[j] << std::endl;
+      for(const auto& candidate : candidates) {
+        std::cerr << candidate << std::endl;
       }
     }
     std::cerr << std::endl;
@@ -1111,9 +1122,8 @@ class IceTestPeer : public sigslot::has_slots<> {
 
     std::cerr << "Begin list of candidate pairs [" << std::endl;
 
-    for (std::vector<NrIceCandidatePair>::iterator p = pairs.begin();
-         p != pairs.end(); ++p) {
-      DumpCandidatePair(*p);
+    for (auto& pair : pairs) {
+      DumpCandidatePair(pair);
     }
     std::cerr << "]" << std::endl;
   }
@@ -1140,7 +1150,8 @@ class IceTestPeer : public sigslot::has_slots<> {
         DumpCandidatePair(pairs[p-1]);
         DumpCandidatePair(pairs[p]);
         return false;
-      } else if (priority == pairs[p].priority) {
+      }
+      if (priority == pairs[p].priority) {
         if (!IceCandidatePairCompare()(pairs[p], pairs[p-1]) &&
             !IceCandidatePairCompare()(pairs[p-1], pairs[p])) {
           std::cerr << "Ignoring identical pair from trigger check" << std::endl;
@@ -1190,16 +1201,14 @@ class IceTestPeer : public sigslot::has_slots<> {
                         std::inserter(removed_pairs, removed_pairs.begin()),
                         IceCandidatePairCompare());
 
-    for (std::vector<NrIceCandidatePair>::iterator a = added_pairs.begin();
-         a != added_pairs.end(); ++a) {
+    for (auto& added_pair : added_pairs) {
         std::cerr << "Found new candidate pair." << std::endl;
-        DumpCandidatePair(*a);
+        DumpCandidatePair(added_pair);
     }
 
-    for (std::vector<NrIceCandidatePair>::iterator r = removed_pairs.begin();
-         r != removed_pairs.end(); ++r) {
+    for (auto& removed_pair : removed_pairs) {
         std::cerr << "Pre-existing candidate pair is now missing:" << std::endl;
-        DumpCandidatePair(*r);
+        DumpCandidatePair(removed_pair);
     }
 
     ASSERT_TRUE(removed_pairs.empty()) << "At least one candidate pair has "
@@ -1225,15 +1234,26 @@ class IceTestPeer : public sigslot::has_slots<> {
       case NrIceCtx::ICE_CTX_INIT:
         break;
       case NrIceCtx::ICE_CTX_CHECKING:
-        std::cerr << name_ << " ICE reached checking " << std::endl;
+        std::cerr << name_ << " ICE reached checking" << std::endl;
         ice_reached_checking_ = true;
         break;
-      case NrIceCtx::ICE_CTX_OPEN:
-        std::cerr << name_ << " ICE completed " << std::endl;
-        ice_complete_ = true;
+      case NrIceCtx::ICE_CTX_CONNECTED:
+        std::cerr << name_ << " ICE connected" << std::endl;
+        ice_connected_ = true;
+        break;
+      case NrIceCtx::ICE_CTX_COMPLETED:
+        std::cerr << name_ << " ICE completed" << std::endl;
         break;
       case NrIceCtx::ICE_CTX_FAILED:
+        std::cerr << name_ << " ICE failed" << std::endl;
+        ice_failed_ = true;
         break;
+      case NrIceCtx::ICE_CTX_DISCONNECTED:
+        std::cerr << name_ << " ICE disconnected" << std::endl;
+        ice_connected_ = false;
+        break;
+      default:
+        MOZ_CRASH();
     }
   }
 
@@ -1351,6 +1371,26 @@ class IceTestPeer : public sigslot::has_slots<> {
         NS_DISPATCH_SYNC);
   }
 
+  void ChangeNetworkState_s(bool online) {
+    ice_ctx_->ctx()->UpdateNetworkState(online);
+  }
+
+  void ChangeNetworkStateToOffline() {
+    test_utils_->sts_target()->Dispatch(
+        WrapRunnable(this,
+                        &IceTestPeer::ChangeNetworkState_s,
+                        false),
+        NS_DISPATCH_SYNC);
+  }
+
+  void ChangeNetworkStateToOnline() {
+    test_utils_->sts_target()->Dispatch(
+        WrapRunnable(this,
+                        &IceTestPeer::ChangeNetworkState_s,
+                        true),
+        NS_DISPATCH_SYNC);
+  }
+
   int trickled() { return trickled_; }
 
   void SetControlling(NrIceCtx::Controlling controlling) {
@@ -1403,6 +1443,7 @@ class IceTestPeer : public sigslot::has_slots<> {
  private:
   std::string name_;
   RefPtr<NrIceCtxHandler> ice_ctx_;
+  bool offerer_;
   std::map<std::string, std::vector<std::string> > candidates_;
   // Maps from stream id to list of remote trickle candidates
   std::map<size_t, std::vector<SchedulableTrickleCandidate*> >
@@ -1410,7 +1451,8 @@ class IceTestPeer : public sigslot::has_slots<> {
   bool shutting_down_;
   bool gathering_complete_;
   int ready_ct_;
-  bool ice_complete_;
+  bool ice_connected_;
+  bool ice_failed_;
   bool ice_reached_checking_;
   size_t received_;
   size_t sent_;
@@ -1576,10 +1618,10 @@ class WebRtcIceGatherTest : public StunTest {
                                   const std::string& match,
                                   const std::string& match2 = "") {
     std::vector<std::string> candidates = peer_->GetCandidates(stream);
-    for (size_t c = 0; c < candidates.size(); ++c) {
-      if (std::string::npos != candidates[c].find(match)) {
+    for (auto& candidate : candidates) {
+      if (std::string::npos != candidate.find(match)) {
         if (!match2.length() ||
-            std::string::npos != candidates[c].find(match2)) {
+            std::string::npos != candidate.find(match2)) {
           return true;
         }
       }
@@ -1593,7 +1635,7 @@ class WebRtcIceGatherTest : public StunTest {
     std::cerr << "Candidates for stream " << stream << "->"
               << candidates.size() << std::endl;
 
-    for (auto c : candidates) {
+    for (const auto& c : candidates) {
       std::cerr << "Candidate: " << c << std::endl;
     }
   }
@@ -1791,10 +1833,10 @@ class WebRtcIceConnectTest : public StunTest {
 
   void ConnectCallerAndCallee(IceTestPeer* caller, IceTestPeer* callee) {
     ASSERT_TRUE(caller->ready_ct() == 0);
-    ASSERT_TRUE(caller->ice_complete() == 0);
+    ASSERT_TRUE(caller->ice_connected() == 0);
     ASSERT_TRUE(caller->ice_reached_checking() == 0);
     ASSERT_TRUE(callee->ready_ct() == 0);
-    ASSERT_TRUE(callee->ice_complete() == 0);
+    ASSERT_TRUE(callee->ice_connected() == 0);
     ASSERT_TRUE(callee->ice_reached_checking() == 0);
 
     // IceTestPeer::Connect grabs attributes from the first arg, and
@@ -1806,7 +1848,7 @@ class WebRtcIceConnectTest : public StunTest {
 
     ASSERT_TRUE_WAIT(caller->ready_ct() == 1 && callee->ready_ct() == 1,
                      kDefaultTimeout);
-    ASSERT_TRUE_WAIT(caller->ice_complete() && callee->ice_complete(),
+    ASSERT_TRUE_WAIT(caller->ice_connected() && callee->ice_connected(),
                      kDefaultTimeout);
 
     ASSERT_TRUE(caller->ice_reached_checking());
@@ -1841,10 +1883,10 @@ class WebRtcIceConnectTest : public StunTest {
     p2_->Connect(p1_.get(), mode);
   }
 
-  void WaitForComplete(int expected_streams = 1) {
+  void WaitForConnectedStreams(int expected_streams = 1) {
     ASSERT_TRUE_WAIT(p1_->ready_ct() == expected_streams &&
                      p2_->ready_ct() == expected_streams, kDefaultTimeout);
-    ASSERT_TRUE_WAIT(p1_->ice_complete() && p2_->ice_complete(),
+    ASSERT_TRUE_WAIT(p1_->ice_connected() && p2_->ice_connected(),
                      kDefaultTimeout);
   }
 
@@ -1853,9 +1895,28 @@ class WebRtcIceConnectTest : public StunTest {
     ASSERT_TRUE(p2_->ice_reached_checking());
   }
 
+  void WaitForConnected(unsigned int timeout = kDefaultTimeout) {
+    ASSERT_TRUE_WAIT(p1_->ice_connected(), timeout);
+    ASSERT_TRUE_WAIT(p2_->ice_connected(), timeout);
+  }
+
   void WaitForGather() {
     ASSERT_TRUE_WAIT(p1_->gathering_complete(), kDefaultTimeout);
     ASSERT_TRUE_WAIT(p2_->gathering_complete(), kDefaultTimeout);
+  }
+
+  void WaitForDisconnected(unsigned int timeout = kDefaultTimeout) {
+    ASSERT_TRUE(p1_->ice_connected());
+    ASSERT_TRUE(p2_->ice_connected());
+    ASSERT_TRUE_WAIT(p1_->ice_connected() == 0 &&
+                     p2_->ice_connected() == 0,
+                     timeout);
+  }
+
+  void WaitForFailed(unsigned int timeout = kDefaultTimeout) {
+    ASSERT_TRUE_WAIT(p1_->ice_failed() &&
+                     p2_->ice_failed(),
+                     timeout);
   }
 
   void ConnectTrickle(TrickleMode trickle = TRICKLE_SIMULATE) {
@@ -1876,9 +1937,6 @@ class WebRtcIceConnectTest : public StunTest {
 
   void SimulateTrickleP2(size_t stream) {
     p2_->SimulateTrickle(stream);
-  }
-
-  void VerifyConnected() {
   }
 
   void CloseP1() {
@@ -2333,9 +2391,9 @@ TEST_F(WebRtcIceGatherTest, TestGatherDisableComponent) {
   std::vector<std::string> candidates =
     peer_->GetCandidates(1);
 
-  for (size_t i=0; i<candidates.size(); ++i) {
-    size_t sp1 = candidates[i].find(' ');
-    ASSERT_EQ(0, candidates[i].compare(sp1+1, 1, "1", 1));
+  for (auto& candidate : candidates) {
+    size_t sp1 = candidate.find(' ');
+    ASSERT_EQ(0, candidate.compare(sp1+1, 1, "1", 1));
   }
 }
 
@@ -2739,8 +2797,7 @@ TEST_F(WebRtcIceConnectTest, TestTrickleBothControllingP1Wins) {
   p2_->SetControlling(NrIceCtx::ICE_CONTROLLING);
   ConnectTrickle();
   SimulateTrickle(0);
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
   AssertCheckingReached();
 }
 
@@ -2753,8 +2810,7 @@ TEST_F(WebRtcIceConnectTest, TestTrickleBothControllingP2Wins) {
   p2_->SetControlling(NrIceCtx::ICE_CONTROLLING);
   ConnectTrickle();
   SimulateTrickle(0);
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
   AssertCheckingReached();
 }
 
@@ -2764,8 +2820,7 @@ TEST_F(WebRtcIceConnectTest, TestTrickleIceLiteOfferer) {
   p1_->SimulateIceLite();
   ConnectTrickle();
   SimulateTrickle(0);
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
   AssertCheckingReached();
 }
 
@@ -2967,7 +3022,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectP2ThenP1) {
   ConnectP2();
   PR_Sleep(1000);
   ConnectP1();
-  WaitForComplete();
+  WaitForConnectedStreams();
 }
 
 TEST_F(WebRtcIceConnectTest, TestConnectP2ThenP1Trickle) {
@@ -2977,7 +3032,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectP2ThenP1Trickle) {
   PR_Sleep(1000);
   ConnectP1(TRICKLE_SIMULATE);
   SimulateTrickleP1(0);
-  WaitForComplete();
+  WaitForConnectedStreams();
 }
 
 TEST_F(WebRtcIceConnectTest, TestConnectP2ThenP1TrickleTwoComponents) {
@@ -2992,7 +3047,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectP2ThenP1TrickleTwoComponents) {
   PR_Sleep(1000);  // Give this some time to settle but not complete
                    // all of ICE.
   SimulateTrickleP1(1);
-  WaitForComplete(2);
+  WaitForConnectedStreams(2);
 }
 
 TEST_F(WebRtcIceConnectTest, TestConnectAutoPrioritize) {
@@ -3007,8 +3062,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectTrickleOneStreamOneComponent) {
   ASSERT_TRUE(Gather());
   ConnectTrickle();
   SimulateTrickle(0);
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
   AssertCheckingReached();
 }
 
@@ -3019,8 +3073,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectTrickleTwoStreamsOneComponent) {
   ConnectTrickle();
   SimulateTrickle(0);
   SimulateTrickle(1);
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
   AssertCheckingReached();
 }
 
@@ -3041,11 +3094,11 @@ void RealisticTrickleDelay(
 void DelayRelayCandidates(
     std::vector<SchedulableTrickleCandidate*>& candidates,
     unsigned int ms) {
-  for (auto i = candidates.begin(); i != candidates.end(); ++i) {
-    if ((*i)->IsRelay()) {
-      (*i)->Schedule(ms);
+  for (auto& candidate : candidates) {
+    if (candidate->IsRelay()) {
+      candidate->Schedule(ms);
     } else {
-      (*i)->Schedule(0);
+      candidate->Schedule(0);
     }
   }
 }
@@ -3102,8 +3155,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectTrickleAddStreamDuringICE) {
   AddStream(1);
   RealisticTrickleDelay(p1_->ControlTrickle(1));
   RealisticTrickleDelay(p2_->ControlTrickle(1));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
   AssertCheckingReached();
 }
 
@@ -3113,15 +3165,13 @@ TEST_F(WebRtcIceConnectTest, TestConnectTrickleAddStreamAfterICE) {
   ConnectTrickle();
   RealisticTrickleDelay(p1_->ControlTrickle(0));
   RealisticTrickleDelay(p2_->ControlTrickle(0));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
   AddStream(1);
   ASSERT_TRUE(Gather());
   ConnectTrickle();
   RealisticTrickleDelay(p1_->ControlTrickle(1));
   RealisticTrickleDelay(p2_->ControlTrickle(1));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
   AssertCheckingReached();
 }
 
@@ -3134,8 +3184,7 @@ TEST_F(WebRtcIceConnectTest, RemoveStream) {
   RealisticTrickleDelay(p2_->ControlTrickle(0));
   RealisticTrickleDelay(p1_->ControlTrickle(1));
   RealisticTrickleDelay(p2_->ControlTrickle(1));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
 
   RemoveStream(0);
   ASSERT_TRUE(Gather());
@@ -3148,8 +3197,7 @@ TEST_F(WebRtcIceConnectTest, P1NoTrickle) {
   ConnectTrickle();
   DropTrickleCandidates(p1_->ControlTrickle(0));
   RealisticTrickleDelay(p2_->ControlTrickle(0));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
 }
 
 TEST_F(WebRtcIceConnectTest, P2NoTrickle) {
@@ -3158,8 +3206,7 @@ TEST_F(WebRtcIceConnectTest, P2NoTrickle) {
   ConnectTrickle();
   RealisticTrickleDelay(p1_->ControlTrickle(0));
   DropTrickleCandidates(p2_->ControlTrickle(0));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
 }
 
 TEST_F(WebRtcIceConnectTest, RemoveAndAddStream) {
@@ -3171,8 +3218,7 @@ TEST_F(WebRtcIceConnectTest, RemoveAndAddStream) {
   RealisticTrickleDelay(p2_->ControlTrickle(0));
   RealisticTrickleDelay(p1_->ControlTrickle(1));
   RealisticTrickleDelay(p2_->ControlTrickle(1));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
 
   RemoveStream(0);
   AddStream(1);
@@ -3180,8 +3226,7 @@ TEST_F(WebRtcIceConnectTest, RemoveAndAddStream) {
   ConnectTrickle();
   RealisticTrickleDelay(p1_->ControlTrickle(2));
   RealisticTrickleDelay(p2_->ControlTrickle(2));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
 }
 
 TEST_F(WebRtcIceConnectTest, RemoveStreamBeforeGather) {
@@ -3193,8 +3238,7 @@ TEST_F(WebRtcIceConnectTest, RemoveStreamBeforeGather) {
   ConnectTrickle();
   RealisticTrickleDelay(p1_->ControlTrickle(1));
   RealisticTrickleDelay(p2_->ControlTrickle(1));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
 }
 
 TEST_F(WebRtcIceConnectTest, RemoveStreamDuringGather) {
@@ -3205,8 +3249,7 @@ TEST_F(WebRtcIceConnectTest, RemoveStreamDuringGather) {
   ConnectTrickle();
   RealisticTrickleDelay(p1_->ControlTrickle(1));
   RealisticTrickleDelay(p2_->ControlTrickle(1));
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
 }
 
 TEST_F(WebRtcIceConnectTest, RemoveStreamDuringConnect) {
@@ -3219,8 +3262,7 @@ TEST_F(WebRtcIceConnectTest, RemoveStreamDuringConnect) {
   RealisticTrickleDelay(p1_->ControlTrickle(1));
   RealisticTrickleDelay(p2_->ControlTrickle(1));
   RemoveStream(0);
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), 1000);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), 1000);
+  WaitForConnected(1000);
 }
 
 TEST_F(WebRtcIceConnectTest, TestConnectRealTrickleOneStreamOneComponent) {
@@ -3228,8 +3270,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectRealTrickleOneStreamOneComponent) {
   AddStream(1);
   ASSERT_TRUE(Gather(0));
   ConnectTrickle(TRICKLE_REAL);
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), kDefaultTimeout);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), kDefaultTimeout);
+  WaitForConnected();
   WaitForGather();  // ICE can complete before we finish gathering.
   AssertCheckingReached();
 }
@@ -3290,14 +3331,23 @@ TEST_F(WebRtcIceConnectTest, TestConsentIntermittent) {
   SetupAndCheckConsent();
   p1_->SetBlockStun(true);
   p2_->SetBlockStun(true);
-  PR_Sleep(1000);
+  WaitForDisconnected();
   AssertConsentRefresh(CONSENT_STALE);
   SendReceive();
   p1_->SetBlockStun(false);
   p2_->SetBlockStun(false);
-  PR_Sleep(600);
+  WaitForConnected();
   AssertConsentRefresh();
   SendReceive();
+  p1_->SetBlockStun(true);
+  p2_->SetBlockStun(true);
+  WaitForDisconnected();
+  AssertConsentRefresh(CONSENT_STALE);
+  SendReceive();
+  p1_->SetBlockStun(false);
+  p2_->SetBlockStun(false);
+  WaitForConnected();
+  AssertConsentRefresh();
 }
 
 TEST_F(WebRtcIceConnectTest, TestConsentTimeout) {
@@ -3305,10 +3355,10 @@ TEST_F(WebRtcIceConnectTest, TestConsentTimeout) {
   SetupAndCheckConsent();
   p1_->SetBlockStun(true);
   p2_->SetBlockStun(true);
-  PR_Sleep(600);
+  WaitForDisconnected();
   AssertConsentRefresh(CONSENT_STALE);
   SendReceive();
-  PR_Sleep(2500);
+  WaitForFailed();
   AssertConsentRefresh(CONSENT_EXPIRED);
   SendFailure();
 }
@@ -3324,6 +3374,49 @@ TEST_F(WebRtcIceConnectTest, TestConsentDelayed) {
   PR_Sleep(1000);
   AssertConsentRefresh();
   SendReceive();
+}
+
+TEST_F(WebRtcIceConnectTest, TestNetworkForcedOfflineAndRecovery) {
+  AddStream(1);
+  SetupAndCheckConsent();
+  p1_->ChangeNetworkStateToOffline();
+  ASSERT_TRUE_WAIT(p1_->ice_connected() == 0, kDefaultTimeout);
+  // Next round of consent check should switch it back to online
+  ASSERT_TRUE_WAIT(p1_->ice_connected(), kDefaultTimeout);
+}
+
+TEST_F(WebRtcIceConnectTest, TestNetworkForcedOfflineTwice) {
+  AddStream(1);
+  SetupAndCheckConsent();
+  p2_->ChangeNetworkStateToOffline();
+  ASSERT_TRUE_WAIT(p2_->ice_connected() == 0, kDefaultTimeout);
+  p2_->ChangeNetworkStateToOffline();
+  ASSERT_TRUE_WAIT(p2_->ice_connected() == 0, kDefaultTimeout);
+}
+
+TEST_F(WebRtcIceConnectTest, TestNetworkOnlineDoesntChangeState) {
+  AddStream(1);
+  SetupAndCheckConsent();
+  p2_->ChangeNetworkStateToOnline();
+  ASSERT_TRUE(p2_->ice_connected());
+  PR_Sleep(1500);
+  p2_->ChangeNetworkStateToOnline();
+  ASSERT_TRUE(p2_->ice_connected());
+}
+
+TEST_F(WebRtcIceConnectTest, TestNetworkOnlineTriggersConsent) {
+  // Let's emulate audio + video w/o rtcp-mux
+  AddStream(2);
+  AddStream(2);
+  SetupAndCheckConsent();
+  p1_->ChangeNetworkStateToOffline();
+  p1_->SetBlockStun(true);
+  ASSERT_TRUE_WAIT(p1_->ice_connected() == 0, kDefaultTimeout);
+  PR_Sleep(1500);
+  ASSERT_TRUE(p1_->ice_connected() == 0);
+  p1_->SetBlockStun(false);
+  p1_->ChangeNetworkStateToOnline();
+  ASSERT_TRUE_WAIT(p1_->ice_connected(), 500);
 }
 
 TEST_F(WebRtcIceConnectTest, TestConnectTurn) {
@@ -3350,7 +3443,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectTurnWithDelay) {
   p2_->Gather();
   ConnectTrickle(TRICKLE_REAL);
   WaitForGather();
-  WaitForComplete();
+  WaitForConnectedStreams();
 }
 
 TEST_F(WebRtcIceConnectTest, TestConnectTurnWithNormalTrickleDelay) {
@@ -3365,8 +3458,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectTurnWithNormalTrickleDelay) {
   RealisticTrickleDelay(p1_->ControlTrickle(0));
   RealisticTrickleDelay(p2_->ControlTrickle(0));
 
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), kDefaultTimeout);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), kDefaultTimeout);
+  WaitForConnected();
   AssertCheckingReached();
 }
 
@@ -3382,8 +3474,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectTurnWithNormalTrickleDelayOneSided) {
   RealisticTrickleDelay(p1_->ControlTrickle(0));
   p2_->SimulateTrickle(0);
 
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), kDefaultTimeout);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), kDefaultTimeout);
+  WaitForConnected();
   AssertCheckingReached();
 }
 
@@ -3401,8 +3492,7 @@ TEST_F(WebRtcIceConnectTest, TestConnectTurnWithLargeTrickleDelay) {
   DelayRelayCandidates(p1_->ControlTrickle(0), 3700);
   DelayRelayCandidates(p2_->ControlTrickle(0), 3700);
 
-  ASSERT_TRUE_WAIT(p1_->ice_complete(), kDefaultTimeout);
-  ASSERT_TRUE_WAIT(p2_->ice_complete(), kDefaultTimeout);
+  WaitForConnected();
   AssertCheckingReached();
 }
 
@@ -3639,14 +3729,14 @@ TEST_F(WebRtcIceConnectTest, TestPollCandPairsDuringConnect) {
   p1_->UpdateAndValidateCandidatePairs(0, &pairs1);
   p2_->UpdateAndValidateCandidatePairs(0, &pairs2);
 
-  WaitForComplete();
+  WaitForConnectedStreams();
   p1_->UpdateAndValidateCandidatePairs(0, &pairs1);
   p2_->UpdateAndValidateCandidatePairs(0, &pairs2);
   ASSERT_TRUE(ContainsSucceededPair(pairs1));
   ASSERT_TRUE(ContainsSucceededPair(pairs2));
 }
 
-TEST_F(WebRtcIceConnectTest, TestRLogRingBuffer) {
+TEST_F(WebRtcIceConnectTest, TestRLogConnector) {
   AddStream(1);
   ASSERT_TRUE(Gather());
 
@@ -3664,25 +3754,25 @@ TEST_F(WebRtcIceConnectTest, TestRLogRingBuffer) {
   p1_->UpdateAndValidateCandidatePairs(0, &pairs1);
   p2_->UpdateAndValidateCandidatePairs(0, &pairs2);
 
-  WaitForComplete();
+  WaitForConnectedStreams();
   p1_->UpdateAndValidateCandidatePairs(0, &pairs1);
   p2_->UpdateAndValidateCandidatePairs(0, &pairs2);
   ASSERT_TRUE(ContainsSucceededPair(pairs1));
   ASSERT_TRUE(ContainsSucceededPair(pairs2));
 
-  for (auto p = pairs1.begin(); p != pairs1.end(); ++p) {
+  for (auto& p : pairs1) {
     std::deque<std::string> logs;
     std::string substring("CAND-PAIR(");
-    substring += p->codeword;
-    RLogRingBuffer::GetInstance()->Filter(substring, 0, &logs);
+    substring += p.codeword;
+    RLogConnector::GetInstance()->Filter(substring, 0, &logs);
     ASSERT_NE(0U, logs.size());
   }
 
-  for (auto p = pairs2.begin(); p != pairs2.end(); ++p) {
+  for (auto& p : pairs2) {
     std::deque<std::string> logs;
     std::string substring("CAND-PAIR(");
-    substring += p->codeword;
-    RLogRingBuffer::GetInstance()->Filter(substring, 0, &logs);
+    substring += p.codeword;
+    RLogConnector::GetInstance()->Filter(substring, 0, &logs);
     ASSERT_NE(0U, logs.size());
   }
 }

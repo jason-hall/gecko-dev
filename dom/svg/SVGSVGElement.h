@@ -132,6 +132,8 @@ public:
    * For use by zoom controls to allow currentScale, currentTranslate.x and
    * currentTranslate.y to be set by a single operation that dispatches a
    * single SVGZoom event (instead of one SVGZoom and two SVGScroll events).
+   *
+   * XXX SVGZoomEvent is no more, is this needed?
    */
   void SetCurrentScaleTranslate(float s, float x, float y);
 
@@ -152,7 +154,8 @@ public:
 
   // nsIContent interface
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const override;
-  virtual nsresult PreHandleEvent(EventChainPreVisitor& aVisitor) override;
+  virtual nsresult GetEventTargetParent(
+                     EventChainPreVisitor& aVisitor) override;
 
   virtual bool IsEventAttributeName(nsIAtom* aName) override;
 

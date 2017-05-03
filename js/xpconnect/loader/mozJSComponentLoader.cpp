@@ -63,8 +63,6 @@ static const char kXPConnectServiceContractID[] = "@mozilla.org/js/xpc/XPConnect
 static const char kObserverServiceContractID[] = "@mozilla.org/observer-service;1";
 static const char kJSCachePrefix[] = "jsloader";
 
-#define HAVE_PR_MEMMAP
-
 /**
  * Buffer sizes for serialization and deserialization of scripts.
  * FIXME: bug #411579 (tune this macro!) Last updated: Jan 2008
@@ -154,6 +152,7 @@ private:
 };
 
 static nsresult
+MOZ_FORMAT_PRINTF(2, 3)
 ReportOnCallerUTF8(JSContext* callerContext,
                    const char* format, ...) {
     if (!callerContext) {
@@ -165,16 +164,19 @@ ReportOnCallerUTF8(JSContext* callerContext,
 
     char* buf = JS_vsmprintf(format, ap);
     if (!buf) {
+        va_end(ap);
         return NS_ERROR_OUT_OF_MEMORY;
     }
 
     JS_ReportErrorUTF8(callerContext, "%s", buf);
     JS_smprintf_free(buf);
 
+    va_end(ap);
     return NS_OK;
 }
 
 static nsresult
+MOZ_FORMAT_PRINTF(2, 3)
 ReportOnCallerUTF8(JSCLContextHelper& helper,
                    const char* format, ...)
 {
@@ -183,11 +185,12 @@ ReportOnCallerUTF8(JSCLContextHelper& helper,
 
     char* buf = JS_vsmprintf(format, ap);
     if (!buf) {
+        va_end(ap);
         return NS_ERROR_OUT_OF_MEMORY;
     }
 
     helper.reportErrorAfterPop(buf);
-
+    va_end(ap);
     return NS_OK;
 }
 
@@ -373,7 +376,7 @@ mozJSComponentLoader::LoadModule(FileLocation& aFile)
 
     ModuleEntry* mod;
     if (mModules.Get(spec, &mod))
-    return mod;
+        return mod;
 
     dom::AutoJSAPI jsapi;
     jsapi.Init();
@@ -502,7 +505,6 @@ mozJSComponentLoader::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf)
 }
 
 // Some stack based classes for cleaning up on early return
-#ifdef HAVE_PR_MEMMAP
 class FileAutoCloser
 {
  public:
@@ -520,16 +522,6 @@ class FileMapAutoCloser
  private:
     PRFileMap* mMap;
 };
-#else
-class ANSIFileAutoCloser
-{
- public:
-    explicit ANSIFileAutoCloser(FILE* file) : mFile(file) {}
-    ~ANSIFileAutoCloser() { fclose(mFile); }
- private:
-    FILE* mFile;
-};
-#endif
 
 JSObject*
 mozJSComponentLoader::PrepareObjectForLocation(JSContext* aCx,
@@ -557,7 +549,7 @@ mozJSComponentLoader::PrepareObjectForLocation(JSContext* aCx,
         CompartmentOptions options;
 
         options.creationOptions()
-               .setZone(SystemZone)
+               .setSystemZone()
                .setAddonId(aReuseLoaderGlobal ? nullptr : MapURIToAddonID(aURI));
 
         options.behaviors().setVersion(JSVERSION_LATEST);
@@ -725,19 +717,28 @@ mozJSComponentLoader::ObjectForLocation(ComponentLoaderInfo& aInfo,
         // The script wasn't in the cache , so compile it now.
         LOG(("Slow loading %s\n", nativePath.get()));
 
-        // Note - if mReuseLoaderGlobal is true, then we can't do lazy source,
-        // because we compile things as functions (rather than script), and lazy
-        // source isn't supported in that configuration. That's ok though,
-        // because we only do mReuseLoaderGlobal on b2g, where we invoke
-        // setDiscardSource(true) on the entire global.
+        // Use lazy source if both of these conditions hold:
+        //
+        // (1) mReuseLoaderGlobal is false. If mReuseLoaderGlobal is true, we
+        //     can't do lazy source because we compile things as functions
+        //     (rather than script), and lazy source isn't supported in that
+        //     configuration. That's ok though, because we only do
+        //     mReuseLoaderGlobal on b2g, where we invoke setDiscardSource(true)
+        //     on the entire global.
+        //
+        // (2) We're using the startup cache. Non-lazy source + startup cache
+        //     regresses installer size (due to source code stored in XDR
+        //     encoded modules in omni.ja). Also, XDR decoding is relatively
+        //     fast. Content processes don't use the startup cache, so we want
+        //     them to use non-lazy source code to enable lazy parsing.
+        //     See bug 1303754.
         CompileOptions options(cx);
         options.setNoScriptRval(mReuseLoaderGlobal ? false : true)
                .setVersion(JSVERSION_LATEST)
                .setFileAndLine(nativePath.get(), 1)
-               .setSourceIsLazy(!mReuseLoaderGlobal);
+               .setSourceIsLazy(!mReuseLoaderGlobal && !!cache);
 
         if (realFile) {
-#ifdef HAVE_PR_MEMMAP
             int64_t fileSize;
             rv = aComponentFile->GetFileSize(&fileSize);
             if (NS_FAILED(rv)) {
@@ -795,58 +796,6 @@ mozJSComponentLoader::ObjectForLocation(ComponentLoaderInfo& aInfo,
             }
 
             PR_MemUnmap(buf, fileSize32);
-
-#else  /* HAVE_PR_MEMMAP */
-
-            /**
-             * No memmap implementation, so fall back to
-             * reading in the file
-             */
-
-            FILE* fileHandle;
-            rv = aComponentFile->OpenANSIFileDesc("r", &fileHandle);
-            if (NS_FAILED(rv)) {
-                return NS_ERROR_FILE_NOT_FOUND;
-            }
-
-            // Ensure file fclose
-            ANSIFileAutoCloser fileCloser(fileHandle);
-
-            int64_t len;
-            rv = aComponentFile->GetFileSize(&len);
-            if (NS_FAILED(rv) || len < 0) {
-                NS_WARNING("Failed to get file size");
-                return NS_ERROR_FAILURE;
-            }
-
-            char* buf = (char*) malloc(len * sizeof(char));
-            if (!buf) {
-                return NS_ERROR_FAILURE;
-            }
-
-            size_t rlen = fread(buf, 1, len, fileHandle);
-            if (rlen != (uint64_t)len) {
-                free(buf);
-                NS_WARNING("Failed to read file");
-                return NS_ERROR_FAILURE;
-            }
-
-            if (!mReuseLoaderGlobal) {
-                script = Compile(cx, options, buf, fileSize32);
-            } else {
-                // Note: exceptions will get handled further down;
-                // don't early return for them here.
-                AutoObjectVector envChain(cx);
-                if (envChain.append(obj)) {
-                    CompileFunction(cx, envChain,
-                                    options, nullptr, 0, nullptr,
-                                    buf, fileSize32, &function);
-                }
-            }
-
-            free(buf);
-
-#endif /* HAVE_PR_MEMMAP */
         } else {
             rv = aInfo.EnsureScriptChannel();
             NS_ENSURE_SUCCESS(rv, rv);
@@ -1298,6 +1247,8 @@ mozJSComponentLoader::ImportInto(const nsACString& aLocation,
             }
 
             JSAutoCompartment target_ac(cx, targetObj);
+
+	    JS_MarkCrossZoneId(cx, symbolId);
 
             if (!JS_WrapValue(cx, &value) ||
                 !JS_SetPropertyById(cx, targetObj, symbolId, value)) {

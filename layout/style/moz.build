@@ -22,12 +22,6 @@ with Files('nsDOM*'):
 DIRS += ['xbl-marquee']
 TEST_DIRS += ['test']
 
-XPIDL_SOURCES += [
-    'nsICSSUnprefixingService.idl',
-]
-
-XPIDL_MODULE = 'layout_base'
-
 EXPORTS += [
     '!nsStyleStructList.h',
     'AnimationCommon.h',
@@ -38,6 +32,7 @@ EXPORTS += [
     'nsCSSAnonBoxList.h',
     'nsCSSCounterDescList.h',
     'nsCSSFontDescList.h',
+    'nsCSSFontFaceRule.h',
     'nsCSSKeywordList.h',
     'nsCSSKeywords.h',
     'nsCSSParser.h',
@@ -64,10 +59,13 @@ EXPORTS += [
     'nsIStyleRule.h',
     'nsIStyleRuleProcessor.h',
     'nsLayoutStylesheetCache.h',
+    'nsMediaFeatures.h',
+    'nsMediaList.h',
     'nsRuleData.h',
     'nsRuleNode.h',
     'nsRuleProcessorData.h',
     'nsRuleWalker.h',
+    'nsStyleAutoArray.h',
     'nsStyleConsts.h',
     'nsStyleContext.h',
     'nsStyleCoord.h',
@@ -81,23 +79,41 @@ EXPORTS += [
 
 EXPORTS.mozilla += [
     'AnimationCollection.h',
+    'BindingStyleRule.h',
     'CSSEnabledState.h',
     'CSSStyleSheet.h',
     'CSSVariableDeclarations.h',
     'CSSVariableResolver.h',
     'CSSVariableValues.h',
+    'DeclarationBlock.h',
+    'DeclarationBlockInlines.h',
+    'DocumentStyleRootIterator.h',
+    'GenericSpecifiedValues.h',
+    'GenericSpecifiedValuesInlines.h',
     'HandleRefPtr.h',
     'IncrementalClearCOMRuleArray.h',
     'LayerAnimationInfo.h',
+    'PreloadedStyleSheet.h',
     'RuleNodeCacheConditions.h',
     'RuleProcessorCache.h',
-    'ServoBindingHelpers.h',
+    'ServoArcTypeList.h',
     'ServoBindingList.h',
     'ServoBindings.h',
+    'ServoBindingTypes.h',
+    'ServoCSSRuleList.h',
+    'ServoDeclarationBlock.h',
     'ServoElementSnapshot.h',
+    'ServoMediaList.h',
+    'ServoMediaRule.h',
+    'ServoNamespaceRule.h',
+    'ServoPageRule.h',
+    'ServoPropPrefList.h',
+    'ServoSpecifiedValues.h',
+    'ServoStyleRule.h',
     'ServoStyleSet.h',
     'ServoStyleSheet.h',
     'ServoTypes.h',
+    'ServoUtils.h',
     'SheetType.h',
     'StyleAnimationValue.h',
     'StyleBackendType.h',
@@ -108,17 +124,21 @@ EXPORTS.mozilla += [
     'StyleSheet.h',
     'StyleSheetInfo.h',
     'StyleSheetInlines.h',
-    'StyleStructContext.h',
+    'URLExtraData.h',
 ]
 
 EXPORTS.mozilla.dom += [
     'CSS.h',
     'CSSLexer.h',
+    'CSSMediaRule.h',
+    'CSSNamespaceRule.h',
+    'CSSPageRule.h',
     'CSSRuleList.h',
     'CSSValue.h',
     'FontFace.h',
     'FontFaceSet.h',
     'FontFaceSetIterator.h',
+    'MediaList.h',
     'MediaQueryList.h',
 ]
 
@@ -137,24 +157,29 @@ EXPORTS.mozilla.css += [
 
 UNIFIED_SOURCES += [
     'AnimationCollection.cpp',
-    'AnimationCommon.cpp',
+    'BindingStyleRule.cpp',
     'CounterStyleManager.cpp',
     'CSS.cpp',
     'CSSLexer.cpp',
+    'CSSMediaRule.cpp',
+    'CSSPageRule.cpp',
     'CSSRuleList.cpp',
     'CSSStyleSheet.cpp',
     'CSSVariableDeclarations.cpp',
     'CSSVariableResolver.cpp',
     'CSSVariableValues.cpp',
     'Declaration.cpp',
+    'DocumentStyleRootIterator.cpp',
     'ErrorReporter.cpp',
     'FontFace.cpp',
     'FontFaceSet.cpp',
     'FontFaceSetIterator.cpp',
+    'GroupRule.cpp',
     'ImageLoader.cpp',
     'IncrementalClearCOMRuleArray.cpp',
     'LayerAnimationInfo.cpp',
     'Loader.cpp',
+    'MediaList.cpp',
     'MediaQueryList.cpp',
     'nsAnimationManager.cpp',
     'nsComputedDOMStyle.cpp',
@@ -165,6 +190,7 @@ UNIFIED_SOURCES += [
     'nsCSSProps.cpp',
     'nsCSSPseudoClasses.cpp',
     'nsCSSPseudoElements.cpp',
+    'nsCSSRuleProcessor.cpp',
     'nsCSSRules.cpp',
     'nsCSSScanner.cpp',
     'nsCSSValue.cpp',
@@ -178,6 +204,7 @@ UNIFIED_SOURCES += [
     'nsHTMLCSSStyleSheet.cpp',
     'nsHTMLStyleSheet.cpp',
     'nsMediaFeatures.cpp',
+    'nsMediaList.cpp',
     'nsNthIndexCache.cpp',
     'nsROCSSPrimitiveValue.cpp',
     'nsRuleData.cpp',
@@ -189,29 +216,31 @@ UNIFIED_SOURCES += [
     'nsStyleTransformMatrix.cpp',
     'nsStyleUtil.cpp',
     'nsTransitionManager.cpp',
+    'PreloadedStyleSheet.cpp',
     'RuleNodeCacheConditions.cpp',
     'RuleProcessorCache.cpp',
     'ServoBindings.cpp',
+    'ServoCSSRuleList.cpp',
+    'ServoDeclarationBlock.cpp',
     'ServoElementSnapshot.cpp',
+    'ServoMediaList.cpp',
+    'ServoMediaRule.cpp',
+    'ServoNamespaceRule.cpp',
+    'ServoPageRule.cpp',
+    'ServoSpecifiedValues.cpp',
+    'ServoStyleRule.cpp',
     'ServoStyleSet.cpp',
     'ServoStyleSheet.cpp',
     'StyleAnimationValue.cpp',
     'StyleRule.cpp',
     'StyleSheet.cpp',
-    'SVGAttrAnimationRuleProcessor.cpp',
+    'URLExtraData.cpp',
 ]
 
-# nsCSSRuleProcessor.cpp needs to be built separately because it uses plarena.h.
-# nsLayoutStylesheetCache.cpp needs to be built separately because it uses
+# - nsLayoutStylesheetCache.cpp needs to be built separately because it uses
 # nsExceptionHandler.h, which includes windows.h.
 SOURCES += [
-    'nsCSSRuleProcessor.cpp',
     'nsLayoutStylesheetCache.cpp',
-]
-
-EXTRA_COMPONENTS += [
-    'CSSUnprefixingService.js',
-    'CSSUnprefixingService.manifest',
 ]
 
 include('/ipc/chromium/chromium-config.mozbuild')

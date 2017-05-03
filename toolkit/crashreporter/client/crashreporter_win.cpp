@@ -20,7 +20,7 @@
 #include <set>
 #include <algorithm>
 #include "resource.h"
-#include "client/windows/sender/crash_report_sender.h"
+#include "windows/sender/crash_report_sender.h"
 #include "common/windows/string_utils-inl.h"
 
 #define CRASH_REPORTER_VALUE L"Enabled"
@@ -1463,16 +1463,21 @@ bool UIDeleteFile(const string& oldfile)
   return DeleteFile(UTF8ToWide(oldfile).c_str()) == TRUE;
 }
 
-ifstream* UIOpenRead(const string& filename)
+ifstream* UIOpenRead(const string& filename, bool binary)
 {
   // adapted from breakpad's src/common/windows/http_upload.cc
+  std::ios_base::openmode mode = ios::in;
+
+  if (binary) {
+    mode = mode | ios::binary;
+  }
 
 #if defined(_MSC_VER)
   ifstream* file = new ifstream();
-  file->open(UTF8ToWide(filename).c_str(), ios::in);
+  file->open(UTF8ToWide(filename).c_str(), mode);
 #else   // GCC
   ifstream* file = new ifstream(WideToMBCP(UTF8ToWide(filename), CP_ACP).c_str(),
-                                ios::in);
+                                mode);
 #endif  // _MSC_VER
 
   return file;
@@ -1543,4 +1548,50 @@ void UIPruneSavedDumps(const std::string& directory)
 
     dumpfiles.pop_back();
   }
+}
+
+bool UIRunProgram(const string& exename,
+                  const std::vector<std::string>& args,
+                  bool wait)
+{
+  wstring cmdLine = L"\"" + UTF8ToWide(exename) + L"\" ";
+
+  for (auto arg : args) {
+    cmdLine += L"\"" + UTF8ToWide(arg) + L"\" ";
+  }
+
+  STARTUPINFO si = {};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi = {};
+
+  if (!CreateProcess(/* lpApplicationName */ nullptr,
+                     (LPWSTR)cmdLine.c_str(),
+                     /* lpProcessAttributes */ nullptr,
+                     /* lpThreadAttributes */ nullptr,
+                     /* bInheritHandles */ false,
+                     NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW,
+                     /* lpEnvironment */ nullptr,
+                     /* lpCurrentDirectory */ nullptr,
+                     &si, &pi)) {
+    return false;
+  }
+
+  if (wait) {
+    WaitForSingleObject(pi.hProcess, INFINITE);
+  }
+
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+  return true;
+}
+
+string
+UIGetEnv(const string name)
+{
+  const wchar_t *var = _wgetenv(UTF8ToWide(name).c_str());
+  if (var && *var) {
+    return WideToUTF8(var);
+  }
+
+  return "";
 }

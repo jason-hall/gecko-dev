@@ -20,11 +20,11 @@ public:
 
   virtual void DeallocateDeviceData() override {}
 
-  virtual void SetCompositor(Compositor* aCompositor) override;
-
-  virtual Compositor* GetCompositor() override;
+  virtual void SetTextureSourceProvider(TextureSourceProvider* aProvider) override;
 
   virtual bool Lock() override;
+
+  virtual void Unlock() override;
 
   virtual gfx::SurfaceFormat GetFormat() const override;
 
@@ -34,6 +34,8 @@ public:
   {
     return nullptr; // XXX - implement this (for MOZ_DUMP_PAINTING)
   }
+
+  virtual YUVColorSpace GetYUVColorSpace() const override;
 
   virtual gfx::IntSize GetSize() const override;
 

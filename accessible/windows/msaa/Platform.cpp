@@ -22,6 +22,7 @@ using namespace mozilla;
 using namespace mozilla::a11y;
 using namespace mozilla::mscom;
 
+static StaticAutoPtr<RegisteredProxy> gRegCustomProxy;
 static StaticAutoPtr<RegisteredProxy> gRegProxy;
 static StaticAutoPtr<RegisteredProxy> gRegAccTlb;
 static StaticAutoPtr<RegisteredProxy> gRegMiscTlb;
@@ -35,6 +36,9 @@ a11y::PlatformInit()
   ia2AccessibleText::InitTextChangeData();
   if (BrowserTabsRemoteAutostart()) {
     mscom::InterceptorLog::Init();
+    UniquePtr<RegisteredProxy> regCustomProxy(
+        mscom::RegisterProxy());
+    gRegCustomProxy = regCustomProxy.release();
     UniquePtr<RegisteredProxy> regProxy(
         mscom::RegisterProxy(L"ia2marshal.dll"));
     gRegProxy = regProxy.release();
@@ -54,6 +58,7 @@ a11y::PlatformShutdown()
   ::DestroyCaret();
 
   nsWinUtils::ShutdownWindowEmulation();
+  gRegCustomProxy = nullptr;
   gRegProxy = nullptr;
   gRegAccTlb = nullptr;
   gRegMiscTlb = nullptr;
@@ -81,22 +86,15 @@ a11y::ProxyDestroyed(ProxyAccessible* aProxy)
 {
   AccessibleWrap* wrapper =
     reinterpret_cast<AccessibleWrap*>(aProxy->GetWrapper());
-  MOZ_ASSERT(wrapper);
+
+  // If aProxy is a document that was created, but
+  // RecvPDocAccessibleConstructor failed then aProxy->GetWrapper() will be
+  // null.
   if (!wrapper)
     return;
 
-  auto doc =
-    static_cast<DocProxyAccessibleWrap*>(WrapperFor(aProxy->Document()));
-  MOZ_ASSERT(doc);
-  if (doc) {
-#ifdef _WIN64
-    uint32_t id = wrapper->GetExistingID();
-    if (id != AccessibleWrap::kNoID) {
-      doc->RemoveID(id);
-    }
-#else
-    doc->RemoveID(-reinterpret_cast<int32_t>(wrapper));
-#endif
+  if (aProxy->IsDoc() && nsWinUtils::IsWindowEmulationStarted()) {
+    aProxy->AsDoc()->SetEmulatedWindowHandle(nullptr);
   }
 
   wrapper->Shutdown();

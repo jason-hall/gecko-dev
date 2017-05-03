@@ -57,14 +57,14 @@ public:
    * Our auto size is just intrinsic width and intrinsic height.
    */
   virtual mozilla::LogicalSize
-  ComputeAutoSize(nsRenderingContext *aRenderingContext,
-                  mozilla::WritingMode aWritingMode,
+  ComputeAutoSize(nsRenderingContext*         aRenderingContext,
+                  mozilla::WritingMode        aWM,
                   const mozilla::LogicalSize& aCBSize,
-                  nscoord aAvailableISize,
+                  nscoord                     aAvailableISize,
                   const mozilla::LogicalSize& aMargin,
                   const mozilla::LogicalSize& aBorder,
                   const mozilla::LogicalSize& aPadding,
-                  bool aShrinkWrap) override;
+                  ComputeSizeFlags            aFlags) override;
 
   /**
     * Respond to a gui event
@@ -108,20 +108,19 @@ protected:
 
   virtual ~nsFormControlFrame();
 
-  nscoord GetIntrinsicISize();
-  nscoord GetIntrinsicBSize();
+  static nscoord DefaultSize()
+  {
+    // XXXmats We have traditionally always returned 9px for GetMin/PrefISize
+    // but we might want to factor in what the theme says, something like:
+    // GetMinimumWidgetSize - GetWidgetPadding - GetWidgetBorder.
+    return nsPresContext::CSSPixelsToAppUnits(9);
+  }
 
-//
-//-------------------------------------------------------------------------------------
-//  Utility methods for managing checkboxes and radiobuttons
-//-------------------------------------------------------------------------------------
-//
-   /**
-    * Get the state of the checked attribute.
-    * @param aState set to true if the checked attribute is set,
-    * false if the checked attribute has been removed
-    */
-
+  /**
+   * Get the state of the checked attribute.
+   * @param aState set to true if the checked attribute is set,
+   * false if the checked attribute has been removed
+   */
   void GetCurrentCheckState(bool* aState);
 };
 

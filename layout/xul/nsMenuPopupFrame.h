@@ -11,6 +11,7 @@
 #define nsMenuPopupFrame_h__
 
 #include "mozilla/Attributes.h"
+#include "mozilla/gfx/Types.h"
 #include "nsIAtom.h"
 #include "nsGkAtoms.h"
 #include "nsCOMPtr.h"
@@ -332,6 +333,9 @@ public:
   nsMenuFrame* FindMenuWithShortcut(nsIDOMKeyEvent* aKeyEvent, bool& doAction);
 
   void ClearIncrementalString() { mIncrementalString.Truncate(); }
+  static bool IsWithinIncrementalTime(DOMTimeStamp time) {
+    return !sTimeoutOfIncrementalSearch || time - sLastKeyTime <= sTimeoutOfIncrementalSearch;
+  }
 
   virtual nsIAtom* GetType() const override { return nsGkAtoms::menuPopupFrame; }
 
@@ -382,17 +386,16 @@ public:
                     nsPopupLevel aPopupLevel);
 
   // Determines whether the given edges of the popup may be moved, where
-  // aHorizontalSide and aVerticalSide are one of the NS_SIDE_* constants, or
-  // 0 for no movement in that direction. aChange is the distance to move on
-  // those sides. If will be reset to 0 if the side cannot be adjusted at all
-  // in that direction. For example, a popup cannot be moved if it is anchored
-  // on a particular side.
+  // aHorizontalSide and aVerticalSide are one of the enum Side constants.
+  // aChange is the distance to move on those sides. If will be reset to 0
+  // if the side cannot be adjusted at all in that direction. For example, a
+  // popup cannot be moved if it is anchored on a particular side.
   //
   // Later, when bug 357725 is implemented, we can make this adjust aChange by
   // the amount that the side can be resized, so that minimums and maximums
   // can be taken into account.
-  void CanAdjustEdges(int8_t aHorizontalSide,
-                      int8_t aVerticalSide,
+  void CanAdjustEdges(mozilla::Side aHorizontalSide,
+                      mozilla::Side aVerticalSide,
                       mozilla::LayoutDeviceIntPoint& aChange);
 
   // Return true if the popup is positioned relative to an anchor.
@@ -433,6 +436,13 @@ public:
     mPopupState = ePopupPositioning;
     mShouldAutoPosition = true;
   }
+
+  // Checks for the anchor to change and either moves or hides the popup
+  // accordingly. The original position of the anchor should be supplied as
+  // the argument. If the popup needs to be hidden, HidePopup will be called by
+  // CheckForAnchorChange. If the popup needs to be moved, aRect will be updated
+  // with the new rectangle.
+  void CheckForAnchorChange(nsRect& aRect);
 
   // nsIReflowCallback
   virtual bool ReflowFinished() override;
@@ -479,7 +489,7 @@ protected:
                        nscoord aAnchorBegin, nscoord aAnchorEnd,
                        nscoord aMarginBegin, nscoord aMarginEnd,
                        nscoord aOffsetForContextMenu, FlipStyle aFlip,
-                       bool* aFlipSide);
+                       bool aIsOnEnd, bool* aFlipSide);
 
   // check if the popup can fit into the available space by "sliding" (i.e.,
   // by having the anchor arrow slide along one axis and only resizing if that
@@ -498,6 +508,10 @@ protected:
   nscoord SlideOrResize(nscoord& aScreenPoint, nscoord aSize,
                         nscoord aScreenBegin, nscoord aScreenEnd,
                         nscoord *aOffset);
+
+  // Given an anchor frame, compute the anchor rectangle relative to the screen,
+  // using the popup frame's app units, and taking into account transforms.
+  nsRect ComputeAnchorRect(nsPresContext* aRootPresContext, nsIFrame* aAnchorFrame);
 
   // Move the popup to the position specified in its |left| and |top| attributes.
   void MoveToAttributePosition();
@@ -519,6 +533,20 @@ protected:
   // view, and is initially hidden.
   void CreatePopupView();
 
+  nsView* GetViewInternal() const override { return mView; }
+  void SetViewInternal(nsView* aView) override { mView = aView; }
+
+  // Returns true if the popup should try to remain at the same relative
+  // location as the anchor while it is open. If the anchor becomes hidden
+  // either directly or indirectly because a parent popup or other element
+  // is no longer visible, or a parent deck page is changed, the popup hides
+  // as well. The second variation also sets the anchor rectangle, relative to
+  // the popup frame.
+  bool ShouldFollowAnchor();
+public:
+  bool ShouldFollowAnchor(nsRect& aRect);
+
+protected:
   nsString     mIncrementalString;  // for incremental typing navigation
 
   // the content that the popup is anchored to, if any, which may be in a
@@ -530,6 +558,7 @@ protected:
   nsCOMPtr<nsIContent> mTriggerContent;
 
   nsMenuFrame* mCurrentMenu; // The current menu that is active.
+  nsView* mView;
 
   RefPtr<nsXULPopupShownEvent> mPopupShownDispatcher;
 
@@ -615,6 +644,8 @@ protected:
   nsRect mOverrideConstraintRect;
 
   static int8_t sDefaultLevelIsTop;
+
+  static DOMTimeStamp sLastKeyTime;
 
   // If 0, never timed out.  Otherwise, the value is in milliseconds.
   static uint32_t sTimeoutOfIncrementalSearch;

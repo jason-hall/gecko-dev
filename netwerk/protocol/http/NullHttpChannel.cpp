@@ -26,8 +26,8 @@ NullHttpChannel::NullHttpChannel(nsIHttpChannel * chan)
   nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
   ssm->GetChannelURIPrincipal(chan, getter_AddRefs(mResourcePrincipal));
 
-  chan->GetResponseHeader(NS_LITERAL_CSTRING("Timing-Allow-Origin"),
-                          mTimingAllowOriginHeader);
+  Unused << chan->GetResponseHeader(NS_LITERAL_CSTRING("Timing-Allow-Origin"),
+                                    mTimingAllowOriginHeader);
   chan->GetURI(getter_AddRefs(mURI));
   chan->GetOriginalURI(getter_AddRefs(mOriginalURI));
 
@@ -58,13 +58,43 @@ NullHttpChannel::Init(nsIURI *aURI,
 //-----------------------------------------------------------------------------
 
 NS_IMETHODIMP
-NullHttpChannel::GetChannelId(nsACString& aChannelId)
+NullHttpChannel::GetChannelId(uint64_t *aChannelId)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
-NullHttpChannel::SetChannelId(const nsACString& aChannelId)
+NullHttpChannel::SetChannelId(uint64_t aChannelId)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetTopLevelContentWindowId(uint64_t *aWindowId)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::SetTopLevelContentWindowId(uint64_t aWindowId)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetTopLevelOuterContentWindowId(uint64_t *aWindowId)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::SetTopLevelOuterContentWindowId(uint64_t aWindowId)
+{
+    return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetIsTrackingResource(bool* aIsTrackingResource)
 {
     return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -259,13 +289,13 @@ NullHttpChannel::RedirectTo(nsIURI *aNewURI)
 }
 
 NS_IMETHODIMP
-NullHttpChannel::GetRequestContextID(nsID *_retval)
+NullHttpChannel::GetRequestContextID(uint64_t *_retval)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
-NullHttpChannel::SetRequestContextID(const nsID rcID)
+NullHttpChannel::SetRequestContextID(uint64_t rcID)
 {
   return NS_ERROR_NOT_IMPLEMENTED;
 }

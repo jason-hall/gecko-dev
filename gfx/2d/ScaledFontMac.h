@@ -20,11 +20,28 @@
 namespace mozilla {
 namespace gfx {
 
+class GlyphRenderingOptionsCG : public GlyphRenderingOptions
+{
+public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GlyphRenderingOptionsCG, override)
+
+  explicit GlyphRenderingOptionsCG(const Color &aFontSmoothingBackgroundColor)
+    : mFontSmoothingBackgroundColor(aFontSmoothingBackgroundColor)
+  {}
+
+  const Color &FontSmoothingBackgroundColor() const { return mFontSmoothingBackgroundColor; }
+
+  virtual FontType GetType() const override { return FontType::MAC; }
+
+private:
+  Color mFontSmoothingBackgroundColor;
+};
+
 class ScaledFontMac : public ScaledFontBase
 {
 public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(ScaledFontMac)
-  ScaledFontMac(CGFontRef aFont, Float aSize);
+  ScaledFontMac(CGFontRef aFont, const RefPtr<UnscaledFont>& aUnscaledFont, Float aSize);
   virtual ~ScaledFontMac();
 
   virtual FontType GetType() const { return FontType::MAC; }
@@ -32,15 +49,14 @@ public:
   virtual SkTypeface* GetSkTypeface();
 #endif
   virtual already_AddRefed<Path> GetPathForGlyphs(const GlyphBuffer &aBuffer, const DrawTarget *aTarget);
-  virtual void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, BackendType aBackendType, const Matrix *aTransformHint);
   virtual bool GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton);
+  virtual bool CanSerialize() { return true; }
 
 #ifdef USE_CAIRO_SCALED_FONT
   cairo_font_face_t* GetCairoFontFace();
 #endif
 
 private:
-  friend class DrawTargetCG;
   friend class DrawTargetSkia;
   CGFontRef mFont;
   CTFontRef mCTFont; // only created if CTFontDrawGlyphs is available, otherwise null

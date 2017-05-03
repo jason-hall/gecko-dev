@@ -346,15 +346,15 @@ BasicLayerManager::SetDefaultTargetConfiguration(BufferMode aDoubleBuffering, Sc
   mDoubleBuffering = aDoubleBuffering;
 }
 
-void
+bool
 BasicLayerManager::BeginTransaction()
 {
   mInTransaction = true;
   mUsingDefaultTarget = true;
-  BeginTransactionWithTarget(mDefaultTarget);
+  return BeginTransactionWithTarget(mDefaultTarget);
 }
 
-void
+bool
 BasicLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
 {
   mInTransaction = true;
@@ -367,6 +367,7 @@ BasicLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
   NS_ASSERTION(!InTransaction(), "Nested transactions not allowed");
   mPhase = PHASE_CONSTRUCTION;
   mTarget = aTarget;
+  return true;
 }
 
 static void
@@ -659,6 +660,8 @@ BasicLayerManager::EndTransactionInternal(DrawPaintedLayerCallback aCallback,
   NS_ASSERTION(!aCallback || !mTransactionIncomplete,
                "If callback is not null, transaction must be complete");
 
+  ClearDisplayItemLayers();
+
   // XXX - We should probably assert here that for an incomplete transaction
   // out target is the default target.
 
@@ -719,10 +722,12 @@ BasicLayerManager::PaintSelfOrChildren(PaintLayerContext& aPaintContext,
   } else {
     ContainerLayer* container =
         static_cast<ContainerLayer*>(aPaintContext.mLayer);
-    AutoTArray<Layer*, 12> children;
-    container->SortChildrenBy3DZOrder(children);
+
+    nsTArray<LayerPolygon> children =
+      container->SortChildrenBy3DZOrder(ContainerLayer::SortMode::WITHOUT_GEOMETRY);
+
     for (uint32_t i = 0; i < children.Length(); i++) {
-      Layer* layer = children.ElementAt(i);
+      Layer* layer = children.ElementAt(i).layer;
       if (layer->IsBackfaceHidden()) {
         continue;
       }
@@ -731,7 +736,7 @@ BasicLayerManager::PaintSelfOrChildren(PaintLayerContext& aPaintContext,
       }
 
       PaintLayer(aGroupTarget, layer, aPaintContext.mCallback,
-          aPaintContext.mCallbackData);
+                aPaintContext.mCallbackData);
       if (mTransactionIncomplete)
         break;
     }
@@ -813,7 +818,8 @@ BasicLayerManager::PaintLayer(gfxContext* aTarget,
   PROFILER_LABEL("BasicLayerManager", "PaintLayer",
     js::ProfileEntry::Category::GRAPHICS);
 
-  PaintLayerContext paintLayerContext(aTarget, aLayer, aCallback, aCallbackData);
+  PaintLayerContext paintLayerContext(aTarget, aLayer,
+                                      aCallback, aCallbackData);
 
   // Don't attempt to paint layers with a singular transform, cairo will
   // just throw an error.

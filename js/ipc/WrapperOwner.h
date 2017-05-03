@@ -20,8 +20,7 @@ namespace jsipc {
 class WrapperOwner : public virtual JavaScriptShared
 {
   public:
-    typedef mozilla::ipc::IProtocolManager<
-                       mozilla::ipc::IProtocol>::ActorDestroyReason
+    typedef mozilla::ipc::IProtocol::ActorDestroyReason
            ActorDestroyReason;
 
     WrapperOwner();
@@ -61,7 +60,8 @@ class WrapperOwner : public virtual JavaScriptShared
     bool getPrototypeIfOrdinary(JSContext* cx, JS::HandleObject proxy, bool* isOrdinary,
                                 JS::MutableHandleObject protop);
 
-    bool regexp_toShared(JSContext* cx, JS::HandleObject proxy, js::RegExpGuard* g);
+    bool regexp_toShared(JSContext* cx, JS::HandleObject proxy,
+                         js::MutableHandle<js::RegExpShared*> shared);
 
     nsresult instanceOf(JSObject* obj, const nsID* id, bool* bp);
 
@@ -84,9 +84,9 @@ class WrapperOwner : public virtual JavaScriptShared
     virtual void ActorDestroy(ActorDestroyReason why);
 
     virtual bool toObjectVariant(JSContext* cx, JSObject* obj, ObjectVariant* objVarp);
-    virtual JSObject* fromObjectVariant(JSContext* cx, ObjectVariant objVar);
-    JSObject* fromRemoteObjectVariant(JSContext* cx, RemoteObject objVar);
-    JSObject* fromLocalObjectVariant(JSContext* cx, LocalObject objVar);
+    virtual JSObject* fromObjectVariant(JSContext* cx, const ObjectVariant& objVar);
+    JSObject* fromRemoteObjectVariant(JSContext* cx, const RemoteObject& objVar);
+    JSObject* fromLocalObjectVariant(JSContext* cx, const LocalObject& objVar);
 
   protected:
     ObjectId idOf(JSObject* obj);

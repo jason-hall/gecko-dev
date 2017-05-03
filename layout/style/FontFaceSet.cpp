@@ -30,6 +30,7 @@
 #include "nsIContentSecurityPolicy.h"
 #include "nsIDocShell.h"
 #include "nsIDocument.h"
+#include "nsILoadContext.h"
 #include "nsINetworkPredictor.h"
 #include "nsIPresShell.h"
 #include "nsIPrincipal.h"
@@ -97,13 +98,14 @@ NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)
 FontFaceSet::FontFaceSet(nsPIDOMWindowInner* aWindow, nsIDocument* aDocument)
   : DOMEventTargetHelper(aWindow)
   , mDocument(aDocument)
+  , mResolveLazilyCreatedReadyPromise(false)
   , mStatus(FontFaceSetLoadStatus::Loaded)
   , mNonRuleFacesDirty(false)
   , mHasLoadingFontFaces(false)
   , mHasLoadingFontFacesIsDirty(false)
   , mDelayedLoadCheck(false)
 {
-  MOZ_COUNT_CTOR(FontFaceSet);
+  MOZ_ASSERT(mDocument, "We should get a valid document from the caller!");
 
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aWindow);
 
@@ -111,12 +113,7 @@ FontFaceSet::FontFaceSet(nsPIDOMWindowInner* aWindow, nsIDocument* aDocument)
   // be able to get to anyway) as it causes the window.FontFaceSet constructor
   // to be created.
   if (global && PrefEnabled()) {
-    ErrorResult rv;
-    mReady = Promise::Create(global, rv);
-  }
-
-  if (mReady) {
-    mReady->MaybeResolve(this);
+    mResolveLazilyCreatedReadyPromise = true;
   }
 
   if (!mDocument->DidFireDOMContentLoaded()) {
@@ -131,8 +128,6 @@ FontFaceSet::FontFaceSet(nsPIDOMWindowInner* aWindow, nsIDocument* aDocument)
 
 FontFaceSet::~FontFaceSet()
 {
-  MOZ_COUNT_DTOR(FontFaceSet);
-
   Disconnect();
   for (auto it = mLoaders.Iter(); !it.Done(); it.Next()) {
     it.Get()->GetKey()->Cancel();
@@ -386,8 +381,16 @@ Promise*
 FontFaceSet::GetReady(ErrorResult& aRv)
 {
   if (!mReady) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return nullptr;
+    nsCOMPtr<nsIGlobalObject> global = GetParentObject();
+    mReady = Promise::Create(global, aRv);
+    if (!mReady) {
+      aRv.Throw(NS_ERROR_FAILURE);
+      return nullptr;
+    }
+    if (mResolveLazilyCreatedReadyPromise) {
+      mReady->MaybeResolve(this);
+      mResolveLazilyCreatedReadyPromise = false;
+    }
   }
 
   FlushUserFontSet();
@@ -617,20 +620,25 @@ FontFaceSet::StartLoad(gfxUserFontEntry* aUserFontEntry,
 
   nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
   if (httpChannel) {
-    httpChannel->SetReferrerWithPolicy(aFontFaceSrc->mReferrer,
-                                       mDocument->GetReferrerPolicy());
+    rv = httpChannel->SetReferrerWithPolicy(aFontFaceSrc->mReferrer,
+                                            mDocument->GetReferrerPolicy());
+    NS_ENSURE_SUCCESS(rv, rv);
+
     nsAutoCString accept("application/font-woff;q=0.9,*/*;q=0.8");
     if (Preferences::GetBool(GFX_PREF_WOFF2_ENABLED)) {
       accept.Insert(NS_LITERAL_CSTRING("application/font-woff2;q=1.0,"), 0);
     }
-    httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("Accept"),
-                                  accept, false);
+    rv = httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("Accept"),
+                                       accept, false);
+    NS_ENSURE_SUCCESS(rv, rv);
+
     // For WOFF and WOFF2, we should tell servers/proxies/etc NOT to try
     // and apply additional compression at the content-encoding layer
     if (aFontFaceSrc->mFormatFlags & (gfxUserFontSet::FLAG_FORMAT_WOFF |
                                       gfxUserFontSet::FLAG_FORMAT_WOFF2)) {
-      httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("Accept-Encoding"),
-                                    NS_LITERAL_CSTRING("identity"), false);
+      rv = httpChannel->SetRequestHeader(NS_LITERAL_CSTRING("Accept-Encoding"),
+                                         NS_LITERAL_CSTRING("identity"), false);
+      NS_ENSURE_SUCCESS(rv, rv);
     }
   }
   nsCOMPtr<nsISupportsPriority> priorityChannel(do_QueryInterface(channel));
@@ -1035,7 +1043,7 @@ FontFaceSet::FindOrCreateUserFontEntryFromFontFace(const nsAString& aFamilyName,
   } else if (unit == eCSSUnit_String) {
     nsString stringValue;
     val.GetStringValue(stringValue);
-    languageOverride = gfxFontStyle::ParseFontLanguageOverride(stringValue);
+    languageOverride = nsRuleNode::ParseFontLanguageOverride(stringValue);
   } else {
     NS_ASSERTION(unit == eCSSUnit_Null,
                  "@font-face font-language-override has unexpected unit");
@@ -1090,12 +1098,13 @@ FontFaceSet::FindOrCreateUserFontEntryFromFontFace(const nsAString& aFamilyName,
           face->mURI = nullptr;
           face->mFormatFlags = 0;
           break;
-        case eCSSUnit_URL:
+        case eCSSUnit_URL: {
           face->mSourceType = gfxFontFaceSrc::eSourceType_URL;
           face->mURI = val.GetURLValue();
-          face->mReferrer = val.GetURLStructValue()->mReferrer;
+          URLValue* url = val.GetURLStructValue();
+          face->mReferrer = url->mExtraData->GetReferrer();
           face->mReferrerPolicy = mDocument->GetReferrerPolicy();
-          face->mOriginPrincipal = val.GetURLStructValue()->mOriginPrincipal;
+          face->mOriginPrincipal = url->mExtraData->GetPrincipal();
           NS_ASSERTION(face->mOriginPrincipal, "null origin principal in @font-face rule");
 
           // agent and user stylesheets are treated slightly differently,
@@ -1139,6 +1148,7 @@ FontFaceSet::FindOrCreateUserFontEntryFromFontFace(const nsAString& aFamilyName,
             continue;
           }
           break;
+        }
         default:
           NS_ASSERTION(unit == eCSSUnit_Local_Font || unit == eCSSUnit_URL,
                        "strange unit type in font-face src array");
@@ -1260,7 +1270,7 @@ FontFaceSet::LogMessage(gfxUserFontEntry* aUserFontEntry,
   if (rule) {
     rv = rule->GetCssText(text);
     NS_ENSURE_SUCCESS(rv, rv);
-    CSSStyleSheet* sheet = rule->GetStyleSheet();
+    StyleSheet* sheet = rule->GetStyleSheet();
     // if the style sheet is removed while the font is loading can be null
     if (sheet) {
       nsCString spec = sheet->GetSheetURI()->GetSpecOrDefault();
@@ -1469,7 +1479,8 @@ FontFaceSet::OnFontFaceStatusChanged(FontFace* aFontFace)
       mDelayedLoadCheck = true;
       nsCOMPtr<nsIRunnable> checkTask =
         NewRunnableMethod(this, &FontFaceSet::CheckLoadingFinishedAfterDelay);
-      NS_DispatchToMainThread(checkTask);
+      mDocument->Dispatch("FontFaceSet::CheckLoadingFinishedAfterDelay",
+                          TaskCategory::Other, checkTask.forget());
     }
   }
 }
@@ -1502,17 +1513,17 @@ FontFaceSet::CheckLoadingStarted()
 
   mStatus = FontFaceSetLoadStatus::Loading;
   (new AsyncEventDispatcher(this, NS_LITERAL_STRING("loading"),
-                            false))->RunDOMEventWhenSafe();
+                            false))->PostDOMEvent();
 
   if (PrefEnabled()) {
-    RefPtr<Promise> ready;
-    if (GetParentObject()) {
-      ErrorResult rv;
-      ready = Promise::Create(GetParentObject(), rv);
+    if (mReady) {
+      if (GetParentObject()) {
+        ErrorResult rv;
+        mReady = Promise::Create(GetParentObject(), rv);
+      }
     }
-
-    if (ready) {
-      mReady.swap(ready);
+    if (!mReady) {
+      mResolveLazilyCreatedReadyPromise = false;
     }
   }
 }
@@ -1599,11 +1610,13 @@ FontFaceSet::CheckLoadingFinished()
   mStatus = FontFaceSetLoadStatus::Loaded;
   if (mReady) {
     mReady->MaybeResolve(this);
+  } else {
+    mResolveLazilyCreatedReadyPromise = true;
   }
 
   // Now dispatch the loadingdone/loadingerror events.
-  nsTArray<FontFace*> loaded;
-  nsTArray<FontFace*> failed;
+  nsTArray<OwningNonNull<FontFace>> loaded;
+  nsTArray<OwningNonNull<FontFace>> failed;
 
   for (size_t i = 0; i < mRuleFaces.Length(); i++) {
     if (!mRuleFaces[i].mLoadEventShouldFire) {
@@ -1611,10 +1624,10 @@ FontFaceSet::CheckLoadingFinished()
     }
     FontFace* f = mRuleFaces[i].mFontFace;
     if (f->Status() == FontFaceLoadStatus::Loaded) {
-      loaded.AppendElement(f);
+      loaded.AppendElement(*f);
       mRuleFaces[i].mLoadEventShouldFire = false;
     } else if (f->Status() == FontFaceLoadStatus::Error) {
-      failed.AppendElement(f);
+      failed.AppendElement(*f);
       mRuleFaces[i].mLoadEventShouldFire = false;
     }
   }
@@ -1625,38 +1638,35 @@ FontFaceSet::CheckLoadingFinished()
     }
     FontFace* f = mNonRuleFaces[i].mFontFace;
     if (f->Status() == FontFaceLoadStatus::Loaded) {
-      loaded.AppendElement(f);
+      loaded.AppendElement(*f);
       mNonRuleFaces[i].mLoadEventShouldFire = false;
     } else if (f->Status() == FontFaceLoadStatus::Error) {
-      failed.AppendElement(f);
+      failed.AppendElement(*f);
       mNonRuleFaces[i].mLoadEventShouldFire = false;
     }
   }
 
-  DispatchLoadingFinishedEvent(NS_LITERAL_STRING("loadingdone"), loaded);
+  DispatchLoadingFinishedEvent(NS_LITERAL_STRING("loadingdone"),
+                               Move(loaded));
 
   if (!failed.IsEmpty()) {
-    DispatchLoadingFinishedEvent(NS_LITERAL_STRING("loadingerror"), failed);
+    DispatchLoadingFinishedEvent(NS_LITERAL_STRING("loadingerror"),
+                                 Move(failed));
   }
 }
 
 void
 FontFaceSet::DispatchLoadingFinishedEvent(
                                  const nsAString& aType,
-                                 const nsTArray<FontFace*>& aFontFaces)
+                                 nsTArray<OwningNonNull<FontFace>>&& aFontFaces)
 {
   FontFaceSetLoadEventInit init;
   init.mBubbles = false;
   init.mCancelable = false;
-  OwningNonNull<FontFace>* elements =
-    init.mFontfaces.AppendElements(aFontFaces.Length(), fallible);
-  MOZ_ASSERT(elements);
-  for (size_t i = 0; i < aFontFaces.Length(); i++) {
-    elements[i] = aFontFaces[i];
-  }
+  init.mFontfaces.SwapElements(aFontFaces);
   RefPtr<FontFaceSetLoadEvent> event =
     FontFaceSetLoadEvent::Constructor(this, aType, init);
-  (new AsyncEventDispatcher(this, event))->RunDOMEventWhenSafe();
+  (new AsyncEventDispatcher(this, event))->PostDOMEvent();
 }
 
 // nsIDOMEventListener

@@ -5,9 +5,9 @@
 
 #include "EditorCommands.h"
 
-#include "mozFlushType.h"
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/FlushType.h"
 #include "mozilla/TextEditor.h"
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
@@ -867,7 +867,7 @@ SelectionMoveCommands::DoCommand(const char* aCommandName,
   if (doc) {
     // Most of the commands below (possibly all of them) need layout to
     // be up to date.
-    doc->FlushPendingNotifications(Flush_Layout);
+    doc->FlushPendingNotifications(FlushType::Layout);
   }
 
   nsCOMPtr<nsISelectionController> selCont;
@@ -952,7 +952,13 @@ NS_IMETHODIMP
 InsertPlaintextCommand::DoCommand(const char* aCommandName,
                                   nsISupports* aCommandRefCon)
 {
-  return NS_ERROR_NOT_IMPLEMENTED;
+  // No value is equivalent to empty string
+  nsCOMPtr<nsIPlaintextEditor> editor = do_QueryInterface(aCommandRefCon);
+  if (NS_WARN_IF(!editor)) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  return editor->InsertText(EmptyString());
 }
 
 NS_IMETHODIMP
@@ -970,10 +976,7 @@ InsertPlaintextCommand::DoCommandParams(const char* aCommandName,
   nsresult rv = aParams->GetStringValue(STATE_DATA, text);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!text.IsEmpty())
-    return editor->InsertText(text);
-
-  return NS_OK;
+  return editor->InsertText(text);
 }
 
 NS_IMETHODIMP

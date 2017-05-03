@@ -26,7 +26,6 @@ namespace mozilla {
 namespace layers {
 
 class CompositableClient;
-class AsyncTransactionTracker;
 class ImageContainer;
 class SurfaceDescriptor;
 class SurfaceDescriptorTiles;
@@ -72,16 +71,8 @@ public:
                                    const ThebesBufferData& aThebesBufferData,
                                    const nsIntRegion& aUpdatedRegion) = 0;
 
-#ifdef MOZ_WIDGET_GONK
-  virtual void UseOverlaySource(CompositableClient* aCompositabl,
-                                const OverlaySource& aOverlay,
-                                const gfx::IntRect& aPictureRect) = 0;
-#endif
-
-  virtual void Destroy(CompositableChild* aCompositable);
-
-  virtual bool DestroyInTransaction(PTextureChild* aTexture, bool synchronously) = 0;
-  virtual bool DestroyInTransaction(PCompositableChild* aCompositable, bool synchronously) = 0;
+  virtual void ReleaseCompositable(const CompositableHandle& aHandle) = 0;
+  virtual bool DestroyInTransaction(PTextureChild* aTexture) = 0;
 
   /**
    * Tell the CompositableHost on the compositor side to remove the texture
@@ -93,19 +84,6 @@ public:
    */
   virtual void RemoveTextureFromCompositable(CompositableClient* aCompositable,
                                              TextureClient* aTexture) = 0;
-
-  /**
-   * Tell the CompositableHost on the compositor side to remove the texture
-   * from the CompositableHost. The compositor side sends back transaction
-   * complete message.
-   * This function does not delete the TextureHost corresponding to the
-   * TextureClient passed in parameter.
-   * It is used when the TextureClient recycled.
-   * Only ImageBridge implements it.
-   */
-  virtual void RemoveTextureFromCompositableAsync(AsyncTransactionTracker* aAsyncTransactionTracker,
-                                                  CompositableClient* aCompositable,
-                                                  TextureClient* aTexture) {}
 
   struct TimedTextureClient {
     TimedTextureClient()
@@ -135,6 +113,8 @@ public:
   void AssertInForwarderThread() {
     MOZ_ASSERT(InForwarderThread());
   }
+
+  static uint32_t GetMaxFileDescriptorsPerMessage();
 
 protected:
   nsTArray<RefPtr<TextureClient> > mTexturesToRemove;

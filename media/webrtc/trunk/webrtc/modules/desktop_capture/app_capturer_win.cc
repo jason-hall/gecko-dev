@@ -19,7 +19,7 @@
 #include <cassert>
 
 #include "webrtc/modules/desktop_capture/desktop_frame_win.h"
-#include "webrtc/system_wrappers/interface/logging.h"
+#include "webrtc/system_wrappers/include/logging.h"
 #include "webrtc/base/scoped_ptr.h"
 
 namespace webrtc {
@@ -80,6 +80,7 @@ public:
 
   // DesktopCapturer interface.
   virtual void Start(Callback* callback) override;
+  virtual void Stop() override;
   virtual void Capture(const DesktopRegion& region) override;
 
   struct WindowItem {
@@ -117,7 +118,7 @@ private:
   // WebRTC Window mode
   WindowsCapturerProxy window_capturer_proxy_;
 
-  DISALLOW_COPY_AND_ASSIGN(AppCapturerWin);
+  RTC_DISALLOW_COPY_AND_ASSIGN(AppCapturerWin);
 };
 
 AppCapturerWin::AppCapturerWin(const DesktopCaptureOptions& options)
@@ -164,6 +165,9 @@ void AppCapturerWin::Start(Callback* callback) {
   assert(callback);
 
   callback_ = callback;
+}
+void AppCapturerWin::Stop() {
+  callback_ = NULL;
 }
 void AppCapturerWin::Capture(const DesktopRegion& region) {
   assert(IsGUIThread(false));

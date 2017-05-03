@@ -478,6 +478,7 @@ function filterDevice() {
       }
 
       provider.listener = null;
+      provider = null;
       run_next_test();
     },
     updateDevice: function() {},
@@ -617,7 +618,7 @@ function handleOnSessionRequest() {
     removeDevice: function(device) {},
     updateDevice: function(device) {},
     onSessionRequest: function(device, url, presentationId, controlChannel) {
-      Assert.ok(true, "recieve onSessionRequest event");
+      Assert.ok(true, "receive onSessionRequest event");
       this.request = {
         deviceId: device.id,
         url: url,
@@ -690,7 +691,7 @@ function handleOnSessionRequestFromUnknownDevice() {
       Assert.ok(false, "shouldn't update any device");
     },
     onSessionRequest: function(device, url, presentationId, controlChannel) {
-      Assert.ok(true, "recieve onSessionRequest event");
+      Assert.ok(true, "receive onSessionRequest event");
       this.request = {
         deviceId: device.id,
         url: url,
@@ -835,6 +836,7 @@ function ignoreIncompatibleDevice() {
     Assert.equal(listener.count(), 0);
 
     provider.listener = null;
+    provider = null;
 
     run_next_test();
   });
@@ -918,6 +920,7 @@ function ignoreSelfDevice() {
     Assert.equal(listener.count(), 0);
 
     provider.listener = null;
+    provider = null;
 
     run_next_test();
   });

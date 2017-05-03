@@ -4,6 +4,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files('**'):
+    BUG_COMPONENT = ('Toolkit', 'General')
+
 # These component dirs are built for all apps (including suite)
 if CONFIG['MOZ_ENABLE_XREMOTE']:
     DIRS += ['remote']
@@ -17,10 +20,10 @@ DIRS += [
     'alerts',
     'apppicker',
     'asyncshutdown',
+    'browser',
     'commandlines',
     'contentprefs',
     'contextualidentity',
-    'cookie',
     'crashmonitor',
     'diskspacewatcher',
     'downloads',
@@ -30,11 +33,11 @@ DIRS += [
     'finalizationwitness',
     'formautofill',
     'find',
-    'gfx',
     'jsdownloads',
     'lz4',
     'mediasniffer',
     'microformats',
+    'mozprotocol',
     'osfile',
     'parentalcontrols',
     'passwordmgr',
@@ -50,7 +53,6 @@ DIRS += [
     'remotebrowserutils',
     'reflect',
     'securityreporter',
-    'sqlite',
     'startup',
     'statusfilter',
     'telemetry',
@@ -62,6 +64,8 @@ DIRS += [
     'url-classifier',
     'urlformatter',
     'viewconfig',
+    'windowcreator',
+    'windowwatcher',
     'workerloader',
     'xulstore'
 ]
@@ -85,7 +89,7 @@ if CONFIG['MOZ_FEEDS']:
     DIRS += ['feeds']
 
 if CONFIG['MOZ_XUL']:
-    DIRS += ['autocomplete', 'satchel']
+    DIRS += ['autocomplete', 'printingui', 'satchel']
 
 if 'gtk' in CONFIG['MOZ_WIDGET_TOOLKIT']:
     DIRS += ['filepicker']
@@ -99,6 +103,9 @@ if CONFIG['OS_TARGET'] != 'Android':
     DIRS += ['terminator']
 
 DIRS += ['build']
+
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
+    DIRS += ['gfx']
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] != 'android':
     EXTRA_COMPONENTS += [

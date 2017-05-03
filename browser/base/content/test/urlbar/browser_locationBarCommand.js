@@ -54,7 +54,7 @@ add_task(function* shift_left_click_test() {
   is(win.gURLBar.textValue, TEST_VALUE, "New URL is loaded in new window");
 
   // Cleanup.
-  yield promiseWindowClosed(win);
+  yield BrowserTestUtils.closeWindow(win);
 });
 
 add_task(function* right_click_test() {
@@ -196,15 +196,13 @@ function* promiseOpenNewTab(url = "about:blank") {
 
 function promiseNewTabSwitched() {
   return new Promise(resolve => {
-    gBrowser.addEventListener("TabSwitchDone", function onSwitch() {
-      gBrowser.removeEventListener("TabSwitchDone", onSwitch);
+    gBrowser.addEventListener("TabSwitchDone", function() {
       executeSoon(resolve);
-    });
+    }, {once: true});
   });
 }
 
-function promiseCheckChildNoFocusedElement(browser)
-{
+function promiseCheckChildNoFocusedElement(browser) {
   if (!gMultiProcessBrowser) {
     Assert.equal(Services.focus.focusedElement, null, "There should be no focused element");
     return null;

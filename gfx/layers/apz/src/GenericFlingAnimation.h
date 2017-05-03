@@ -45,11 +45,11 @@ public:
     // (in this APZC, or an APZC further in the handoff chain).
     // This ensures that we don't take the 'overscroll' path in Sample()
     // on account of one axis which can't scroll having a velocity.
-    if (!mOverscrollHandoffChain->CanScrollInDirection(&mApzc, Layer::HORIZONTAL)) {
+    if (!mOverscrollHandoffChain->CanScrollInDirection(&mApzc, ScrollDirection::HORIZONTAL)) {
       ReentrantMonitorAutoEnter lock(mApzc.mMonitor);
       mApzc.mX.SetVelocity(0);
     }
-    if (!mOverscrollHandoffChain->CanScrollInDirection(&mApzc, Layer::VERTICAL)) {
+    if (!mOverscrollHandoffChain->CanScrollInDirection(&mApzc, ScrollDirection::VERTICAL)) {
       ReentrantMonitorAutoEnter lock(mApzc.mMonitor);
       mApzc.mY.SetVelocity(0);
     }
@@ -67,7 +67,8 @@ public:
     // not in APZCs further down the handoff chain during handoff.
     bool applyAcceleration = !aFlingIsHandedOff;
     if (applyAcceleration && !mApzc.mLastFlingTime.IsNull()
-        && (now - mApzc.mLastFlingTime).ToMilliseconds() < gfxPrefs::APZFlingAccelInterval()) {
+        && (now - mApzc.mLastFlingTime).ToMilliseconds() < gfxPrefs::APZFlingAccelInterval()
+        && velocity.Length() >= gfxPrefs::APZFlingAccelMinVelocity()) {
       if (SameDirection(velocity.x, mApzc.mLastFlingVelocity.x)) {
         velocity.x = Accelerate(velocity.x, mApzc.mLastFlingVelocity.x);
         FLING_LOG("%p Applying fling x-acceleration from %f to %f (delta %f)\n",

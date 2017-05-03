@@ -9,7 +9,7 @@ const {Task} = require("devtools/shared/task");
 const {KeyCodes} = require("devtools/client/shared/keycodes");
 
 const EventEmitter = require("devtools/shared/event-emitter");
-const {AutocompletePopup} = require("devtools/client/shared/autocomplete-popup");
+const AutocompletePopup = require("devtools/client/shared/autocomplete-popup");
 const Services = require("Services");
 
 // Maximum number of selector suggestions shown in the panel.
@@ -112,11 +112,9 @@ InspectorSearch.prototype = {
   _onInput: function () {
     if (this.searchBox.value.length === 0) {
       this.searchClearButton.hidden = true;
-      this.searchBox.removeAttribute("filled");
       this._onSearch();
     } else {
       this.searchClearButton.hidden = false;
-      this.searchBox.setAttribute("filled", true);
     }
   },
 
@@ -175,7 +173,8 @@ function SelectorAutocompleter(inspector, inputNode) {
     onClick: this._onSearchPopupClick,
   };
 
-  this.searchPopup = new AutocompletePopup(inspector._toolbox, options);
+  // The popup will be attached to the toolbox document.
+  this.searchPopup = new AutocompletePopup(inspector._toolbox.doc, options);
 
   this.searchBox.addEventListener("input", this.showSuggestions, true);
   this.searchBox.addEventListener("keypress", this._onSearchKeypress, true);
@@ -331,7 +330,6 @@ SelectorAutocompleter.prototype = {
    */
   _onSearchKeypress: function (event) {
     let popup = this.searchPopup;
-
     switch (event.keyCode) {
       case KeyCodes.DOM_VK_RETURN:
       case KeyCodes.DOM_VK_TAB:
@@ -374,6 +372,9 @@ SelectorAutocompleter.prototype = {
       case KeyCodes.DOM_VK_ESCAPE:
         if (popup.isOpen) {
           this.hidePopup();
+        } else {
+          this.emit("processing-done");
+          return;
         }
         break;
 
@@ -544,7 +545,5 @@ SelectorAutocompleter.prototype = {
       // the autoSelect item has been selected.
       return this._showPopup(result.suggestions, firstPart, state);
     });
-
-    return;
   }
 };

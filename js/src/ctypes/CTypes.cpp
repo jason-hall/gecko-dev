@@ -30,8 +30,6 @@
 
 #if defined(XP_UNIX)
 #include <errno.h>
-#elif defined(XP_WIN)
-#include <windows.h>
 #endif
 
 #include "jscntxt.h"
@@ -39,11 +37,13 @@
 #include "jsfun.h"
 #include "jsnum.h"
 #include "jsprf.h"
+#include "jswin.h"
 
 #include "builtin/TypedObject.h"
 #include "ctypes/Library.h"
 #include "gc/Policy.h"
 #include "gc/Zone.h"
+#include "jit/AtomicOperations.h"
 #include "js/Vector.h"
 
 #include "jsatominlines.h"
@@ -4570,8 +4570,8 @@ CType::Trace(JSTracer* trc, JSObject* obj)
     // Identify our objects to the tracer.
     JS::TraceEdge(trc, &fninfo->mABI, "abi");
     JS::TraceEdge(trc, &fninfo->mReturnType, "returnType");
-    for (size_t i = 0; i < fninfo->mArgTypes.length(); ++i)
-      JS::TraceEdge(trc, &fninfo->mArgTypes[i], "argType");
+    for (auto& argType : fninfo->mArgTypes)
+      JS::TraceEdge(trc, &argType, "argType");
 
     break;
   }
@@ -8465,7 +8465,7 @@ CDataFinalizer::Methods::Dispose(JSContext* cx, unsigned argc, Value* vp)
   Value valType = JS_GetReservedSlot(obj, SLOT_DATAFINALIZER_VALTYPE);
   MOZ_ASSERT(valType.isObject());
 
-  JSObject* objCTypes = CType::GetGlobalCTypes(cx, &valType.toObject());
+  RootedObject objCTypes(cx, CType::GetGlobalCTypes(cx, &valType.toObject()));
   if (!objCTypes)
     return false;
 

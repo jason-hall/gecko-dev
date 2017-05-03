@@ -27,6 +27,7 @@
 #undef GetBinaryType
 #undef RemoveDirectory
 #undef LoadIcon
+#undef LoadImage
 #undef GetObject
 #endif
 
@@ -94,8 +95,6 @@ public:
     return nsFrame::IsFrameOfType(aFlags &
       ~(nsIFrame::eReplaced | nsIFrame::eReplacedSizing));
   }
-
-  virtual bool NeedsView() override { return true; }
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override;
@@ -270,6 +269,9 @@ protected:
   friend class nsDisplayPlugin;
   friend class PluginBackgroundSink;
 
+  nsView* GetViewInternal() const override { return mOuterView; }
+  void SetViewInternal(nsView* aView) override { mOuterView = aView; }
+
 private:
   // Registers the plugin for a geometry update, and requests a geometry
   // update. This caches the root pres context in
@@ -302,7 +304,8 @@ private:
   };
 
   nsPluginInstanceOwner*          mInstanceOwner; // WEAK
-  nsView*                        mInnerView;
+  nsView*                         mOuterView;
+  nsView*                         mInnerView;
   nsCOMPtr<nsIWidget>             mWidget;
   nsIntRect                       mWindowlessRect;
   /**

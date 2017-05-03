@@ -1,8 +1,8 @@
 
 /* pngrtran.c - transforms the data in a row for PNG readers
  *
- * Last changed in libpng 1.6.24 [August 4, 2016]
- * Copyright (c) 1998-2002,2004,2006-2016 Glenn Randers-Pehrson
+ * Last changed in libpng 1.6.29 [March 16, 2017]
+ * Copyright (c) 1998-2002,2004,2006-2017 Glenn Randers-Pehrson
  * (Version 0.96 Copyright (c) 1996, 1997 Andreas Dilger)
  * (Version 0.88 Copyright (c) 1995, 1996 Guy Eric Schalnat, Group 42, Inc.)
  *
@@ -429,7 +429,7 @@ png_set_quantize(png_structrp png_ptr, png_colorp palette,
       int i;
 
       png_ptr->quantize_index = (png_bytep)png_malloc(png_ptr,
-          (png_uint_32)(num_palette * (sizeof (png_byte))));
+          (png_uint_32)((png_uint_32)num_palette * (sizeof (png_byte))));
       for (i = 0; i < num_palette; i++)
          png_ptr->quantize_index[i] = (png_byte)i;
    }
@@ -446,7 +446,7 @@ png_set_quantize(png_structrp png_ptr, png_colorp palette,
 
          /* Initialize an array to sort colors */
          png_ptr->quantize_sort = (png_bytep)png_malloc(png_ptr,
-             (png_uint_32)(num_palette * (sizeof (png_byte))));
+             (png_uint_32)((png_uint_32)num_palette * (sizeof (png_byte))));
 
          /* Initialize the quantize_sort array */
          for (i = 0; i < num_palette; i++)
@@ -580,9 +580,9 @@ png_set_quantize(png_structrp png_ptr, png_colorp palette,
 
          /* Initialize palette index arrays */
          png_ptr->index_to_palette = (png_bytep)png_malloc(png_ptr,
-             (png_uint_32)(num_palette * (sizeof (png_byte))));
+             (png_uint_32)((png_uint_32)num_palette * (sizeof (png_byte))));
          png_ptr->palette_to_index = (png_bytep)png_malloc(png_ptr,
-             (png_uint_32)(num_palette * (sizeof (png_byte))));
+             (png_uint_32)((png_uint_32)num_palette * (sizeof (png_byte))));
 
          /* Initialize the sort array */
          for (i = 0; i < num_palette; i++)
@@ -2150,7 +2150,7 @@ png_do_unpack(png_row_infop row_info, png_bytep row)
          {
             png_bytep sp = row + (png_size_t)((row_width - 1) >> 3);
             png_bytep dp = row + (png_size_t)row_width - 1;
-            png_uint_32 shift = 7 - (int)((row_width + 7) & 0x07);
+            png_uint_32 shift = 7U - ((row_width + 7U) & 0x07);
             for (i = 0; i < row_width; i++)
             {
                *dp = (png_byte)((*sp >> shift) & 0x01);
@@ -2174,7 +2174,7 @@ png_do_unpack(png_row_infop row_info, png_bytep row)
 
             png_bytep sp = row + (png_size_t)((row_width - 1) >> 2);
             png_bytep dp = row + (png_size_t)row_width - 1;
-            png_uint_32 shift = (int)((3 - ((row_width + 3) & 0x03)) << 1);
+            png_uint_32 shift = ((3U - ((row_width + 3U) & 0x03)) << 1);
             for (i = 0; i < row_width; i++)
             {
                *dp = (png_byte)((*sp >> shift) & 0x03);
@@ -2197,7 +2197,7 @@ png_do_unpack(png_row_infop row_info, png_bytep row)
          {
             png_bytep sp = row + (png_size_t)((row_width - 1) >> 1);
             png_bytep dp = row + (png_size_t)row_width - 1;
-            png_uint_32 shift = (int)((1 - ((row_width + 1) & 0x01)) << 2);
+            png_uint_32 shift = ((1U - ((row_width + 1U) & 0x01)) << 2);
             for (i = 0; i < row_width; i++)
             {
                *dp = (png_byte)((*sp >> shift) & 0x0f);
@@ -3223,7 +3223,8 @@ png_do_compose(png_row_infop row_info, png_bytep row, png_structrp png_ptr)
                         == png_ptr->trans_color.gray)
                      {
                         unsigned int tmp = *sp & (0x7f7f >> (7 - shift));
-                        tmp |= png_ptr->background.gray << shift;
+                        tmp |=
+                            (unsigned int)(png_ptr->background.gray << shift);
                         *sp = (png_byte)(tmp & 0xff);
                      }
 
@@ -3252,7 +3253,8 @@ png_do_compose(png_row_infop row_info, png_bytep row, png_structrp png_ptr)
                             == png_ptr->trans_color.gray)
                         {
                            unsigned int tmp = *sp & (0x3f3f >> (6 - shift));
-                           tmp |= png_ptr->background.gray << shift;
+                           tmp |=
+                              (unsigned int)png_ptr->background.gray << shift;
                            *sp = (png_byte)(tmp & 0xff);
                         }
 
@@ -3262,7 +3264,7 @@ png_do_compose(png_row_infop row_info, png_bytep row, png_structrp png_ptr)
                            unsigned int g = (gamma_table [p | (p << 2) |
                                (p << 4) | (p << 6)] >> 6) & 0x03;
                            unsigned int tmp = *sp & (0x3f3f >> (6 - shift));
-                           tmp |= g << shift;
+                           tmp |= (unsigned int)(g << shift);
                            *sp = (png_byte)(tmp & 0xff);
                         }
 
@@ -3288,7 +3290,8 @@ png_do_compose(png_row_infop row_info, png_bytep row, png_structrp png_ptr)
                             == png_ptr->trans_color.gray)
                         {
                            unsigned int tmp = *sp & (0x3f3f >> (6 - shift));
-                           tmp |= png_ptr->background.gray << shift;
+                           tmp |=
+                               (unsigned int)png_ptr->background.gray << shift;
                            *sp = (png_byte)(tmp & 0xff);
                         }
 
@@ -3318,7 +3321,8 @@ png_do_compose(png_row_infop row_info, png_bytep row, png_structrp png_ptr)
                             == png_ptr->trans_color.gray)
                         {
                            unsigned int tmp = *sp & (0x0f0f >> (4 - shift));
-                           tmp |= png_ptr->background.gray << shift;
+                           tmp |= 
+                              (unsigned int)(png_ptr->background.gray << shift);
                            *sp = (png_byte)(tmp & 0xff);
                         }
 
@@ -3328,7 +3332,7 @@ png_do_compose(png_row_infop row_info, png_bytep row, png_structrp png_ptr)
                            unsigned int g = (gamma_table[p | (p << 4)] >> 4) &
                               0x0f;
                            unsigned int tmp = *sp & (0x0f0f >> (4 - shift));
-                           tmp |= g << shift;
+                           tmp |= (unsigned int)(g << shift);
                            *sp = (png_byte)(tmp & 0xff);
                         }
 
@@ -3354,7 +3358,8 @@ png_do_compose(png_row_infop row_info, png_bytep row, png_structrp png_ptr)
                             == png_ptr->trans_color.gray)
                         {
                            unsigned int tmp = *sp & (0x0f0f >> (4 - shift));
-                           tmp |= png_ptr->background.gray << shift;
+                           tmp |=
+                              (unsigned int)(png_ptr->background.gray << shift);
                            *sp = (png_byte)(tmp & 0xff);
                         }
 
@@ -4297,7 +4302,7 @@ png_do_expand_palette(png_row_infop row_info, png_bytep row,
             if (num_trans > 0)
             {
                sp = row + (png_size_t)row_width - 1;
-               dp = row + (png_size_t)(row_width << 2) - 1;
+               dp = row + ((png_size_t)row_width << 2) - 1;
 
                for (i = 0; i < row_width; i++)
                {
@@ -4458,7 +4463,7 @@ png_do_expand(png_row_infop row_info, png_bytep row,
             {
                gray = gray & 0xff;
                sp = row + (png_size_t)row_width - 1;
-               dp = row + (png_size_t)(row_width << 1) - 1;
+               dp = row + ((png_size_t)row_width << 1) - 1;
 
                for (i = 0; i < row_width; i++)
                {
@@ -4514,7 +4519,7 @@ png_do_expand(png_row_infop row_info, png_bytep row,
             png_byte green = (png_byte)(trans_color->green & 0xff);
             png_byte blue = (png_byte)(trans_color->blue & 0xff);
             sp = row + (png_size_t)row_info->rowbytes - 1;
-            dp = row + (png_size_t)(row_width << 2) - 1;
+            dp = row + ((png_size_t)row_width << 2) - 1;
             for (i = 0; i < row_width; i++)
             {
                if (*(sp - 2) == red && *(sp - 1) == green && *(sp) == blue)
@@ -4537,7 +4542,7 @@ png_do_expand(png_row_infop row_info, png_bytep row,
             png_byte green_low = (png_byte)(trans_color->green & 0xff);
             png_byte blue_low = (png_byte)(trans_color->blue & 0xff);
             sp = row + row_info->rowbytes - 1;
-            dp = row + (png_size_t)(row_width << 3) - 1;
+            dp = row + ((png_size_t)row_width << 3) - 1;
             for (i = 0; i < row_width; i++)
             {
                if (*(sp - 5) == red_high &&

@@ -32,6 +32,10 @@ class nsPresContext;
 class nsIContent;
 class imgRequestProxy;
 
+namespace mozilla {
+class AsyncEventDispatcher;
+} // namespace mozilla
+
 #ifdef LoadImage
 // Undefine LoadImage to prevent naming conflict with Windows.
 #undef LoadImage
@@ -126,13 +130,15 @@ protected:
    * @param aNotify If true, nsIDocumentObserver state change notifications
    *                will be sent as needed.
    * @param aImageLoadType The ImageLoadType for this request
+   * @param aLoadStart If true, dispatch "loadstart" event.
    * @param aDocument Optional parameter giving the document this node is in.
    *        This is purely a performance optimization.
    * @param aLoadFlags Optional parameter specifying load flags to use for
    *        the image load
    */
   nsresult LoadImage(nsIURI* aNewURI, bool aForce, bool aNotify,
-                     ImageLoadType aImageLoadType, nsIDocument* aDocument = nullptr,
+                     ImageLoadType aImageLoadType, bool aLoadStart = true,
+                     nsIDocument* aDocument = nullptr,
                      nsLoadFlags aLoadFlags = nsIRequest::LOAD_NORMAL);
 
   /**
@@ -211,6 +217,12 @@ protected:
   // The nsContentPolicyType we would use for this ImageLoadType
   static nsContentPolicyType PolicyTypeForLoad(ImageLoadType aImageLoadType);
 
+  void AsyncEventRunning(mozilla::AsyncEventDispatcher* aEvent);
+
+  // Get ourselves as an nsIContent*.  Not const because some of the callers
+  // want a non-const nsIContent.
+  virtual nsIContent* AsContent() = 0;
+
 private:
   /**
    * Struct used to manage the image observers.
@@ -258,8 +270,16 @@ private:
    *
    * @param aEventType "loadstart", "loadend", "load", or "error" depending on
    *                   how things went
+   * @param aIsCancelable true if event is cancelable.
    */
-  nsresult FireEvent(const nsAString& aEventType);
+  nsresult FireEvent(const nsAString& aEventType, bool aIsCancelable = false);
+
+  /**
+   * Method to cancel and null-out pending event if they exist.
+   */
+  void CancelPendingEvent();
+
+  RefPtr<mozilla::AsyncEventDispatcher> mPendingEvent;
 
 protected:
   /**
@@ -348,6 +368,11 @@ protected:
    *
    * No-op if aImage is null.
    *
+   * @param aFrame If called from FrameCreated the frame passed to FrameCreated.
+   *               This is our frame, but at the time of the FrameCreated call
+   *               our primary frame pointer hasn't been set yet, so this is
+   *               only way to get our frame.
+   *
    * @param aNonvisibleAction A requested action if the frame has become
    *                          nonvisible. If Nothing(), no action is
    *                          requested. If DISCARD_IMAGES is specified, the
@@ -355,7 +380,7 @@ protected:
    *                          associated with to discard their surfaces if
    *                          possible.
    */
-  void TrackImage(imgIRequest* aImage);
+  void TrackImage(imgIRequest* aImage, nsIFrame* aFrame = nullptr);
   void UntrackImage(imgIRequest* aImage,
                     const Maybe<OnNonvisible>& aNonvisibleAction = Nothing());
 
@@ -438,9 +463,6 @@ private:
   // registered with the refresh driver.
   bool mCurrentRequestRegistered;
   bool mPendingRequestRegistered;
-
-  // True when FrameCreate has been called but FrameDestroy has not.
-  bool mFrameCreateCalled;
 };
 
 #endif // nsImageLoadingContent_h__

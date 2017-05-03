@@ -338,13 +338,13 @@ ValueNumberer::discardDef(MDefinition* def)
             def->opName(), def->id());
 #endif
 #ifdef DEBUG
-    /*MOZ_ASSERT(def != nextDef_, "Invalidating the MDefinition iterator");
+    MOZ_ASSERT(def != nextDef_, "Invalidating the MDefinition iterator");
     if (def->block()->isMarked()) {
         MOZ_ASSERT(!def->hasUses(), "Discarding def that still has uses");
     } else {
         MOZ_ASSERT(IsDiscardable(def), "Discarding non-discardable definition");
         MOZ_ASSERT(!values_.has(def), "Discarding a definition still in the set");
-    }*/
+    }
 #endif
 
     MBasicBlock* block = def->block();
@@ -367,7 +367,7 @@ ValueNumberer::discardDef(MDefinition* def)
     // If that was the last definition in the block, it can be safely removed
     // from the graph.
     if (block->phisEmpty() && block->begin() == block->end()) {
-        //MOZ_ASSERT(block->isMarked(), "Reachable block lacks at least a control instruction");
+        MOZ_ASSERT(block->isMarked(), "Reachable block lacks at least a control instruction");
 
         // As a special case, don't remove a block which is a dominator tree
         // root so that we don't invalidate the iterator in visitGraph. We'll
@@ -431,8 +431,7 @@ ValueNumberer::fixupOSROnlyLoop(MBasicBlock* block, MBasicBlock* backedge)
     // which is hard, especially if the OSR is into a nested loop. Doing all
     // that would produce slightly more optimal code, but this is so
     // extraordinarily rare that it isn't worth the complexity.
-    MBasicBlock* fake = MBasicBlock::NewAsmJS(graph_, block->info(),
-                                              nullptr, MBasicBlock::NORMAL);
+    MBasicBlock* fake = MBasicBlock::New(graph_, block->info(), nullptr, MBasicBlock::NORMAL);
     if (fake == nullptr)
         return false;
 
@@ -472,8 +471,8 @@ ValueNumberer::fixupOSROnlyLoop(MBasicBlock* block, MBasicBlock* backedge)
 bool
 ValueNumberer::removePredecessorAndDoDCE(MBasicBlock* block, MBasicBlock* pred, size_t predIndex)
 {
-    //MOZ_ASSERT(!block->isMarked(),
-               //"Block marked unreachable should have predecessors removed already");
+    MOZ_ASSERT(!block->isMarked(),
+               "Block marked unreachable should have predecessors removed already");
 
     // Before removing the predecessor edge, scan the phi operands for that edge
     // for dead code before they get removed.
@@ -481,6 +480,7 @@ ValueNumberer::removePredecessorAndDoDCE(MBasicBlock* block, MBasicBlock* pred, 
     for (MPhiIterator iter(block->phisBegin()), end(block->phisEnd()); iter != end; ) {
         MPhi* phi = *iter++;
         MOZ_ASSERT(!values_.has(phi), "Visited phi in block having predecessor removed");
+        MOZ_ASSERT(!phi->isGuard());
 
         MDefinition* op = phi->getOperand(predIndex);
         phi->removeOperand(predIndex);
@@ -489,9 +489,9 @@ ValueNumberer::removePredecessorAndDoDCE(MBasicBlock* block, MBasicBlock* pred, 
         if (!handleUseReleased(op, DontSetUseRemoved) || !processDeadDefs())
             return false;
 
-        // If |nextDef_| became dead while we had it pinned, advance the iterator
-        // and discard it now.
-        while (nextDef_ && !nextDef_->hasUses()) {
+        // If |nextDef_| became dead while we had it pinned, advance the
+        // iterator and discard it now.
+        while (nextDef_ && !nextDef_->hasUses() && !nextDef_->isGuardRangeBailouts()) {
             phi = nextDef_->toPhi();
             iter++;
             nextDef_ = iter != end ? *iter : nullptr;
@@ -512,7 +512,7 @@ ValueNumberer::removePredecessorAndDoDCE(MBasicBlock* block, MBasicBlock* pred, 
 bool
 ValueNumberer::removePredecessorAndCleanUp(MBasicBlock* block, MBasicBlock* pred)
 {
-    //MOZ_ASSERT(!block->isMarked(), "Removing predecessor on block already marked unreachable");
+    MOZ_ASSERT(!block->isMarked(), "Removing predecessor on block already marked unreachable");
 
     // We'll be removing a predecessor, so anything we know about phis in this
     // block will be wrong.
@@ -728,7 +728,8 @@ ValueNumberer::visitDefinition(MDefinition* def)
         MResumePoint* rp = nop->resumePoint();
         if (rp && rp->numOperands() > 0 &&
             rp->getOperand(rp->numOperands() - 1) == prev &&
-            !nop->block()->lastIns()->isThrow())
+            !nop->block()->lastIns()->isThrow() &&
+            !prev->isAssertRecoveredOnBailout())
         {
             size_t numOperandsLive = 0;
             for (size_t j = 0; j < prev->numOperands(); j++) {
@@ -797,6 +798,9 @@ ValueNumberer::visitDefinition(MDefinition* def)
         // needed, so we can clear |def|'s guard flag and let it be discarded.
         def->setNotGuardUnchecked();
 
+        if (def->isGuardRangeBailouts())
+            sim->setGuardRangeBailoutsUnchecked();
+
         if (DeadIfUnused(def)) {
             if (!discardDefsRecursively(def))
                 return false;
@@ -804,6 +808,12 @@ ValueNumberer::visitDefinition(MDefinition* def)
             // If that ended up discarding |sim|, then we're done here.
             if (sim->isDiscarded())
                 return true;
+        }
+
+        if (!rerun_ && def->isPhi() && !sim->isPhi()) {
+            rerun_ = true;
+            JitSpew(JitSpew_GVN, "      Replacing phi%u may have enabled cascading optimisations; "
+                                 "will re-run", def->id());
         }
 
         // Otherwise, procede to optimize with |sim| in place of |def|.
@@ -918,7 +928,7 @@ ValueNumberer::visitUnreachableBlock(MBasicBlock* block)
             block->isSplitEdge() ? " (split edge)" : "",
             block->immediateDominator() == block ? " (dominator root)" : "");
 
-    //MOZ_ASSERT(block->isMarked(), "Visiting unmarked (and therefore reachable?) block");
+    MOZ_ASSERT(block->isMarked(), "Visiting unmarked (and therefore reachable?) block");
     MOZ_ASSERT(block->numPredecessors() == 0, "Block marked unreachable still has predecessors");
     MOZ_ASSERT(block != graph_.entryBlock(), "Removing normal entry block");
     MOZ_ASSERT(block != graph_.osrBlock(), "Removing OSR entry block");
@@ -962,8 +972,8 @@ ValueNumberer::visitUnreachableBlock(MBasicBlock* block)
 bool
 ValueNumberer::visitBlock(MBasicBlock* block, const MBasicBlock* dominatorRoot)
 {
-    //MOZ_ASSERT(!block->isMarked(), "Blocks marked unreachable during GVN");
-    //MOZ_ASSERT(!block->isDead(), "Block to visit is already dead");
+    MOZ_ASSERT(!block->isMarked(), "Blocks marked unreachable during GVN");
+    MOZ_ASSERT(!block->isDead(), "Block to visit is already dead");
 
     JitSpew(JitSpew_GVN, "    Visiting block%u", block->id());
 
@@ -996,7 +1006,7 @@ ValueNumberer::visitBlock(MBasicBlock* block, const MBasicBlock* dominatorRoot)
 bool
 ValueNumberer::visitDominatorTree(MBasicBlock* dominatorRoot)
 {
-    JitSpew(JitSpew_GVN, "  Visiting dominator tree (with %llu blocks) rooted at block%u%s",
+    JitSpew(JitSpew_GVN, "  Visiting dominator tree (with %" PRIu64 " blocks) rooted at block%u%s",
             uint64_t(dominatorRoot->numDominated()), dominatorRoot->id(),
             dominatorRoot == graph_.entryBlock() ? " (normal entry block)" :
             dominatorRoot == graph_.osrBlock() ? " (OSR entry block)" :
@@ -1222,7 +1232,7 @@ ValueNumberer::run(UpdateAliasAnalysisFlag updateAliasAnalysis)
 {
     updateAliasAnalysis_ = updateAliasAnalysis == UpdateAliasAnalysis;
 
-    JitSpew(JitSpew_GVN, "Running GVN on graph (with %llu blocks)",
+    JitSpew(JitSpew_GVN, "Running GVN on graph (with %" PRIu64 " blocks)",
             uint64_t(graph_.numBlocks()));
 
     // Adding fixup blocks only make sense iff we have a second entry point into
@@ -1282,7 +1292,7 @@ ValueNumberer::run(UpdateAliasAnalysisFlag updateAliasAnalysis)
             break;
         }
 
-        JitSpew(JitSpew_GVN, "Re-running GVN on graph (run %d, now with %llu blocks)",
+        JitSpew(JitSpew_GVN, "Re-running GVN on graph (run %d, now with %" PRIu64 " blocks)",
                 runs, uint64_t(graph_.numBlocks()));
     }
 

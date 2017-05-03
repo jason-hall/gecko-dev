@@ -9,6 +9,7 @@
 #define mozilla_StyleAnimationValue_h_
 
 #include "mozilla/gfx/MatrixFwd.h"
+#include "mozilla/ServoBindingTypes.h"
 #include "mozilla/UniquePtr.h"
 #include "nsStringFwd.h"
 #include "nsStringBuffer.h"
@@ -16,6 +17,8 @@
 #include "nsColor.h"
 #include "nsCSSProps.h"
 #include "nsCSSValue.h"
+#include "nsStyleCoord.h"
+#include "nsStyleTransformMatrix.h"
 
 class nsIFrame;
 class nsStyleContext;
@@ -60,6 +63,15 @@ public:
   }
 
   /**
+   * Alternative version of Add that reflects the naming used in Web Animations
+   * and which returns the result using the return value.
+   */
+  static StyleAnimationValue
+  Add(nsCSSPropertyID aProperty,
+      const StyleAnimationValue& aA,
+      StyleAnimationValue&& aB);
+
+  /**
    * Calculates a measure of 'distance' between two colors.
    *
    * @param aStartColor The start of the interval for which the distance
@@ -86,6 +98,8 @@ public:
    *                    should be calculated.
    * @param aEndValue   The end of the interval for which the distance
    *                    should be calculated.
+   * @param aStyleContext The style context to use for processing the
+   *                      translate part of transforms.
    * @param aDistance   The result of the calculation.
    * @return true on success, false on failure.
    */
@@ -93,6 +107,7 @@ public:
   ComputeDistance(nsCSSPropertyID aProperty,
                   const StyleAnimationValue& aStartValue,
                   const StyleAnimationValue& aEndValue,
+                  nsStyleContext* aStyleContext,
                   double& aDistance);
 
   /**
@@ -142,25 +157,16 @@ public:
               StyleAnimationValue& aResultValue);
 
   /**
-   * Accumulates |aValueToAccumulate| onto |aDest| |aCount| times.
-   * The result is stored in |aDest| on success.
-   *
-   * @param aDest              The base value to be accumulated.
-   * @param aValueToAccumulate The value to accumulate.
-   * @param aCount             The number of times to accumulate
-   *                           aValueToAccumulate.
-   * @return true on success, false on failure.
-   *
-   * NOTE: This function will work as a wrapper of StyleAnimationValue::Add()
-   * if |aProperty| isn't color or shadow or filter.  For these properties,
-   * this function may return a color value that at least one of its components
-   * has a value which is outside the range [0, 1] so that we can calculate
-   * plausible values as interpolation with the return value.
+   * Accumulates |aA| onto |aA| (|aCount| - 1) times then accumulates |aB| onto
+   * the result.
+   * If |aCount| is zero or no accumulation or addition procedure is defined
+   * for |aProperty|, the result will be |aB|.
    */
-  static MOZ_MUST_USE bool
-  Accumulate(nsCSSPropertyID aProperty, StyleAnimationValue& aDest,
-             const StyleAnimationValue& aValueToAccumulate,
-             uint64_t aCount);
+  static StyleAnimationValue
+  Accumulate(nsCSSPropertyID aProperty,
+             const StyleAnimationValue& aA,
+             StyleAnimationValue&& aB,
+             uint64_t aCount = 1);
 
   // Type-conversion methods
   // -----------------------
@@ -251,9 +257,6 @@ public:
    * @param aComputedValue The computed value to be converted.
    * @param [out] aSpecifiedValue The resulting specified value.
    * @return true on success, false on failure.
-   *
-   * These functions are not MOZ_MUST_USE because failing to check the return
-   * value is common and reasonable.
    */
   static MOZ_MUST_USE bool
   UncomputeValue(nsCSSPropertyID aProperty,
@@ -286,17 +289,6 @@ public:
     nsCSSPropertyID aProperty,
     nsStyleContext* aStyleContext,
     StyleAnimationValue& aComputedValue);
-
-  /**
-   * Interpolates between 2 matrices by decomposing them.
-   *
-   * @param aMatrix1   First matrix, using CSS pixel units.
-   * @param aMatrix2   Second matrix, using CSS pixel units.
-   * @param aProgress  Interpolation value in the range [0.0, 1.0]
-   */
-  static gfx::Matrix4x4 InterpolateTransformMatrix(const gfx::Matrix4x4 &aMatrix1,
-                                                   const gfx::Matrix4x4 &aMatrix2,
-                                                   double aProgress);
 
   static already_AddRefed<nsCSSValue::Array>
     AppendTransformFunction(nsCSSKeyword aTransformFunction,
@@ -486,11 +478,11 @@ public:
   void SetIntValue(int32_t aInt, Unit aUnit);
   template<typename T,
            typename = typename std::enable_if<std::is_enum<T>::value>::type>
-  void SetIntValue(T aInt, Unit aUnit)
+  void SetEnumValue(T aInt)
   {
     static_assert(mozilla::EnumTypeFitsWithin<T, int32_t>::value,
                   "aValue must be an enum that fits within mValue.mInt");
-    SetIntValue(static_cast<int32_t>(aInt), aUnit);
+    SetIntValue(static_cast<int32_t>(aInt), eUnit_Enumerated);
   }
   void SetCoordValue(nscoord aCoord);
   void SetPercentValue(float aPercent);
@@ -514,6 +506,17 @@ public:
   void SetTransformValue(nsCSSValueSharedList* aList);
 
   StyleAnimationValue& operator=(const StyleAnimationValue& aOther);
+  StyleAnimationValue& operator=(StyleAnimationValue&& aOther)
+  {
+    MOZ_ASSERT(this != &aOther, "Do not move itself");
+    if (this != &aOther) {
+      FreeValue();
+      mUnit = aOther.mUnit;
+      mValue = aOther.mValue;
+      aOther.mUnit = eUnit_Null;
+    }
+    return *this;
+  }
 
   bool operator==(const StyleAnimationValue& aOther) const;
   bool operator!=(const StyleAnimationValue& aOther) const
@@ -565,12 +568,36 @@ private:
   }
 };
 
+struct AnimationValue
+{
+  // mGecko and mServo are mutually exclusive: only one or the other should
+  // ever be set.
+  // FIXME: After obsoleting StyleAnimationValue, we should remove mGecko, and
+  // make AnimationValue a wrapper of RawServoAnimationValue to hide these
+  // FFIs.
+  StyleAnimationValue mGecko;
+  RefPtr<RawServoAnimationValue> mServo;
+
+  bool operator==(const AnimationValue& aOther) const;
+
+  bool IsNull() const { return mGecko.IsNull() && !mServo; }
+
+  float GetOpacity() const;
+
+  // Returns the scale for mGecko or mServo, which are calculated with
+  // reference to aFrame.
+  gfxSize GetScaleValue(const nsIFrame* aFrame) const;
+
+  // Uncompute this AnimationValue and then serialize it.
+  void SerializeSpecifiedValue(nsCSSPropertyID aProperty,
+                               nsAString& aString) const;
+};
+
 struct PropertyStyleAnimationValuePair
 {
   nsCSSPropertyID mProperty;
-  StyleAnimationValue mValue;
+  AnimationValue mValue;
 };
-
 } // namespace mozilla
 
 #endif

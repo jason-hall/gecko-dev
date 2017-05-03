@@ -190,13 +190,26 @@ namespace dom {
 
 XULDocument::XULDocument(void)
     : XMLDocument("application/vnd.mozilla.xul+xml"),
+      mNextSrcLoadWaiter(nullptr),
+      mApplyingPersistedAttrs(false),
+      mIsWritingFastLoad(false),
+      mDocumentLoaded(false),
+      mStillWalking(false),
+      mRestrictPersistence(false),
+      mTemplateBuilderTable(nullptr),
+      mPendingSheets(0),
       mDocLWTheme(Doc_Theme_Uninitialized),
       mState(eState_Master),
-      mResolutionPhase(nsForwardReference::eStart)
+      mCurrentScriptProto(nullptr),
+      mOffThreadCompiling(false),
+      mOffThreadCompileStringBuf(nullptr),
+      mOffThreadCompileStringLength(0),
+      mResolutionPhase(nsForwardReference::eStart),
+      mBroadcasterMap(nullptr),
+      mInitialLayoutComplete(false),
+      mHandlingDelayedAttrChange(false),
+      mHandlingDelayedBroadcasters(false)
 {
-    // NOTE! nsDocument::operator new() zeroes out all members, so don't
-    // bother initializing members to 0.
-
     // Override the default in nsDocument
     mCharacterSet.AssignLiteral("UTF-8");
 
@@ -226,7 +239,7 @@ XULDocument::~XULDocument()
     delete mTemplateBuilderTable;
 
     Preferences::UnregisterCallback(XULDocument::DirectionChanged,
-                                    "intl.uidirection.", this);
+                                    "intl.uidirection", this);
 
     if (mOffThreadCompileStringBuf) {
       js_free(mOffThreadCompileStringBuf);
@@ -1337,7 +1350,7 @@ XULDocument::GetViewportSize(int32_t* aWidth,
 {
     *aWidth = *aHeight = 0;
 
-    FlushPendingNotifications(Flush_Layout);
+    FlushPendingNotifications(FlushType::Layout);
 
     nsIPresShell *shell = GetShell();
     NS_ENSURE_TRUE(shell, NS_ERROR_FAILURE);
@@ -1885,7 +1898,7 @@ XULDocument::Init()
     }
 
     Preferences::RegisterCallback(XULDocument::DirectionChanged,
-                                  "intl.uidirection.", this);
+                                  "intl.uidirection", this);
 
     return NS_OK;
 }
@@ -1919,26 +1932,26 @@ XULDocument::StartLayout(void)
 
 /* static */
 bool
-XULDocument::MatchAttribute(nsIContent* aContent,
+XULDocument::MatchAttribute(Element* aElement,
                             int32_t aNamespaceID,
                             nsIAtom* aAttrName,
                             void* aData)
 {
-    NS_PRECONDITION(aContent, "Must have content node to work with!");
+    NS_PRECONDITION(aElement, "Must have content node to work with!");
     nsString* attrValue = static_cast<nsString*>(aData);
     if (aNamespaceID != kNameSpaceID_Unknown &&
         aNamespaceID != kNameSpaceID_Wildcard) {
         return attrValue->EqualsLiteral("*") ?
-            aContent->HasAttr(aNamespaceID, aAttrName) :
-            aContent->AttrValueIs(aNamespaceID, aAttrName, *attrValue,
+            aElement->HasAttr(aNamespaceID, aAttrName) :
+            aElement->AttrValueIs(aNamespaceID, aAttrName, *attrValue,
                                   eCaseMatters);
     }
 
     // Qualified name match. This takes more work.
 
-    uint32_t count = aContent->GetAttrCount();
+    uint32_t count = aElement->GetAttrCount();
     for (uint32_t i = 0; i < count; ++i) {
-        const nsAttrName* name = aContent->GetAttrNameAt(i);
+        const nsAttrName* name = aElement->GetAttrNameAt(i);
         bool nameMatch;
         if (name->IsAtom()) {
             nameMatch = name->Atom() == aAttrName;
@@ -1950,7 +1963,7 @@ XULDocument::MatchAttribute(nsIContent* aContent,
 
         if (nameMatch) {
             return attrValue->EqualsLiteral("*") ||
-                aContent->AttrValueIs(name->NamespaceID(), name->LocalName(),
+                aElement->AttrValueIs(name->NamespaceID(), name->LocalName(),
                                       *attrValue, eCaseMatters);
         }
     }
@@ -2844,7 +2857,7 @@ XULDocument::ResumeWalk()
                     if (NS_SUCCEEDED(rv) && blocked)
                         return NS_OK;
                 }
-                else if (scriptproto->GetScriptObject()) {
+                else if (scriptproto->HasScriptObject()) {
                     // An inline script
                     rv = ExecuteScript(scriptproto);
                     if (NS_FAILED(rv)) return rv;
@@ -3210,7 +3223,7 @@ XULDocument::LoadScript(nsXULPrototypeScript* aScriptProto, bool* aBlock)
 
     bool isChromeDoc = IsChromeURI(mDocumentURI);
 
-    if (isChromeDoc && aScriptProto->GetScriptObject()) {
+    if (isChromeDoc && aScriptProto->HasScriptObject()) {
         rv = ExecuteScript(aScriptProto);
 
         // Ignore return value from execution, and don't block
@@ -3233,7 +3246,7 @@ XULDocument::LoadScript(nsXULPrototypeScript* aScriptProto, bool* aBlock)
             aScriptProto->Set(newScriptObject);
         }
 
-        if (aScriptProto->GetScriptObject()) {
+        if (aScriptProto->HasScriptObject()) {
             rv = ExecuteScript(aScriptProto);
 
             // Ignore return value from execution, and don't block
@@ -3353,7 +3366,7 @@ XULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
             mOffThreadCompileStringLength = 0;
 
             rv = mCurrentScriptProto->Compile(srcBuf, uri, 1, this, this);
-            if (NS_SUCCEEDED(rv) && !mCurrentScriptProto->GetScriptObject()) {
+            if (NS_SUCCEEDED(rv) && !mCurrentScriptProto->HasScriptObject()) {
                 // We will be notified via OnOffThreadCompileComplete when the
                 // compile finishes. Keep the contents of the compiled script
                 // alive until the compilation finishes.
@@ -3378,7 +3391,7 @@ XULDocument::OnScriptCompileComplete(JSScript* aScript, nsresult aStatus)
 {
     // When compiling off thread the script will not have been attached to the
     // script proto yet.
-    if (aScript && !mCurrentScriptProto->GetScriptObject())
+    if (aScript && !mCurrentScriptProto->HasScriptObject())
         mCurrentScriptProto->Set(aScript);
 
     // Allow load events to be fired once off thread compilation finishes.
@@ -3431,11 +3444,11 @@ XULDocument::OnScriptCompileComplete(JSScript* aScript, nsresult aStatus)
         // (See http://bugzilla.mozilla.org/show_bug.cgi?id=98207 for
         // the true crime story.)
         bool useXULCache = nsXULPrototypeCache::GetInstance()->IsEnabled();
-  
-        if (useXULCache && IsChromeURI(mDocumentURI) && scriptProto->GetScriptObject()) {
+
+        if (useXULCache && IsChromeURI(mDocumentURI) && scriptProto->HasScriptObject()) {
+            JS::Rooted<JSScript*> script(RootingCx(), scriptProto->GetScriptObject());
             nsXULPrototypeCache::GetInstance()->PutScript(
-                               scriptProto->mSrcURI,
-                               scriptProto->GetScriptObject());
+                               scriptProto->mSrcURI, script);
         }
 
         if (mIsWritingFastLoad && mCurrentPrototype != mMasterPrototype) {
@@ -3474,7 +3487,7 @@ XULDocument::OnScriptCompileComplete(JSScript* aScript, nsresult aStatus)
         doc->mNextSrcLoadWaiter = nullptr;
 
         // Execute only if we loaded and compiled successfully, then resume
-        if (NS_SUCCEEDED(aStatus) && scriptProto->GetScriptObject()) {
+        if (NS_SUCCEEDED(aStatus) && scriptProto->HasScriptObject()) {
             doc->ExecuteScript(scriptProto);
         }
         doc->ResumeWalk();
@@ -3495,9 +3508,6 @@ XULDocument::ExecuteScript(nsXULPrototypeScript *aScript)
     rv = mScriptGlobalObject->EnsureScriptEnvironment();
     NS_ENSURE_SUCCESS(rv, rv);
 
-    JS::HandleScript scriptObject = aScript->GetScriptObject();
-    NS_ENSURE_TRUE(scriptObject, NS_ERROR_UNEXPECTED);
-
     // Execute the precompiled script with the given version
     nsAutoMicroTask mt;
 
@@ -3505,6 +3515,10 @@ XULDocument::ExecuteScript(nsXULPrototypeScript *aScript)
     // AutoEntryScript. This is Gecko specific and not in any spec.
     AutoEntryScript aes(mScriptGlobalObject, "precompiled XUL <script> element");
     JSContext* cx = aes.cx();
+
+    JS::Rooted<JSScript*> scriptObject(cx, aScript->GetScriptObject());
+    NS_ENSURE_TRUE(scriptObject, NS_ERROR_UNEXPECTED);
+
     JS::Rooted<JSObject*> baseGlobal(cx, JS::CurrentGlobalOrNull(cx));
     NS_ENSURE_TRUE(xpc::Scriptability::Get(baseGlobal).Allowed(), NS_OK);
 
@@ -3513,7 +3527,6 @@ XULDocument::ExecuteScript(nsXULPrototypeScript *aScript)
     NS_ENSURE_TRUE(global, NS_ERROR_FAILURE);
 
     JS::ExposeObjectToActiveJS(global);
-    xpc_UnmarkGrayScript(scriptObject);
     JSAutoCompartment ac(cx, global);
 
     // The script is in the compilation scope. Clone it into the target scope
@@ -3634,10 +3647,9 @@ XULDocument::CheckTemplateBuilderHookup(nsIContent* aElement,
     // bad) if aElement is not a XUL element.
     //
     // XXXvarga Do we still want to support non XUL content?
-    nsCOMPtr<nsIDOMXULElement> xulElement = do_QueryInterface(aElement);
+    RefPtr<nsXULElement> xulElement = nsXULElement::FromContent(aElement);
     if (xulElement) {
-        nsCOMPtr<nsIRDFCompositeDataSource> ds;
-        xulElement->GetDatabase(getter_AddRefs(ds));
+        nsCOMPtr<nsIRDFCompositeDataSource> ds = xulElement->GetDatabase();
         if (ds) {
             *aNeedsHookup = false;
             return NS_OK;

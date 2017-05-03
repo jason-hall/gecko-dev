@@ -66,153 +66,6 @@ public:
   size_t mSize;
 };
 
-// The ReaderQueue is used to keep track of the numer of active readers to
-// enforce a given limit on the number of simultaneous active decoders.
-// Readers are added/removed during construction/destruction and are
-// suspended and resumed by the queue. The max number of active decoders is
-// controlled by the "media.decoder.limit" pref.
-class ReaderQueue
-{
-public:
-  static ReaderQueue& Instance()
-  {
-    static StaticMutex sMutex;
-    StaticMutexAutoLock lock(sMutex);
-
-    if (!sInstance) {
-      sInstance = new ReaderQueue;
-      sInstance->MaxNumActive(MediaPrefs::MediaDecoderLimit());
-      ClearOnShutdown(&sInstance, ShutdownPhase::Shutdown);
-    }
-    MOZ_ASSERT(sInstance);
-    return *sInstance;
-  }
-
-  void MaxNumActive(int32_t aNumActive)
-  {
-    MutexAutoLock lock(mMutex);
-
-    if (aNumActive < 0) {
-      mNumMaxActive = std::numeric_limits<uint32_t>::max();
-    } else {
-      mNumMaxActive = aNumActive;
-    }
-  }
-
-  void Add(MediaDecoderReader* aReader)
-  {
-    MutexAutoLock lock(mMutex);
-
-    if (mActive.Length() < mNumMaxActive) {
-      // Below active limit, resume the new reader.
-      mActive.AppendElement(aReader);
-      DispatchResume(aReader);
-    } else if (mActive.IsEmpty()) {
-      MOZ_ASSERT(mNumMaxActive == 0);
-      mSuspended.AppendElement(aReader);
-    } else {
-      // We're past the active limit, suspend an old reader and resume the new.
-      mActive.AppendElement(aReader);
-      MediaDecoderReader* suspendReader = mActive.ElementAt(0);
-      mSuspended.AppendElement(suspendReader);
-      mActive.RemoveElementAt(0);
-      DispatchSuspendResume(suspendReader, aReader);
-    }
-  }
-
-  void Remove(MediaDecoderReader* aReader)
-  {
-    MutexAutoLock lock(mMutex);
-
-    // Remove the reader from the queue. Note that the reader's IsSuspended
-    // state is updated on the task queue, so we cannot depend on it here to
-    // determine the factual suspension state.
-    DebugOnly<bool> suspended = mSuspended.RemoveElement(aReader);
-    bool active = mActive.RemoveElement(aReader);
-
-    MOZ_ASSERT(suspended || active, "Reader must be in the queue");
-
-    if (active && !mSuspended.IsEmpty()) {
-      // For each removed active reader, we resume a suspended one.
-      MediaDecoderReader* resumeReader = mSuspended.LastElement();
-      mActive.AppendElement(resumeReader);
-      mSuspended.RemoveElementAt(mSuspended.Length() - 1);
-      DispatchResume(resumeReader);
-    }
-  }
-
-private:
-  ReaderQueue()
-    : mNumMaxActive(std::numeric_limits<uint32_t>::max())
-    , mMutex("ReaderQueue:mMutex")
-  {
-  }
-
-  static void Resume(MediaDecoderReader* aReader)
-  {
-    if (!aReader->IsSuspended()) {
-      return;
-    }
-    aReader->SetIsSuspended(false);
-  }
-
-  static void Suspend(MediaDecoderReader* aReader)
-  {
-    if (aReader->IsSuspended()) {
-      return;
-    }
-    aReader->SetIsSuspended(true);
-
-    aReader->ReleaseResources();
-  }
-
-  static void DispatchResume(MediaDecoderReader* aReader)
-  {
-    RefPtr<MediaDecoderReader> reader = aReader;
-
-    nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction(
-      [reader]() {
-        Resume(reader);
-    });
-    reader->OwnerThread()->Dispatch(task.forget());
-  }
-
-  static void DispatchSuspend(MediaDecoderReader* aReader)
-  {
-    RefPtr<MediaDecoderReader> reader = aReader;
-
-    nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction(
-      [reader]() {
-        Suspend(reader);
-    });
-    reader->OwnerThread()->Dispatch(task.forget());
-  }
-
-  static void DispatchSuspendResume(MediaDecoderReader* aSuspend,
-                                    MediaDecoderReader* aResume)
-  {
-    RefPtr<MediaDecoderReader> suspend = aSuspend;
-    RefPtr<MediaDecoderReader> resume = aResume;
-
-    nsCOMPtr<nsIRunnable> task = NS_NewRunnableFunction(
-      [suspend, resume] () {
-        Suspend(suspend);
-        DispatchResume(resume);
-    });
-    suspend->OwnerThread()->Dispatch(task.forget());
-  }
-
-  static StaticAutoPtr<ReaderQueue> sInstance;
-
-  nsTArray<RefPtr<MediaDecoderReader>> mActive;
-  nsTArray<RefPtr<MediaDecoderReader>> mSuspended;
-  uint32_t mNumMaxActive;
-
-  mutable Mutex mMutex;
-};
-
-StaticAutoPtr<ReaderQueue> ReaderQueue::sInstance;
-
 MediaDecoderReader::MediaDecoderReader(AbstractMediaDecoder* aDecoder)
   : mAudioCompactor(mAudioQueue)
   , mDecoder(aDecoder)
@@ -224,21 +77,21 @@ MediaDecoderReader::MediaDecoderReader(AbstractMediaDecoder* aDecoder)
   , mIgnoreAudioOutputFormat(false)
   , mHitAudioDecodeError(false)
   , mShutdown(false)
-  , mIsSuspended(mTaskQueue, true,
-                 "MediaDecoderReader::mIsSuspended (Canonical)")
 {
   MOZ_COUNT_CTOR(MediaDecoderReader);
   MOZ_ASSERT(NS_IsMainThread());
+}
 
+nsresult
+MediaDecoderReader::Init()
+{
   if (mDecoder && mDecoder->DataArrivedEvent()) {
     mDataArrivedListener = mDecoder->DataArrivedEvent()->Connect(
       mTaskQueue, this, &MediaDecoderReader::NotifyDataArrived);
   }
-
-  ReaderQueue::Instance().Add(this);
-
   // Dispatch initialization that needs to happen on that task queue.
   mTaskQueue->Dispatch(NewRunnableMethod(this, &MediaDecoderReader::InitializationTask));
+  return InitInternal();
 }
 
 void
@@ -300,18 +153,18 @@ nsresult MediaDecoderReader::ResetDecode(TrackSet aTracks)
   return NS_OK;
 }
 
-RefPtr<MediaDecoderReader::MediaDataPromise>
+RefPtr<MediaDecoderReader::VideoDataPromise>
 MediaDecoderReader::DecodeToFirstVideoData()
 {
   MOZ_ASSERT(OnTaskQueue());
-  typedef MediaDecoderReader::MediaDataPromise PromiseType;
+  typedef VideoDataPromise PromiseType;
   RefPtr<PromiseType::Private> p = new PromiseType::Private(__func__);
   RefPtr<MediaDecoderReader> self = this;
   InvokeUntil([self] () -> bool {
     MOZ_ASSERT(self->OnTaskQueue());
     NS_ENSURE_TRUE(!self->mShutdown, false);
     bool skip = false;
-    if (!self->DecodeVideoFrame(skip, 0)) {
+    if (!self->DecodeVideoFrame(skip, media::TimeUnit::Zero())) {
       self->VideoQueue().Finish();
       return !!self->VideoQueue().PeekFront();
     }
@@ -345,9 +198,7 @@ media::TimeIntervals
 MediaDecoderReader::GetBuffered()
 {
   MOZ_ASSERT(OnTaskQueue());
-  if (!HaveStartTime()) {
-    return media::TimeIntervals();
-  }
+
   AutoPinned<MediaResource> stream(mDecoder->GetResource());
 
   if (!mDuration.Ref().isSome()) {
@@ -368,10 +219,14 @@ MediaDecoderReader::AsyncReadMetadata()
   nsresult rv = ReadMetadata(&metadata->mInfo, getter_Transfers(metadata->mTags));
   metadata->mInfo.AssertValid();
 
+  // Update the buffer ranges before resolving the metadata promise. Bug 1320258.
+  UpdateBuffered();
+
   // We're not waiting for anything. If we didn't get the metadata, that's an
   // error.
   if (NS_FAILED(rv) || !metadata->mInfo.HasValidMedia()) {
-    DECODER_WARN("ReadMetadata failed, rv=%x HasValidMedia=%d", rv, metadata->mInfo.HasValidMedia());
+    DECODER_WARN("ReadMetadata failed, rv=%" PRIx32 " HasValidMedia=%d",
+                 static_cast<uint32_t>(rv), metadata->mInfo.HasValidMedia());
     return MetadataPromise::CreateAndReject(NS_ERROR_DOM_MEDIA_METADATA_ERR, __func__);
   }
 
@@ -383,7 +238,7 @@ class ReRequestVideoWithSkipTask : public Runnable
 {
 public:
   ReRequestVideoWithSkipTask(MediaDecoderReader* aReader,
-                             int64_t aTimeThreshold)
+                             const media::TimeUnit& aTimeThreshold)
     : mReader(aReader)
     , mTimeThreshold(aTimeThreshold)
   {
@@ -403,7 +258,7 @@ public:
 
 private:
   RefPtr<MediaDecoderReader> mReader;
-  const int64_t mTimeThreshold;
+  const media::TimeUnit mTimeThreshold;
 };
 
 class ReRequestAudioTask : public Runnable
@@ -430,11 +285,11 @@ private:
   RefPtr<MediaDecoderReader> mReader;
 };
 
-RefPtr<MediaDecoderReader::MediaDataPromise>
+RefPtr<MediaDecoderReader::VideoDataPromise>
 MediaDecoderReader::RequestVideoData(bool aSkipToNextKeyframe,
-                                     int64_t aTimeThreshold)
+                                     const media::TimeUnit& aTimeThreshold)
 {
-  RefPtr<MediaDataPromise> p = mBaseVideoPromise.Ensure(__func__);
+  RefPtr<VideoDataPromise> p = mBaseVideoPromise.Ensure(__func__);
   bool skip = aSkipToNextKeyframe;
   while (VideoQueue().GetSize() == 0 &&
          !VideoQueue().IsFinished()) {
@@ -445,7 +300,8 @@ MediaDecoderReader::RequestVideoData(bool aSkipToNextKeyframe,
       // keyframe. Post another task to the decode task queue to decode
       // again. We don't just decode straight in a loop here, as that
       // would hog the decode task queue.
-      RefPtr<nsIRunnable> task(new ReRequestVideoWithSkipTask(this, aTimeThreshold));
+      RefPtr<nsIRunnable> task(
+        new ReRequestVideoWithSkipTask(this, aTimeThreshold));
       mTaskQueue->Dispatch(task.forget());
       return p;
     }
@@ -462,10 +318,10 @@ MediaDecoderReader::RequestVideoData(bool aSkipToNextKeyframe,
   return p;
 }
 
-RefPtr<MediaDecoderReader::MediaDataPromise>
+RefPtr<MediaDecoderReader::AudioDataPromise>
 MediaDecoderReader::RequestAudioData()
 {
-  RefPtr<MediaDataPromise> p = mBaseAudioPromise.Ensure(__func__);
+  RefPtr<AudioDataPromise> p = mBaseAudioPromise.Ensure(__func__);
   while (AudioQueue().GetSize() == 0 &&
          !AudioQueue().IsFinished()) {
     if (!DecodeAudioData()) {
@@ -511,14 +367,11 @@ MediaDecoderReader::Shutdown()
   ReleaseResources();
   mDuration.DisconnectIfConnected();
   mBuffered.DisconnectAll();
-  mIsSuspended.DisconnectAll();
 
   // Shut down the watch manager before shutting down our task queue.
   mWatchManager.Shutdown();
 
   mDecoder = nullptr;
-
-  ReaderQueue::Instance().Remove(this);
 
   return mTaskQueue->BeginShutdown();
 }

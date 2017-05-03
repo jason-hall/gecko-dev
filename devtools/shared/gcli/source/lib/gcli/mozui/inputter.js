@@ -22,6 +22,8 @@ var KeyEvent = require('../util/util').KeyEvent;
 var Status = require('../types/types').Status;
 var History = require('../ui/history').History;
 
+var Telemetry = require("devtools/client/shared/telemetry");
+
 var RESOLVED = Promise.resolve(true);
 
 /**
@@ -47,11 +49,14 @@ function Inputter(components) {
   // Used to effect caret changes. See _processCaretChange()
   this._caretChange = null;
 
+  // Use telemetry
+  this._telemetry = new Telemetry();
+
   // Ensure that TAB/UP/DOWN isn't handled by the browser
   this.onKeyDown = this.onKeyDown.bind(this);
   this.onKeyUp = this.onKeyUp.bind(this);
-  this.element.addEventListener('keydown', this.onKeyDown, false);
-  this.element.addEventListener('keyup', this.onKeyUp, false);
+  this.element.addEventListener('keydown', this.onKeyDown);
+  this.element.addEventListener('keyup', this.onKeyUp);
 
   // Setup History
   this.history = new History();
@@ -63,7 +68,7 @@ function Inputter(components) {
 
   // Cursor position affects hint severity
   this.onMouseUp = this.onMouseUp.bind(this);
-  this.element.addEventListener('mouseup', this.onMouseUp, false);
+  this.element.addEventListener('mouseup', this.onMouseUp);
 
   if (this.focusManager) {
     this.focusManager.addMonitoredElement(this.element, 'input');
@@ -83,7 +88,7 @@ function Inputter(components) {
 
   this.onResize = util.createEvent('Inputter.onResize');
   this.onWindowResize = this.onWindowResize.bind(this);
-  this.document.defaultView.addEventListener('resize', this.onWindowResize, false);
+  this.document.defaultView.addEventListener('resize', this.onWindowResize);
   this.requisition.onExternalUpdate.add(this.textChanged, this);
 
   this._previousValue = undefined;
@@ -94,7 +99,7 @@ function Inputter(components) {
  * Avoid memory leaks
  */
 Inputter.prototype.destroy = function() {
-  this.document.defaultView.removeEventListener('resize', this.onWindowResize, false);
+  this.document.defaultView.removeEventListener('resize', this.onWindowResize);
 
   this.requisition.commandOutputManager.onOutput.remove(this.outputted, this);
   this.requisition.onExternalUpdate.remove(this.textChanged, this);
@@ -102,14 +107,14 @@ Inputter.prototype.destroy = function() {
     this.focusManager.removeMonitoredElement(this.element, 'input');
   }
 
-  this.element.removeEventListener('mouseup', this.onMouseUp, false);
-  this.element.removeEventListener('keydown', this.onKeyDown, false);
-  this.element.removeEventListener('keyup', this.onKeyUp, false);
+  this.element.removeEventListener('mouseup', this.onMouseUp);
+  this.element.removeEventListener('keydown', this.onKeyDown);
+  this.element.removeEventListener('keyup', this.onKeyUp);
 
   this.history.destroy();
 
   if (this.style) {
-    this.style.parentNode.removeChild(this.style);
+    this.style.remove();
     this.style = undefined;
   }
 
@@ -122,6 +127,7 @@ Inputter.prototype.destroy = function() {
   this.tooltip = undefined;
   this.document = undefined;
   this.element = undefined;
+  this._telemetry = undefined;
 };
 
 /**
@@ -145,7 +151,7 @@ Inputter.prototype.getDimensions = function() {
   var fixedLoc = {};
   var currentElement = this.element.parentNode;
   while (currentElement && currentElement.nodeName !== '#document') {
-    var style = this.document.defaultView.getComputedStyle(currentElement, '');
+    var style = this.document.defaultView.getComputedStyle(currentElement);
     if (style) {
       var position = style.getPropertyValue('position');
       if (position === 'absolute' || position === 'fixed') {
@@ -556,6 +562,9 @@ Inputter.prototype._handleReturn = function() {
   if (this.requisition.status === Status.VALID) {
     this._scrollingThroughHistory = false;
     this.history.add(this.element.value);
+
+    let name = this.requisition.commandAssignment.value.name;
+    this._telemetry.logKeyed("DEVTOOLS_GCLI_COMMANDS_KEYED", name);
 
     return this.requisition.exec().then(function() {
       this.textChanged();

@@ -19,13 +19,15 @@
 == flexbox-align-self-baseline-horiz-003.xhtml flexbox-align-self-baseline-horiz-003.xhtml
 == flexbox-align-self-baseline-horiz-004.xhtml flexbox-align-self-baseline-horiz-004.xhtml
 == flexbox-align-self-baseline-horiz-005.xhtml flexbox-align-self-baseline-horiz-005.xhtml
+== flexbox-align-self-baseline-horiz-006.xhtml flexbox-align-self-baseline-horiz-006.xhtml
+== flexbox-align-self-baseline-horiz-007.xhtml flexbox-align-self-baseline-horiz-007.xhtml
 
 == flexbox-align-self-stretch-vert-001.html flexbox-align-self-stretch-vert-001.html
 == flexbox-align-self-stretch-vert-002.html flexbox-align-self-stretch-vert-002.html
 
 == flexbox-align-self-horiz-001-block.xhtml flexbox-align-self-horiz-001-block.xhtml
 == flexbox-align-self-horiz-001-table.xhtml flexbox-align-self-horiz-001-table.xhtml
-random == flexbox-align-self-horiz-002.xhtml flexbox-align-self-horiz-002.xhtml
+== flexbox-align-self-horiz-002.xhtml flexbox-align-self-horiz-002.xhtml
 == flexbox-align-self-horiz-003.xhtml flexbox-align-self-horiz-003.xhtml
 == flexbox-align-self-horiz-004.xhtml flexbox-align-self-horiz-004.xhtml
 == flexbox-align-self-horiz-005.xhtml flexbox-align-self-horiz-005.xhtml
@@ -33,7 +35,7 @@ random == flexbox-align-self-horiz-002.xhtml flexbox-align-self-horiz-002.xhtml
 == flexbox-align-self-vert-002.xhtml flexbox-align-self-vert-002.xhtml
 == flexbox-align-self-vert-003.xhtml flexbox-align-self-vert-003.xhtml
 == flexbox-align-self-vert-004.xhtml flexbox-align-self-vert-004.xhtml
-fuzzy-if(Android,158,32) == flexbox-align-self-vert-rtl-001.xhtml flexbox-align-self-vert-rtl-001.xhtml
+== flexbox-align-self-vert-rtl-001.xhtml flexbox-align-self-vert-rtl-001.xhtml
 == flexbox-align-self-vert-rtl-002.xhtml flexbox-align-self-vert-rtl-002.xhtml
 == flexbox-align-self-vert-rtl-003.xhtml flexbox-align-self-vert-rtl-003.xhtml
 == flexbox-align-self-vert-rtl-004.xhtml flexbox-align-self-vert-rtl-004.xhtml
@@ -43,8 +45,10 @@ fuzzy-if(Android,158,32) == flexbox-align-self-vert-rtl-001.xhtml flexbox-align-
 == flexbox-baseline-align-self-baseline-vert-001.html flexbox-baseline-align-self-baseline-vert-001.html
 == flexbox-baseline-empty-001a.html flexbox-baseline-empty-001a.html
 == flexbox-baseline-empty-001b.html flexbox-baseline-empty-001b.html
-== flexbox-baseline-multi-item-horiz-001.html flexbox-baseline-multi-item-horiz-001.html
-== flexbox-baseline-multi-item-vert-001.html flexbox-baseline-multi-item-vert-001.html
+== flexbox-baseline-multi-item-horiz-001a.html flexbox-baseline-multi-item-horiz-001a.html
+== flexbox-baseline-multi-item-horiz-001b.html flexbox-baseline-multi-item-horiz-001b.html
+== flexbox-baseline-multi-item-vert-001a.html flexbox-baseline-multi-item-vert-001a.html
+== flexbox-baseline-multi-item-vert-001b.html flexbox-baseline-multi-item-vert-001b.html
 == flexbox-baseline-multi-line-horiz-001.html flexbox-baseline-multi-line-horiz-001.html
 == flexbox-baseline-multi-line-horiz-002.html flexbox-baseline-multi-line-horiz-002.html
 == flexbox-baseline-multi-line-horiz-003.html flexbox-baseline-multi-line-horiz-003.html
@@ -67,8 +71,8 @@ fuzzy-if(Android,158,32) == flexbox-align-self-vert-rtl-001.xhtml flexbox-align-
 == flexbox-basic-iframe-vert-001.xhtml flexbox-basic-iframe-vert-001.xhtml
 == flexbox-basic-img-horiz-001.xhtml flexbox-basic-img-horiz-001.xhtml
 == flexbox-basic-img-vert-001.xhtml flexbox-basic-img-vert-001.xhtml
-== flexbox-basic-textarea-horiz-001.xhtml flexbox-basic-textarea-horiz-001.xhtml
-== flexbox-basic-textarea-vert-001.xhtml flexbox-basic-textarea-vert-001.xhtml
+fails == flexbox-basic-textarea-horiz-001.xhtml flexbox-basic-textarea-horiz-001.xhtml
+fails == flexbox-basic-textarea-vert-001.xhtml flexbox-basic-textarea-vert-001.xhtml
 == flexbox-basic-video-horiz-001.xhtml flexbox-basic-video-horiz-001.xhtml
 == flexbox-basic-video-vert-001.xhtml flexbox-basic-video-vert-001.xhtml
 
@@ -134,8 +138,8 @@ fuzzy-if(Android,158,32) == flexbox-align-self-vert-rtl-001.xhtml flexbox-align-
 == flexbox-mbp-horiz-001-reverse.xhtml flexbox-mbp-horiz-001-reverse.xhtml
 == flexbox-mbp-horiz-001-rtl.xhtml flexbox-mbp-horiz-001-rtl.xhtml
 == flexbox-mbp-horiz-001-rtl-reverse.xhtml flexbox-mbp-horiz-001-rtl-reverse.xhtml
-random == flexbox-mbp-horiz-002a.xhtml flexbox-mbp-horiz-002a.xhtml
-random == flexbox-mbp-horiz-002b.xhtml flexbox-mbp-horiz-002b.xhtml
+== flexbox-mbp-horiz-002a.xhtml flexbox-mbp-horiz-002a.xhtml
+== flexbox-mbp-horiz-002b.xhtml flexbox-mbp-horiz-002b.xhtml
 == flexbox-mbp-horiz-003.xhtml flexbox-mbp-horiz-003.xhtml
 == flexbox-mbp-horiz-003-reverse.xhtml flexbox-mbp-horiz-003-reverse.xhtml
 == flexbox-mbp-horiz-004.xhtml flexbox-mbp-horiz-004.xhtml
@@ -143,25 +147,24 @@ random == flexbox-mbp-horiz-002b.xhtml flexbox-mbp-horiz-002b.xhtml
 # Tests for min-height:auto / min-width:auto on flex items
 == flexbox-min-height-auto-001.html flexbox-min-height-auto-001.html
 == flexbox-min-height-auto-002a.html flexbox-min-height-auto-002a.html
-== flexbox-min-height-auto-002b.html flexbox-min-height-auto-002b.html
-# bug 1055354
+fails == flexbox-min-height-auto-002b.html flexbox-min-height-auto-002-ref.html # bug 1055354
 == flexbox-min-height-auto-002c.html flexbox-min-height-auto-002c.html
-== flexbox-min-height-auto-003.html flexbox-min-height-auto-003.html
-== flexbox-min-height-auto-004.html flexbox-min-height-auto-004.html
+fails == flexbox-min-height-auto-003.html flexbox-min-height-auto-003.html
+fails == flexbox-min-height-auto-004.html flexbox-min-height-auto-004.html
 == flexbox-min-width-auto-001.html flexbox-min-width-auto-001.html
 == flexbox-min-width-auto-002a.html flexbox-min-width-auto-002a.html
 == flexbox-min-width-auto-002b.html flexbox-min-width-auto-002b.html
 == flexbox-min-width-auto-002c.html flexbox-min-width-auto-002c.html
 == flexbox-min-width-auto-003.html flexbox-min-width-auto-003.html
-== flexbox-min-width-auto-004.html flexbox-min-width-auto-004.html
+fails == flexbox-min-width-auto-004.html flexbox-min-width-auto-004.html
 
 # Tests for flex containers with the "overflow" property set
-== flexbox-overflow-horiz-001.html flexbox-overflow-horiz-001.html
+fails == flexbox-overflow-horiz-001.html flexbox-overflow-horiz-001.html
 == flexbox-overflow-horiz-002.html flexbox-overflow-horiz-002.html
 == flexbox-overflow-horiz-003.html flexbox-overflow-horiz-003.html
 == flexbox-overflow-horiz-004.html flexbox-overflow-horiz-004.html
 == flexbox-overflow-horiz-005.html flexbox-overflow-horiz-005.html
-== flexbox-overflow-vert-001.html flexbox-overflow-vert-001.html
+fails == flexbox-overflow-vert-001.html flexbox-overflow-vert-001.html
 == flexbox-overflow-vert-002.html flexbox-overflow-vert-002.html
 == flexbox-overflow-vert-003.html flexbox-overflow-vert-003.html
 == flexbox-overflow-vert-004.html flexbox-overflow-vert-004.html
@@ -204,3 +207,8 @@ random == flexbox-mbp-horiz-002b.xhtml flexbox-mbp-horiz-002b.xhtml
 == flexbox-writing-mode-007.html flexbox-writing-mode-007.html
 == flexbox-writing-mode-008.html flexbox-writing-mode-008.html
 == flexbox-writing-mode-009.html flexbox-writing-mode-009.html
+
+# Single-line size clamping
+== flexbox-single-line-clamp-1.html flexbox-single-line-clamp-1.html
+== flexbox-single-line-clamp-2.html flexbox-single-line-clamp-2.html
+== flexbox-single-line-clamp-3.html flexbox-single-line-clamp-3.html

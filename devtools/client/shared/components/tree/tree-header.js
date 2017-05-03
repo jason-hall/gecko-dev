@@ -79,18 +79,23 @@ define(function (require, exports, module) {
           td({
             className: classNames.join(" "),
             style: cellStyle,
+            role: "presentation",
+            id: col.id,
             key: col.id},
-            div({ className: visible ? "treeHeaderCellBox" : "" },
-              visible ? col.title : ""
-            )
+            visible ? div({ className: "treeHeaderCellBox"},
+              col.title
+            ) : null,
           )
         );
       });
 
       return (
-        thead({}, tr({ className: visible ? "treeHeaderRow" : "" },
-          cells
-        ))
+        thead({
+          role: "presentation"
+        }, tr({
+          className: visible ? "treeHeaderRow" : "",
+          role: "presentation"
+        }, cells))
       );
     }
   });

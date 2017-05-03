@@ -29,12 +29,15 @@ if test "$OS_ARCH" = "WINNT"; then
   fi
 fi
 
+if test "$NIGHTLY_BUILD"; then
+  MOZ_RUST_URLPARSE=1
+fi
+
 # Enable building ./signmar and running libmar signature tests
 MOZ_ENABLE_SIGNMAR=1
 
 MOZ_APP_VERSION=$FIREFOX_VERSION
 MOZ_APP_VERSION_DISPLAY=$FIREFOX_VERSION_DISPLAY
-MOZ_EXTENSIONS_DEFAULT=" gio"
 # MOZ_APP_DISPLAYNAME will be set by branding/configure.sh
 # MOZ_BRANDING_DIRECTORY is the default branding directory used when none is
 # specified. It should never point to the "official" branding directory.
@@ -51,10 +54,7 @@ ACCEPTED_MAR_CHANNEL_IDS=firefox-mozilla-central
 # The MAR_CHANNEL_ID must not contain the following 3 characters: ",\t "
 MAR_CHANNEL_ID=firefox-mozilla-central
 MOZ_PROFILE_MIGRATOR=1
-MOZ_APP_STATIC_INI=1
-MOZ_WEBGL_CONFORMANT=1
 MOZ_JSDOWNLOADS=1
-MOZ_RUST_MP4PARSE=1
 
 # Enable checking that add-ons are signed by the trusted root
 MOZ_ADDON_SIGNING=1

@@ -18,22 +18,32 @@ EvaluationResult.displayName = "EvaluationResult";
 
 EvaluationResult.propTypes = {
   message: PropTypes.object.isRequired,
+  indent: PropTypes.number.isRequired,
+};
+
+EvaluationResult.defaultProps = {
+  indent: 0,
 };
 
 function EvaluationResult(props) {
-  const { message } = props;
+  const { message, serviceContainer, indent } = props;
   const {
     source,
     type,
     level,
-    emitNewMessage,
+    id: messageId,
+    exceptionDocURL,
+    frame,
+    timeStamp,
+    parameters,
+    notes,
   } = message;
 
   let messageBody;
   if (message.messageText) {
     messageBody = message.messageText;
   } else {
-    messageBody = GripMessageBody({grip: message.parameters});
+    messageBody = GripMessageBody({grip: parameters, serviceContainer, useQuotes: true});
   }
 
   const topLevelClasses = ["cm-s-mozilla"];
@@ -42,10 +52,17 @@ function EvaluationResult(props) {
     source,
     type,
     level,
+    indent,
     topLevelClasses,
     messageBody,
+    messageId,
     scrollToMessage: props.autoscroll,
-    emitNewMessage,
+    serviceContainer,
+    exceptionDocURL,
+    frame,
+    timeStamp,
+    parameters,
+    notes,
   };
   return Message(childProps);
 }

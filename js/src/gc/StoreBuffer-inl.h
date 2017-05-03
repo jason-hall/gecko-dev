@@ -11,6 +11,8 @@
 
 #include "gc/Heap.h"
 
+#include "gc/Heap-inl.h"
+
 namespace js {
 namespace gc {
 

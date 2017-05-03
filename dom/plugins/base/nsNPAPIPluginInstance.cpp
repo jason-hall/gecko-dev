@@ -68,7 +68,12 @@ class PluginEventRunnable : public Runnable
 {
 public:
   PluginEventRunnable(nsNPAPIPluginInstance* instance, ANPEvent* event)
-    : mInstance(instance), mEvent(*event), mCanceled(false) {}
+    : Runnable("PluginEventRunnable"),
+      mInstance(instance),
+      mEvent(*event),
+      mCanceled(false)
+  {
+  }
 
   virtual nsresult Run() {
     if (mCanceled)
@@ -139,6 +144,7 @@ nsNPAPIPluginInstance::nsNPAPIPluginInstance()
   , mCachedParamLength(0)
   , mCachedParamNames(nullptr)
   , mCachedParamValues(nullptr)
+  , mMuted(false)
 {
   mNPP.pdata = nullptr;
   mNPP.ndata = this;
@@ -340,15 +346,6 @@ nsNPAPIPluginInstance::GetTagType(nsPluginTagType *result)
   return mOwner->GetTagType(result);
 }
 
-nsresult
-nsNPAPIPluginInstance::GetMode(int32_t *result)
-{
-  if (mOwner)
-    return mOwner->GetMode(result);
-  else
-    return NS_ERROR_FAILURE;
-}
-
 nsTArray<nsNPAPIPluginStreamListener*>*
 nsNPAPIPluginInstance::StreamListeners()
 {
@@ -417,11 +414,9 @@ nsNPAPIPluginInstance::Start()
     pos++;
   }
 
-  int32_t       mode;
   const char*   mimetype;
   NPError       error = NPERR_GENERIC_ERROR;
 
-  GetMode(&mode);
   GetMIMEType(&mimetype);
 
   CheckJavaC2PJSObjectQuirk(quirkParamLength, mCachedParamNames, mCachedParamValues);
@@ -445,14 +440,14 @@ nsNPAPIPluginInstance::Start()
   // before returning. If the plugin returns failure, we'll clear it out below.
   mRunning = RUNNING;
 
-  nsresult newResult = library->NPP_New((char*)mimetype, &mNPP, (uint16_t)mode,
+  nsresult newResult = library->NPP_New((char*)mimetype, &mNPP,
                                         quirkParamLength, mCachedParamNames,
                                         mCachedParamValues, nullptr, &error);
   mInPluginInitCall = oldVal;
 
   NPP_PLUGIN_LOG(PLUGIN_LOG_NORMAL,
-  ("NPP New called: this=%p, npp=%p, mime=%s, mode=%d, argc=%d, return=%d\n",
-  this, &mNPP, mimetype, mode, quirkParamLength, error));
+  ("NPP New called: this=%p, npp=%p, mime=%s, argc=%d, return=%d\n",
+  this, &mNPP, mimetype, quirkParamLength, error));
 
   if (NS_FAILED(newResult) || error != NPERR_NO_ERROR) {
     mRunning = DESTROYED;
@@ -650,7 +645,7 @@ nsresult nsNPAPIPluginInstance::GetValueFromPlugin(NPPVariable variable, void* v
     NS_TRY_SAFE_CALL_RETURN(pluginError, (*pluginFunctions->getvalue)(&mNPP, variable, value), this,
                             NS_PLUGIN_CALL_UNSAFE_TO_REENTER_GECKO);
     NPP_PLUGIN_LOG(PLUGIN_LOG_NORMAL,
-    ("NPP GetValue called: this=%p, npp=%p, var=%d, value=%d, return=%d\n",
+    ("NPP GetValue called: this=%p, npp=%p, var=%d, value=%p, return=%d\n",
     this, &mNPP, variable, value, pluginError));
 
     if (pluginError == NPERR_NO_ERROR) {
@@ -679,20 +674,6 @@ nsresult nsNPAPIPluginInstance::GetNPP(NPP* aNPP)
 NPError nsNPAPIPluginInstance::SetWindowless(bool aWindowless)
 {
   mWindowless = aWindowless;
-
-  if (mMIMEType) {
-    // bug 558434 - Prior to 3.6.4, we assumed windowless was transparent.
-    // Silverlight apparently relied on this quirk, so we default to
-    // transparent unless they specify otherwise after setting the windowless
-    // property. (Last tested version: sl 4.0).
-    // Changes to this code should be matched with changes in
-    // PluginInstanceChild::InitQuirksMode.
-    if (nsPluginHost::GetSpecialType(nsDependentCString(mMIMEType)) ==
-        nsPluginHost::eSpecialType_Silverlight) {
-      mTransparent = true;
-    }
-  }
-
   return NPERR_NO_ERROR;
 }
 
@@ -1602,49 +1583,6 @@ nsNPAPIPluginInstance::SetCurrentAsyncSurface(NPAsyncSurface *surface, NPRect *c
   }
 }
 
-class CarbonEventModelFailureEvent : public Runnable {
-public:
-  nsCOMPtr<nsIContent> mContent;
-
-  explicit CarbonEventModelFailureEvent(nsIContent* aContent)
-    : mContent(aContent)
-  {}
-
-  ~CarbonEventModelFailureEvent() {}
-
-  NS_IMETHOD Run();
-};
-
-NS_IMETHODIMP
-CarbonEventModelFailureEvent::Run()
-{
-  nsString type = NS_LITERAL_STRING("npapi-carbon-event-model-failure");
-  nsContentUtils::DispatchTrustedEvent(mContent->GetComposedDoc(), mContent,
-                                       type, true, true);
-  return NS_OK;
-}
-
-void
-nsNPAPIPluginInstance::CarbonNPAPIFailure()
-{
-  nsCOMPtr<nsIDOMElement> element;
-  GetDOMElement(getter_AddRefs(element));
-  if (!element) {
-    return;
-  }
-
-  nsCOMPtr<nsIContent> content(do_QueryInterface(element));
-  if (!content) {
-    return;
-  }
-
-  nsCOMPtr<nsIRunnable> e = new CarbonEventModelFailureEvent(content);
-  nsresult rv = NS_DispatchToCurrentThread(e);
-  if (NS_FAILED(rv)) {
-    NS_WARNING("Failed to dispatch CarbonEventModelFailureEvent.");
-  }
-}
-
 static bool
 GetJavaVersionFromMimetype(nsPluginTag* pluginTag, nsCString& version)
 {
@@ -1775,45 +1713,110 @@ nsNPAPIPluginInstance::GetRunID(uint32_t* aRunID)
 }
 
 nsresult
-nsNPAPIPluginInstance::GetOrCreateAudioChannelAgent(nsIAudioChannelAgent** aAgent)
+nsNPAPIPluginInstance::CreateAudioChannelAgentIfNeeded()
 {
-  if (!mAudioChannelAgent) {
-    nsresult rv;
-    mAudioChannelAgent = do_CreateInstance("@mozilla.org/audiochannelagent;1", &rv);
-    if (NS_WARN_IF(!mAudioChannelAgent)) {
-      return NS_ERROR_FAILURE;
-    }
-
-    nsCOMPtr<nsPIDOMWindowOuter> window = GetDOMWindow();
-    if (NS_WARN_IF(!window)) {
-      return NS_ERROR_FAILURE;
-    }
-
-    rv = mAudioChannelAgent->Init(window->GetCurrentInnerWindow(),
-                                 (int32_t)AudioChannelService::GetDefaultAudioChannel(),
-                                 this);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+  if (mAudioChannelAgent) {
+    return NS_OK;
   }
 
-  nsCOMPtr<nsIAudioChannelAgent> agent = mAudioChannelAgent;
-  agent.forget(aAgent);
+  nsresult rv;
+  mAudioChannelAgent = do_CreateInstance("@mozilla.org/audiochannelagent;1", &rv);
+  if (NS_WARN_IF(!mAudioChannelAgent)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsPIDOMWindowOuter> window = GetDOMWindow();
+  if (NS_WARN_IF(!window)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  rv = mAudioChannelAgent->Init(window->GetCurrentInnerWindow(),
+                               (int32_t)AudioChannelService::GetDefaultAudioChannel(),
+                               this);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
   return NS_OK;
+}
+
+void
+nsNPAPIPluginInstance::NotifyStartedPlaying()
+{
+  nsresult rv = CreateAudioChannelAgentIfNeeded();
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+
+  MOZ_ASSERT(mAudioChannelAgent);
+  dom::AudioPlaybackConfig config;
+  rv = mAudioChannelAgent->NotifyStartedPlaying(&config,
+                                                dom::AudioChannelService::AudibleState::eAudible);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+
+  rv = WindowVolumeChanged(config.mVolume, config.mMuted);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+
+  // Since we only support muting for now, the implementation of suspend
+  // is equal to muting. Therefore, if we have already muted the plugin,
+  // then we don't need to call WindowSuspendChanged() again.
+  if (config.mMuted) {
+    return;
+  }
+
+  rv = WindowSuspendChanged(config.mSuspend);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
+}
+
+void
+nsNPAPIPluginInstance::NotifyStoppedPlaying()
+{
+  MOZ_ASSERT(mAudioChannelAgent);
+
+  // Reset the attribute.
+  mMuted = false;
+  nsresult rv = mAudioChannelAgent->NotifyStoppedPlaying();
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return;
+  }
 }
 
 NS_IMETHODIMP
 nsNPAPIPluginInstance::WindowVolumeChanged(float aVolume, bool aMuted)
 {
+  MOZ_LOG(AudioChannelService::GetAudioChannelLog(), LogLevel::Debug,
+         ("nsNPAPIPluginInstance, WindowVolumeChanged, "
+          "this = %p, aVolume = %f, aMuted = %s\n",
+          this, aVolume, aMuted ? "true" : "false"));
+
   // We just support mute/unmute
   nsresult rv = SetMuted(aMuted);
   NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "SetMuted failed");
+  if (mMuted != aMuted) {
+    mMuted = aMuted;
+    if (mAudioChannelAgent) {
+      AudioChannelService::AudibleState audible = aMuted ?
+        AudioChannelService::AudibleState::eNotAudible :
+        AudioChannelService::AudibleState::eAudible;
+      mAudioChannelAgent->NotifyStartedAudible(audible,
+                                               AudioChannelService::AudibleChangedReasons::eVolumeChanged);
+    }
+  }
   return rv;
 }
 
 NS_IMETHODIMP
 nsNPAPIPluginInstance::WindowSuspendChanged(nsSuspendedTypes aSuspend)
 {
+  MOZ_LOG(AudioChannelService::GetAudioChannelLog(), LogLevel::Debug,
+         ("nsNPAPIPluginInstance, WindowSuspendChanged, "
+          "this = %p, aSuspend = %s\n", this, SuspendTypeToStr(aSuspend)));
+
   // It doesn't support suspended, so we just do something like mute/unmute.
   WindowVolumeChanged(1.0, /* useless */
                       aSuspend != nsISuspendedTypes::NONE_SUSPENDED);

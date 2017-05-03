@@ -21,7 +21,6 @@ VRLayerChild::VRLayerChild(uint32_t aVRDisplayID, VRManagerChild* aVRManagerChil
   , mShSurfClient(nullptr)
   , mFront(nullptr)
 {
-  MOZ_COUNT_CTOR(VRLayerChild);
 }
 
 VRLayerChild::~VRLayerChild()
@@ -47,7 +46,7 @@ VRLayerChild::Initialize(dom::HTMLCanvasElement* aCanvasElement)
 }
 
 void
-VRLayerChild::SubmitFrame(int32_t aInputFrameID)
+VRLayerChild::SubmitFrame()
 {
   if (!mCanvasElement) {
     return;
@@ -72,7 +71,7 @@ VRLayerChild::SubmitFrame(int32_t aInputFrameID)
   mFront->SyncWithObject(vrmc->GetSyncObject());
   MOZ_ALWAYS_TRUE(mFront->InitIPDLActor(vrmc));
 
-  SendSubmitFrame(aInputFrameID, mFront->GetIPDLActor());
+  SendSubmitFrame(mFront->GetIPDLActor());
 }
 
 void

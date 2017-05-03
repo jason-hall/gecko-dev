@@ -37,13 +37,13 @@ WMFH264Decoder::Init(int32_t aCoreCount)
   HRESULT hr;
 
   hr = CreateMFT(__uuidof(CMSH264DecoderMFT),
-                 WMFDecoderDllNameFor(H264),
+                 WMFDecoderDllName(),
                  mDecoder);
   if (FAILED(hr)) {
     // Windows 7 Enterprise Server N (which is what Mozilla's mochitests run
     // on) need a different CLSID to instantiate the H.264 decoder.
     hr = CreateMFT(CLSID_CMSH264DecMFT,
-                   WMFDecoderDllNameFor(H264),
+                   WMFDecoderDllName(),
                    mDecoder);
   }
   ENSURE(SUCCEEDED(hr), hr);
@@ -102,12 +102,6 @@ WMFH264Decoder::ConfigureVideoFrameGeometry(IMFMediaType* aMediaType)
       mPictureRegion.x, mPictureRegion.y, mPictureRegion.width, mPictureRegion.height);
 
   return S_OK;
-}
-
-int32_t
-WMFH264Decoder::GetFrameWidth() const
-{
-  return mVideoWidth;
 }
 
 int32_t
@@ -196,7 +190,6 @@ HRESULT
 WMFH264Decoder::CreateInputSample(const uint8_t* aData,
                                   uint32_t aDataSize,
                                   Microseconds aTimestamp,
-                                  Microseconds aDuration,
                                   IMFSample** aOutSample)
 {
   HRESULT hr;
@@ -230,8 +223,6 @@ WMFH264Decoder::CreateInputSample(const uint8_t* aData,
 
   hr = sample->SetSampleTime(UsecsToHNs(aTimestamp));
   ENSURE(SUCCEEDED(hr), hr);
-
-  sample->SetSampleDuration(UsecsToHNs(aDuration));
 
   *aOutSample = sample.Detach();
 
@@ -301,12 +292,11 @@ WMFH264Decoder::GetOutputSample(IMFSample** aOutSample)
 HRESULT
 WMFH264Decoder::Input(const uint8_t* aData,
                       uint32_t aDataSize,
-                      Microseconds aTimestamp,
-                      Microseconds aDuration)
+                      Microseconds aTimestamp)
 {
   HRESULT hr;
   CComPtr<IMFSample> input = nullptr;
-  hr = CreateInputSample(aData, aDataSize, aTimestamp, aDuration, &input);
+  hr = CreateInputSample(aData, aDataSize, aTimestamp, &input);
   ENSURE(SUCCEEDED(hr) && input!=nullptr, hr);
 
   hr = mDecoder->ProcessInput(0, input, 0);

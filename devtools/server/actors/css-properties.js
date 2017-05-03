@@ -10,41 +10,32 @@ loader.lazyGetter(this, "DOMUtils", () => {
   return Cc["@mozilla.org/inspector/dom-utils;1"].getService(Ci.inIDOMUtils);
 });
 
-loader.lazyGetter(this, "appInfo", () => {
-  return Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULAppInfo);
-});
-
 const protocol = require("devtools/shared/protocol");
 const { ActorClassWithSpec, Actor } = protocol;
 const { cssPropertiesSpec } = require("devtools/shared/specs/css-properties");
-const { CSS_PROPERTIES, CSS_TYPES } = require("devtools/shared/css/properties-db");
+const { CSS_TYPES } = require("devtools/shared/css/properties-db");
 const { cssColors } = require("devtools/shared/css/color-db");
 
 exports.CssPropertiesActor = ActorClassWithSpec(cssPropertiesSpec, {
   typeName: "cssProperties",
 
-  initialize(conn, parent) {
+  initialize(conn) {
     Actor.prototype.initialize.call(this, conn);
-    this.parent = parent;
   },
 
   destroy() {
     Actor.prototype.destroy.call(this);
   },
 
-  getCSSDatabase(clientBrowserVersion) {
-    // If the client and server are both the same version of Firefox, do not return a
-    // database, use the client-side css-properties-db.js.
-    const serverBrowserVersion = appInfo.platformVersion.match(/^\d+/)[0];
-
-    if (clientBrowserVersion !== 0 && clientBrowserVersion === serverBrowserVersion) {
-      return {};
-    }
-
+  getCSSDatabase() {
     const properties = generateCssProperties();
     const pseudoElements = DOMUtils.getCSSPseudoElementNames();
+    const supportedFeature = {
+      // checking for css-color-4 color function support.
+      "css-color-4-color-function": DOMUtils.isValidCSSColor("rgb(1 1 1 / 100%)"),
+    };
 
-    return { properties, pseudoElements };
+    return { properties, pseudoElements, supportedFeature };
   }
 });
 
@@ -77,17 +68,12 @@ function generateCssProperties() {
 
     let subproperties = DOMUtils.getSubpropertiesForCSSProperty(name);
 
-    // In order to maintain any backwards compatible changes when debugging older
-    // clients, take the definition from the static CSS properties database, and fill it
-    // in with the most recent property definition from the server.
-    const clientDefinition = CSS_PROPERTIES[name] || {};
-    const serverDefinition = {
+    properties[name] = {
       isInherited: DOMUtils.isInheritedProperty(name),
       values,
       supports,
       subproperties,
     };
-    properties[name] = Object.assign(clientDefinition, serverDefinition);
   });
 
   return properties;

@@ -44,12 +44,21 @@ ImageBitmapRenderingContext::ClipToIntrinsicSize()
   } else {
     surface = mImage->GetAsSourceSurface();
   }
+  if (!surface) {
+    return nullptr;
+  }
   result = new layers::SourceSurfaceImage(gfx::IntSize(mWidth, mHeight), surface);
   return result.forget();
 }
 
 void
 ImageBitmapRenderingContext::TransferImageBitmap(ImageBitmap& aImageBitmap)
+{
+  TransferFromImageBitmap(aImageBitmap);
+}
+
+void
+ImageBitmapRenderingContext::TransferFromImageBitmap(ImageBitmap& aImageBitmap)
 {
   Reset();
   mImage = aImageBitmap.TransferAsImage();
@@ -104,7 +113,7 @@ ImageBitmapRenderingContext::MatchWithIntrinsicSize()
   }
 
   RefPtr<DrawTarget> dt =
-    Factory::CreateDrawTargetForData(BackendType::CAIRO,
+    Factory::CreateDrawTargetForData(gfxPlatform::GetPlatform()->GetSoftwareBackend(),
                                      map.GetData(),
                                      temp->GetSize(),
                                      map.GetStride(),
@@ -141,6 +150,9 @@ ImageBitmapRenderingContext::GetImageBuffer(int32_t* aFormat)
 
   if (data->GetSize() != IntSize(mWidth, mHeight)) {
     data = MatchWithIntrinsicSize();
+    if (!data) {
+      return nullptr;
+    }
   }
 
   *aFormat = imgIEncoder::INPUT_FORMAT_HOSTARGB;
@@ -246,6 +258,9 @@ ImageBitmapRenderingContext::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
 
   AutoTArray<ImageContainer::NonOwningImage, 1> imageList;
   RefPtr<layers::Image> image = ClipToIntrinsicSize();
+  if (!image) {
+    return nullptr;
+  }
   imageList.AppendElement(ImageContainer::NonOwningImage(image));
   imageContainer->SetCurrentImages(imageList);
 

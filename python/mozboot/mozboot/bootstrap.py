@@ -12,6 +12,7 @@ import subprocess
 
 # Don't forgot to add new mozboot modules to the bootstrap download
 # list in bin/bootstrap.py!
+from mozboot.base import MODERN_RUST_VERSION
 from mozboot.centosfedora import CentOSFedoraBootstrapper
 from mozboot.debian import DebianBootstrapper
 from mozboot.freebsd import FreeBSDBootstrapper
@@ -55,8 +56,7 @@ But don't worry! You can always switch configurations later.
 You can learn more about Artifact mode builds at
 https://developer.mozilla.org/en-US/docs/Artifact_builds.
 
-Your choice:
-'''
+Your choice: '''
 
 APPLICATIONS_LIST=[
     ('Firefox for Desktop Artifact Mode', 'browser_artifact_mode'),
@@ -90,8 +90,7 @@ Would you like to create this directory?
   1. Yes
   2. No
 
-Your choice:
-'''
+Your choice: '''
 
 FINISHED = '''
 Your system should be ready to build %s!
@@ -122,7 +121,7 @@ optimally configured?
   1. Yes
   2. No
 
-Please enter your reply: '''.lstrip()
+Please enter your reply: '''
 
 CLONE_MERCURIAL = '''
 If you would like to clone the canonical Mercurial repository, please
@@ -146,6 +145,7 @@ DEBIAN_DISTROS = (
     'Elementary OS',
     'Elementary',
     '"elementary OS"',
+    '"elementary"'
 )
 
 
@@ -229,6 +229,7 @@ class Bootstrapper(object):
 
         hg_installed, hg_modern = self.instance.ensure_mercurial_modern()
         self.instance.ensure_python_modern()
+        self.instance.ensure_rust_modern()
 
         # The state directory code is largely duplicated from mach_bootstrap.py.
         # We can't easily import mach_bootstrap.py because the bootstrapper may
@@ -283,6 +284,8 @@ class Bootstrapper(object):
             print(SOURCE_ADVERTISE)
 
         print(self.finished % name)
+        if not (self.instance.which('rustc') and self.instance._parse_version('rustc') >= MODERN_RUST_VERSION):
+            print("To build %s, please restart the shell (Start a new terminal window)" % name)
 
         # Like 'suggest_browser_mozconfig' or 'suggest_mobile_android_mozconfig'.
         getattr(self.instance, 'suggest_%s_mozconfig' % application)()

@@ -2,7 +2,7 @@ if (this.document === undefined) {
   importScripts("/resources/testharness.js");
   importScripts("/common/utils.js");
   importScripts("../resources/utils.js");
-  importScripts("../resources/get-host-info.sub.js");
+  importScripts("/common/get-host-info.sub.js");
 }
 
 function headerNames(headers)
@@ -33,11 +33,8 @@ function corsPreflight(desc, corsUrl, method, allowed, headers, safeHeaders) {
       requestInit["headers"] = requestHeaders;
 
       if (allowed) {
-        urlParameters += "&allow_methods=" + method;
+        urlParameters += "&allow_methods=" + method + "&control_request_headers";
         if (headers) {
-          //Let's check prefligh request.
-          //Server will send back headers from Access-Control-Request-Headers in x-control-request-headers
-          urlParameters += "&control_request_headers"
           //Make the server allow the headers
           urlParameters += "&allow_headers=" + headerNames(headers).join("%20%2C");
         }
@@ -52,8 +49,10 @@ function corsPreflight(desc, corsUrl, method, allowed, headers, safeHeaders) {
               assert_in_array(header[0].toLowerCase(), actualHeaders, "Preflight asked permission for header: " + header);
 
             let accessControlAllowHeaders = headerNames(headers).sort().join(",");
-            assert_equals(resp.headers.get("x-control-request-headers").replace(new RegExp(" ", "g"), ""), accessControlAllowHeaders, "Access-Control-Allow-Headers value");
+            assert_equals(resp.headers.get("x-control-request-headers"), accessControlAllowHeaders, "Access-Control-Allow-Headers value");
             return fetch(RESOURCES_DIR + "clean-stash.py?token=" + uuid_token);
+          } else {
+            assert_equals(resp.headers.get("x-control-request-headers"), null, "Access-Control-Request-Headers should be omitted")
           }
         });
       } else {

@@ -236,14 +236,10 @@ nsHTMLCanvasFrame::ComputeSize(nsRenderingContext *aRenderingContext,
 
   nsSize intrinsicRatio = GetIntrinsicRatio(); // won't actually be used
 
-  return nsLayoutUtils::ComputeSizeWithIntrinsicDimensions(
-                            aWM,
-                            aRenderingContext, this,
-                            intrinsicSize, intrinsicRatio,
-                            aCBSize,
-                            aMargin,
-                            aBorder,
-                            aPadding);
+  return ComputeSizeWithIntrinsicDimensions(aRenderingContext, aWM,
+                                            intrinsicSize, intrinsicRatio,
+                                            aCBSize, aMargin, aBorder, aPadding,
+                                            aFlags);
 }
 
 void
@@ -261,7 +257,7 @@ nsHTMLCanvasFrame::Reflow(nsPresContext*           aPresContext,
 
   NS_PRECONDITION(mState & NS_FRAME_IN_REFLOW, "frame is not in reflow");
 
-  aStatus = NS_FRAME_COMPLETE;
+  aStatus.Reset();
 
   WritingMode wm = aReflowInput.GetWritingMode();
   LogicalSize finalSize(wm,
@@ -421,6 +417,18 @@ nsHTMLCanvasFrame::GetContinuationOffset(nscoord* aWidth) const
     offset = std::max(0, offset);
   }
   return offset;
+}
+
+void
+nsHTMLCanvasFrame::DoUpdateStyleOfOwnedAnonBoxes(ServoStyleSet& aStyleSet,
+                                                 nsStyleChangeList& aChangeList,
+                                                 nsChangeHint aHintForThisFrame)
+{
+  MOZ_ASSERT(mFrames.FirstChild(), "Must have our canvas content anon box");
+  MOZ_ASSERT(!mFrames.FirstChild()->GetNextSibling(),
+             "Must only have our canvas content anon box");
+  UpdateStyleOfChildAnonBox(mFrames.FirstChild(),
+                            aStyleSet, aChangeList, aHintForThisFrame);
 }
 
 #ifdef ACCESSIBILITY

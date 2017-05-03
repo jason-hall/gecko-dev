@@ -25,14 +25,14 @@ EventTree* const TreeMutation::kNoEventTree = reinterpret_cast<EventTree*>(-1);
 TreeMutation::TreeMutation(Accessible* aParent, bool aNoEvents) :
   mParent(aParent), mStartIdx(UINT32_MAX),
   mStateFlagsCopy(mParent->mStateFlags),
-  mEventTree(aNoEvents ? kNoEventTree : nullptr)
+  mQueueEvents(!aNoEvents)
 {
 #ifdef DEBUG
   mIsDone = false;
 #endif
 
 #ifdef A11Y_LOG
-  if (mEventTree != kNoEventTree && logging::IsEnabled(logging::eEventTree)) {
+  if (mQueueEvents && logging::IsEnabled(logging::eEventTree)) {
     logging::MsgBegin("EVENTS_TREE", "reordering tree before");
     logging::AccessibleInfo("reordering for", mParent);
     Controller()->RootEventTree().Log();
@@ -62,17 +62,14 @@ TreeMutation::AfterInsertion(Accessible* aChild)
     mStartIdx = aChild->mIndexInParent + 1;
   }
 
-  if (!mEventTree) {
-    mEventTree = Controller()->QueueMutation(mParent);
-    if (!mEventTree) {
-      mEventTree = kNoEventTree;
-    }
+  if (!mQueueEvents) {
+    return;
   }
 
-  if (mEventTree != kNoEventTree) {
-    mEventTree->Shown(aChild);
-    Controller()->QueueNameChange(aChild);
-  }
+  RefPtr<AccShowEvent> ev = new AccShowEvent(aChild);
+  DebugOnly<bool> added = Controller()->QueueMutationEvent(ev);
+  MOZ_ASSERT(added);
+  aChild->SetShowEventTarget(true);
 }
 
 void
@@ -84,16 +81,13 @@ TreeMutation::BeforeRemoval(Accessible* aChild, bool aNoShutdown)
     mStartIdx = aChild->mIndexInParent;
   }
 
-  if (!mEventTree) {
-    mEventTree = Controller()->QueueMutation(mParent);
-    if (!mEventTree) {
-      mEventTree = kNoEventTree;
-    }
+  if (!mQueueEvents) {
+    return;
   }
 
-  if (mEventTree != kNoEventTree) {
-    mEventTree->Hidden(aChild, !aNoShutdown);
-    Controller()->QueueNameChange(aChild);
+  RefPtr<AccHideEvent> ev = new AccHideEvent(aChild, !aNoShutdown);
+  if (Controller()->QueueMutationEvent(ev)) {
+    aChild->SetHideEventTarget(true);
   }
 }
 
@@ -124,7 +118,7 @@ TreeMutation::Done()
 #endif
 
 #ifdef A11Y_LOG
-  if (mEventTree != kNoEventTree && logging::IsEnabled(logging::eEventTree)) {
+  if (mQueueEvents && logging::IsEnabled(logging::eEventTree)) {
     logging::MsgBegin("EVENTS_TREE", "reordering tree after");
     logging::AccessibleInfo("reordering for", mParent);
     Controller()->RootEventTree().Log();
@@ -258,7 +252,7 @@ EventTree*
 EventTree::FindOrInsert(Accessible* aContainer)
 {
   if (!mFirst) {
-    mFirst.reset(new EventTree(aContainer, true));
+    mFirst.reset(new EventTree(aContainer, mDependentEvents.IsEmpty()));
     return mFirst.get();
   }
 
@@ -394,6 +388,7 @@ EventTree::Clear()
 
   uint32_t eventsCount = mDependentEvents.Length();
   for (uint32_t jdx = 0; jdx < eventsCount; jdx++) {
+    mDependentEvents[jdx]->mEventType = AccEvent::eDoNotEmit;
     AccHideEvent* ev = downcast_accEvent(mDependentEvents[jdx]);
     if (ev && ev->NeedsShutdown()) {
       ev->Document()->ShutdownChildrenInSubtree(ev->mAccessible);

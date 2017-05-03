@@ -18,7 +18,6 @@
 #include "nsIException.h"
 #include "nsIProgrammingLanguage.h"
 #include "nsMemory.h"
-#include "prprf.h"
 #include "xpcprivate.h"
 
 #include "mozilla/dom/DOMExceptionBinding.h"
@@ -75,19 +74,6 @@ enum DOM4ErrorTypeCodeMap {
   /* WebCrypto errors https://dvcs.w3.org/hg/webcrypto-api/raw-file/tip/spec/Overview.html#dfn-DataError */
   OperationError           = 0,
 
-  /* Bluetooth API errors */
-  BtFailError              = 0,
-  BtNotReadyError          = 0,
-  BtNoMemError             = 0,
-  BtBusyError              = 0,
-  BtDoneError              = 0,
-  BtUnsupportedError       = 0,
-  BtParmInvalidError       = 0,
-  BtUnhandledError         = 0,
-  BtAuthFailureError       = 0,
-  BtRmtDevDownError        = 0,
-  BtAuthRejectedError      = 0,
-
   /* Push API errors */
   NotAllowedError          = 0,
 };
@@ -95,7 +81,7 @@ enum DOM4ErrorTypeCodeMap {
 #define DOM4_MSG_DEF(name, message, nsresult) {(nsresult), name, #name, message},
 #define DOM_MSG_DEF(val, message) {(val), NS_ERROR_GET_CODE(val), #val, message},
 
-static const struct ResultStruct
+static constexpr struct ResultStruct
 {
   nsresult mNSResult;
   uint16_t mCode;
@@ -178,7 +164,6 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(Exception)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Exception)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLocation)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mData)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(Exception)
@@ -375,7 +360,7 @@ Exception::ToString(JSContext* aCx, nsACString& _retval)
   static const char defaultMsg[] = "<no message>";
   static const char defaultLocation[] = "<unknown>";
   static const char format[] =
-"[Exception... \"%s\"  nsresult: \"0x%x (%s)\"  location: \"%s\"  data: %s]";
+"[Exception... \"%s\"  nsresult: \"0x%" PRIx32 " (%s)\"  location: \"%s\"  data: %s]";
 
   nsCString location;
 
@@ -403,7 +388,7 @@ Exception::ToString(JSContext* aCx, nsACString& _retval)
   const char* data = mData ? "yes" : "no";
 
   _retval.Truncate();
-  _retval.AppendPrintf(format, msg, mResult, resultName,
+  _retval.AppendPrintf(format, msg, static_cast<uint32_t>(mResult), resultName,
                        location.get(), data);
   return NS_OK;
 }
@@ -567,7 +552,7 @@ DOMException::ToString(JSContext* aCx, nsACString& aReturn)
   static const char defaultLocation[] = "<unknown>";
   static const char defaultName[] = "<unknown>";
   static const char format[] =
-    "[Exception... \"%s\"  code: \"%d\" nsresult: \"0x%x (%s)\"  location: \"%s\"]";
+    "[Exception... \"%s\"  code: \"%d\" nsresult: \"0x%" PRIx32 " (%s)\"  location: \"%s\"]";
 
   nsAutoCString location;
 
@@ -578,7 +563,7 @@ DOMException::ToString(JSContext* aCx, nsACString& aReturn)
   const char* msg = !mMessage.IsEmpty() ? mMessage.get() : defaultMsg;
   const char* resultName = !mName.IsEmpty() ? mName.get() : defaultName;
 
-  aReturn.AppendPrintf(format, msg, mCode, mResult, resultName,
+  aReturn.AppendPrintf(format, msg, mCode, static_cast<uint32_t>(mResult), resultName,
                        location.get());
 
   return NS_OK;

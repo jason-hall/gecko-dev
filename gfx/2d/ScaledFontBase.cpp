@@ -5,6 +5,8 @@
 
 #include "ScaledFontBase.h"
 
+#include "gfxPrefs.h"
+
 #ifdef USE_SKIA
 #include "PathSkia.h"
 #include "skia/include/core/SkPaint.h"
@@ -24,6 +26,23 @@ using namespace std;
 namespace mozilla {
 namespace gfx {
 
+uint32_t UnscaledFont::sDeletionCounter = 0;
+
+UnscaledFont::~UnscaledFont()
+{
+  sDeletionCounter++;
+}
+
+AntialiasMode
+ScaledFont::GetDefaultAAMode()
+{
+  if (gfxPrefs::DisableAllTextAA()) {
+    return AntialiasMode::NONE;
+  }
+
+  return AntialiasMode::DEFAULT;
+}
+
 ScaledFontBase::~ScaledFontBase()
 {
 #ifdef USE_SKIA
@@ -34,8 +53,10 @@ ScaledFontBase::~ScaledFontBase()
 #endif
 }
 
-ScaledFontBase::ScaledFontBase(Float aSize)
-  : mSize(aSize)
+ScaledFontBase::ScaledFontBase(const RefPtr<UnscaledFont>& aUnscaledFont,
+                               Float aSize)
+  : ScaledFont(aUnscaledFont)
+  , mSize(aSize)
 {
 #ifdef USE_SKIA
   mTypeface = nullptr;
@@ -80,7 +101,7 @@ ScaledFontBase::GetSkiaPathForGlyphs(const GlyphBuffer &aBuffer)
   MOZ_ASSERT(typeFace);
 
   SkPaint paint;
-  paint.setTypeface(typeFace);
+  paint.setTypeface(sk_ref_sp(typeFace));
   paint.setTextEncoding(SkPaint::kGlyphID_TextEncoding);
   paint.setTextSize(SkFloatToScalar(mSize));
 
@@ -151,17 +172,18 @@ ScaledFontBase::GetPathForGlyphs(const GlyphBuffer &aBuffer, const DrawTarget *a
 }
 
 void
-ScaledFontBase::CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, BackendType aBackendType, const Matrix *aTransformHint)
+ScaledFontBase::CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, const Matrix *aTransformHint)
 {
+  BackendType backendType = aBuilder->GetBackendType();
 #ifdef USE_SKIA
-  if (aBackendType == BackendType::SKIA) {
+  if (backendType == BackendType::SKIA) {
     PathBuilderSkia *builder = static_cast<PathBuilderSkia*>(aBuilder);
     builder->AppendPath(GetSkiaPathForGlyphs(aBuffer));
     return;
   }
 #endif
 #ifdef USE_CAIRO
-  if (aBackendType == BackendType::CAIRO) {
+  if (backendType == BackendType::CAIRO) {
     MOZ_ASSERT(mScaledFont);
 
     PathBuilderCairo* builder = static_cast<PathBuilderCairo*>(aBuilder);
@@ -191,8 +213,6 @@ ScaledFontBase::CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBu
     return;
   }
 #endif
-
-  MOZ_CRASH("GFX: The specified backend type is not supported by CopyGlyphsToBuilder");
 }
 
 void
@@ -254,7 +274,7 @@ ScaledFontBase::SetCairoScaledFont(cairo_scaled_font_t* font)
 
   if (font == mScaledFont)
     return;
- 
+
   if (mScaledFont)
     cairo_scaled_font_destroy(mScaledFont);
 

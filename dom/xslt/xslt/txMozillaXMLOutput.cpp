@@ -296,13 +296,16 @@ txMozillaXMLOutput::endElement()
         } else if (element->IsSVGElement(nsGkAtoms::script) ||
                    element->IsHTMLElement(nsGkAtoms::script)) {
             nsCOMPtr<nsIScriptElement> sele = do_QueryInterface(element);
-            MOZ_ASSERT(sele, "script elements need to implement nsIScriptElement");
-            bool block = sele->AttemptToExecute();
-            // If the act of insertion evaluated the script, we're fine.
-            // Else, add this script element to the array of loading scripts.
-            if (block) {
-                rv = mNotifier->AddScriptElement(sele);
-                NS_ENSURE_SUCCESS(rv, rv);
+            if (sele) {
+              bool block = sele->AttemptToExecute();
+              // If the act of insertion evaluated the script, we're fine.
+              // Else, add this script element to the array of loading scripts.
+              if (block) {
+                  rv = mNotifier->AddScriptElement(sele);
+                  NS_ENSURE_SUCCESS(rv, rv);
+              }
+            } else {
+              MOZ_ASSERT(nsNameSpaceManager::GetInstance()->mSVGDisabled, "Script elements need to implement nsIScriptElement and SVG wasn't disabled.");
             }
         } else if (element->IsAnyOfHTMLElements(nsGkAtoms::input,
                                                 nsGkAtoms::button,
@@ -797,19 +800,23 @@ txMozillaXMLOutput::createResultDocument(const nsSubstring& aName, int32_t aNsID
     MOZ_ASSERT(mDocument->GetReadyStateEnum() ==
                nsIDocument::READYSTATE_UNINITIALIZED, "Bad readyState");
     mDocument->SetReadyStateInternal(nsIDocument::READYSTATE_LOADING);
+    mDocument->SetMayStartLayout(false);
     nsCOMPtr<nsIDocument> source = do_QueryInterface(aSourceDocument);
     NS_ENSURE_STATE(source);
     bool hasHadScriptObject = false;
     nsIScriptGlobalObject* sgo =
       source->GetScriptHandlingObject(hasHadScriptObject);
     NS_ENSURE_STATE(sgo || !hasHadScriptObject);
-    mDocument->SetScriptHandlingObject(sgo);
 
     mCurrentNode = mDocument;
     mNodeInfoManager = mDocument->NodeInfoManager();
 
     // Reset and set up the document
     URIUtils::ResetWithSource(mDocument, aSourceDocument);
+
+    // Make sure we set the script handling object after resetting with the
+    // source, so that we have the right principal.
+    mDocument->SetScriptHandlingObject(sgo);
 
     // Set the charset
     if (!mOutputFormat.mEncoding.IsEmpty()) {

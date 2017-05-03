@@ -6,6 +6,7 @@ Components.utils.import("resource://gre/modules/NetUtil.jsm");
 
 function test() {
   waitForExplicitFinish();
+  SpecialPowers.pushPrefEnv({set: [["browser.storageManager.enabled", true]]});
   open_preferences(runTest);
 }
 
@@ -13,9 +14,11 @@ var gElements;
 
 function checkElements(expectedPane) {
   for (let element of gElements) {
-    // preferences elements fail is_element_visible checks because they are never visible.
+    // keyset and preferences elements fail is_element_visible checks because they are never visible.
     // special-case the drmGroup item because its visibility depends on pref + OS version
-    if (element.nodeName == "preferences" || element.id === "drmGroup") {
+    if (element.nodeName == "keyset" ||
+        element.nodeName == "preferences" ||
+        element.id === "drmGroup") {
       continue;
     }
     let attributeValue = element.getAttribute("data-category");
@@ -35,8 +38,8 @@ function runTest(win) {
   gElements = tab.getElementById("mainPrefPane").children;
 
   let panes = [
-    "General", "Search", "Content", "Applications",
-    "Privacy", "Security", "Sync", "Advanced",
+    "General", "Applications",
+    "Privacy", "Sync", "Advanced",
   ];
 
   for (let pane of panes) {

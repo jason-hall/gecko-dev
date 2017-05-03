@@ -9,7 +9,9 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Monitor.h"
+#include "mozilla/MozPromise.h"
 #include "mozilla/UniquePtr.h"
+#include "mozilla/AbstractThread.h"
 #include "nsTArray.h"
 #include "MediaCache.h"
 #include "nsDeque.h"
@@ -62,8 +64,7 @@ protected:
   ~FileBlockCache();
 
 public:
-  // Assumes ownership of aFD.
-  nsresult Open(PRFileDesc* aFD);
+  nsresult Init();
 
   // Closes writer, shuts down thread.
   void Close();
@@ -130,6 +131,8 @@ private:
     return static_cast<int64_t>(aBlockIndex) * BLOCK_SIZE;
   }
 
+  void SetCacheFile(PRFileDesc* aFD);
+
   // Monitor which controls access to mFD and mFDCurrentPos. Don't hold
   // mDataMonitor while holding mFileMonitor! mFileMonitor must be owned
   // while accessing any of the following data fields or methods.
@@ -160,6 +163,7 @@ private:
   // has been dispatched to preform the IO.
   // mDataMonitor must be owned while calling this.
   void EnsureWriteScheduled();
+
   // Array of block changes to made. If mBlockChanges[offset/BLOCK_SIZE] == nullptr,
   // then the block has no pending changes to be written, but if
   // mBlockChanges[offset/BLOCK_SIZE] != nullptr, then either there's a block
@@ -175,8 +179,12 @@ private:
   // True if we've dispatched an event to commit all pending block changes
   // to file on mThread.
   bool mIsWriteScheduled;
-  // True if the writer is ready to write data to file.
+  // True if the writer is ready to enqueue writes.
   bool mIsOpen;
+  // True if we've got a temporary file descriptor. Note: we don't use mFD
+  // directly as that's synchronized via mFileMonitor and we need to make
+  // decisions about whether we can write while holding mDataMonitor.
+  bool mInitialized = false;
 };
 
 } // End namespace mozilla.

@@ -26,51 +26,6 @@ AndroidCompositorWidget::SetFirstPaintViewport(const LayerIntPoint& aOffset,
 }
 
 void
-AndroidCompositorWidget::SetPageRect(const CSSRect& aCssPageRect)
-{
-    auto layerClient = static_cast<nsWindow*>(RealWidget())->GetLayerClient();
-    if (!layerClient) {
-        return;
-    }
-
-    layerClient->SetPageRect(aCssPageRect.x, aCssPageRect.y,
-                             aCssPageRect.XMost(), aCssPageRect.YMost());
-}
-
-void
-AndroidCompositorWidget::SyncViewportInfo(const LayerIntRect& aDisplayPort,
-                                          const CSSToLayerScale& aDisplayResolution,
-                                          bool aLayersUpdated,
-                                          int32_t aPaintSyncId,
-                                          ParentLayerRect& aScrollRect,
-                                          CSSToParentLayerScale& aScale,
-                                          ScreenMargin& aFixedLayerMargins)
-{
-    auto layerClient = static_cast<nsWindow*>(RealWidget())->GetLayerClient();
-    if (!layerClient) {
-        return;
-    }
-
-    java::ViewTransform::LocalRef viewTransform = layerClient->SyncViewportInfo(
-            aDisplayPort.x, aDisplayPort.y, aDisplayPort.width,
-            aDisplayPort.height, aDisplayResolution.scale, aLayersUpdated,
-            aPaintSyncId);
-
-    MOZ_ASSERT(viewTransform, "No view transform object!");
-
-    aScrollRect = ParentLayerRect(
-        viewTransform->X(), viewTransform->Y(),
-        viewTransform->Width(), viewTransform->Height());
-
-    aScale.scale = viewTransform->Scale();
-
-    aFixedLayerMargins.top = viewTransform->FixedLayerMarginTop();
-    aFixedLayerMargins.right = viewTransform->FixedLayerMarginRight();
-    aFixedLayerMargins.bottom = viewTransform->FixedLayerMarginBottom();
-    aFixedLayerMargins.left = viewTransform->FixedLayerMarginLeft();
-}
-
-void
 AndroidCompositorWidget::SyncFrameMetrics(const ParentLayerPoint& aScrollOffset,
                                           const CSSToParentLayerScale& aZoom,
                                           const CSSRect& aCssPageRect,
@@ -102,6 +57,30 @@ AndroidCompositorWidget::SyncFrameMetrics(const ParentLayerPoint& aScrollOffset,
     aFixedLayerMargins.right = viewTransform->FixedLayerMarginRight();
     aFixedLayerMargins.bottom = viewTransform->FixedLayerMarginBottom();
     aFixedLayerMargins.left = viewTransform->FixedLayerMarginLeft();
+}
+
+EGLNativeWindowType
+AndroidCompositorWidget::GetEGLNativeWindow()
+{
+  return (EGLNativeWindowType)mWidget->GetNativeData(NS_JAVA_SURFACE);
+}
+
+EGLNativeWindowType
+AndroidCompositorWidget::GetPresentationEGLSurface()
+{
+  return (EGLNativeWindowType)mWidget->GetNativeData(NS_PRESENTATION_SURFACE);
+}
+
+void
+AndroidCompositorWidget::SetPresentationEGLSurface(EGLSurface aVal)
+{
+  mWidget->SetNativeData(NS_PRESENTATION_SURFACE, (uintptr_t)aVal);
+}
+
+ANativeWindow*
+AndroidCompositorWidget::GetPresentationANativeWindow()
+{
+  return (ANativeWindow*)mWidget->GetNativeData(NS_PRESENTATION_WINDOW);
 }
 
 } // namespace widget

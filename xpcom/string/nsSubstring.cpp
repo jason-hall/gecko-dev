@@ -186,17 +186,42 @@ public:
 void
 nsStringBuffer::AddRef()
 {
-  ++mRefCount;
+  // Memory synchronization is not required when incrementing a
+  // reference count.  The first increment of a reference count on a
+  // thread is not important, since the first use of the object on a
+  // thread can happen before it.  What is important is the transfer
+  // of the pointer to that thread, which may happen prior to the
+  // first increment on that thread.  The necessary memory
+  // synchronization is done by the mechanism that transfers the
+  // pointer between threads.
+#ifdef NS_BUILD_REFCNT_LOGGING
+  uint32_t count =
+#endif
+    mRefCount.fetch_add(1, std::memory_order_relaxed)
+#ifdef NS_BUILD_REFCNT_LOGGING
+    + 1
+#endif
+    ;
   STRING_STAT_INCREMENT(Share);
-  NS_LOG_ADDREF(this, mRefCount, "nsStringBuffer", sizeof(*this));
+  NS_LOG_ADDREF(this, count, "nsStringBuffer", sizeof(*this));
 }
 
 void
 nsStringBuffer::Release()
 {
-  int32_t count = --mRefCount;
+  // Since this may be the last release on this thread, we need
+  // release semantics so that prior writes on this thread are visible
+  // to the thread that destroys the object when it reads mValue with
+  // acquire semantics.
+  uint32_t count = mRefCount.fetch_sub(1, std::memory_order_release) - 1;
   NS_LOG_RELEASE(this, count, "nsStringBuffer");
   if (count == 0) {
+    // We're going to destroy the object on this thread, so we need
+    // acquire semantics to synchronize with the memory released by
+    // the last release on other threads, that is, to ensure that
+    // writes prior to that release are now visible on this thread.
+    count = mRefCount.load(std::memory_order_acquire);
+
     STRING_STAT_INCREMENT(Free);
     free(this); // we were allocated with |malloc|
   }
@@ -285,7 +310,8 @@ nsStringBuffer::ToString(uint32_t aLen, nsAString& aStr,
   char16_t* data = static_cast<char16_t*>(Data());
 
   nsAStringAccessor* accessor = static_cast<nsAStringAccessor*>(&aStr);
-  NS_ASSERTION(data[aLen] == char16_t(0), "data should be null terminated");
+  MOZ_DIAGNOSTIC_ASSERT(data[aLen] == char16_t(0),
+                        "data should be null terminated");
 
   // preserve class flags
   uint32_t flags = accessor->flags();
@@ -304,7 +330,8 @@ nsStringBuffer::ToString(uint32_t aLen, nsACString& aStr,
   char* data = static_cast<char*>(Data());
 
   nsACStringAccessor* accessor = static_cast<nsACStringAccessor*>(&aStr);
-  NS_ASSERTION(data[aLen] == char(0), "data should be null terminated");
+  MOZ_DIAGNOSTIC_ASSERT(data[aLen] == char(0),
+                        "data should be null terminated");
 
   // preserve class flags
   uint32_t flags = accessor->flags();
@@ -341,17 +368,17 @@ nsStringBuffer::SizeOfIncludingThisEvenIfShared(mozilla::MallocSizeOf aMallocSiz
 #include "nsTSubstring.cpp"
 #include "string-template-undef.h"
 
-// Check that internal and external strings have the same size.
-// See https://bugzilla.mozilla.org/show_bug.cgi?id=430581
-
-#include "mozilla/Logging.h"
-#include "nsXPCOMStrings.h"
-
-static_assert(sizeof(nsStringContainer_base) == sizeof(nsSubstring),
-              "internal and external strings must have the same size");
-
 // Provide rust bindings to the nsA[C]String types
 extern "C" {
+
+// This is a no-op on release, so we ifdef it out such that using it in release
+// results in a linker error.
+#ifdef DEBUG
+void Gecko_IncrementStringAdoptCount(void* aData)
+{
+  MOZ_LOG_CTOR(aData, "StringAdopt", 1);
+}
+#endif
 
 void Gecko_FinalizeCString(nsACString* aThis)
 {
@@ -368,6 +395,26 @@ void Gecko_AppendCString(nsACString* aThis, const nsACString* aOther)
   aThis->Append(*aOther);
 }
 
+void Gecko_SetLengthCString(nsACString* aThis, uint32_t aLength)
+{
+  aThis->SetLength(aLength);
+}
+
+bool Gecko_FallibleAssignCString(nsACString* aThis, const nsACString* aOther)
+{
+  return aThis->Assign(*aOther, mozilla::fallible);
+}
+
+bool Gecko_FallibleAppendCString(nsACString* aThis, const nsACString* aOther)
+{
+  return aThis->Append(*aOther, mozilla::fallible);
+}
+
+bool Gecko_FallibleSetLengthCString(nsACString* aThis, uint32_t aLength)
+{
+  return aThis->SetLength(aLength, mozilla::fallible);
+}
+
 void Gecko_FinalizeString(nsAString* aThis)
 {
   aThis->~nsAString();
@@ -381,6 +428,26 @@ void Gecko_AssignString(nsAString* aThis, const nsAString* aOther)
 void Gecko_AppendString(nsAString* aThis, const nsAString* aOther)
 {
   aThis->Append(*aOther);
+}
+
+void Gecko_SetLengthString(nsAString* aThis, uint32_t aLength)
+{
+  aThis->SetLength(aLength);
+}
+
+bool Gecko_FallibleAssignString(nsAString* aThis, const nsAString* aOther)
+{
+  return aThis->Assign(*aOther, mozilla::fallible);
+}
+
+bool Gecko_FallibleAppendString(nsAString* aThis, const nsAString* aOther)
+{
+  return aThis->Append(*aOther, mozilla::fallible);
+}
+
+bool Gecko_FallibleSetLengthString(nsAString* aThis, uint32_t aLength)
+{
+  return aThis->SetLength(aLength, mozilla::fallible);
 }
 
 } // extern "C"

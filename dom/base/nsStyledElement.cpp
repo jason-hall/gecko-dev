@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsStyledElement.h"
+#include "mozAutoDocUpdate.h"
 #include "nsGkAtoms.h"
 #include "nsAttrValue.h"
 #include "nsAttrValueInlines.h"
@@ -14,7 +15,7 @@
 #include "nsDOMCSSAttrDeclaration.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIDocument.h"
-#include "mozilla/css/Declaration.h"
+#include "mozilla/DeclarationBlockInlines.h"
 #include "nsCSSParser.h"
 #include "mozilla/css/Loader.h"
 #include "nsIDOMMutationEvent.h"
@@ -49,7 +50,7 @@ nsStyledElement::ParseAttribute(int32_t aNamespaceID,
 }
 
 nsresult
-nsStyledElement::SetInlineStyleDeclaration(css::Declaration* aDeclaration,
+nsStyledElement::SetInlineStyleDeclaration(DeclarationBlock* aDeclaration,
                                            const nsAString* aSerialized,
                                            bool aNotify)
 {
@@ -68,8 +69,6 @@ nsStyledElement::SetInlineStyleDeclaration(css::Declaration* aDeclaration,
   // and thus will be the same.
   if (hasListeners) {
     // save the old attribute so we can set up the mutation event properly
-    // XXXbz if the old rule points to the same declaration as the new one,
-    // this is getting the new attr value, not the old one....
     nsAutoString oldValueStr;
     modification = GetAttr(kNameSpaceID_None, nsGkAtoms::style,
                            oldValueStr);
@@ -81,31 +80,19 @@ nsStyledElement::SetInlineStyleDeclaration(css::Declaration* aDeclaration,
     modification = !!mAttrsAndChildren.GetAttr(nsGkAtoms::style);
   }
 
-  nsAttrValue attrValue(aDeclaration, aSerialized);
+  nsAttrValue attrValue(do_AddRef(aDeclaration), aSerialized);
 
   // XXXbz do we ever end up with ADDITION here?  I doubt it.
   uint8_t modType = modification ?
     static_cast<uint8_t>(nsIDOMMutationEvent::MODIFICATION) :
     static_cast<uint8_t>(nsIDOMMutationEvent::ADDITION);
 
+  nsIDocument* document = GetComposedDoc();
+  mozAutoDocUpdate updateBatch(document, UPDATE_CONTENT_MODEL, aNotify);
   return SetAttrAndNotify(kNameSpaceID_None, nsGkAtoms::style, nullptr,
                           oldValue, attrValue, modType, hasListeners,
-                          aNotify, kDontCallAfterSetAttr);
-}
-
-css::Declaration*
-nsStyledElement::GetInlineStyleDeclaration()
-{
-  if (!MayHaveStyle()) {
-    return nullptr;
-  }
-  const nsAttrValue* attrVal = mAttrsAndChildren.GetAttr(nsGkAtoms::style);
-
-  if (attrVal && attrVal->Type() == nsAttrValue::eGeckoCSSDeclaration) {
-    return attrVal->GetGeckoCSSDeclarationValue();
-  }
-
-  return nullptr;
+                          aNotify, kDontCallAfterSetAttr, document,
+                          updateBatch);
 }
 
 // ---------------------------------------------------------------
@@ -118,7 +105,7 @@ nsStyledElement::Style()
 
   if (!slots->mStyle) {
     // Just in case...
-    ReparseStyleAttribute(true);
+    ReparseStyleAttribute(true, false);
 
     slots->mStyle = new nsDOMCSSAttributeDeclaration(this, false);
     SetMayHaveStyle();
@@ -128,19 +115,13 @@ nsStyledElement::Style()
 }
 
 nsresult
-nsStyledElement::ReparseStyleAttribute(bool aForceInDataDoc)
+nsStyledElement::ReparseStyleAttribute(bool aForceInDataDoc, bool aForceIfAlreadyParsed)
 {
   if (!MayHaveStyle()) {
     return NS_OK;
   }
   const nsAttrValue* oldVal = mAttrsAndChildren.GetAttr(nsGkAtoms::style);
-  
-  nsAttrValue::ValueType desiredType =
-    OwnerDoc()->GetStyleBackendType() == StyleBackendType::Gecko ?
-      nsAttrValue::eGeckoCSSDeclaration :
-      nsAttrValue::eServoCSSDeclaration;
-
-  if (oldVal && oldVal->Type() != desiredType) {
+  if (oldVal && (aForceIfAlreadyParsed || oldVal->Type() != nsAttrValue::eCSSDeclaration)) {
     nsAttrValue attrValue;
     nsAutoString stringValue;
     oldVal->ToString(stringValue);
@@ -152,6 +133,15 @@ nsStyledElement::ReparseStyleAttribute(bool aForceInDataDoc)
   }
   
   return NS_OK;
+}
+
+void
+nsStyledElement::NodeInfoChanged(nsIDocument* aOldDoc)
+{
+  nsStyledElementBase::NodeInfoChanged(aOldDoc);
+  if (OwnerDoc()->GetStyleBackendType() != aOldDoc->GetStyleBackendType()) {
+    ReparseStyleAttribute(false, /* aForceIfAlreadyParsed */ true);
+  }
 }
 
 nsICSSDeclaration*

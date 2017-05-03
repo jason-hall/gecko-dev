@@ -56,11 +56,11 @@ extern mozilla::LazyLogModule gContentSinkLogModuleInfo;
 #define SINK_LOG_TEST(_lm, _bit) (int((_lm)->Level()) & (_bit))
 
 #define SINK_TRACE(_lm, _bit, _args) \
-  PR_BEGIN_MACRO                     \
+  do {                     \
     if (SINK_LOG_TEST(_lm, _bit)) {  \
-      PR_LogPrint _args;             \
+      printf_stderr _args;             \
     }                                \
-  PR_END_MACRO
+  } while(0)
 
 #else
 #define SINK_TRACE(_lm, _bit, _args)
@@ -76,13 +76,16 @@ extern mozilla::LazyLogModule gContentSinkLogModuleInfo;
 class nsContentSink : public nsICSSLoaderObserver,
                       public nsSupportsWeakReference,
                       public nsStubDocumentObserver,
-                      public nsITimerCallback
+                      public nsITimerCallback,
+                      public nsINamed
 {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsContentSink,
                                            nsICSSLoaderObserver)
     // nsITimerCallback
   NS_DECL_NSITIMERCALLBACK
+
+  NS_DECL_NSINAMED
 
   // nsICSSLoaderObserver
   NS_IMETHOD StyleSheetLoaded(mozilla::StyleSheet* aSheet,
@@ -264,11 +267,6 @@ protected:
   void StopDeflecting() {
     mDeflectedCount = sPerfDeflectCount;
   }
-
-private:
-  // People shouldn't be allocating this class directly.  All subclasses should
-  // be allocated using a zeroing operator new.
-  void* operator new(size_t sz) CPP_THROW_NEW;  // Not to be implemented
 
 protected:
 

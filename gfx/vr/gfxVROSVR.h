@@ -26,7 +26,6 @@ class VRDisplayOSVR : public VRDisplayHost
 {
 public:
   VRHMDSensorState GetSensorState() override;
-  VRHMDSensorState GetImmediateSensorState() override;
   void ZeroSensor() override;
 
 protected:
@@ -61,16 +60,25 @@ protected:
 
 } // namespace impl
 
-class VRDisplayManagerOSVR : public VRDisplayManager
+class VRSystemManagerOSVR : public VRSystemManager
 {
 public:
-  static already_AddRefed<VRDisplayManagerOSVR> Create();
-  virtual bool Init() override;
+  static already_AddRefed<VRSystemManagerOSVR> Create();
   virtual void Destroy() override;
+  virtual void Shutdown() override;
   virtual void GetHMDs(nsTArray<RefPtr<VRDisplayHost>>& aHMDResult) override;
+  virtual bool GetIsPresenting() override;
+  virtual void HandleInput() override;
+  virtual void GetControllers(nsTArray<RefPtr<VRControllerHost>>&
+                              aControllerResult) override;
+  virtual void ScanForControllers() override;
+  virtual void RemoveControllers() override;
+  virtual void VibrateHaptic(uint32_t aControllerIdx, uint32_t aHapticIndex,
+                             double aIntensity, double aDuration, uint32_t aPromiseID) override;
+  virtual void StopVibrateHaptic(uint32_t aControllerIdx) override;
 
 protected:
-  VRDisplayManagerOSVR()
+  VRSystemManagerOSVR()
     : mOSVRInitialized(false)
     , mClientContextInitialized(false)
     , mDisplayConfigInitialized(false)
@@ -80,6 +88,8 @@ protected:
     , m_display(nullptr)
   {
   }
+
+  bool Init();
 
   RefPtr<impl::VRDisplayOSVR> mHMDInfo;
   bool mOSVRInitialized;

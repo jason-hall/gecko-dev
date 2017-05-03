@@ -47,6 +47,9 @@ GetCairoAntialiasOption(gfxFont::AntialiasOption anAntialiasOption)
 #define FE_FONTSMOOTHINGCLEARTYPE 2
 #endif
 
+bool gfxDWriteFont::mUseClearType = true;
+
+// This function is expensive so we only want to call it when we have to.
 static bool
 UsingClearType()
 {
@@ -68,11 +71,12 @@ UsingClearType()
 
 ////////////////////////////////////////////////////////////////////////////////
 // gfxDWriteFont
-gfxDWriteFont::gfxDWriteFont(gfxFontEntry *aFontEntry,
+gfxDWriteFont::gfxDWriteFont(const RefPtr<UnscaledFontDWrite>& aUnscaledFont,
+                             gfxFontEntry *aFontEntry,
                              const gfxFontStyle *aFontStyle,
                              bool aNeedsBold,
                              AntialiasOption anAAOption)
-    : gfxFont(aFontEntry, aFontStyle, anAAOption)
+    : gfxFont(aUnscaledFont, aFontEntry, aFontStyle, anAAOption)
     , mCairoFontFace(nullptr)
     , mMetrics(nullptr)
     , mSpaceGlyph(0)
@@ -81,42 +85,15 @@ gfxDWriteFont::gfxDWriteFont(gfxFontEntry *aFontEntry,
     , mUseSubpixelPositions(false)
     , mAllowManualShowGlyphs(true)
 {
-    gfxDWriteFontEntry *fe =
-	        static_cast<gfxDWriteFontEntry*>(aFontEntry);
-    nsresult rv;
-    DWRITE_FONT_SIMULATIONS sims = DWRITE_FONT_SIMULATIONS_NONE;
     if ((GetStyle()->style != NS_FONT_STYLE_NORMAL) &&
-        fe->IsUpright() &&
+        aFontEntry->IsUpright() &&
         GetStyle()->allowSyntheticStyle) {
             // For this we always use the font_matrix for uniformity. Not the
             // DWrite simulation.
             mNeedsOblique = true;
     }
-    if (aNeedsBold) {
-        sims |= DWRITE_FONT_SIMULATIONS_BOLD;
-    }
 
-    rv = fe->CreateFontFace(getter_AddRefs(mFontFace), sims);
-
-    if (NS_FAILED(rv)) {
-        mIsValid = false;
-        return;
-    }
-
-    mFont = fe->GetFont();
-    if (!mFont) {
-        gfxPlatformFontList* fontList = gfxPlatformFontList::PlatformFontList();
-        gfxDWriteFontFamily* defaultFontFamily =
-            static_cast<gfxDWriteFontFamily*>(fontList->GetDefaultFont(aFontStyle));
-
-        mFont = defaultFontFamily->GetDefaultFont();
-        NS_WARNING("Using default font");
-    }
-
-    HRESULT hr = mFont->GetFontFamily(getter_AddRefs(mFontFamily));
-    if (FAILED(hr)) {
-        MOZ_ASSERT(false);
-    }
+    mFontFace = aUnscaledFont->GetFontFace();
 
     ComputeMetrics(anAAOption);
 }
@@ -132,11 +109,19 @@ gfxDWriteFont::~gfxDWriteFont()
     delete mMetrics;
 }
 
-gfxFont*
+void
+gfxDWriteFont::UpdateClearTypeUsage()
+{
+  Factory::UpdateSystemTextQuality();
+  mUseClearType = UsingClearType();
+}
+
+UniquePtr<gfxFont>
 gfxDWriteFont::CopyWithAntialiasOption(AntialiasOption anAAOption)
 {
-    return new gfxDWriteFont(static_cast<gfxDWriteFontEntry*>(mFontEntry.get()),
-                             &mStyle, mNeedsBold, anAAOption);
+    auto entry = static_cast<gfxDWriteFontEntry*>(mFontEntry.get());
+    RefPtr<UnscaledFontDWrite> unscaledFont = static_cast<UnscaledFontDWrite*>(mUnscaledFont.get());
+    return MakeUnique<gfxDWriteFont>(unscaledFont, entry, &mStyle, mNeedsBold, anAAOption);
 }
 
 const gfxFont::Metrics&
@@ -188,7 +173,7 @@ gfxDWriteFont::ComputeMetrics(AntialiasOption anAAOption)
 
     // Note that GetMeasuringMode depends on mAdjustedSize
     if ((anAAOption == gfxFont::kAntialiasDefault &&
-         UsingClearType() &&
+         mUseClearType &&
          GetMeasuringMode() == DWRITE_MEASURING_MODE_NATURAL) ||
         anAAOption == gfxFont::kAntialiasSubpixel)
     {
@@ -615,7 +600,7 @@ gfxDWriteFont::GetGlyphWidth(DrawTarget& aDrawTarget, uint16_t aGID)
 already_AddRefed<GlyphRenderingOptions>
 gfxDWriteFont::GetGlyphRenderingOptions(const TextRunDrawParams* aRunParams)
 {
-  if (UsingClearType()) {
+  if (mUseClearType) {
     return Factory::CreateDWriteGlyphRenderingOptions(
       gfxWindowsPlatform::GetPlatform()->GetRenderingParams(GetForceGDIClassic() ?
         gfxWindowsPlatform::TEXT_RENDERING_GDI_CLASSIC : gfxWindowsPlatform::TEXT_RENDERING_NORMAL));
@@ -699,6 +684,7 @@ gfxDWriteFont::GetScaledFont(mozilla::gfx::DrawTarget *aTarget)
 
   if (wantCairo) {
     mAzureScaledFont = Factory::CreateScaledFontWithCairo(nativeFont,
+                                                        GetUnscaledFont(),
                                                         GetAdjustedSize(),
                                                         GetCairoScaledFont());
   } else if (aTarget->GetBackendType() == BackendType::SKIA) {
@@ -706,13 +692,16 @@ gfxDWriteFont::GetScaledFont(mozilla::gfx::DrawTarget *aTarget)
         static_cast<gfxDWriteFontEntry*>(mFontEntry.get());
     bool useEmbeddedBitmap = (fe->IsCJKFont() && HasBitmapStrikeForSize(NS_lround(mAdjustedSize)));
 
+    const gfxFontStyle* fontStyle = GetStyle();
     mAzureScaledFont =
-            Factory::CreateScaledFontForDWriteFont(mFont, mFontFamily,
-                                                   mFontFace, GetAdjustedSize(),
+            Factory::CreateScaledFontForDWriteFont(mFontFace, fontStyle,
+                                                   GetUnscaledFont(),
+                                                   GetAdjustedSize(),
                                                    useEmbeddedBitmap,
                                                    GetForceGDIClassic());
   } else {
     mAzureScaledFont = Factory::CreateScaledFontForNativeFont(nativeFont,
+                                                            GetUnscaledFont(),
                                                             GetAdjustedSize());
   }
 

@@ -13,38 +13,50 @@ import android.view.ViewGroup;
 
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.home.HomePager;
+import org.mozilla.gecko.widget.RecyclerViewClickSupport;
 
-import java.util.LinkedList;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * The primary / top-level TopSites adapter: it handles the ViewPager, and also handles
  * all lower-level Adapters that populate the individual topsite items.
  */
 public class TopSitesPagerAdapter extends PagerAdapter {
-    // Note: because of RecyclerView limitations we need to also adjust the layout height when
-    // GRID_HEIGHT is changed.
-    public static final int GRID_HEIGHT = 1;
-    public static final int GRID_WIDTH = 4;
     public static final int PAGES = 4;
+    public static final int SUGGESTED_SITES_MAX_PAGES = 2;
 
-    public static final int ITEMS_PER_PAGE = GRID_HEIGHT * GRID_WIDTH;
-    public static final int TOTAL_ITEMS = ITEMS_PER_PAGE * PAGES;
+    private int tiles;
+    private int tilesWidth;
+    private int tilesHeight;
 
-    private LinkedList<TopSitesPage> pages = new LinkedList<>();
+    private final List<TopSitesPage> pages;
 
     private final Context context;
     private final HomePager.OnUrlOpenListener onUrlOpenListener;
+    private final HomePager.OnUrlOpenInBackgroundListener onUrlOpenInBackgroundListener;
 
     private int count = 0;
 
-    public TopSitesPagerAdapter(Context context, HomePager.OnUrlOpenListener onUrlOpenListener) {
+    public TopSitesPagerAdapter(Context context,
+                                HomePager.OnUrlOpenListener onUrlOpenListener,
+                                HomePager.OnUrlOpenInBackgroundListener onUrlOpenInBackgroundListener) {
+        pages = new ArrayList<>(PAGES);
+
         this.context = context;
         this.onUrlOpenListener = onUrlOpenListener;
+        this.onUrlOpenInBackgroundListener = onUrlOpenInBackgroundListener;
+    }
+
+    public void setTilesSize(int tiles, int tilesWidth, int tilesHeight) {
+        this.tilesWidth = tilesWidth;
+        this.tilesHeight = tilesHeight;
+        this.tiles = tiles;
     }
 
     @Override
     public int getCount() {
-        return count;
+        return Math.min(count, 4);
     }
 
     @Override
@@ -62,39 +74,53 @@ public class TopSitesPagerAdapter extends PagerAdapter {
     }
 
     @Override
+    public int getItemPosition(Object object) {
+        if (pages.contains(object)) {
+            // Pages don't get rearranged, so if it exists it still has its original position
+            return PagerAdapter.POSITION_UNCHANGED;
+        } else {
+            return PagerAdapter.POSITION_NONE;
+        }
+    }
+
+    @Override
     public void destroyItem(ViewGroup container, int position, Object object) {
         container.removeView((View) object);
     }
 
     public void swapCursor(Cursor cursor) {
-        final int oldPages = getCount();
-
         // Divide while rounding up: 0 items = 0 pages, 1-ITEMS_PER_PAGE items = 1 page, etc.
         if (cursor != null) {
-            count = (cursor.getCount() - 1) / ITEMS_PER_PAGE + 1;
+            count = (cursor.getCount() - 1) / tiles + 1;
         } else {
             count = 0;
         }
 
-        final int pageDelta = count - oldPages;
+        // Try to only add/remove pages if really needed: this minimises the amount of UI work that
+        // happens when e.g. only one topsite has moved or has been added.
+        final int pageDelta = count - pages.size();
 
         if (pageDelta > 0) {
             final LayoutInflater inflater = LayoutInflater.from(context);
             for (int i = 0; i < pageDelta; i++) {
                 final TopSitesPage page = (TopSitesPage) inflater.inflate(R.layout.activity_stream_topsites_page, null, false);
 
-                page.setOnUrlOpenListener(onUrlOpenListener);
-                page.setAdapter(new TopSitesPageAdapter());
+                page.setTiles(tiles);
+                final TopSitesPageAdapter adapter = new TopSitesPageAdapter(
+                        context, i, tiles, tilesWidth, tilesHeight,
+                        onUrlOpenListener, onUrlOpenInBackgroundListener);
+                page.setAdapter(adapter);
+                RecyclerViewClickSupport.addTo(page).setOnItemClickListener(adapter);
                 pages.add(page);
             }
         } else if (pageDelta < 0) {
             for (int i = 0; i > pageDelta; i--) {
-                final TopSitesPage page = pages.getLast();
+                final TopSitesPage page = pages.get(pages.size() - 1);
 
                 // Ensure the page doesn't use the old/invalid cursor anymore
                 page.getAdapter().swapCursor(null, 0);
 
-                pages.removeLast();
+                pages.remove(pages.size() - 1);
             }
         } else {
             // do nothing: we will be updating all the pages below
@@ -103,7 +129,7 @@ public class TopSitesPagerAdapter extends PagerAdapter {
         int startIndex = 0;
         for (TopSitesPage page : pages) {
             page.getAdapter().swapCursor(cursor, startIndex);
-            startIndex += ITEMS_PER_PAGE;
+            startIndex += tiles;
         }
 
         notifyDataSetChanged();

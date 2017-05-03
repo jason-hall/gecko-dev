@@ -16,9 +16,15 @@
 const {
   utils: Cu,
 } = Components;
-Cu.import("resource://gre/modules/ManifestObtainer.jsm");
-Cu.import("resource://gre/modules/ManifestFinder.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "ManifestObtainer",
+				  "resource://gre/modules/ManifestObtainer.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "ManifestFinder",
+				  "resource://gre/modules/ManifestFinder.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "ManifestIcons",
+				  "resource://gre/modules/ManifestIcons.jsm");
 
 const MessageHandler = {
   registerListeners() {
@@ -31,8 +37,12 @@ const MessageHandler = {
       this.obtainManifest.bind(this)
     );
     addMessageListener(
-      "DOM:Manifest:FireInstallEvent",
-      this.fireInstallEvent.bind(this)
+      "DOM:Manifest:FireAppInstalledEvent",
+      this.fireAppInstalledEvent.bind(this)
+    );
+    addMessageListener(
+      "DOM:WebManifest:fetchIcon",
+      this.fetchIcon.bind(this)
     );
   },
 
@@ -65,8 +75,8 @@ const MessageHandler = {
     sendAsyncMessage("DOM:ManifestObtainer:Obtain", response);
   }),
 
-  fireInstallEvent({data: {id}}){
-    const ev = new Event("install");
+  fireAppInstalledEvent({data: {id}}){
+    const ev = new Event("appinstalled");
     const response = makeMsgResponse(id);
     if (!content || content.top !== content) {
       const msg = "Can only dispatch install event on top-level browsing contexts.";
@@ -75,8 +85,25 @@ const MessageHandler = {
       response.success = true;
       content.dispatchEvent(ev);
     }
-    sendAsyncMessage("DOM:Manifest:FireInstallEvent", response);
-  }
+    sendAsyncMessage("DOM:Manifest:FireAppInstalledEvent", response);
+  },
+
+  /**
+   * Given a manifest and an expected icon size, ask ManifestIcons
+   * to fetch the appropriate icon and send along result
+   */
+  fetchIcon: Task.async(function* ({data: {id, manifest, iconSize}}) {
+    const response = makeMsgResponse(id);
+    try {
+      response.result =
+        yield ManifestIcons.contentFetchIcon(content, manifest, iconSize);
+      response.success = true;
+    } catch (err) {
+      response.result = serializeError(err);
+    }
+    sendAsyncMessage("DOM:WebManifest:fetchIcon", response);
+  }),
+
 };
 /**
  * Utility function to Serializes an JS Error, so it can be transferred over

@@ -31,14 +31,15 @@ NS_IMETHODIMP
 FocusEvent::GetRelatedTarget(nsIDOMEventTarget** aRelatedTarget)
 {
   NS_ENSURE_ARG_POINTER(aRelatedTarget);
-  NS_IF_ADDREF(*aRelatedTarget = GetRelatedTarget());
+  *aRelatedTarget = GetRelatedTarget().take();
   return NS_OK;
 }
 
-EventTarget*
+already_AddRefed<EventTarget>
 FocusEvent::GetRelatedTarget()
 {
-  return mEvent->AsFocusEvent()->mRelatedTarget;
+  return
+    EnsureWebAccessibleRelatedTarget(mEvent->AsFocusEvent()->mRelatedTarget);
 }
 
 void
@@ -49,6 +50,8 @@ FocusEvent::InitFocusEvent(const nsAString& aType,
                            int32_t aDetail,
                            EventTarget* aRelatedTarget)
 {
+  MOZ_ASSERT(!mEvent->mFlags.mIsBeingDispatched);
+
   UIEvent::InitUIEvent(aType, aCanBubble, aCancelable, aView, aDetail);
   mEvent->AsFocusEvent()->mRelatedTarget = aRelatedTarget;
 }

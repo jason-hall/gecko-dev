@@ -319,11 +319,10 @@ nsHtml5TreeOperation::AddAttributes(nsIContent* aNode,
     if (!node->HasAttr(nsuri, localName)) {
       // prefix doesn't need regetting. it is always null or a static atom
       // local name is never null
-      node->SetAttr(nsuri,
-                    localName,
-                    aAttributes->getPrefixNoBoundsCheck(i),
-                    *(aAttributes->getValueNoBoundsCheck(i)),
-                    true);
+      nsString value; // Not Auto, because using it to hold nsStringBuffer*
+      aAttributes->getValueNoBoundsCheck(i).ToString(value);
+      node->SetAttr(
+        nsuri, localName, aAttributes->getPrefixNoBoundsCheck(i), value, true);
       // XXX what to do with nsresult?
     }
   }
@@ -418,12 +417,14 @@ nsHtml5TreeOperation::CreateElement(int32_t aNs,
     nsCOMPtr<nsIAtom> prefix = aAttributes->getPrefixNoBoundsCheck(i);
     int32_t nsuri = aAttributes->getURINoBoundsCheck(i);
 
+    nsString value; // Not Auto, because using it to hold nsStringBuffer*
+    aAttributes->getValueNoBoundsCheck(i).ToString(value);
     if (aNs == kNameSpaceID_XHTML &&
         nsHtml5Atoms::a == aName &&
         nsHtml5Atoms::name == localName) {
       // This is an HTML5-incompliant Geckoism.
       // Remove when fixing bug 582361
-      NS_ConvertUTF16toUTF8 cname(*(aAttributes->getValueNoBoundsCheck(i)));
+      NS_ConvertUTF16toUTF8 cname(value);
       NS_ConvertUTF8toUTF16 uv(nsUnescape(cname.BeginWriting()));
       newContent->SetAttr(nsuri,
                           localName,
@@ -431,7 +432,6 @@ nsHtml5TreeOperation::CreateElement(int32_t aNs,
                           uv,
                           false);
     } else {
-      nsString& value = *(aAttributes->getValueNoBoundsCheck(i));
       newContent->SetAttr(nsuri,
                           localName,
                           prefix,
@@ -596,8 +596,11 @@ void
 nsHtml5TreeOperation::PreventScriptExecution(nsIContent* aNode)
 {
   nsCOMPtr<nsIScriptElement> sele = do_QueryInterface(aNode);
-  MOZ_ASSERT(sele);
-  sele->PreventExecution();
+  if (sele) {
+    sele->PreventExecution();
+  } else {
+    MOZ_ASSERT(nsNameSpaceManager::GetInstance()->mSVGDisabled, "Node didn't QI to script, but SVG wasn't disabled.");
+  }
 }
 
 void
@@ -616,7 +619,9 @@ void
 nsHtml5TreeOperation::SvgLoad(nsIContent* aNode)
 {
   nsCOMPtr<nsIRunnable> event = new nsHtml5SVGLoadDispatcher(aNode);
-  if (NS_FAILED(NS_DispatchToMainThread(event))) {
+  if (NS_FAILED(aNode->OwnerDoc()->Dispatch("nsHtml5SVGLoadDispatcher",
+                                            TaskCategory::Other,
+                                            event.forget()))) {
     NS_WARNING("failed to dispatch svg load dispatcher");
   }
 }
@@ -633,7 +638,8 @@ nsHtml5TreeOperation::MarkMalformedIfScript(nsIContent* aNode)
 
 nsresult
 nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
-                              nsIContent** aScriptElement)
+                              nsIContent** aScriptElement,
+                              bool* aInterrupted)
 {
   switch(mOpCode) {
     case eTreeOpUninitialized: {
@@ -662,7 +668,10 @@ nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
     }
     case eTreeOpAppendToDocument: {
       nsIContent* node = *(mOne.node);
-      return AppendToDocument(node, aBuilder);
+      nsresult rv = AppendToDocument(node, aBuilder);
+
+      aBuilder->PauseDocUpdate(aInterrupted);
+      return rv;
     }
     case eTreeOpAddAttributes: {
       nsIContent* node = *(mOne.node);
@@ -824,16 +833,22 @@ nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
     case eTreeOpSetStyleLineNumber: {
       nsIContent* node = *(mOne.node);
       nsCOMPtr<nsIStyleSheetLinkingElement> ssle = do_QueryInterface(node);
-      NS_ASSERTION(ssle, "Node didn't QI to style.");
-      ssle->SetLineNumber(mFour.integer);
+      if (ssle) {
+        ssle->SetLineNumber(mFour.integer);
+      } else {
+        MOZ_ASSERT(nsNameSpaceManager::GetInstance()->mSVGDisabled, "Node didn't QI to style, but SVG wasn't disabled.");
+      }
       return NS_OK;
     }
     case eTreeOpSetScriptLineNumberAndFreeze: {
       nsIContent* node = *(mOne.node);
       nsCOMPtr<nsIScriptElement> sele = do_QueryInterface(node);
-      NS_ASSERTION(sele, "Node didn't QI to script.");
-      sele->SetScriptLineNumber(mFour.integer);
-      sele->FreezeUriAsyncDefer();
+      if (sele) {
+        sele->SetScriptLineNumber(mFour.integer);
+        sele->FreezeUriAsyncDefer();
+      } else {
+        MOZ_ASSERT(nsNameSpaceManager::GetInstance()->mSVGDisabled, "Node didn't QI to script, but SVG wasn't disabled.");
+      }
       return NS_OK;
     }
     case eTreeOpSvgLoad: {
@@ -984,7 +999,7 @@ nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
       return NS_OK;
     }
     case eTreeOpStartLayout: {
-      aBuilder->StartLayout(); // this causes a notification flush anyway
+      aBuilder->StartLayout(aInterrupted); // this causes a notification flush anyway
       return NS_OK;
     }
     default: {

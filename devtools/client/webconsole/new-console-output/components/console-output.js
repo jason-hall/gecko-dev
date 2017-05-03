@@ -9,10 +9,14 @@ const {
   DOM: dom,
   PropTypes
 } = require("devtools/client/shared/vendor/react");
-const ReactDOM = require("devtools/client/shared/vendor/react-dom");
 const { connect } = require("devtools/client/shared/vendor/react-redux");
 
-const { getAllMessages, getAllMessagesUiById, getAllMessagesTableDataById } = require("devtools/client/webconsole/new-console-output/selectors/messages");
+const {
+  getAllMessages,
+  getAllMessagesUiById,
+  getAllMessagesTableDataById,
+  getAllGroupsById,
+} = require("devtools/client/webconsole/new-console-output/selectors/messages");
 const { getScrollSetting } = require("devtools/client/webconsole/new-console-output/selectors/ui");
 const MessageContainer = createFactory(require("devtools/client/webconsole/new-console-output/components/message-container").MessageContainer);
 
@@ -21,19 +25,22 @@ const ConsoleOutput = createClass({
   displayName: "ConsoleOutput",
 
   propTypes: {
-    hudProxyClient: PropTypes.object.isRequired,
     messages: PropTypes.object.isRequired,
     messagesUi: PropTypes.object.isRequired,
-    sourceMapService: PropTypes.object,
-    onViewSourceInDebugger: PropTypes.func.isRequired,
-    openNetworkPanel: PropTypes.func.isRequired,
-    openLink: PropTypes.func.isRequired,
-    emitNewMessage: PropTypes.func.isRequired,
+    serviceContainer: PropTypes.shape({
+      attachRefToHud: PropTypes.func.isRequired,
+      openContextMenu: PropTypes.func.isRequired,
+    }),
     autoscroll: PropTypes.bool.isRequired,
+    dispatch: PropTypes.func.isRequired,
+    timestampsVisible: PropTypes.bool,
+    groups: PropTypes.object.isRequired,
+    messagesTableData: PropTypes.object.isRequired,
   },
 
   componentDidMount() {
     scrollToBottom(this.outputNode);
+    this.props.serviceContainer.attachRefToHud("outputScroller", this.outputNode);
   },
 
   componentWillUpdate(nextProps, nextState) {
@@ -56,42 +63,54 @@ const ConsoleOutput = createClass({
     }
   },
 
+  onContextMenu(e) {
+    this.props.serviceContainer.openContextMenu(e);
+    e.stopPropagation();
+    e.preventDefault();
+  },
+
   render() {
     let {
       dispatch,
       autoscroll,
-      hudProxyClient,
       messages,
       messagesUi,
       messagesTableData,
-      sourceMapService,
-      onViewSourceInDebugger,
-      openNetworkPanel,
-      openLink,
-      emitNewMessage,
+      serviceContainer,
+      groups,
+      timestampsVisible,
     } = this.props;
 
     let messageNodes = messages.map((message) => {
+      const parentGroups = message.groupId ? (
+        (groups.get(message.groupId) || [])
+          .concat([message.groupId])
+      ) : [];
+
       return (
         MessageContainer({
           dispatch,
-          hudProxyClient,
           message,
           key: message.id,
-          sourceMapService,
-          onViewSourceInDebugger,
-          openNetworkPanel,
-          openLink,
-          emitNewMessage,
+          serviceContainer,
           open: messagesUi.includes(message.id),
           tableData: messagesTableData.get(message.id),
           autoscroll,
+          indent: parentGroups.length,
         })
       );
     });
+
+    let classList = ["webconsole-output"];
+
+    if (!timestampsVisible) {
+      classList.push("hideTimestamps");
+    }
+
     return (
       dom.div({
-        className: "webconsole-output",
+        className: classList.join(" "),
+        onContextMenu: this.onContextMenu,
         ref: node => {
           this.outputNode = node;
         },
@@ -112,12 +131,14 @@ function isScrolledToBottom(outputNode, scrollNode) {
          scrollNode.scrollHeight - lastNodeHeight / 2;
 }
 
-function mapStateToProps(state) {
+function mapStateToProps(state, props) {
   return {
     messages: getAllMessages(state),
     messagesUi: getAllMessagesUiById(state),
     messagesTableData: getAllMessagesTableDataById(state),
     autoscroll: getScrollSetting(state),
+    groups: getAllGroupsById(state),
+    timestampsVisible: state.ui.timestampsVisible,
   };
 }
 

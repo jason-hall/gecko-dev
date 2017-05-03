@@ -30,8 +30,7 @@ this.EXPORTED_SYMBOLS = [
  * the registered download status indicators.
  */
 
-////////////////////////////////////////////////////////////////////////////////
-//// Globals
+// Globals
 
 const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
 
@@ -89,7 +88,7 @@ const kDownloadsStringsRequiringFormatting = {
 };
 
 const kDownloadsStringsRequiringPluralForm = {
-  otherDownloads2: true
+  otherDownloads3: true
 };
 
 const kPartialDownloadSuffix = ".part";
@@ -111,7 +110,7 @@ var PrefObserver = {
   observe(aSubject, aTopic, aData) {
     if (this.prefs.hasOwnProperty(aData)) {
       delete this[aData];
-      return this[aData] = this.getPref(aData);
+      this[aData] = this.getPref(aData);
     }
   },
   register(prefs) {
@@ -119,7 +118,7 @@ var PrefObserver = {
     kPrefBranch.addObserver("", this, true);
     for (let key in prefs) {
       let name = key;
-      XPCOMUtils.defineLazyGetter(this, name, function () {
+      XPCOMUtils.defineLazyGetter(this, name, function() {
         return PrefObserver.getPref(name);
       });
     }
@@ -133,8 +132,7 @@ PrefObserver.register({
 });
 
 
-////////////////////////////////////////////////////////////////////////////////
-//// DownloadsCommon
+// DownloadsCommon
 
 /**
  * This object is exposed directly to the consumers of this JavaScript module,
@@ -145,6 +143,13 @@ this.DownloadsCommon = {
   ATTENTION_SUCCESS: "success",
   ATTENTION_WARNING: "warning",
   ATTENTION_SEVERE: "severe",
+
+  /**
+   * This can be used by add-on experiments as a killswitch for the new style
+   * progress indication. This will be removed in bug 1329109 after the new
+   * indicator is released.
+   **/
+  arrowStyledIndicator: true,
 
   /**
    * Returns an object whose keys are the string names from the downloads string
@@ -159,14 +164,14 @@ this.DownloadsCommon = {
       let string = enumerator.getNext().QueryInterface(Ci.nsIPropertyElement);
       let stringName = string.key;
       if (stringName in kDownloadsStringsRequiringFormatting) {
-        strings[stringName] = function () {
+        strings[stringName] = function() {
           // Convert "arguments" to a real array before calling into XPCOM.
           return sb.formatStringFromName(stringName,
                                          Array.slice(arguments, 0),
                                          arguments.length);
         };
       } else if (stringName in kDownloadsStringsRequiringPluralForm) {
-        strings[stringName] = function (aCount) {
+        strings[stringName] = function(aCount) {
           // Convert "arguments" to a real array before calling into XPCOM.
           let formattedString = sb.formatStringFromName(stringName,
                                          Array.slice(arguments, 0),
@@ -236,9 +241,8 @@ this.DownloadsCommon = {
   getData(aWindow) {
     if (PrivateBrowsingUtils.isContentWindowPrivate(aWindow)) {
       return PrivateDownloadsData;
-    } else {
-      return DownloadsData;
     }
+    return DownloadsData;
   },
 
   /**
@@ -258,9 +262,8 @@ this.DownloadsCommon = {
   getIndicatorData(aWindow) {
     if (PrivateBrowsingUtils.isContentWindowPrivate(aWindow)) {
       return PrivateDownloadsIndicatorData;
-    } else {
-      return DownloadsIndicatorData;
     }
+    return DownloadsIndicatorData;
   },
 
   /**
@@ -279,12 +282,11 @@ this.DownloadsCommon = {
         return this._privateSummary;
       }
       return this._privateSummary = new DownloadsSummaryData(true, aNumToExclude);
-    } else {
-      if (this._summary) {
-        return this._summary;
-      }
-      return this._summary = new DownloadsSummaryData(false, aNumToExclude);
     }
+    if (this._summary) {
+      return this._summary;
+    }
+    return this._summary = new DownloadsSummaryData(false, aNumToExclude);
   },
   _summary: null,
   _privateSummary: null,
@@ -628,8 +630,7 @@ this.DownloadsCommon = {
       if (topic == "domwindowopened" && subj instanceof Ci.nsIDOMWindow) {
         // Make sure to listen for "DOMContentLoaded" because it is fired
         // before the "load" event.
-        subj.addEventListener("DOMContentLoaded", function onLoad() {
-          subj.removeEventListener("DOMContentLoaded", onLoad);
+        subj.addEventListener("DOMContentLoaded", function() {
           if (subj.document.documentURI ==
               "chrome://global/content/commonDialog.xul") {
             Services.ww.unregisterNotification(onOpen);
@@ -639,7 +640,7 @@ this.DownloadsCommon = {
               dialog.classList.add("alert-dialog");
             }
           }
-        });
+        }, {once: true});
       }
     });
 
@@ -660,7 +661,7 @@ XPCOMUtils.defineLazyGetter(this.DownloadsCommon, "error", () => {
 /**
  * Returns true if we are executing on Windows Vista or a later version.
  */
-XPCOMUtils.defineLazyGetter(DownloadsCommon, "isWinVistaOrHigher", function () {
+XPCOMUtils.defineLazyGetter(DownloadsCommon, "isWinVistaOrHigher", function() {
   let os = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime).OS;
   if (os != "WINNT") {
     return false;
@@ -669,8 +670,7 @@ XPCOMUtils.defineLazyGetter(DownloadsCommon, "isWinVistaOrHigher", function () {
   return parseFloat(sysInfo.getProperty("version")) >= 6;
 });
 
-////////////////////////////////////////////////////////////////////////////////
-//// DownloadsData
+// DownloadsData
 
 /**
  * Retrieves the list of past and completed downloads from the underlying
@@ -750,8 +750,7 @@ DownloadsDataCtor.prototype = {
     indicatorData.attention = DownloadsCommon.ATTENTION_NONE;
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Integration with the asynchronous Downloads back-end
+  // Integration with the asynchronous Downloads back-end
 
   onDownloadAdded(download) {
     // Download objects do not store the end time of downloads, as the Downloads
@@ -841,8 +840,7 @@ DownloadsDataCtor.prototype = {
     }
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Registration of views
+  // Registration of views
 
   /**
    * Adds an object to be notified when the available download data changes.
@@ -890,8 +888,7 @@ DownloadsDataCtor.prototype = {
     aView.onDataLoadCompleted();
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Notifications sent to the most recent browser window only
+  // Notifications sent to the most recent browser window only
 
   /**
    * Set to true after the first download causes the downloads panel to be
@@ -946,16 +943,14 @@ XPCOMUtils.defineLazyGetter(this, "DownloadsData", function() {
   return new DownloadsDataCtor(false);
 });
 
-////////////////////////////////////////////////////////////////////////////////
-//// DownloadsViewPrototype
+// DownloadsViewPrototype
 
 /**
  * A prototype for an object that registers itself with DownloadsData as soon
  * as a view is registered with it.
  */
 const DownloadsViewPrototype = {
-  //////////////////////////////////////////////////////////////////////////////
-  //// Registration of views
+  // Registration of views
 
   /**
    * Array of view objects that should be notified when the available status
@@ -1030,8 +1025,7 @@ const DownloadsViewPrototype = {
     }
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Callback functions from DownloadsData
+  // Callback functions from DownloadsData
 
   /**
    * Indicates whether we are still loading downloads data asynchronously.
@@ -1130,8 +1124,7 @@ const DownloadsViewPrototype = {
   },
 };
 
-////////////////////////////////////////////////////////////////////////////////
-//// DownloadsIndicatorData
+// DownloadsIndicatorData
 
 /**
  * This object registers itself with DownloadsData as a view, and transforms the
@@ -1164,8 +1157,7 @@ DownloadsIndicatorDataCtor.prototype = {
     }
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Callback functions from DownloadsData
+  // Callback functions from DownloadsData
 
   onDataLoadCompleted() {
     DownloadsViewPrototype.onDataLoadCompleted.call(this);
@@ -1195,11 +1187,16 @@ DownloadsIndicatorDataCtor.prototype = {
           Cu.reportError("Unknown reputation verdict: " +
                          download.error.reputationCheckVerdict);
       }
-    } else if (download.succeeded || download.error) {
+    } else if (download.succeeded) {
       // Existing higher level attention indication trumps ATTENTION_SUCCESS.
       if (this._attention != DownloadsCommon.ATTENTION_SEVERE &&
           this._attention != DownloadsCommon.ATTENTION_WARNING) {
         this.attention = DownloadsCommon.ATTENTION_SUCCESS;
+      }
+    } else if (download.error) {
+      // Existing higher level attention indication trumps ATTENTION_WARNING.
+      if (this._attention != DownloadsCommon.ATTENTION_SEVERE) {
+        this.attention = DownloadsCommon.ATTENTION_WARNING;
       }
     }
 
@@ -1217,8 +1214,7 @@ DownloadsIndicatorDataCtor.prototype = {
     this._updateViews();
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Propagation of properties to our views
+  // Propagation of properties to our views
 
   // The following properties are updated by _refreshProperties and are then
   // propagated to the views.  See _refreshProperties for details.
@@ -1277,8 +1273,7 @@ DownloadsIndicatorDataCtor.prototype = {
                                                 : this._attention;
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Property updating based on current download status
+  // Property updating based on current download status
 
   /**
    * Number of download items that are available to be displayed.
@@ -1359,8 +1354,7 @@ XPCOMUtils.defineLazyGetter(this, "DownloadsIndicatorData", function() {
   return new DownloadsIndicatorDataCtor(false);
 });
 
-////////////////////////////////////////////////////////////////////////////////
-//// DownloadsSummaryData
+// DownloadsSummaryData
 
 /**
  * DownloadsSummaryData is a view for DownloadsData that produces a summary
@@ -1428,10 +1422,9 @@ DownloadsSummaryData.prototype = {
     }
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Callback functions from DownloadsData - see the documentation in
-  //// DownloadsViewPrototype for more information on what these functions
-  //// are used for.
+  // Callback functions from DownloadsData - see the documentation in
+  // DownloadsViewPrototype for more information on what these functions
+  // are used for.
 
   onDataLoadCompleted() {
     DownloadsViewPrototype.onDataLoadCompleted.call(this);
@@ -1464,8 +1457,7 @@ DownloadsSummaryData.prototype = {
     this._updateViews();
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Propagation of properties to our views
+  // Propagation of properties to our views
 
   /**
    * Computes aggregate values and propagates the changes to our views.
@@ -1493,8 +1485,7 @@ DownloadsSummaryData.prototype = {
     aView.details = this._details;
   },
 
-  //////////////////////////////////////////////////////////////////////////////
-  //// Property updating based on current download status
+  // Property updating based on current download status
 
   /**
    * A generator function for the Download objects this summary is currently
@@ -1520,12 +1511,11 @@ DownloadsSummaryData.prototype = {
       DownloadsCommon.summarizeDownloads(this._downloadsForSummary());
 
     this._description = DownloadsCommon.strings
-                                       .otherDownloads2(summary.numActive);
+                                       .otherDownloads3(summary.numDownloading);
     this._percentComplete = summary.percentComplete;
 
-    // If all downloads are paused, show the progress indicator as paused.
-    this._showingProgress = summary.numDownloading > 0 ||
-                            summary.numPaused > 0;
+    // Only show the downloading items.
+    this._showingProgress = summary.numDownloading > 0;
 
     // Display the estimated time left, if present.
     if (summary.rawTimeLeft == -1) {

@@ -58,7 +58,7 @@
 }
 
 #filter-button {
-  list-style-image: url(images/filter.svg);
+  list-style-image: url(chrome://devtools/skin/images/filter.svg);
 }
 
 #performance-filter-menupopup > menuitem .menu-iconic-left::after {
@@ -695,6 +695,12 @@
 .marker-details-customcontainer .custom-button {
   padding: 2px 5px;
   border-width: 1px;
+  color: var(--theme-highlight-blue);
+  text-decoration: none;
+}
+
+.marker-details-customcontainer .custom-button:hover {
+  text-decoration: underline;
 }
 
 /**

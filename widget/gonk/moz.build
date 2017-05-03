@@ -17,7 +17,6 @@
 EXPORTS += [
     'GeckoTouchDispatcher.h',
     'GonkPermission.h',
-    'OrientationObserver.h',
 ]
 
 DIRS += ['libdisplay', 'nativewindow']
@@ -66,7 +65,6 @@ SOURCES += [
     'nsScreenManagerGonk.cpp',
     'nsWidgetFactory.cpp',
     'nsWindow.cpp',
-    'OrientationObserver.cpp',
     'ProcessOrientation.cpp',
     'WidgetTraceEvent.cpp'
 ]
@@ -86,9 +84,6 @@ LOCAL_INCLUDES += [
 DEFINES['HAVE_OFF64_T'] = True
 DEFINES['SK_BUILD_FOR_ANDROID_NDK'] = True
 DEFINES['HAVE_POSIX_CLOCKS'] = True
-
-if CONFIG['MOZ_OMX_DECODER']:
-    DEFINES['MOZ_OMX_DECODER'] = True
 
 LOCAL_INCLUDES += [
     '%' + '%s/%s' % (CONFIG['ANDROID_SOURCE'], d) for d in [

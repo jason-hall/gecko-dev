@@ -25,8 +25,8 @@ Preferences
   If ``unified`` is on, this controls whether to record *extended* data.
   This preference is controlled through the `Preferences` dialog.
 
-  Note that the default value here of this pref depends on the define ``RELEASE_BUILD`` and the channel.
-  If ``RELEASE_BUILD`` is set, ``MOZ_TELEMETRY_ON_BY_DEFAULT`` gets set, which means this pref will default to ``true``.
+  Note that the default value here of this pref depends on the define ``RELEASE_OR_BETA`` and the channel.
+  If ``RELEASE_OR_BETA`` is set, ``MOZ_TELEMETRY_ON_BY_DEFAULT`` gets set, which means this pref will default to ``true``.
   This is overridden by the preferences code on the "beta" channel, the pref also defaults to ``true`` there.
 
 ``datareporting.healthreport.uploadEnabled``
@@ -50,12 +50,20 @@ Preferences
 
   Sets whether to dump Telemetry log messages to ``stdout`` too.
 
+``toolkit.telemetry.shutdownPingSender.enabled``
+
+  Allow the ``shutdown`` ping to be sent when the browser shuts down, instead of the next restart, using the :doc:`ping sender <pingsender>`.
+
 Data-choices notification
 -------------------------
 
 ``toolkit.telemetry.reportingpolicy.firstRun``
 
   This preference is not present until the first run. After, its value is set to false. This is used to show the infobar with a more aggressive timeout if it wasn't shown yet.
+
+``datareporting.policy.firstRunURL``
+
+  If set, a browser tab will be opened on first run instead of the infobar.
 
 ``datareporting.policy.dataSubmissionEnabled``
 
@@ -96,7 +104,7 @@ The following prefs are for testing purpose only.
 
 ``toolkit.telemetry.minSubsessionLength``
 
-  Minimum length of a telemetry subsession (seconds).
+  Minimum length of a telemetry subsession and throttling time for common environment changes (seconds).
 
 ``toolkit.telemetry.collectInterval``
 
@@ -113,3 +121,11 @@ The following prefs are for testing purpose only.
 ``toolkit.telemetry.idleTimeout``
 
   Timeout until we decide whether a user is idle or not (seconds).
+
+``toolkit.telemetry.modulesPing.interval``
+
+  Interval between "modules" ping transmissions.
+
+``toolkit.telemetry.send.overrideOfficialCheck``
+
+  If true, allows sending pings on unofficial builds. Requires a restart.

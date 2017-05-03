@@ -18,19 +18,21 @@ PageError.displayName = "PageError";
 PageError.propTypes = {
   message: PropTypes.object.isRequired,
   open: PropTypes.bool,
+  indent: PropTypes.number.isRequired,
 };
 
 PageError.defaultProps = {
-  open: false
+  open: false,
+  indent: 0,
 };
 
 function PageError(props) {
   const {
+    dispatch,
     message,
     open,
-    sourceMapService,
-    onViewSourceInDebugger,
-    emitNewMessage,
+    serviceContainer,
+    indent,
   } = props;
   const {
     id: messageId,
@@ -40,23 +42,30 @@ function PageError(props) {
     messageText: messageBody,
     repeat,
     stacktrace,
-    frame
+    frame,
+    exceptionDocURL,
+    timeStamp,
+    notes,
   } = message;
 
   const childProps = {
+    dispatch,
     messageId,
     open,
+    collapsible: Array.isArray(stacktrace),
     source,
     type,
     level,
     topLevelClasses: [],
+    indent,
     messageBody,
     repeat,
     frame,
     stacktrace,
-    onViewSourceInDebugger,
-    sourceMapService,
-    emitNewMessage,
+    serviceContainer,
+    exceptionDocURL,
+    timeStamp,
+    notes,
   };
   return Message(childProps);
 }

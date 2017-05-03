@@ -9,14 +9,14 @@
  */
 
 enum RTCStatsType {
-  "inboundrtp",
-  "outboundrtp",
+  "inbound-rtp",
+  "outbound-rtp",
   "session",
   "track",
   "transport",
-  "candidatepair",
-  "localcandidate",
-  "remotecandidate"
+  "candidate-pair",
+  "local-candidate",
+  "remote-candidate"
 };
 
 dictionary RTCStats {
@@ -34,11 +34,17 @@ dictionary RTCRTPStreamStats : RTCStats {
   DOMString transportId;
   DOMString codecId;
 
-  // Video encoder/decoder measurements (absent for rtcp)
+  // Video encoder/decoder measurements, not present in RTCP case
   double bitrateMean;
   double bitrateStdDev;
   double framerateMean;
   double framerateStdDev;
+
+  // Local only measurements, RTCP related but not communicated via RTCP. Not
+  // present in RTCP case.
+  unsigned long firCount;
+  unsigned long pliCount;
+  unsigned long nackCount;
 };
 
 dictionary RTCInboundRTPStreamStats : RTCRTPStreamStats {
@@ -48,9 +54,9 @@ dictionary RTCInboundRTPStreamStats : RTCRTPStreamStats {
   unsigned long packetsLost;
   long mozAvSyncDelay;
   long mozJitterBufferDelay;
-  long mozRtt;
+  long roundTripTime;
 
-  // Video decoder measurement (absent in rtcp case)
+  // Video decoder measurement, not present in RTCP case
   unsigned long discardedPackets;
 };
 
@@ -59,8 +65,9 @@ dictionary RTCOutboundRTPStreamStats : RTCRTPStreamStats {
   unsigned long long bytesSent;
   double targetBitrate;  // config encoder bitrate target of this SSRC in bits/s
 
-  // Video encoder measurement (absent in rtcp case)
+  // Video encoder measurements, not present in RTCP case
   unsigned long droppedFrames;
+  unsigned long framesEncoded;
 };
 
 dictionary RTCMediaStreamTrackStats : RTCStats {
@@ -163,6 +170,8 @@ dictionary RTCStatsReportInternal {
   DOMString                           localSdp;
   DOMString                           remoteSdp;
   DOMHighResTimeStamp                 timestamp;
+  unsigned long                       iceRestarts;
+  unsigned long                       iceRollbacks;
   boolean                             closed; // Is the PC now closed
 };
 

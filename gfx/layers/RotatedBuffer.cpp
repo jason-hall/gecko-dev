@@ -406,20 +406,6 @@ ComputeBufferRect(const IntRect& aRequestedRect)
   // rendering glitch, and guarantees image rows can be SIMD'd for
   // even r5g6b5 surfaces pretty much everywhere.
   rect.width = std::max(aRequestedRect.width, 64);
-#ifdef MOZ_WIDGET_GONK
-  // Set a minumum height to guarantee a minumum height of buffers we
-  // allocate. Some GL implementations fail to render gralloc textures
-  // with a height 9px-16px. It happens on Adreno 200. Adreno 320 does not
-  // have this problem. 32 is choosed as alignment of gralloc buffers.
-  // See Bug 873937.
-  // Increase the height only when the requested height is more than 0.
-  // See Bug 895976.
-  // XXX it might be better to disable it on the gpu that does not have
-  // the height problem.
-  if (rect.height > 0) {
-    rect.height = std::max(aRequestedRect.height, 32);
-  }
-#endif
   return rect;
 }
 
@@ -441,8 +427,10 @@ RotatedContentBuffer::BeginPaint(PaintedLayer* aLayer,
   PaintState result;
   // We need to disable rotation if we're going to be resampled when
   // drawing, because we might sample across the rotation boundary.
+  // Also disable buffer rotation when using webrender.
   bool canHaveRotation = gfxPlatform::BufferRotationEnabled() &&
-                         !(aFlags & (PAINT_WILL_RESAMPLE | PAINT_NO_ROTATION));
+                         !(aFlags & (PAINT_WILL_RESAMPLE | PAINT_NO_ROTATION)) &&
+                         !(aLayer->Manager()->AsWebRenderLayerManager());
 
   nsIntRegion validRegion = aLayer->GetValidRegion();
 
@@ -480,7 +468,7 @@ RotatedContentBuffer::BeginPaint(PaintedLayer* aLayer,
     }
 
     if (mode == SurfaceMode::SURFACE_COMPONENT_ALPHA) {
-#if defined(MOZ_GFX_OPTIMIZE_MOBILE) || defined(MOZ_WIDGET_GONK)
+#if defined(MOZ_GFX_OPTIMIZE_MOBILE)
       mode = SurfaceMode::SURFACE_SINGLE_CHANNEL_ALPHA;
 #else
       if (!aLayer->GetParent() ||
@@ -555,10 +543,20 @@ RotatedContentBuffer::BeginPaint(PaintedLayer* aLayer,
     return result;
 
   if (HaveBuffer()) {
-    // Do not modify result.mRegionToDraw or result.mContentType after this call.
-    // Do not modify mBufferRect, mBufferRotation, or mDidSelfCopy,
-    // or call CreateBuffer before this call.
-    FinalizeFrame(result.mRegionToDraw);
+    if (LockBuffers()) {
+      // Do not modify result.mRegionToDraw or result.mContentType after this call.
+      // Do not modify mBufferRect, mBufferRotation, or mDidSelfCopy,
+      // or call CreateBuffer before this call.
+      FinalizeFrame(result.mRegionToDraw);
+    } else {
+      // Abandon everything and redraw it all. Ideally we'd reallocate and copy
+      // the old to the new and then call FinalizeFrame on the new buffer so that
+      // we only need to draw the latest bits, but we need a big refactor to support
+      // that ordering.
+      result.mRegionToDraw = neededRegion;
+      canReuseBuffer = false;
+      Clear();
+    }
   }
 
   IntRect drawBounds = result.mRegionToDraw.GetBounds();

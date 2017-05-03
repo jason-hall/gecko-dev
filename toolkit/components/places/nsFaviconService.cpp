@@ -31,7 +31,7 @@
 #include "nsILoadInfo.h"
 #include "nsIContentPolicy.h"
 #include "nsContentUtils.h"
-#include "nsNullPrincipal.h"
+#include "NullPrincipal.h"
 
 // For large favicons optimization.
 #include "imgITools.h"
@@ -240,7 +240,7 @@ nsFaviconService::SetAndFetchFaviconForPage(nsIURI* aPageURI,
                                     nsContentUtils::eNECKO_PROPERTIES,
                                     "APIDeprecationWarning",
                                     params, ArrayLength(params));
-    loadingPrincipal = nsNullPrincipal::Create();
+    loadingPrincipal = NullPrincipal::Create();
   }
   NS_ENSURE_TRUE(loadingPrincipal, NS_ERROR_FAILURE);
 
@@ -402,7 +402,7 @@ nsFaviconService::ReplaceFaviconDataFromDataURL(nsIURI* aFaviconURI,
                                     "APIDeprecationWarning",
                                     params, ArrayLength(params));
 
-    loadingPrincipal = nsNullPrincipal::Create();
+    loadingPrincipal = NullPrincipal::Create();
   }
   NS_ENSURE_TRUE(loadingPrincipal, NS_ERROR_FAILURE);
 
@@ -413,7 +413,7 @@ nsFaviconService::ReplaceFaviconDataFromDataURL(nsIURI* aFaviconURI,
                           nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_DATA_INHERITS |
                           nsILoadInfo::SEC_ALLOW_CHROME |
                           nsILoadInfo::SEC_DISALLOW_SCRIPT,
-                          nsIContentPolicy::TYPE_INTERNAL_IMAGE);
+                          nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON);
 
   nsCOMPtr<nsIChannel> channel;
   rv = protocolHandler->NewChannel2(dataURI, loadInfo, getter_AddRefs(channel));

@@ -12,9 +12,6 @@ interface MozXULTemplateBuilder;
 
 [Func="IsChromeOrXBL"]
 interface XULElement : Element {
-  [SetterThrows]
-  attribute DOMString className;
-
   // Layout properties
   [SetterThrows]
   attribute DOMString align;
@@ -100,7 +97,7 @@ interface XULElement : Element {
   void                      focus();
   [Throws]
   void                      blur();
-  [Throws]
+  [NeedsCallerType]
   void                      click();
   void                      doCommand();
 
@@ -124,6 +121,9 @@ interface MozFrameLoaderOwner {
 
   [ChromeOnly]
   void setIsPrerendered();
+
+  [ChromeOnly, Throws]
+  void presetOpenerWindow(WindowProxy? window);
 
   [ChromeOnly, Throws]
   void swapFrameLoaders(XULElement aOtherLoaderOwner);

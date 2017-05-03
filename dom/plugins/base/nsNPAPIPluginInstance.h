@@ -30,6 +30,7 @@ class PluginEventRunnable;
 #include "mozilla/EventForwards.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/PluginLibrary.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/WeakPtr.h"
 
 class nsPluginStreamListenerPeer; // browser-initiated stream class
@@ -135,7 +136,8 @@ public:
     return !!mAudioChannelAgent;
   }
 
-  nsresult GetOrCreateAudioChannelAgent(nsIAudioChannelAgent** aAgent);
+  void NotifyStartedPlaying();
+  void NotifyStoppedPlaying();
 
   nsresult SetMuted(bool aIsMuted);
 
@@ -301,10 +303,6 @@ public:
   NPError FinalizeAsyncSurface(NPAsyncSurface *surface);
   void SetCurrentAsyncSurface(NPAsyncSurface *surface, NPRect *changed);
 
-  // Called when the instance fails to instantiate beceause the Carbon
-  // event model is not supported.
-  void CarbonNPAPIFailure();
-
   // Returns the contents scale factor of the screen the plugin is drawn on.
   double GetContentsScaleFactor();
 
@@ -333,12 +331,13 @@ protected:
   virtual ~nsNPAPIPluginInstance();
 
   nsresult GetTagType(nsPluginTagType *result);
-  nsresult GetMode(int32_t *result);
 
   // check if this is a Java applet and affected by bug 750480
   void CheckJavaC2PJSObjectQuirk(uint16_t paramCount,
                                  const char* const* names,
                                  const char* const* values);
+
+  nsresult CreateAudioChannelAgentIfNeeded();
 
   // The structure used to communicate between the plugin instance and
   // the browser.
@@ -384,7 +383,7 @@ public:
   nsXPIDLCString mFakeURL;
 
 private:
-  nsNPAPIPlugin* mPlugin;
+  RefPtr<nsNPAPIPlugin> mPlugin;
 
   nsTArray<nsNPAPIPluginStreamListener*> mStreamListeners;
 
@@ -430,6 +429,7 @@ private:
   char **mCachedParamValues;
 
   nsCOMPtr<nsIAudioChannelAgent> mAudioChannelAgent;
+  bool mMuted;
 };
 
 // On Android, we need to guard against plugin code leaking entries in the local
@@ -440,23 +440,23 @@ private:
   #define MAIN_THREAD_JNI_REF_GUARD
 #endif
 
-PRIntervalTime NS_NotifyBeginPluginCall(NSPluginCallReentry aReentryState);
-void NS_NotifyPluginCall(PRIntervalTime aTime, NSPluginCallReentry aReentryState);
+void NS_NotifyBeginPluginCall(NSPluginCallReentry aReentryState);
+void NS_NotifyPluginCall(NSPluginCallReentry aReentryState);
 
 #define NS_TRY_SAFE_CALL_RETURN(ret, fun, pluginInst, pluginCallReentry) \
 PR_BEGIN_MACRO                                     \
   MAIN_THREAD_JNI_REF_GUARD;                       \
-  PRIntervalTime startTime = NS_NotifyBeginPluginCall(pluginCallReentry); \
+  NS_NotifyBeginPluginCall(pluginCallReentry); \
   ret = fun;                                       \
-  NS_NotifyPluginCall(startTime, pluginCallReentry); \
+  NS_NotifyPluginCall(pluginCallReentry); \
 PR_END_MACRO
 
 #define NS_TRY_SAFE_CALL_VOID(fun, pluginInst, pluginCallReentry) \
 PR_BEGIN_MACRO                                     \
   MAIN_THREAD_JNI_REF_GUARD;                       \
-  PRIntervalTime startTime = NS_NotifyBeginPluginCall(pluginCallReentry); \
+  NS_NotifyBeginPluginCall(pluginCallReentry); \
   fun;                                             \
-  NS_NotifyPluginCall(startTime, pluginCallReentry); \
+  NS_NotifyPluginCall(pluginCallReentry); \
 PR_END_MACRO
 
 #endif // nsNPAPIPluginInstance_h_

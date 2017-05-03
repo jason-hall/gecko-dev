@@ -1,10 +1,6 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-registerCleanupFunction(function() {
-  gBrowser.removeCurrentTab();
-});
-
 var gTests = [
 
 {
@@ -22,13 +18,15 @@ var gTests = [
       });
       yield expectObserverCalled("getUserMedia:response:allow");
       yield expectObserverCalled("recording-device-events");
-      let expected = [];
+      let expected = {};
       if (aVideo)
-        expected.push("Camera");
+        expected.video = true;
       if (aAudio)
-        expected.push("Microphone");
-      is((yield getMediaCaptureState()), expected.join("And"),
-         "expected stream to be shared");
+        expected.audio = true;
+      Assert.deepEqual((yield getMediaCaptureState()), expected,
+                       "expected " + Object.keys(expected).join(" and ") +
+                       " to be shared");
+
 
       // Check the attribute on the tab, and check there's no visible
       // sharing icon on the tab
@@ -58,6 +56,10 @@ var gTests = [
 
       // And finally verify the attribute is removed when closing the stream.
       yield closeStream();
+
+      // TODO(Bug 1304997): Fix the race in closeStream() and remove this
+      // promiseWaitForCondition().
+      yield promiseWaitForCondition(() => !tab.getAttribute("sharing"));
       is(tab.getAttribute("sharing"), "",
          "the tab no longer has the 'sharing' attribute after closing the stream");
     }
@@ -70,36 +72,6 @@ var gTests = [
 
 ];
 
-function test() {
-  waitForExplicitFinish();
-
-  let tab = gBrowser.addTab();
-  gBrowser.selectedTab = tab;
-  let browser = tab.linkedBrowser;
-
-  browser.messageManager.loadFrameScript(CONTENT_SCRIPT_HELPER, true);
-
-  browser.addEventListener("load", function onload() {
-    browser.removeEventListener("load", onload, true);
-
-    is(PopupNotifications._currentNotifications.length, 0,
-       "should start the test without any prior popup notification");
-
-    Task.spawn(function* () {
-      yield SpecialPowers.pushPrefEnv({"set": [[PREF_PERMISSION_FAKE, true]]});
-
-      for (let test of gTests) {
-        info(test.desc);
-        yield test.run();
-      }
-    }).then(finish, ex => {
-     Cu.reportError(ex);
-     ok(false, "Unexpected Exception: " + ex);
-     finish();
-    });
-  }, true);
-  let rootDir = getRootDirectory(gTestPath);
-  rootDir = rootDir.replace("chrome://mochitests/content/",
-                            "https://example.com/");
-  content.location = rootDir + "get_user_media.html";
-}
+add_task(async function test() {
+  await runTests(gTests);
+});

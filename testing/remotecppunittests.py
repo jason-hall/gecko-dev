@@ -15,7 +15,7 @@ import mozinfo
 import mozlog
 import StringIO
 import posixpath
-from mozdevice import devicemanager, devicemanagerADB, devicemanagerSUT
+from mozdevice import devicemanager, devicemanagerADB
 
 try:
     from mozbuild.base import MozbuildObject
@@ -52,17 +52,6 @@ class RemoteCPPUnitTests(cppunittests.CPPUnitTests):
         self.device.chmodDir(self.remote_bin_dir)
 
     def push_libs(self):
-        if self.options.local_bin is not None:
-            szip = os.path.join(self.options.local_bin, '..', 'host', 'bin', 'szip')
-            if not os.path.exists(szip):
-                # Tinderbox builds must run szip from the test package
-                szip = os.path.join(self.options.local_bin, 'host', 'szip')
-            if not os.path.exists(szip):
-                # If the test package doesn't contain szip, it means files
-                # are not szipped in the test package.
-                szip = None
-        else:
-            szip = None
         if self.options.local_apk:
             with mozfile.TemporaryDirectory() as tmpdir:
                 apk_contents = ZipFile(self.options.local_apk)
@@ -73,13 +62,13 @@ class RemoteCPPUnitTests(cppunittests.CPPUnitTests):
                         remote_file = posixpath.join(self.remote_bin_dir, os.path.basename(info.filename))
                         apk_contents.extract(info, tmpdir)
                         local_file = os.path.join(tmpdir, info.filename)
-                        if szip:
-                            try:
-                                out = subprocess.check_output([szip, '-d', local_file], stderr=subprocess.STDOUT)
-                            except subprocess.CalledProcessError:
-                                print >> sys.stderr, "Error calling %s on %s.." % (szip, local_file)
-                                if out:
-                                    print >> sys.stderr, out
+                        with open(local_file) as f:
+                            # Decompress xz-compressed file.
+                            if f.read(5)[1:] == '7zXZ':
+                                cmd = ['xz', '-df', '--suffix', '.so', local_file]
+                                subprocess.check_output(cmd)
+                                # xz strips the ".so" file suffix.
+                                os.rename(local_file[:-3], local_file)
                         self.device.pushFile(local_file, remote_file)
 
         elif self.options.local_lib:
@@ -88,13 +77,6 @@ class RemoteCPPUnitTests(cppunittests.CPPUnitTests):
                     print >> sys.stderr, "Pushing %s.." % file
                     remote_file = posixpath.join(self.remote_bin_dir, file)
                     local_file = os.path.join(self.options.local_lib, file)
-                    if szip:
-                        try:
-                            out = subprocess.check_output([szip, '-d', local_file], stderr=subprocess.STDOUT)
-                        except subprocess.CalledProcessError:
-                            print >> sys.stderr, "Error calling %s on %s.." % (szip, local_file)
-                            if out:
-                                print >> sys.stderr, out
                     self.device.pushFile(local_file, remote_file)
             # Additional libraries may be found in a sub-directory such as "lib/armeabi-v7a"
             for subdir in ["assets", "lib"]:
@@ -106,13 +88,6 @@ class RemoteCPPUnitTests(cppunittests.CPPUnitTests):
                                 print >> sys.stderr, "Pushing %s.." % file
                                 remote_file = posixpath.join(self.remote_bin_dir, file)
                                 local_file = os.path.join(root, file)
-                                if szip:
-                                    try:
-                                        out = subprocess.check_output([szip, '-d', local_file], stderr=subprocess.STDOUT)
-                                    except subprocess.CalledProcessError:
-                                        print >> sys.stderr, "Error calling %s on %s.." % (szip, local_file)
-                                        if out:
-                                            print >> sys.stderr, out
                                 self.device.pushFile(local_file, remote_file)
 
     def push_progs(self, progs):
@@ -192,11 +167,6 @@ class RemoteCPPUnittestOptions(cppunittests.CPPUnittestOptions):
                         help = "port of remote device to test")
         defaults["device_port"] = 20701
 
-        self.add_option("--dm_trans", action="store",
-                        type = "string", dest = "dm_trans",
-                        help = "the transport to use to communicate with device: [adb|sut]; default=sut")
-        defaults["dm_trans"] = "sut"
-
         self.add_option("--noSetup", action="store_false",
                         dest = "setup",
                         help = "do not copy any files to device (to be used only if device is already setup)")
@@ -241,28 +211,21 @@ def run_test_harness(options, args):
         from mozrunner import B2GEmulatorRunner
         runner = B2GEmulatorRunner(arch=options.emulator, b2g_home=options.with_b2g_emulator)
         runner.start()
-    if options.dm_trans == "adb":
-        if options.with_b2g_emulator:
-            # because we just started the emulator, we need more than the
-            # default number of retries here.
-            retryLimit = 50
-        else:
-            retryLimit = 5
-        try:
-            if options.device_ip:
-                dm = devicemanagerADB.DeviceManagerADB(options.device_ip, options.device_port, packageName=None, deviceRoot=options.remote_test_root, retryLimit=retryLimit)
-            else:
-                dm = devicemanagerADB.DeviceManagerADB(packageName=None, deviceRoot=options.remote_test_root, retryLimit=retryLimit)
-        except:
-            if options.with_b2g_emulator:
-                runner.cleanup()
-                runner.wait()
-            raise
+        # because we just started the emulator, we need more than the
+        # default number of retries here.
+        retryLimit = 50
     else:
-        dm = devicemanagerSUT.DeviceManagerSUT(options.device_ip, options.device_port, deviceRoot=options.remote_test_root)
-        if not options.device_ip:
-            print "Error: you must provide a device IP to connect to via the --deviceIP option"
-            sys.exit(1)
+        retryLimit = 5
+    try:
+        if options.device_ip:
+            dm = devicemanagerADB.DeviceManagerADB(options.device_ip, options.device_port, packageName=None, deviceRoot=options.remote_test_root, retryLimit=retryLimit)
+        else:
+            dm = devicemanagerADB.DeviceManagerADB(packageName=None, deviceRoot=options.remote_test_root, retryLimit=retryLimit)
+    except:
+        if options.with_b2g_emulator:
+            runner.cleanup()
+            runner.wait()
+        raise
 
     options.xre_path = os.path.abspath(options.xre_path)
     cppunittests.update_mozinfo()

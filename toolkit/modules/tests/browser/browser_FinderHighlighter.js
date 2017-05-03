@@ -66,7 +66,8 @@ function promiseTestHighlighterOutput(browser, word, expectedResult, extraTest =
       let stubbed = {};
       let callCounts = {
         insertCalls: [],
-        removeCalls: []
+        removeCalls: [],
+        animationCalls: []
       };
       let lastMaskNode, lastOutlineNode;
       let rects = [];
@@ -107,6 +108,13 @@ function promiseTestHighlighterOutput(browser, word, expectedResult, extraTest =
         Assert.equal(rects.length, expectedResult.rectCount,
           `Amount of inserted rects should match for '${word}'.`);
 
+        if ("animationCalls" in expectedResult) {
+          Assert.greaterOrEqual(callCounts.animationCalls.length,
+            expectedResult.animationCalls[0], `Min. animation calls should match for '${word}'.`);
+          Assert.lessOrEqual(callCounts.animationCalls.length,
+            expectedResult.animationCalls[1], `Max. animation calls should match for '${word}'.`);
+        }
+
         // Allow more specific assertions to be tested in `extraTest`.
         extraTest = eval(extraTest);
         extraTest(lastMaskNode, lastOutlineNode, rects);
@@ -117,7 +125,7 @@ function promiseTestHighlighterOutput(browser, word, expectedResult, extraTest =
       function stubAnonymousContentNode(domNode, anonNode) {
         let originals = [anonNode.setTextContentForElement,
           anonNode.setAttributeForElement, anonNode.removeAttributeForElement,
-          anonNode.setCutoutRectsForElement];
+          anonNode.setCutoutRectsForElement, anonNode.setAnimationForElement];
         anonNode.setTextContentForElement = (id, text) => {
           try {
             (domNode.querySelector("#" + id) || domNode).textContent = text;
@@ -141,6 +149,10 @@ function promiseTestHighlighterOutput(browser, word, expectedResult, extraTest =
         anonNode.setCutoutRectsForElement = (id, cutoutRects) => {
           rects = cutoutRects;
           return originals[3].call(anonNode, id, cutoutRects);
+        };
+        anonNode.setAnimationForElement = (id, keyframes, options) => {
+          callCounts.animationCalls.push([keyframes, options]);
+          return originals[4].call(anonNode, id, keyframes, options);
         };
       }
 
@@ -184,31 +196,32 @@ add_task(function* setup() {
 add_task(function* testModalResults() {
   let tests = new Map([
     ["Roland", {
-      rectCount: 1,
+      rectCount: 2,
       insertCalls: [2, 4],
-      removeCalls: [0, 1]
+      removeCalls: [0, 1],
+      animationCalls: [1, 2]
     }],
     ["their law might propagate their kind", {
-      rectCount: 0,
-      insertCalls: [28, 31],
-      removeCalls: [28, 30],
-      extraTest: function(maskNode, outlineNode, rects) {
+      rectCount: 2,
+      insertCalls: [5, 6],
+      removeCalls: [4, 5],
+      extraTest(maskNode, outlineNode, rects) {
         Assert.equal(outlineNode.getElementsByTagName("div").length, 2,
           "There should be multiple rects drawn");
       }
     }],
     ["ro", {
-      rectCount: 40,
+      rectCount: 41,
       insertCalls: [1, 4],
-      removeCalls: [1, 3]
+      removeCalls: [0, 2]
     }],
     ["new", {
-      rectCount: 1,
+      rectCount: 2,
       insertCalls: [1, 4],
       removeCalls: [0, 2]
     }],
     ["o", {
-      rectCount: 491,
+      rectCount: 492,
       insertCalls: [1, 4],
       removeCalls: [0, 2]
     }]
@@ -221,7 +234,12 @@ add_task(function* testModalResults() {
       yield promiseOpenFindbar(findbar);
       Assert.ok(!findbar.hidden, "Findbar should be open now.");
 
-      yield new Promise(resolve => setTimeout(resolve, kIteratorTimeout));
+      let timeout = kIteratorTimeout;
+      if (word.length == 1)
+        timeout *= 4;
+      else if (word.length == 2)
+        timeout *= 2;
+      yield new Promise(resolve => setTimeout(resolve, timeout));
       let promise = promiseTestHighlighterOutput(browser, word, expectedResult,
         expectedResult.extraTest);
       yield promiseEnterStringIntoFindField(findbar, word);
@@ -244,7 +262,7 @@ add_task(function* testModalSwitching() {
 
     let word = "Roland";
     let expectedResult = {
-      rectCount: 1,
+      rectCount: 2,
       insertCalls: [2, 4],
       removeCalls: [0, 1]
     };
@@ -280,12 +298,13 @@ add_task(function* testDarkPageDetection() {
 
     let word = "Roland";
     let expectedResult = {
-      rectCount: 1,
+      rectCount: 2,
       insertCalls: [1, 3],
       removeCalls: [0, 1]
     };
     let promise = promiseTestHighlighterOutput(browser, word, expectedResult, function(node) {
-      Assert.ok(!node.hasAttribute("brighttext"), "White HTML page shouldn't have 'brighttext' set");
+      Assert.ok(node.style.background.startsWith("rgba(0, 0, 0"),
+        "White HTML page should have a black background color set for the mask");
     });
     yield promiseEnterStringIntoFindField(findbar, word);
     yield promise;
@@ -300,7 +319,7 @@ add_task(function* testDarkPageDetection() {
 
     let word = "Roland";
     let expectedResult = {
-      rectCount: 1,
+      rectCount: 2,
       insertCalls: [2, 4],
       removeCalls: [0, 1]
     };
@@ -319,7 +338,8 @@ add_task(function* testDarkPageDetection() {
     });
 
     let promise = promiseTestHighlighterOutput(browser, word, expectedResult, node => {
-      Assert.ok(node.hasAttribute("brighttext"), "Dark HTML page should have 'brighttext' set");
+      Assert.ok(node.style.background.startsWith("rgba(255, 255, 255"),
+        "Dark HTML page should have a white background color set for the mask");
     });
     yield promiseEnterStringIntoFindField(findbar, word);
     yield promise;
@@ -337,7 +357,7 @@ add_task(function* testHighlightAllToggle() {
 
     let word = "Roland";
     let expectedResult = {
-      rectCount: 1,
+      rectCount: 2,
       insertCalls: [2, 4],
       removeCalls: [0, 1]
     };
@@ -350,7 +370,7 @@ add_task(function* testHighlightAllToggle() {
     expectedResult = {
       rectCount: 0,
       insertCalls: [0, 1],
-      removeCalls: [0, 1]
+      removeCalls: [1, 2]
     };
     promise = promiseTestHighlighterOutput(browser, word, expectedResult);
     yield SpecialPowers.pushPrefEnv({ "set": [[ kHighlightAllPref, false ]] });
@@ -358,7 +378,7 @@ add_task(function* testHighlightAllToggle() {
 
     // For posterity, let's switch back.
     expectedResult = {
-      rectCount: 1,
+      rectCount: 2,
       insertCalls: [1, 3],
       removeCalls: [0, 1]
     };
@@ -403,7 +423,7 @@ add_task(function* testHideOnLocationChange() {
 
   let word = "Roland";
   let expectedResult = {
-    rectCount: 1,
+    rectCount: 2,
     insertCalls: [2, 4],
     removeCalls: [0, 1]
   };
@@ -431,9 +451,9 @@ add_task(function* testHideOnClear() {
 
     let word = "Roland";
     let expectedResult = {
-      rectCount: 1,
+      rectCount: 2,
       insertCalls: [2, 4],
-      removeCalls: [1, 2]
+      removeCalls: [0, 2]
     };
     let promise = promiseTestHighlighterOutput(browser, word, expectedResult);
     yield promiseEnterStringIntoFindField(findbar, word);
@@ -449,5 +469,63 @@ add_task(function* testHideOnClear() {
     yield promise;
 
     findbar.close(true);
+  });
+});
+
+add_task(function* testRectsAndTexts() {
+  let url = "data:text/html;charset=utf-8," +
+    encodeURIComponent("<div style=\"width: 150px; border: 1px solid black\">" +
+    "Here are a lot of words Please use find to highlight some words that wrap" +
+    " across a line boundary and see what happens.</div>");
+  yield BrowserTestUtils.withNewTab(url, function* (browser) {
+    let findbar = gBrowser.getFindBar();
+    yield promiseOpenFindbar(findbar);
+
+    let word = "words please use find to";
+    let expectedResult = {
+      rectCount: 2,
+      insertCalls: [2, 4],
+      removeCalls: [0, 2]
+    };
+    let promise = promiseTestHighlighterOutput(browser, word, expectedResult, (maskNode, outlineNode) => {
+      let boxes = outlineNode.getElementsByTagName("span");
+      Assert.equal(boxes.length, 2, "There should be two outline boxes containing text");
+      Assert.equal(boxes[0].textContent.trim(), "words", "First text should match");
+      Assert.equal(boxes[1].textContent.trim(), "Please use find to", "Second word should match");
+    });
+    yield promiseEnterStringIntoFindField(findbar, word);
+    yield promise;
+  });
+});
+
+add_task(function* testTooLargeToggle() {
+  let url = kFixtureBaseURL + "file_FinderSample.html";
+  yield BrowserTestUtils.withNewTab(url, function* (browser) {
+    let findbar = gBrowser.getFindBar();
+    yield promiseOpenFindbar(findbar);
+
+    yield ContentTask.spawn(browser, null, function* () {
+      let dwu = content.QueryInterface(Ci.nsIInterfaceRequestor)
+        .getInterface(Ci.nsIDOMWindowUtils);
+      let uri = "data:text/css;charset=utf-8," + encodeURIComponent(`
+        body {
+          min-height: 1234567px;
+        }`);
+      try {
+        dwu.loadSheetUsingURIString(uri, dwu.USER_SHEET);
+      } catch (e) {}
+    });
+
+    let word = "Roland";
+    let expectedResult = {
+      rectCount: 2,
+      insertCalls: [2, 4],
+      removeCalls: [0, 2],
+      // No animations should be triggered when the page is too large.
+      animationCalls: [0, 0]
+    };
+    let promise = promiseTestHighlighterOutput(browser, word, expectedResult);
+    yield promiseEnterStringIntoFindField(findbar, word);
+    yield promise;
   });
 });

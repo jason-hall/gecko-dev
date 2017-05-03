@@ -10,6 +10,7 @@
 #include "ScaledFontBase.h"
 
 struct ID2D1GeometrySink;
+struct gfxFontStyle;
 
 namespace mozilla {
 namespace gfx {
@@ -18,36 +19,34 @@ class ScaledFontDWrite final : public ScaledFontBase
 {
 public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(ScaledFontDwrite)
-  ScaledFontDWrite(IDWriteFontFace *aFont, Float aSize)
-    : ScaledFontBase(aSize)
-    , mFont(nullptr)
-    , mFontFamily(nullptr)
+  ScaledFontDWrite(IDWriteFontFace *aFont,
+                   const RefPtr<UnscaledFont>& aUnscaledFont,
+                   Float aSize)
+    : ScaledFontBase(aUnscaledFont, aSize)
     , mFontFace(aFont)
     , mUseEmbeddedBitmap(false)
     , mForceGDIMode(false)
   {}
 
-  ScaledFontDWrite(IDWriteFont* aFont, IDWriteFontFamily* aFontFamily,
-                   IDWriteFontFace *aFontFace, Float aSize, bool aUseEmbeddedBitmap,
-                   bool aForceGDIMode)
-    : ScaledFontBase(aSize)
-    , mFont(aFont)
-    , mFontFamily(aFontFamily)
-    , mFontFace(aFontFace)
-    , mUseEmbeddedBitmap(aUseEmbeddedBitmap)
-    , mForceGDIMode(aForceGDIMode)
-  {}
+  ScaledFontDWrite(IDWriteFontFace *aFontFace,
+                   const RefPtr<UnscaledFont>& aUnscaledFont,
+                   Float aSize,
+                   bool aUseEmbeddedBitmap,
+                   bool aForceGDIMode,
+                   const gfxFontStyle* aStyle);
 
   virtual FontType GetType() const { return FontType::DWRITE; }
 
   virtual already_AddRefed<Path> GetPathForGlyphs(const GlyphBuffer &aBuffer, const DrawTarget *aTarget);
-  virtual void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, BackendType aBackendType, const Matrix *aTransformHint);
+  virtual void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, const Matrix *aTransformHint);
 
   void CopyGlyphsToSink(const GlyphBuffer &aBuffer, ID2D1GeometrySink *aSink);
 
   virtual void GetGlyphDesignMetrics(const uint16_t* aGlyphIndices, uint32_t aNumGlyphs, GlyphMetrics* aGlyphMetrics);
 
   virtual bool GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton);
+
+  virtual bool CanSerialize() override { return true; }
 
   virtual AntialiasMode GetDefaultAAMode() override;
 
@@ -56,13 +55,9 @@ public:
 
 #ifdef USE_SKIA
   virtual SkTypeface* GetSkTypeface();
-  bool GetFontDataFromSystemFonts(IDWriteFactory* aFactory);
-  bool DefaultToArialFont(IDWriteFontCollection* aSystemFonts);
+  SkFontStyle mStyle;
 #endif
 
-  // The font and font family are only used with Skia
-  RefPtr<IDWriteFont> mFont;
-  RefPtr<IDWriteFontFamily> mFontFamily;
   RefPtr<IDWriteFontFace> mFontFace;
   bool mUseEmbeddedBitmap;
   bool mForceGDIMode;
@@ -77,7 +72,7 @@ class GlyphRenderingOptionsDWrite : public GlyphRenderingOptions
 {
 public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GlyphRenderingOptionsDWrite)
-  GlyphRenderingOptionsDWrite(IDWriteRenderingParams *aParams)
+  explicit GlyphRenderingOptionsDWrite(IDWriteRenderingParams *aParams)
     : mParams(aParams)
   {
   }

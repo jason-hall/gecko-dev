@@ -14,9 +14,6 @@
 #include "mozilla/dom/BlobBinding.h"
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/StructuredCloneHolder.h"
-#ifdef MOZ_NFC
-#include "mozilla/dom/MozNDEFRecord.h"
-#endif
 #include "nsGlobalWindow.h"
 #include "nsJSUtils.h"
 #include "nsIDOMFileList.h"
@@ -41,7 +38,6 @@ enum StackScopedCloneTags {
     SCTAG_REFLECTOR,
     SCTAG_BLOB,
     SCTAG_FUNCTION,
-    SCTAG_DOM_NFC_NDEF
 };
 
 // The HTML5 structured cloning algorithm includes a few DOM objects, notably
@@ -145,26 +141,6 @@ public:
             return val.toObjectOrNull();
         }
 
-        if (aTag == SCTAG_DOM_NFC_NDEF) {
-#ifdef MOZ_NFC
-          nsIGlobalObject* global = xpc::NativeGlobal(JS::CurrentGlobalOrNull(aCx));
-          if (!global) {
-            return nullptr;
-          }
-
-          // Prevent the return value from being trashed by a GC during ~nsRefPtr.
-          JS::Rooted<JSObject*> result(aCx);
-          {
-            RefPtr<MozNDEFRecord> ndefRecord = new MozNDEFRecord(global);
-            result = ndefRecord->ReadStructuredClone(aCx, aReader) ?
-                     ndefRecord->WrapObject(aCx, nullptr) : nullptr;
-          }
-          return result;
-#else
-          return nullptr;
-#endif
-        }
-
         MOZ_ASSERT_UNREACHABLE("Encountered garbage in the clone stream!");
         return nullptr;
     }
@@ -212,16 +188,6 @@ public:
                 return false;
             }
         }
-
-#ifdef MOZ_NFC
-        {
-          MozNDEFRecord* ndefRecord;
-          if (NS_SUCCEEDED(UNWRAP_OBJECT(MozNDEFRecord, aObj, ndefRecord))) {
-            return JS_WriteUint32Pair(aWriter, SCTAG_DOM_NFC_NDEF, 0) &&
-                   ndefRecord->WriteStructuredClone(aCx, aWriter);
-          }
-        }
-#endif
 
         JS_ReportErrorASCII(aCx, "Encountered unsupported value type writing stack-scoped structured clone");
         return false;
@@ -442,9 +408,12 @@ ExportFunction(JSContext* cx, HandleValue vfunction, HandleValue vscope, HandleV
             RootedString funName(cx, JS_GetFunctionId(fun));
             if (!funName)
                 funName = JS_AtomizeAndPinString(cx, "");
+            JS_MarkCrossZoneIdValue(cx, StringValue(funName));
 
             if (!JS_StringToId(cx, funName, &id))
                 return false;
+        } else {
+            JS_MarkCrossZoneId(cx, id);
         }
         MOZ_ASSERT(JSID_IS_STRING(id));
 
@@ -507,6 +476,8 @@ CreateObjectIn(JSContext* cx, HandleValue vobj, CreateObjectInOptions& options,
     RootedObject obj(cx);
     {
         JSAutoCompartment ac(cx, scope);
+        JS_MarkCrossZoneId(cx, options.defineAs);
+
         obj = JS_NewPlainObject(cx);
         if (!obj)
             return false;

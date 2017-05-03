@@ -185,32 +185,14 @@ enum eNPPStreamTypeInternal {
   eNPPStreamTypeInternal_Post
 };
 
-PRIntervalTime NS_NotifyBeginPluginCall(NSPluginCallReentry aReentryState)
+void NS_NotifyBeginPluginCall(NSPluginCallReentry aReentryState)
 {
   nsNPAPIPluginInstance::BeginPluginCall(aReentryState);
-  return PR_IntervalNow();
 }
 
-// This function sends a notification using the observer service to any object
-// registered to listen to the "experimental-notify-plugin-call" subject.
-// Each "experimental-notify-plugin-call" notification carries with it the run
-// time value in milliseconds that the call took to execute.
-void NS_NotifyPluginCall(PRIntervalTime startTime, NSPluginCallReentry aReentryState)
+void NS_NotifyPluginCall(NSPluginCallReentry aReentryState)
 {
   nsNPAPIPluginInstance::EndPluginCall(aReentryState);
-
-  PRIntervalTime endTime = PR_IntervalNow() - startTime;
-  nsCOMPtr<nsIObserverService> notifyUIService =
-    mozilla::services::GetObserverService();
-  if (!notifyUIService)
-    return;
-
-  float runTimeInSeconds = float(endTime) / PR_TicksPerSecond();
-  nsAutoString runTimeString;
-  runTimeString.AppendFloat(runTimeInSeconds);
-  const char16_t* runTime = runTimeString.get();
-  notifyUIService->NotifyObservers(nullptr, "experimental-notify-plugin-call",
-                                   runTime);
 }
 
 static void CheckClassInitialized()
@@ -227,8 +209,6 @@ static void CheckClassInitialized()
 
   NPN_PLUGIN_LOG(PLUGIN_LOG_NORMAL,("NPN callbacks initialized\n"));
 }
-
-NS_IMPL_ISUPPORTS0(nsNPAPIPlugin)
 
 nsNPAPIPlugin::nsNPAPIPlugin()
 {
@@ -484,9 +464,9 @@ class nsPluginThreadRunnable : public Runnable,
 public:
   nsPluginThreadRunnable(NPP instance, PluginThreadCallback func,
                          void *userData);
-  virtual ~nsPluginThreadRunnable();
+  ~nsPluginThreadRunnable() override;
 
-  NS_IMETHOD Run();
+  NS_IMETHOD Run() override;
 
   bool IsForInstance(NPP instance)
   {
@@ -526,23 +506,6 @@ GetDocumentFromNPP(NPP npp)
   owner->GetDocument(getter_AddRefs(doc));
 
   return doc;
-}
-
-static already_AddRefed<nsIChannel>
-GetChannelFromNPP(NPP npp)
-{
-  nsCOMPtr<nsIDocument> doc = GetDocumentFromNPP(npp);
-  if (!doc)
-    return nullptr;
-  nsCOMPtr<nsPIDOMWindowOuter> domwindow = doc->GetWindow();
-  nsCOMPtr<nsIChannel> channel;
-  if (domwindow) {
-    nsCOMPtr<nsIDocShell> docShell = domwindow->GetDocShell();
-    if (docShell) {
-      docShell->GetCurrentDocumentChannel(getter_AddRefs(channel));
-    }
-  }
-  return channel.forget();
 }
 
 static NPIdentifier
@@ -594,7 +557,10 @@ NPPExceptionAutoHolder::~NPPExceptionAutoHolder()
 nsPluginThreadRunnable::nsPluginThreadRunnable(NPP instance,
                                                PluginThreadCallback func,
                                                void *userData)
-  : mInstance(instance), mFunc(func), mUserData(userData)
+  : Runnable("nsPluginThreadRunnable"),
+    mInstance(instance),
+    mFunc(func),
+    mUserData(userData)
 {
   if (!sPluginThreadAsyncCallLock) {
     // Failed to create lock, not much we can do here then...
@@ -742,23 +708,6 @@ _geturl(NPP npp, const char* relativeURL, const char* target)
 
   PluginDestructionGuard guard(npp);
 
-  // Block Adobe Acrobat from loading URLs that are not http:, https:,
-  // or ftp: URLs if the given target is null.
-  if (!target && relativeURL &&
-      (strncmp(relativeURL, "http:", 5) != 0) &&
-      (strncmp(relativeURL, "https:", 6) != 0) &&
-      (strncmp(relativeURL, "ftp:", 4) != 0)) {
-    nsNPAPIPluginInstance *inst = (nsNPAPIPluginInstance *) npp->ndata;
-
-    const char *name = nullptr;
-    RefPtr<nsPluginHost> host = nsPluginHost::GetInst();
-    host->GetPluginName(inst, &name);
-
-    if (name && strstr(name, "Adobe") && strstr(name, "Acrobat")) {
-      return NPERR_NO_ERROR;
-    }
-  }
-
   return MakeNewNPAPIStreamInternal(npp, relativeURL, target,
                                     eNPPStreamTypeInternal_Get);
 }
@@ -847,7 +796,7 @@ _newstream(NPP npp, NPMIMEType type, const char* target, NPStream* *result)
     nsCOMPtr<nsIOutputStream> stream;
     if (NS_SUCCEEDED(inst->NewStreamFromPlugin((const char*) type, target,
                                                getter_AddRefs(stream)))) {
-      nsNPAPIStreamWrapper* wrapper = new nsNPAPIStreamWrapper(stream, nullptr);
+      auto* wrapper = new nsNPAPIStreamWrapper(stream, nullptr);
       if (wrapper) {
         (*result) = &wrapper->mNPStream;
         err = NPERR_NO_ERROR;
@@ -1422,14 +1371,23 @@ _evaluate(NPP npp, NPObject* npobj, NPString *script, NPVariant *result)
   options.setFileAndLine(spec, 0)
          .setVersion(JSVERSION_DEFAULT);
   JS::Rooted<JS::Value> rval(cx);
-  nsJSUtils::EvaluateOptions evalOptions(cx);
+  JS::AutoObjectVector scopeChain(cx);
   if (obj != js::GetGlobalForObjectCrossCompartment(obj) &&
-      !evalOptions.scopeChain.append(obj)) {
+      !scopeChain.append(obj)) {
     return false;
   }
   obj = js::GetGlobalForObjectCrossCompartment(obj);
-  nsresult rv = nsJSUtils::EvaluateString(cx, utf16script, obj, options,
-                                          evalOptions, &rval);
+  nsresult rv = NS_OK;
+  {
+    nsJSUtils::ExecutionContext exec(cx, obj);
+    exec.SetScopeChain(scopeChain);
+    exec.CompileAndExec(options, utf16script);
+    rv = exec.ExtractReturnValue(&rval);
+  }
+
+  if (!JS_WrapValue(cx, &rval)) {
+    return false;
+  }
 
   return NS_SUCCEEDED(rv) &&
          (!result || JSValToNPVariant(npp, cx, rval, result));
@@ -2267,53 +2225,19 @@ _setvalue(NPP npp, NPPVariable variable, void *result)
     }
 
     case NPPVpluginIsPlayingAudio: {
-      bool isMuted = !result;
+      const bool isPlaying = result;
 
       nsNPAPIPluginInstance* inst = (nsNPAPIPluginInstance*) npp->ndata;
       MOZ_ASSERT(inst);
 
-      if (isMuted && !inst->HasAudioChannelAgent()) {
+      if (!isPlaying && !inst->HasAudioChannelAgent()) {
         return NPERR_NO_ERROR;
       }
 
-      nsCOMPtr<nsIAudioChannelAgent> agent;
-      nsresult rv = inst->GetOrCreateAudioChannelAgent(getter_AddRefs(agent));
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return NPERR_NO_ERROR;
-      }
-
-      MOZ_ASSERT(agent);
-
-      if (isMuted) {
-        rv = agent->NotifyStoppedPlaying();
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return NPERR_NO_ERROR;
-        }
+      if (isPlaying) {
+        inst->NotifyStartedPlaying();
       } else {
-
-        dom::AudioPlaybackConfig config;
-        rv = agent->NotifyStartedPlaying(&config,
-                                         dom::AudioChannelService::AudibleState::eAudible);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return NPERR_NO_ERROR;
-        }
-
-        rv = inst->WindowVolumeChanged(config.mVolume, config.mMuted);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return NPERR_NO_ERROR;
-        }
-
-        // Since we only support for muting now, the implementation of suspend
-        // is equal to muting. Therefore, if we have already muted the plugin,
-        // then we don't need to call WindowSuspendChanged() again.
-        if (config.mMuted) {
-          return NPERR_NO_ERROR;
-        }
-
-        rv = inst->WindowSuspendChanged(config.mSuspend);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return NPERR_NO_ERROR;
-        }
+        inst->NotifyStoppedPlaying();
       }
 
       return NPERR_NO_ERROR;
@@ -2326,9 +2250,7 @@ _setvalue(NPP npp, NPPVariable variable, void *result)
         inst->SetDrawingModel((NPDrawingModel)NS_PTR_TO_INT32(result));
         return NPERR_NO_ERROR;
       }
-      else {
-        return NPERR_GENERIC_ERROR;
-      }
+      return NPERR_GENERIC_ERROR;
     }
 #endif
 
@@ -2515,39 +2437,14 @@ _getvalueforurl(NPP instance, NPNURLVariable variable, const char *url,
 
   switch (variable) {
   case NPNURLVProxy:
-    {
-      nsCOMPtr<nsIPluginHost> pluginHostCOM(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID));
-      nsPluginHost *pluginHost = static_cast<nsPluginHost*>(pluginHostCOM.get());
-      if (pluginHost && NS_SUCCEEDED(pluginHost->FindProxyForURL(url, value))) {
-        *len = *value ? strlen(*value) : 0;
-        return NPERR_NO_ERROR;
-      }
-      break;
-    }
+    // NPNURLVProxy is no longer supported.
+    *value = nullptr;
+    return NPERR_GENERIC_ERROR;
+
   case NPNURLVCookie:
-    {
-      nsCOMPtr<nsICookieService> cookieService =
-        do_GetService(NS_COOKIESERVICE_CONTRACTID);
-
-      if (!cookieService)
-        return NPERR_GENERIC_ERROR;
-
-      // Make an nsURI from the url argument
-      nsCOMPtr<nsIURI> uri;
-      if (NS_FAILED(NS_NewURI(getter_AddRefs(uri), nsDependentCString(url)))) {
-        return NPERR_GENERIC_ERROR;
-      }
-
-      nsCOMPtr<nsIChannel> channel = GetChannelFromNPP(instance);
-
-      if (NS_FAILED(cookieService->GetCookieString(uri, channel, value)) ||
-          !*value) {
-        return NPERR_GENERIC_ERROR;
-      }
-
-      *len = strlen(*value);
-      return NPERR_NO_ERROR;
-    }
+    // NPNURLVCookie is no longer supported.
+    *value = nullptr;
+    return NPERR_GENERIC_ERROR;
 
   default:
     // Fall through and return an error...
@@ -2576,36 +2473,9 @@ _setvalueforurl(NPP instance, NPNURLVariable variable, const char *url,
 
   switch (variable) {
   case NPNURLVCookie:
-    {
-      if (!value || 0 == len)
-        return NPERR_INVALID_PARAM;
+    // NPNURLVCookie is no longer supported.
+    return NPERR_GENERIC_ERROR;
 
-      nsresult rv = NS_ERROR_FAILURE;
-      nsCOMPtr<nsIIOService> ioService(do_GetService(NS_IOSERVICE_CONTRACTID, &rv));
-      if (NS_FAILED(rv))
-        return NPERR_GENERIC_ERROR;
-
-      nsCOMPtr<nsICookieService> cookieService = do_GetService(NS_COOKIESERVICE_CONTRACTID, &rv);
-      if (NS_FAILED(rv))
-        return NPERR_GENERIC_ERROR;
-
-      nsCOMPtr<nsIURI> uriIn;
-      rv = ioService->NewURI(nsDependentCString(url), nullptr, nullptr, getter_AddRefs(uriIn));
-      if (NS_FAILED(rv))
-        return NPERR_GENERIC_ERROR;
-
-      nsCOMPtr<nsIChannel> channel = GetChannelFromNPP(instance);
-
-      char *cookie = (char*)value;
-      char c = cookie[len];
-      cookie[len] = '\0';
-      rv = cookieService->SetCookieString(uriIn, nullptr, cookie, channel);
-      cookie[len] = c;
-      if (NS_SUCCEEDED(rv))
-        return NPERR_NO_ERROR;
-    }
-
-    break;
   case NPNURLVProxy:
     // We don't support setting proxy values, fall through...
   default:

@@ -93,12 +93,11 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         return ToType(Operand(base)).toAddress();
     }
     void moveValue(const Value& val, Register type, Register data) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        movl(Imm32(jv.s.tag), type);
-        if (val.isMarkable())
-            movl(ImmGCPtr(reinterpret_cast<gc::Cell*>(val.toGCThing())), data);
+        movl(Imm32(val.toNunboxTag()), type);
+        if (val.isGCThing())
+            movl(ImmGCPtr(val.toGCThing()), data);
         else
-            movl(Imm32(jv.s.payload.i32), data);
+            movl(Imm32(val.toNunboxPayload()), data);
     }
     void moveValue(const Value& val, const ValueOperand& dest) {
         moveValue(val, dest.typeReg(), dest.payloadReg());
@@ -143,8 +142,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     }
     template <typename T>
     void storeValue(const Value& val, const T& dest) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        storeTypeTag(ImmTag(jv.s.tag), Operand(dest));
+        storeTypeTag(ImmTag(val.toNunboxTag()), Operand(dest));
         storePayload(val, Operand(dest));
     }
     void storeValue(ValueOperand val, BaseIndex dest) {
@@ -214,12 +212,11 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         pop(val.typeReg());
     }
     void pushValue(const Value& val) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        push(Imm32(jv.s.tag));
-        if (val.isMarkable())
-            push(ImmGCPtr(reinterpret_cast<gc::Cell*>(val.toGCThing())));
+        push(Imm32(val.toNunboxTag()));
+        if (val.isGCThing())
+            push(ImmGCPtr(val.toGCThing()));
         else
-            push(Imm32(jv.s.payload.i32));
+            push(Imm32(val.toNunboxPayload()));
     }
     void pushValue(JSValueType type, Register reg) {
         push(ImmTag(JSVAL_TYPE_TO_TAG(type)));
@@ -238,11 +235,10 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         pop(dest.high);
     }
     void storePayload(const Value& val, Operand dest) {
-        jsval_layout jv = JSVAL_TO_IMPL(val);
-        if (val.isMarkable())
-            movl(ImmGCPtr((gc::Cell*)jv.s.payload.ptr), ToPayload(dest));
+        if (val.isGCThing())
+            movl(ImmGCPtr(val.toGCThing()), ToPayload(dest));
         else
-            movl(Imm32(jv.s.payload.i32), ToPayload(dest));
+            movl(Imm32(val.toNunboxPayload()), ToPayload(dest));
     }
     void storePayload(Register src, Operand dest) {
         movl(src, ToPayload(dest));
@@ -557,13 +553,6 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         test32(lhs, Imm32(rhs.value));
     }
 
-    template <typename T1, typename T2>
-    void cmpPtrSet(Assembler::Condition cond, T1 lhs, T2 rhs, Register dest)
-    {
-        cmpPtr(lhs, rhs);
-        emitSet(cond, dest);
-    }
-
     /////////////////////////////////////////////////////////////////
     // Common interface.
     /////////////////////////////////////////////////////////////////
@@ -790,8 +779,6 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
 
     void loadConstantDouble(double d, FloatRegister dest);
     void loadConstantFloat32(float f, FloatRegister dest);
-    void loadConstantDouble(wasm::RawF64 d, FloatRegister dest);
-    void loadConstantFloat32(wasm::RawF32 f, FloatRegister dest);
 
     void loadConstantSimd128Int(const SimdConstant& v, FloatRegister dest);
     void loadConstantSimd128Float(const SimdConstant& v, FloatRegister dest);
@@ -857,8 +844,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     inline void ensureDouble(const ValueOperand& source, FloatRegister dest, Label* failure);
 
     void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
-        CodeOffset label = movlWithPatch(PatchedAbsoluteAddress(), dest);
-        append(wasm::GlobalAccess(label, globalDataOffset));
+        loadPtr(Address(WasmTlsReg, offsetof(wasm::TlsData, globalArea) + globalDataOffset), dest);
     }
     void loadWasmPinnedRegsFromTls() {
         // x86 doesn't have any pinned registers.

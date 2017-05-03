@@ -13,6 +13,7 @@
 #include "mozilla/Unused.h"
 #include "mozilla/dom/CheckerboardReportServiceBinding.h" // for dom::CheckerboardReports
 #include "mozilla/gfx/GPUParent.h"
+#include "mozilla/gfx/GPUProcessManager.h"
 #include "nsContentUtils.h" // for nsContentUtils
 #include "nsXULAppAPI.h"
 
@@ -158,7 +159,7 @@ CheckerboardReportService::IsEnabled(JSContext* aCtx, JSObject* aGlobal)
     return false;
   }
   // Allow privileged code or about:checkerboard (unprivileged) to access this.
-  return nsContentUtils::IsCallerChrome()
+  return nsContentUtils::IsSystemCaller(aCtx)
       || nsContentUtils::IsSpecificAboutPage(aGlobal, "about:checkerboard");
 }
 
@@ -205,6 +206,22 @@ void
 CheckerboardReportService::SetRecordingEnabled(bool aEnabled)
 {
   gfxPrefs::SetAPZRecordCheckerboarding(aEnabled);
+}
+
+void
+CheckerboardReportService::FlushActiveReports()
+{
+  MOZ_ASSERT(XRE_IsParentProcess());
+  gfx::GPUProcessManager* gpu = gfx::GPUProcessManager::Get();
+  if (gpu && gpu->NotifyGpuObservers("APZ:FlushActiveCheckerboard")) {
+    return;
+  }
+
+  nsCOMPtr<nsIObserverService> obsSvc = mozilla::services::GetObserverService();
+  MOZ_ASSERT(obsSvc);
+  if (obsSvc) {
+    obsSvc->NotifyObservers(nullptr, "APZ:FlushActiveCheckerboard", nullptr);
+  }
 }
 
 } // namespace dom

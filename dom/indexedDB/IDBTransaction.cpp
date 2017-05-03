@@ -307,6 +307,9 @@ IDBTransaction::StartRequest(IDBRequest* aRequest, const RequestParams& aParams)
       SendPBackgroundIDBRequestConstructor(actor, aParams);
   }
 
+  MOZ_ASSERT(actor->GetActorEventTarget(),
+    "The event target shall be inherited from its manager actor.");
+
   // Balanced in BackgroundRequestChild::Recv__delete__().
   OnNewRequest();
 
@@ -332,6 +335,9 @@ IDBTransaction::OpenCursor(BackgroundCursorChild* aBackgroundActor,
     mBackgroundActor.mNormalBackgroundActor->
       SendPBackgroundIDBCursorConstructor(aBackgroundActor, aParams);
   }
+
+  MOZ_ASSERT(aBackgroundActor->GetActorEventTarget(),
+    "The event target shall be inherited from its manager actor.");
 
   // Balanced in BackgroundCursorChild::RecvResponse().
   OnNewRequest();
@@ -639,7 +645,7 @@ IDBTransaction::AbortInternal(nsresult aAbortCode,
 
   const bool isVersionChange = mMode == VERSION_CHANGE;
   const bool isInvalidated = mDatabase->IsInvalidated();
-  bool needToSendAbort = mReadyState == INITIAL && !isInvalidated;
+  bool needToSendAbort = mReadyState == INITIAL;
 
   mAbortCode = aAbortCode;
   mReadyState = DONE;
@@ -996,7 +1002,7 @@ IDBTransaction::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 }
 
 nsresult
-IDBTransaction::PreHandleEvent(EventChainPreVisitor& aVisitor)
+IDBTransaction::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   AssertIsOnOwningThread();
 

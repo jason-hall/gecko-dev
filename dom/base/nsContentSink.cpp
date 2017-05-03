@@ -65,6 +65,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsContentSink)
   NS_INTERFACE_MAP_ENTRY(nsIDocumentObserver)
   NS_INTERFACE_MAP_ENTRY(nsIMutationObserver)
   NS_INTERFACE_MAP_ENTRY(nsITimerCallback)
+  NS_INTERFACE_MAP_ENTRY(nsINamed)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDocumentObserver)
 NS_INTERFACE_MAP_END
 
@@ -90,8 +91,27 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 
 nsContentSink::nsContentSink()
+  : mBackoffCount(0)
+  , mLastNotificationTime(0)
+  , mBeganUpdate(0)
+  , mLayoutStarted(0)
+  , mDynamicLowerValue(0)
+  , mParsing(0)
+  , mDroppedTimer(0)
+  , mDeferredLayoutStart(0)
+  , mDeferredFlushTags(0)
+  , mIsDocumentObserver(0)
+  , mRunsToCompletion(0)
+  , mDeflectedCount(0)
+  , mHasPendingEvent(false)
+  , mCurrentParseEndTime(0)
+  , mBeginLoadTime(0)
+  , mLastSampledUserEventTime(0)
+  , mInMonolithicContainer(0)
+  , mInNotification(0)
+  , mUpdatesInNotification(0)
+  , mPendingSheetCount(0)
 {
-  // We have a zeroing operator new
   NS_ASSERTION(!mLayoutStarted, "What?");
   NS_ASSERTION(!mDynamicLowerValue, "What?");
   NS_ASSERTION(!mParsing, "What?");
@@ -517,7 +537,7 @@ nsContentSink::ProcessLinkHeader(const nsAString& aLinkData)
             while (ch != kNullCh && ch != kSemicolon && ch != kComma) {
               ++end;
 
-              ch = *end;
+              ch = *(end + 1);
             }
           }
         }
@@ -697,6 +717,14 @@ nsContentSink::ProcessLink(const nsSubstring& aAnchor, const nsSubstring& aHref,
     PrefetchHref(aHref, mDocument, hasPrefetch);
   }
 
+  if (linkTypes & nsStyleLinkElement::ePRERENDER) {
+    nsCOMPtr<nsIURI> href;
+    nsresult rv = NS_NewURI(getter_AddRefs(href), aHref);
+    if (NS_SUCCEEDED(rv)) {
+      mDocument->PrerenderHref(href);
+    }
+  }
+
   if (!aHref.IsEmpty() && (linkTypes & nsStyleLinkElement::eDNS_PREFETCH)) {
     PrefetchDNS(aHref);
   }
@@ -866,7 +894,8 @@ nsContentSink::PrefetchDNS(const nsAString &aHref)
   }
 
   if (!hostname.IsEmpty() && nsHTMLDNSPrefetch::IsAllowed(mDocument)) {
-    nsHTMLDNSPrefetch::PrefetchLow(hostname);
+    nsHTMLDNSPrefetch::PrefetchLow(hostname,
+                                   mDocument->NodePrincipal()->OriginAttributesRef());
   }
 }
 
@@ -1487,7 +1516,7 @@ nsContentSink::DidBuildModelImpl(bool aTerminated)
                ("nsContentSink::DidBuildModel: canceling notification "
                 "timeout"));
     mNotificationTimer->Cancel();
-    mNotificationTimer = 0;
+    mNotificationTimer = nullptr;
   }	
 }
 
@@ -1599,4 +1628,17 @@ nsContentSink::NotifyDocElementCreated(nsIDocument* aDoc)
   nsContentUtils::DispatchChromeEvent(aDoc, aDoc,
                                       NS_LITERAL_STRING("DOMDocElementInserted"),
                                       true, false);
+}
+
+NS_IMETHODIMP
+nsContentSink::GetName(nsACString& aName)
+{
+  aName.AssignASCII("nsContentSink_timer");
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsContentSink::SetName(const char* aName)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
 }

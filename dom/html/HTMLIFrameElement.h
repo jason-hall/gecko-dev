@@ -168,7 +168,7 @@ public:
     GetEnumAttr(nsGkAtoms::referrerpolicy, EmptyCString().get(), aReferrer);
   }
   nsIDocument*
-  GetSVGDocument(const mozilla::Maybe<nsIPrincipal*>& aSubjectPrincipal)
+  GetSVGDocument(nsIPrincipal& aSubjectPrincipal)
   {
     return GetContentDocument(aSubjectPrincipal);
   }
@@ -198,7 +198,7 @@ protected:
 
 private:
   static void MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                                    nsRuleData* aData);
+                                    GenericSpecifiedValues* aGenericData);
 
   static const DOMTokenListSupportedToken sSupportedSandboxTokens[];
 };

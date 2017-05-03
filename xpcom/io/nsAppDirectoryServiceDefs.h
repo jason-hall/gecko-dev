@@ -71,7 +71,6 @@
 
 #define NS_APP_LOCALSTORE_50_FILE               "LclSt"
 #define NS_APP_USER_PANELS_50_FILE              "UPnls"
-#define NS_APP_USER_MIMETYPES_50_FILE           "UMimTyp"
 #define NS_APP_CACHE_PARENT_DIR                 "cachePDir"
 
 #define NS_APP_DOWNLOADS_50_FILE                "DLoads"
@@ -110,6 +109,9 @@
 // NS_APP_CONTENT_PROCESS_TEMP_DIR, but that should not be relied upon.
 //
 #define NS_APP_CONTENT_PROCESS_TEMP_DIR         "ContentTmpD"
+#else
+// Otherwise NS_APP_CONTENT_PROCESS_TEMP_DIR must match NS_OS_TEMP_DIR.
+#define NS_APP_CONTENT_PROCESS_TEMP_DIR         "TmpD"
 #endif // (defined(XP_WIN) || defined(XP_MACOSX)) && defined(MOZ_CONTENT_SANDBOX)
 
 #endif // nsAppDirectoryServiceDefs_h___

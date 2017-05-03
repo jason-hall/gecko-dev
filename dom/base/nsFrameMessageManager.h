@@ -44,6 +44,10 @@ class MessageManagerReporter;
 
 namespace ipc {
 
+// Note: we round the time we spend to the nearest millisecond. So a min value
+// of 1 ms actually captures from 500us and above.
+static const uint32_t kMinTelemetrySyncMessageManagerLatencyMs = 1;
+
 enum MessageManagerFlags {
   MM_CHILD = 0,
   MM_CHROME = 1,
@@ -81,32 +85,6 @@ public:
                                       nsIPrincipal* aPrincipal)
   {
     return NS_OK;
-  }
-
-  virtual bool CheckPermission(const nsAString& aPermission)
-  {
-    return false;
-  }
-
-  virtual bool CheckManifestURL(const nsAString& aManifestURL)
-  {
-    return false;
-  }
-
-  virtual bool CheckAppHasPermission(const nsAString& aPermission)
-  {
-    return false;
-  }
-
-  virtual bool CheckAppHasStatus(unsigned short aStatus)
-  {
-    return false;
-  }
-
-  virtual bool KillChild()
-  {
-    // By default, does nothing.
-    return false;
   }
 
   virtual nsIMessageSender* GetProcessMessageManager() const
@@ -165,8 +143,7 @@ private:
 class nsFrameMessageManager final : public nsIContentFrameMessageManager,
                                     public nsIMessageBroadcaster,
                                     public nsIFrameScriptLoader,
-                                    public nsIGlobalProcessScriptLoader,
-                                    public nsIProcessChecker
+                                    public nsIGlobalProcessScriptLoader
 {
   friend class mozilla::dom::MessageManagerReporter;
   typedef mozilla::dom::ipc::StructuredCloneData StructuredCloneData;
@@ -191,7 +168,6 @@ public:
   NS_DECL_NSIFRAMESCRIPTLOADER
   NS_DECL_NSIPROCESSSCRIPTLOADER
   NS_DECL_NSIGLOBALPROCESSSCRIPTLOADER
-  NS_DECL_NSIPROCESSCHECKER
 
   static nsFrameMessageManager*
   NewProcessMessageManager(bool aIsRemote);

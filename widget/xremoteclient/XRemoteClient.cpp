@@ -7,6 +7,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Sprintf.h"
 #include "XRemoteClient.h"
 #include "prmem.h"
@@ -51,7 +52,7 @@
 
 using mozilla::LogLevel;
 
-static PRLogModuleInfo *sRemoteLm = nullptr;
+static mozilla::LazyLogModule sRemoteLm("XRemoteClient");
 
 static int (*sOldHandler)(Display *, XErrorEvent *);
 static bool sGotBadWindow;
@@ -69,8 +70,6 @@ XRemoteClient::XRemoteClient()
   mMozProfileAtom = 0;
   mMozProgramAtom = 0;
   mLockData = 0;
-  if (!sRemoteLm)
-    sRemoteLm = PR_NewLogModule("XRemoteClient");
   MOZ_LOG(sRemoteLm, LogLevel::Debug, ("XRemoteClient::XRemoteClient"));
 }
 
@@ -151,9 +150,9 @@ HandleBadWindow(Display *display, XErrorEvent *event)
     sGotBadWindow = true;
     return 0; // ignored
   }
-  else {
+  
     return (*sOldHandler)(display, event);
-  }
+  
 }
 
 nsresult
@@ -208,7 +207,8 @@ XRemoteClient::SendCommandLine (const char *aProgram, const char *aUsername,
 
   XSetErrorHandler(sOldHandler);
 
-  MOZ_LOG(sRemoteLm, LogLevel::Debug, ("SendCommandInternal returning 0x%x\n", rv));
+  MOZ_LOG(sRemoteLm, LogLevel::Debug, ("SendCommandInternal returning 0x%" PRIx32 "\n",
+                                       static_cast<uint32_t>(rv)));
 
   return rv;
 }
@@ -357,7 +357,7 @@ XRemoteClient::GetLock(Window aWindow, bool *aDestroyed)
 	     ("window 0x%x is locked by %s; waiting...\n",
 	      (unsigned int) aWindow, data));
       waited = True;
-      while (1) {
+      while (true) {
 	XEvent event;
 	int select_retval;
 	fd_set select_set;
@@ -384,7 +384,7 @@ XRemoteClient::GetLock(Window aWindow, bool *aDestroyed)
           rv = NS_ERROR_FAILURE;
           break;
 	}
-	else if (event.xany.type == PropertyNotify &&
+	if (event.xany.type == PropertyNotify &&
 		 event.xproperty.state == PropertyDelete &&
 		 event.xproperty.window == aWindow &&
 		 event.xproperty.atom == mMozLockAtom) {
@@ -584,7 +584,7 @@ XRemoteClient::FreeLock(Window aWindow)
               " property\n"));
       return NS_ERROR_FAILURE;
   }
-  else if (!data || !*data){
+  if (!data || !*data){
       MOZ_LOG(sRemoteLm, LogLevel::Debug,
              ("invalid data on " MOZILLA_LOCK_PROP
               " of window 0x%x.\n",
@@ -642,14 +642,14 @@ XRemoteClient::DoSendCommandLine(Window aWindow, int32_t argc, char **argv,
     argvlen += len;
   }
 
-  int32_t* buffer = (int32_t*) malloc(argvlen + argc + 1 +
+  auto* buffer = (int32_t*) malloc(argvlen + argc + 1 +
                                       sizeof(int32_t) * (argc + 1));
   if (!buffer)
     return NS_ERROR_OUT_OF_MEMORY;
 
   buffer[0] = TO_LITTLE_ENDIAN32(argc);
 
-  char *bufend = (char*) (buffer + argc + 1);
+  auto *bufend = (char*) (buffer + argc + 1);
 
   bufend = estrcpy(cwdbuf, bufend);
 
@@ -709,7 +709,7 @@ XRemoteClient::WaitForResponse(Window aWindow, char **aResponse,
       *aDestroyed = true;
       return false;
     }
-    else if (event.xany.type == PropertyNotify &&
+    if (event.xany.type == PropertyNotify &&
              event.xproperty.state == PropertyNewValue &&
              event.xproperty.window == aWindow &&
              event.xproperty.atom == mMozResponseAtom) {

@@ -5,7 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 include protocol PBlob;
-include protocol PSendStream;
+include protocol PMemoryStream;
+
 include IPCStream;
 include ProtocolTypes;
 
@@ -15,14 +16,13 @@ using struct mozilla::void_t
 using struct mozilla::SerializedStructuredCloneBuffer
   from "ipc/IPCMessageUtils.h";
 
+using LayoutDeviceIntRect from "Units.h";
+using DesktopIntRect from "Units.h";
+using DesktopToLayoutDeviceScale from "Units.h";
+using CSSToLayoutDeviceScale from "Units.h";
+
 namespace mozilla {
 namespace dom {
-
-union OptionalID
-{
-  nsID;
-  void_t;
-};
 
 struct MessagePortIdentifier
 {
@@ -32,11 +32,24 @@ struct MessagePortIdentifier
   bool neutered;
 };
 
+/**
+ * Cross-process representation for postMessage() style payloads where Blobs may
+ * be referenced/"cloned" and (optionally) messageports transferred.  Use
+ * StructuredCloneData in your code to convert between this wire representation
+ * and the StructuredCloneData StructuredCloneHolder-subclass.
+ */
 struct ClonedMessageData
 {
   SerializedStructuredCloneBuffer data;
   PBlob[] blobs;
+  IPCStream[] inputStreams;
   MessagePortIdentifier[] identfiers;
+};
+
+struct BlobDataStream
+{
+  PMemoryStream stream;
+  uint64_t length;
 };
 
 union BlobData
@@ -45,7 +58,7 @@ union BlobData
   nsID;
 
   // For memory-backed blobs.
-  IPCStream;
+  BlobDataStream;
 
   // For multiplex blobs.
   BlobData[];
@@ -169,6 +182,17 @@ struct IPCDataTransferItem
 struct IPCDataTransfer
 {
   IPCDataTransferItem[] items;
+};
+
+struct ScreenDetails {
+  LayoutDeviceIntRect rect;
+  DesktopIntRect rectDisplayPix;
+  LayoutDeviceIntRect availRect;
+  DesktopIntRect availRectDisplayPix;
+  int32_t pixelDepth;
+  int32_t colorDepth;
+  DesktopToLayoutDeviceScale contentsScaleFactor;
+  CSSToLayoutDeviceScale defaultCSSScaleFactor;
 };
 
 } // namespace dom

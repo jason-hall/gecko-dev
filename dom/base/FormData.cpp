@@ -8,6 +8,7 @@
 #include "nsIVariant.h"
 #include "nsIInputStream.h"
 #include "mozilla/dom/File.h"
+#include "mozilla/dom/Directory.h"
 #include "mozilla/dom/HTMLFormElement.h"
 
 #include "MultipartBlobImpl.h"
@@ -83,7 +84,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(FormData)
                                 "mFormData[i].GetAsBlob()", 0);
   }
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(FormData)
@@ -399,7 +399,7 @@ FormData::Constructor(const GlobalObject& aGlobal,
 
 NS_IMETHODIMP
 FormData::GetSendInfo(nsIInputStream** aBody, uint64_t* aContentLength,
-                      nsACString& aContentType, nsACString& aCharset)
+                      nsACString& aContentTypeWithCharset, nsACString& aCharset)
 {
   FSMultipartFormData fs(NS_LITERAL_CSTRING("UTF-8"), nullptr);
 
@@ -420,7 +420,7 @@ FormData::GetSendInfo(nsIInputStream** aBody, uint64_t* aContentLength,
     }
   }
 
-  fs.GetContentType(aContentType);
+  fs.GetContentType(aContentTypeWithCharset);
   aCharset.Truncate();
   *aContentLength = 0;
   NS_ADDREF(*aBody = fs.GetSubmissionBody(aContentLength));

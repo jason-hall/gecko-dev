@@ -6,15 +6,19 @@
 #ifndef mozilla_dom_StructuredCloneHolder_h
 #define mozilla_dom_StructuredCloneHolder_h
 
+#include "jsapi.h"
 #include "js/StructuredClone.h"
 #include "mozilla/Move.h"
 #include "mozilla/UniquePtr.h"
+#include "mozilla/dom/BindingDeclarations.h"
 #include "nsISupports.h"
 #include "nsTArray.h"
 
 #ifdef DEBUG
 #include "nsIThread.h"
 #endif
+
+class nsIInputStream;
 
 namespace mozilla {
 class ErrorResult;
@@ -89,10 +93,12 @@ public:
   bool Write(JSContext* aCx,
              JS::Handle<JS::Value> aValue);
 
-  // Like Write() but it supports the transferring of objects.
+  // Like Write() but it supports the transferring of objects and handling
+  // of cloning policy.
   bool Write(JSContext* aCx,
              JS::Handle<JS::Value> aValue,
-             JS::Handle<JS::Value> aTransfer);
+             JS::Handle<JS::Value> aTransfer,
+             JS::CloneDataPolicy cloneDataPolicy);
 
   // If Write() has been called, this method retrieves data and stores it into
   // aValue.
@@ -163,6 +169,7 @@ public:
   void Write(JSContext* aCx,
              JS::Handle<JS::Value> aValue,
              JS::Handle<JS::Value> aTransfer,
+             JS::CloneDataPolicy cloneDataPolicy,
              ErrorResult &aRv);
 
   void Read(nsISupports* aParent,
@@ -174,13 +181,27 @@ public:
   bool HasClonedDOMObjects() const
   {
     return !mBlobImplArray.IsEmpty() ||
-           !mClonedSurfaces.IsEmpty();
+           !mWasmModuleArray.IsEmpty() ||
+           !mClonedSurfaces.IsEmpty() ||
+           !mInputStreamArray.IsEmpty();
   }
 
   nsTArray<RefPtr<BlobImpl>>& BlobImpls()
   {
     MOZ_ASSERT(mSupportsCloning, "Blobs cannot be taken/set if cloning is not supported.");
     return mBlobImplArray;
+  }
+
+  nsTArray<RefPtr<JS::WasmModule>>& WasmModules()
+  {
+    MOZ_ASSERT(mSupportsCloning, "WasmModules cannot be taken/set if cloning is not supported.");
+    return mWasmModuleArray;
+  }
+
+  nsTArray<nsCOMPtr<nsIInputStream>>& InputStreams()
+  {
+    MOZ_ASSERT(mSupportsCloning, "InputStreams cannot be taken/set if cloning is not supported.");
+    return mInputStreamArray;
   }
 
   StructuredCloneScope CloneScope() const
@@ -203,6 +224,11 @@ public:
     MOZ_ASSERT(mSupportsTransferring);
     return Move(mTransferredPorts);
   }
+
+  // This method uses TakeTransferredPorts() to populate a sequence of
+  // MessagePorts for WebIDL binding classes.
+  bool
+  TakeTransferredPortsAsSequence(Sequence<OwningNonNull<mozilla::dom::MessagePort>>& aPorts);
 
   nsTArray<MessagePortIdentifier>& PortIdentifiers() const
   {
@@ -282,6 +308,12 @@ protected:
 
   // Used for cloning blobs in the structured cloning algorithm.
   nsTArray<RefPtr<BlobImpl>> mBlobImplArray;
+
+  // Used for cloning JS::WasmModules in the structured cloning algorithm.
+  nsTArray<RefPtr<JS::WasmModule>> mWasmModuleArray;
+
+  // Used for cloning InputStream in the structured cloning algorithm.
+  nsTArray<nsCOMPtr<nsIInputStream>> mInputStreamArray;
 
   // This is used for sharing the backend of ImageBitmaps.
   // The DataSourceSurface object must be thread-safely reference-counted.

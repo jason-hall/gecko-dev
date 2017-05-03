@@ -13,6 +13,7 @@ import re
 import urllib2
 import json
 import socket
+from urlparse import urlparse, ParseResult
 
 from mozharness.base.errors import BaseErrorList
 from mozharness.base.log import FATAL, WARNING
@@ -117,6 +118,7 @@ class TestingMixin(VirtualenvMixin, BuildbotMixin, ResourceMonitoringMixin,
     symbols_path = None
     jsshell_url = None
     minidump_stackwalk_path = None
+    nodejs_path = None
     default_tools_repo = 'https://hg.mozilla.org/build/tools'
     proxxy = None
 
@@ -160,10 +162,15 @@ class TestingMixin(VirtualenvMixin, BuildbotMixin, ResourceMonitoringMixin,
             self.fatal("Can't figure out build directory urls without an installer_url "
                        "or test_packages_url!")
 
-        last_slash = reference_url.rfind('/')
-        base_url = reference_url[:last_slash]
+        reference_url = urllib2.unquote(reference_url)
+        parts = list(urlparse(reference_url))
 
-        return '%s/%s' % (base_url, file_name)
+        last_slash = parts[2].rfind('/')
+        parts[2] = '/'.join([parts[2][:last_slash], file_name])
+
+        url = ParseResult(*parts).geturl()
+
+        return url
 
     def query_prefixed_build_dir_url(self, suffix):
         """Resolve a file name prefixed with platform and build details to a potential url
@@ -187,7 +194,7 @@ class TestingMixin(VirtualenvMixin, BuildbotMixin, ResourceMonitoringMixin,
 
         return url
 
-    def query_symbols_url(self):
+    def query_symbols_url(self, raise_on_failure=False):
         if self.symbols_url:
             return self.symbols_url
 
@@ -199,8 +206,11 @@ class TestingMixin(VirtualenvMixin, BuildbotMixin, ResourceMonitoringMixin,
                 if symbols_url:
                     self._urlopen(symbols_url, timeout=120)
                     self.symbols_url = symbols_url
-            except (urllib2.HTTPError, urllib2.URLError, socket.error, socket.timeout):
-                self.warning("Can't figure out symbols_url from installer_url: %s!" % self.installer_url)
+            except Exception as ex:
+                self.warning("Cannot open symbols url %s (installer url: %s): %s" %
+                    (symbols_url, self.installer_url, ex))
+                if raise_on_failure:
+                    raise
 
         # If no symbols URL can be determined let minidump_stackwalk query the symbols.
         # As of now this only works for Nightly and release builds.
@@ -455,10 +465,23 @@ You can set this by:
             for file_name in target_packages:
                 target_dir = test_install_dir
                 unpack_dirs = extract_dirs
+
+                if "common.tests" in file_name and isinstance(unpack_dirs, list):
+                    # Ensure that the following files are always getting extracted
+                    required_files = ["mach",
+                                      "mozinfo.json",
+                                      ]
+                    for req_file in required_files:
+                        if req_file not in unpack_dirs:
+                            self.info("Adding '{}' for extraction from common.tests zip file"
+                                      .format(req_file))
+                            unpack_dirs.append(req_file)
+
                 if "jsshell-" in file_name or file_name == "target.jsshell.zip":
                     self.info("Special-casing the jsshell zip file")
                     unpack_dirs = None
                     target_dir = dirs['abs_test_bin_dir']
+
                 url = self.query_build_dir_url(file_name)
                 self.download_unpack(url, target_dir,
                                      extract_dirs=unpack_dirs)
@@ -506,16 +529,29 @@ You can set this by:
 
     def _download_and_extract_symbols(self):
         dirs = self.query_abs_dirs()
-        self.symbols_url = self.query_symbols_url()
         if self.config.get('download_symbols') == 'ondemand':
+            self.symbols_url = self.query_symbols_url()
             self.symbols_path = self.symbols_url
             return
-        if not self.symbols_path:
-            self.symbols_path = os.path.join(dirs['abs_work_dir'], 'symbols')
 
-        self.set_buildbot_property("symbols_url", self.symbols_url,
-                                   write_to_file=True)
-        self.download_unpack(self.symbols_url, self.symbols_path)
+        else:
+            # In the case for 'ondemand', we're OK to proceed without getting a hold of the
+            # symbols right this moment, however, in other cases we need to at least retry
+            # before being unable to proceed (e.g. debug tests need symbols)
+            self.symbols_url = self.retry(
+                action=self.query_symbols_url,
+                kwargs={'raise_on_failure': True},
+                sleeptime=20,
+                error_level=FATAL,
+                error_message="We can't proceed without downloading symbols.",
+            )
+            if not self.symbols_path:
+                self.symbols_path = os.path.join(dirs['abs_work_dir'], 'symbols')
+
+            self.set_buildbot_property("symbols_url", self.symbols_url,
+                                       write_to_file=True)
+            if self.symbols_url:
+                self.download_unpack(self.symbols_url, self.symbols_path)
 
     def download_and_extract(self, extract_dirs=None, suite_categories=None):
         """
@@ -651,6 +687,67 @@ Did you run with --create-virtualenv? Is mozinstall in virtualenv_modules?""")
             return minidump_filename
         else:
             self.fatal('We could not determine the minidump\'s filename.')
+
+    def query_nodejs_tooltool_manifest(self):
+        if self.config.get('nodejs_tooltool_manifest_path'):
+            return self.config['nodejs_tooltool_manifest_path']
+
+        self.info('NodeJS tooltool manifest unknown. Determining based upon '
+                  'platform and architecture.')
+        platform_name = self.platform_name()
+
+        if platform_name:
+            tooltool_path = "config/tooltool-manifests/%s/nodejs.manifest" % \
+                TOOLTOOL_PLATFORM_DIR[platform_name]
+            return tooltool_path
+        else:
+            self.fatal('Could not determine nodejs manifest filename')
+
+    def query_nodejs_filename(self):
+        if self.config.get('nodejs_path'):
+            return self.config['nodejs_path']
+
+        self.fatal('Could not determine nodejs filename')
+
+    def query_nodejs(self, manifest=None):
+        if self.nodejs_path:
+            return self.nodejs_path
+
+        c = self.config
+        dirs = self.query_abs_dirs();
+
+        nodejs_path = self.query_nodejs_filename()
+        if not self.config.get('download_nodejs'):
+            self.nodejs_path = nodejs_path
+            return self.nodejs_path
+
+        if not manifest:
+            tooltool_manifest_path = self.query_nodejs_tooltool_manifest()
+            manifest = os.path.join(dirs.get('abs_test_install_dir',
+                                             os.path.join(dirs['abs_work_dir'], 'tests')),
+                                    tooltool_manifest_path)
+
+        self.info('grabbing nodejs binary from tooltool')
+        try:
+            self.tooltool_fetch(
+                manifest=manifest,
+                output_dir=dirs['abs_work_dir'],
+                cache=c.get('tooltool_cache')
+            )
+        except KeyError:
+            self.error('missing a required key')
+
+        abs_nodejs_path = os.path.join(dirs['abs_work_dir'], nodejs_path)
+
+        if os.path.exists(abs_nodejs_path):
+            if self.platform_name() not in ('win32', 'win64'):
+                self.chmod(abs_nodejs_path, 0755)
+            self.nodejs_path = abs_nodejs_path
+        else:
+            self.warning("nodejs path was given but couldn't be found. Tried looking in '%s'" % abs_nodejs_path)
+            self.buildbot_status(TBPL_WARNING, WARNING)
+
+        return self.nodejs_path
 
     def query_minidump_stackwalk(self, manifest=None):
         if self.minidump_stackwalk_path:

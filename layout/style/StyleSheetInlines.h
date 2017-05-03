@@ -7,83 +7,25 @@
 #ifndef mozilla_StyleSheetInlines_h
 #define mozilla_StyleSheetInlines_h
 
-#include "mozilla/TypeTraits.h"
 #include "mozilla/StyleSheetInfo.h"
 #include "mozilla/ServoStyleSheet.h"
 #include "mozilla/CSSStyleSheet.h"
+#include "nsINode.h"
 
 namespace mozilla {
 
-CSSStyleSheet*
-StyleSheet::AsGecko()
-{
-  MOZ_ASSERT(IsGecko());
-  return static_cast<CSSStyleSheet*>(this);
-}
-
-ServoStyleSheet*
-StyleSheet::AsServo()
-{
-  MOZ_ASSERT(IsServo());
-  return static_cast<ServoStyleSheet*>(this);
-}
-
-const CSSStyleSheet*
-StyleSheet::AsGecko() const
-{
-  MOZ_ASSERT(IsGecko());
-  return static_cast<const CSSStyleSheet*>(this);
-}
-
-const ServoStyleSheet*
-StyleSheet::AsServo() const
-{
-  MOZ_ASSERT(IsServo());
-  return static_cast<const ServoStyleSheet*>(this);
-}
+MOZ_DEFINE_STYLO_METHODS(StyleSheet, CSSStyleSheet, ServoStyleSheet)
 
 StyleSheetInfo&
 StyleSheet::SheetInfo()
 {
-  if (IsServo()) {
-    return AsServo()->mSheetInfo;
-  }
-  return *AsGecko()->mInner;
+  return *mInner;
 }
 
 const StyleSheetInfo&
 StyleSheet::SheetInfo() const
 {
-  if (IsServo()) {
-    return AsServo()->mSheetInfo;
-  }
-  return *AsGecko()->mInner;
-}
-
-#define FORWARD_CONCRETE(method_, geckoargs_, servoargs_) \
-  static_assert(!IsSame<decltype(&StyleSheet::method_), \
-                        decltype(&CSSStyleSheet::method_)>::value, \
-                "CSSStyleSheet should define its own " #method_); \
-  static_assert(!IsSame<decltype(&StyleSheet::method_), \
-                        decltype(&ServoStyleSheet::method_)>::value, \
-                "ServoStyleSheet should define its own " #method_); \
-  if (IsServo()) { \
-    return AsServo()->method_ servoargs_; \
-  } \
-  return AsGecko()->method_ geckoargs_;
-
-#define FORWARD(method_, args_) FORWARD_CONCRETE(method_, args_, args_)
-
-MozExternalRefCountType
-StyleSheet::AddRef()
-{
-  FORWARD(AddRef, ())
-}
-
-MozExternalRefCountType
-StyleSheet::Release()
-{
-  FORWARD(Release, ())
+  return *mInner;
 }
 
 bool
@@ -132,25 +74,22 @@ StyleSheet::IsApplicable() const
 bool
 StyleSheet::HasRules() const
 {
-  FORWARD(HasRules, ())
-}
-
-void
-StyleSheet::SetOwningDocument(nsIDocument* aDocument)
-{
-  FORWARD(SetOwningDocument, (aDocument))
+  MOZ_STYLO_FORWARD(HasRules, ())
 }
 
 StyleSheet*
-StyleSheet::GetParentSheet() const
+StyleSheet::GetParentStyleSheet() const
 {
-  FORWARD(GetParentSheet, ())
+  return GetParentSheet();
 }
 
-void
-StyleSheet::AppendStyleSheet(StyleSheet* aSheet)
+dom::ParentObject
+StyleSheet::GetParentObject() const
 {
-  FORWARD_CONCRETE(AppendStyleSheet, (aSheet->AsGecko()), (aSheet->AsServo()))
+  if (mOwningNode) {
+    return dom::ParentObject(mOwningNode);
+  }
+  return dom::ParentObject(static_cast<nsIDOMCSSStyleSheet*>(mParent), mParent);
 }
 
 nsIPrincipal*
@@ -190,40 +129,9 @@ StyleSheet::GetIntegrity(dom::SRIMetadata& aResult) const
   aResult = SheetInfo().mIntegrity;
 }
 
-size_t
-StyleSheet::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
-{
-  FORWARD(SizeOfIncludingThis, (aMallocSizeOf))
-}
+void StyleSheet::WillDirty() { MOZ_STYLO_FORWARD(WillDirty, ()) }
+void StyleSheet::DidDirty() { MOZ_STYLO_FORWARD(DidDirty, ()) }
 
-#ifdef DEBUG
-void
-StyleSheet::List(FILE* aOut, int32_t aIndex) const
-{
-  FORWARD(List, (aOut, aIndex))
-}
-#endif
-
-#undef FORWARD
-#undef FORWARD_CONCRETE
-
-inline void
-ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
-                            RefPtr<StyleSheet>& aField,
-                            const char* aName,
-                            uint32_t aFlags = 0)
-{
-  if (aField && aField->IsGecko()) {
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(aCallback, aName);
-    aCallback.NoteXPCOMChild(NS_ISUPPORTS_CAST(nsIDOMCSSStyleSheet*, aField->AsGecko()));
-  }
-}
-
-inline void
-ImplCycleCollectionUnlink(RefPtr<StyleSheet>& aField)
-{
-  aField = nullptr;
-}
 
 }
 

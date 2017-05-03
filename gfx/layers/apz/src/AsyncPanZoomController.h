@@ -44,9 +44,9 @@ namespace layers {
 
 class AsyncDragMetrics;
 struct ScrollableLayerGuid;
-class CompositorBridgeParent;
+class CompositorController;
+class MetricsSharingController;
 class GestureEventListener;
-class PCompositorBridgeParent;
 struct AsyncTransform;
 class AsyncPanZoomAnimation;
 class AndroidFlingAnimation;
@@ -187,17 +187,16 @@ public:
                            bool aThisLayerTreeUpdated);
 
   /**
-   * The platform implementation must set the compositor parent so that we can
+   * The platform implementation must set the compositor controller so that we can
    * request composites.
    */
-  void SetCompositorBridgeParent(CompositorBridgeParent* aCompositorBridgeParent);
+  void SetCompositorController(CompositorController* aCompositorController);
 
   /**
-   * Inform this APZC that it will be sharing its FrameMetrics with a cross-process
-   * compositor so that the associated content process can access it. This is only
-   * relevant when progressive painting is enabled.
+   * If we need to share the frame metrics with some other thread, this controller
+   * needs to be set and provides relevant information/APIs.
    */
-  void ShareFrameMetricsAcrossProcesses();
+  void SetMetricsSharingController(MetricsSharingController* aMetricsSharingController);
 
   // --------------------------------------------------------------------------
   // These methods can be called from any thread.
@@ -233,6 +232,15 @@ public:
    * Report the number of CSSPixel-milliseconds of checkerboard to telemetry.
    */
   void ReportCheckerboard(const TimeStamp& aSampleTime);
+
+  /**
+   * Flush any active checkerboard report that's in progress. This basically
+   * pretends like any in-progress checkerboard event has terminated, and pushes
+   * out the report to the checkerboard reporting service and telemetry. If the
+   * checkerboard event has not really finished, it will start a new event
+   * on the next composite.
+   */
+  void FlushActiveCheckerboardReport();
 
   /**
    * Returns whether or not the APZC is currently in a state of checkerboarding.
@@ -386,7 +394,7 @@ public:
 
   // Return whether or not there is room to scroll this APZC
   // in the given direction.
-  bool CanScroll(Layer::ScrollDirection aDirection) const;
+  bool CanScroll(ScrollDirection aDirection) const;
 
   void NotifyMozMouseScrollEvent(const nsString& aString) const;
 
@@ -449,6 +457,7 @@ protected:
   nsEventStatus OnPanEnd(const PanGestureInput& aEvent);
   nsEventStatus OnPanMomentumStart(const PanGestureInput& aEvent);
   nsEventStatus OnPanMomentumEnd(const PanGestureInput& aEvent);
+  nsEventStatus HandleEndOfPan();
 
   /**
    * Helper methods for handling scroll wheel events.
@@ -505,8 +514,7 @@ protected:
                       const CSSPoint& aFocus);
 
   /**
-   * Schedules a composite on the compositor thread. Wrapper for
-   * CompositorBridgeParent::ScheduleRenderOnCompositorThread().
+   * Schedules a composite on the compositor thread.
    */
   void ScheduleComposite();
 
@@ -569,7 +577,7 @@ protected:
    * Sets up anything needed for panning. This takes us out of the "TOUCHING"
    * state and starts actually panning us.
    */
-  nsEventStatus StartPanning(const MultiTouchInput& aStartPoint);
+  nsEventStatus StartPanning(const ParentLayerPoint& aStartPoint);
 
   /**
    * Wrapper for Axis::UpdateWithTouchAtDevicePoint(). Calls this function for
@@ -638,7 +646,8 @@ protected:
   void OnTouchEndOrCancel();
 
   uint64_t mLayersId;
-  RefPtr<CompositorBridgeParent> mCompositorBridgeParent;
+  RefPtr<CompositorController> mCompositorController;
+  RefPtr<MetricsSharingController> mMetricsSharingController;
 
   /* Access to the following two fields is protected by the mRefPtrMonitor,
      since they are accessed on the UI thread but can be cleared on the
@@ -657,12 +666,6 @@ protected:
   /* Utility functions that return a addrefed pointer to the corresponding fields. */
   already_AddRefed<GeckoContentController> GetGeckoContentController() const;
   already_AddRefed<GestureEventListener> GetGestureEventListener() const;
-
-  // If we are sharing our frame metrics with content across processes
-  bool mSharingFrameMetricsAcrossProcesses;
-  /* Utility function to get the Compositor with which we share the FrameMetrics.
-     This function is only callable from the compositor thread. */
-  PCompositorBridgeParent* GetSharedFrameMetricsCompositor();
 
   PlatformSpecificStateBase* GetPlatformSpecificState();
 
@@ -750,12 +753,18 @@ public:
   };
 
   /**
-   * Query the transforms that should be applied to the layer corresponding
-   * to this APZC due to asynchronous panning and zooming.
-   * This function returns the async transform via the |aOutTransform|
-   * out parameter.
+   * Get the current scroll offset of the scrollable frame corresponding
+   * to this APZC, including the effects of any asynchronous panning and
+   * zooming, in ParentLayer pixels.
    */
   ParentLayerPoint GetCurrentAsyncScrollOffset(AsyncMode aMode) const;
+
+  /**
+   * Get the current scroll offset of the scrollable frame corresponding
+   * to this APZC, including the effects of any asynchronous panning, in
+   * CSS pixels.
+   */
+  CSSPoint GetCurrentAsyncScrollOffsetInCssPixels(AsyncMode aMode) const;
 
   /**
    * Return a visual effect that reflects this apzc's
@@ -1167,6 +1176,10 @@ private:
    * recording.
    */
 private:
+  // Helper function to update the in-progress checkerboard event, if any.
+  void UpdateCheckerboardEvent(const MutexAutoLock& aProofOfLock,
+                               uint32_t aMagnitude);
+
   // Mutex protecting mCheckerboardEvent
   Mutex mCheckerboardEventLock;
   // This is created when this APZC instance is first included as part of a

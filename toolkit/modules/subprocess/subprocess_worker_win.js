@@ -440,7 +440,17 @@ class Process extends BaseProcess {
   spawn(options) {
     let {command, arguments: args} = options;
 
-    args = args.map(arg => this.quoteString(arg));
+    if (/\\cmd\.exe$/i.test(command) && args.length == 3 && /^(\/S)?\/C$/i.test(args[1])) {
+      // cmd.exe is insane and requires special treatment.
+      args = [this.quoteString(args[0]), "/S/C", `"${args[2]}"`];
+    } else {
+      args = args.map(arg => this.quoteString(arg));
+    }
+
+    if (/\.bat$/i.test(command)) {
+      command = io.comspec;
+      args = ["cmd.exe", "/s/c", `"${args.join(" ")}"`];
+    }
 
     let envp = this.stringList(options.environment);
 
@@ -511,7 +521,10 @@ class Process extends BaseProcess {
 
     if (ok) {
       ok = libc.AssignProcessToJobObject(this.jobHandle, procInfo.hProcess);
-      errorMessage = `Failed to attach process to job object: 0x${(ctypes.winLastError || 0).toString(16)}`;
+      if (!ok) {
+        errorMessage = `Failed to attach process to job object: 0x${(ctypes.winLastError || 0).toString(16)}`;
+        libc.TerminateProcess(procInfo.hProcess, TERMINATE_EXIT_CODE);
+      }
     }
 
     if (!ok) {
@@ -593,6 +606,8 @@ io = {
   running: true,
 
   init(details) {
+    this.comspec = details.comspec;
+
     let signalEvent = ctypes.cast(ctypes.uintptr_t(details.signalEvent),
                                   win32.HANDLE);
     this.signal = new Signal(signalEvent);

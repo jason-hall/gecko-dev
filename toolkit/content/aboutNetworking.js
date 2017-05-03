@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-'use strict';
+"use strict";
 
 var Ci = Components.interfaces;
 var Cc = Components.classes;
@@ -12,7 +12,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 const FileUtils = Cu.import("resource://gre/modules/FileUtils.jsm").FileUtils
 const gEnv = Cc["@mozilla.org/process/environment;1"]
                .getService(Ci.nsIEnvironment);
-const gDashboard = Cc['@mozilla.org/network/dashboard;1']
+const gDashboard = Cc["@mozilla.org/network/dashboard;1"]
                      .getService(Ci.nsIDashboard);
 const gDirServ = Cc["@mozilla.org/file/directory_service;1"]
                    .getService(Ci.nsIDirectoryServiceProvider);
@@ -33,20 +33,20 @@ const gDashboardCallbacks = {
 const REFRESH_INTERVAL_MS = 3000;
 
 function col(element) {
-  let col = document.createElement('td');
+  let col = document.createElement("td");
   let content = document.createTextNode(element);
   col.appendChild(content);
   return col;
 }
 
 function displayHttp(data) {
-  let cont = document.getElementById('http_content');
+  let cont = document.getElementById("http_content");
   let parent = cont.parentNode;
-  let new_cont = document.createElement('tbody');
-  new_cont.setAttribute('id', 'http_content');
+  let new_cont = document.createElement("tbody");
+  new_cont.setAttribute("id", "http_content");
 
   for (let i = 0; i < data.connections.length; i++) {
-    let row = document.createElement('tr');
+    let row = document.createElement("tr");
     row.appendChild(col(data.connections[i].host));
     row.appendChild(col(data.connections[i].port));
     row.appendChild(col(data.connections[i].spdy));
@@ -60,13 +60,13 @@ function displayHttp(data) {
 }
 
 function displaySockets(data) {
-  let cont = document.getElementById('sockets_content');
+  let cont = document.getElementById("sockets_content");
   let parent = cont.parentNode;
-  let new_cont = document.createElement('tbody');
-  new_cont.setAttribute('id', 'sockets_content');
+  let new_cont = document.createElement("tbody");
+  new_cont.setAttribute("id", "sockets_content");
 
   for (let i = 0; i < data.sockets.length; i++) {
-    let row = document.createElement('tr');
+    let row = document.createElement("tr");
     row.appendChild(col(data.sockets[i].host));
     row.appendChild(col(data.sockets[i].port));
     row.appendChild(col(data.sockets[i].tcp));
@@ -80,20 +80,20 @@ function displaySockets(data) {
 }
 
 function displayDns(data) {
-  let cont = document.getElementById('dns_content');
+  let cont = document.getElementById("dns_content");
   let parent = cont.parentNode;
-  let new_cont = document.createElement('tbody');
-  new_cont.setAttribute('id', 'dns_content');
+  let new_cont = document.createElement("tbody");
+  new_cont.setAttribute("id", "dns_content");
 
   for (let i = 0; i < data.entries.length; i++) {
-    let row = document.createElement('tr');
+    let row = document.createElement("tr");
     row.appendChild(col(data.entries[i].hostname));
     row.appendChild(col(data.entries[i].family));
-    let column = document.createElement('td');
+    let column = document.createElement("td");
 
     for (let j = 0; j < data.entries[i].hostaddr.length; j++) {
       column.appendChild(document.createTextNode(data.entries[i].hostaddr[j]));
-      column.appendChild(document.createElement('br'));
+      column.appendChild(document.createElement("br"));
     }
 
     row.appendChild(column);
@@ -105,13 +105,13 @@ function displayDns(data) {
 }
 
 function displayWebsockets(data) {
-  let cont = document.getElementById('websockets_content');
+  let cont = document.getElementById("websockets_content");
   let parent = cont.parentNode;
-  let new_cont = document.createElement('tbody');
-  new_cont.setAttribute('id', 'websockets_content');
+  let new_cont = document.createElement("tbody");
+  new_cont.setAttribute("id", "websockets_content");
 
   for (let i = 0; i < data.websockets.length; i++) {
-    let row = document.createElement('tr');
+    let row = document.createElement("tr");
     row.appendChild(col(data.websockets[i].hostport));
     row.appendChild(col(data.websockets[i].encrypted));
     row.appendChild(col(data.websockets[i].msgsent));
@@ -182,8 +182,14 @@ function init() {
   let setModulesButton = document.getElementById("set-log-modules-button");
   setModulesButton.addEventListener("click", setLogModules);
 
+  let startLoggingButton = document.getElementById("start-logging-button");
+  startLoggingButton.addEventListener("click", startLogging);
+
+  let stopLoggingButton = document.getElementById("stop-logging-button");
+  stopLoggingButton.addEventListener("click", stopLogging);
+
   try {
-    let file = gDirServ.getFile("TmpD",  {});
+    let file = gDirServ.getFile("TmpD", {});
     file.append("log.txt");
     document.getElementById("log-file").value = file.path;
   } catch (e) {
@@ -195,6 +201,13 @@ function init() {
 
   // Update the active log modules
   updateLogModules();
+
+  // If we can't set the file and the modules at runtime,
+  // the start and stop buttons wouldn't really do anything.
+  if (setLogButton.disabled && setModulesButton.disabled) {
+    startLoggingButton.disabled = true;
+    stopLoggingButton.disabled = true;
+  }
 }
 
 function updateLogFile() {
@@ -213,7 +226,6 @@ function updateLogFile() {
   } else {
     // There may be a value set by a pref.
     currentLogFile.innerText = gDashboard.getLogPath();
-    setLogFileButton.disabled = false;
   }
 }
 
@@ -264,51 +276,73 @@ function updateLogModules() {
 }
 
 function setLogFile() {
+  let setLogButton = document.getElementById("set-log-file-button");
+  if (setLogButton.disabled) {
+    // There's no point trying since it wouldn't work anyway.
+    return;
+  }
   let logFile = document.getElementById("log-file").value.trim();
   Services.prefs.setCharPref("logging.config.LOG_FILE", logFile);
   updateLogFile();
 }
 
-function setLogModules() {
-  let modules = document.getElementById("log-modules").value.trim();
-  if (modules.length == 0) {
-    // Turn off all the modules.
-    let children = Services.prefs.getBranch("logging.").getChildList("", {});
-    for (let pref of children) {
-      if (!pref.startsWith("config.")) {
-        Services.prefs.clearUserPref(`logging.${pref}`);
-      }
+function clearLogModules() {
+  // Turn off all the modules.
+  let children = Services.prefs.getBranch("logging.").getChildList("", {});
+  for (let pref of children) {
+    if (!pref.startsWith("config.")) {
+      Services.prefs.clearUserPref(`logging.${pref}`);
     }
-    Services.prefs.clearUserPref("logging.config.add_timestamp");
-    Services.prefs.clearUserPref("logging.config.sync");
-    updateLogModules();
+  }
+  Services.prefs.clearUserPref("logging.config.add_timestamp");
+  Services.prefs.clearUserPref("logging.config.sync");
+  updateLogModules();
+}
+
+function setLogModules() {
+  let setLogModulesButton = document.getElementById("set-log-modules-button");
+  if (setLogModulesButton.disabled) {
+    // The modules were set via env var, so we shouldn't try to change them.
     return;
   }
 
+  let modules = document.getElementById("log-modules").value.trim();
+
+  // Clear previously set log modules.
+  clearLogModules();
+
   let logModules = modules.split(",");
-  let isSync = false;
-  let addTimestamp = false;
   for (let module of logModules) {
     if (module == "timestamp") {
-      addTimestamp = true;
+      Services.prefs.setBoolPref("logging.config.add_timestamp", true);
     } else if (module == "rotate") {
       // XXX: rotate is not yet supported.
     } else if (module == "append") {
       // XXX: append is not yet supported.
     } else if (module == "sync") {
-      isSync = true;
+      Services.prefs.setBoolPref("logging.config.sync", true);
     } else {
       let [key, value] = module.split(":");
       Services.prefs.setIntPref(`logging.${key}`, parseInt(value, 10));
     }
   }
-  Services.prefs.setBoolPref("logging.config.add_timestamp", addTimestamp);
-  Services.prefs.setBoolPref("logging.config.sync", isSync);
 
   updateLogModules();
 }
 
-function confirm () {
+function startLogging() {
+  setLogFile();
+  setLogModules();
+}
+
+function stopLogging() {
+  clearLogModules();
+  // clear the log file as well
+  Services.prefs.clearUserPref("logging.config.LOG_FILE");
+  updateLogFile();
+}
+
+function confirm() {
   let div = document.getElementById("warning_message");
   div.classList.remove("active");
   div.hidden = true;
@@ -347,10 +381,9 @@ function setAutoRefreshInterval(checkBox) {
   }, REFRESH_INTERVAL_MS);
 }
 
-window.addEventListener("DOMContentLoaded", function load() {
-  window.removeEventListener("DOMContentLoaded", load);
+window.addEventListener("DOMContentLoaded", function() {
   init();
-});
+}, {once: true});
 
 function doLookup() {
   let host = document.getElementById("host").value;
@@ -371,8 +404,7 @@ function displayDNSLookup(data) {
       row.appendChild(col(address));
       new_cont.appendChild(row);
     }
-  }
-  else {
+  } else {
     new_cont.appendChild(col(data.error));
   }
 

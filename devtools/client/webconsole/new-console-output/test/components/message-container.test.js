@@ -17,12 +17,12 @@ const PageError = require("devtools/client/webconsole/new-console-output/compone
 
 // Test fakes.
 const { stubPreparedMessages } = require("devtools/client/webconsole/new-console-output/test/fixtures/stubs/index");
-const onViewSourceInDebugger = () => {};
+const serviceContainer = require("devtools/client/webconsole/new-console-output/test/fixtures/serviceContainer");
 
 describe("MessageContainer component:", () => {
   it("pipes data to children as expected", () => {
     const message = stubPreparedMessages.get("console.log('foobar', 'test')");
-    const rendered = renderComponent(MessageContainer, {message, onViewSourceInDebugger});
+    const rendered = renderComponent(MessageContainer, {message, serviceContainer});
 
     expect(rendered.textContent.includes("foobar")).toBe(true);
   });
@@ -39,6 +39,12 @@ describe("MessageContainer component:", () => {
       {
         component: PageError,
         message: stubPreparedMessages.get("ReferenceError: asdf is not defined")
+      },
+      {
+        component: PageError,
+        message: stubPreparedMessages.get(
+          "Unknown property ‘such-unknown-property’.  Declaration dropped."
+        )
       }
     ];
 
@@ -46,7 +52,7 @@ describe("MessageContainer component:", () => {
       const { component, message } = info;
       const rendered = shallowRenderComponent(MessageContainer, {
         message,
-        onViewSourceInDebugger,
+        serviceContainer,
       });
       expect(rendered.type).toBe(component);
     });

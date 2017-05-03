@@ -9,6 +9,7 @@
 #include "xpcprivate.h"
 #include "jsprf.h"
 #include "mozilla/DeferredFinalize.h"
+#include "mozilla/Sprintf.h"
 #include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "nsCCUncollectableMarker.h"
 #include "nsContentUtils.h"
@@ -92,7 +93,7 @@ nsXPCWrappedJS::CanSkip()
 }
 
 NS_IMETHODIMP
-NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Traverse
+NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::TraverseNative
    (void* p, nsCycleCollectionTraversalCallback& cb)
 {
     nsISupports* s = static_cast<nsISupports*>(p);
@@ -103,9 +104,9 @@ NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Traverse
     if (cb.WantDebugInfo()) {
         char name[72];
         if (tmp->GetClass())
-            snprintf(name, sizeof(name), "nsXPCWrappedJS (%s)", tmp->GetClass()->GetInterfaceName());
+            SprintfLiteral(name, "nsXPCWrappedJS (%s)", tmp->GetClass()->GetInterfaceName());
         else
-            snprintf(name, sizeof(name), "nsXPCWrappedJS");
+            SprintfLiteral(name, "nsXPCWrappedJS");
         cb.DescribeRefCountedNode(refcnt, name);
     } else {
         NS_IMPL_CYCLE_COLLECTION_DESCRIBE(nsXPCWrappedJS, refcnt)
@@ -206,9 +207,7 @@ nsXPCWrappedJS::QueryInterface(REFNSIID aIID, void** aInstancePtr)
     if (aIID.Equals(NS_GET_IID(nsIXPConnectWrappedJSUnmarkGray))) {
         *aInstancePtr = nullptr;
 
-        // No need to null check mJSObj because IsValid() call above did
-        // that already.
-        JS::ExposeObjectToActiveJS(mJSObj);
+        mJSObj.exposeToActiveJS();
 
         // Just return some error value since one isn't supposed to use
         // nsIXPConnectWrappedJSUnmarkGray objects for anything.
@@ -317,9 +316,6 @@ nsXPCWrappedJS::GetWeakReference(nsIWeakReference** aInstancePtr)
 JSObject*
 nsXPCWrappedJS::GetJSObject()
 {
-    if (mJSObj) {
-        JS::ExposeObjectToActiveJS(mJSObj);
-    }
     return mJSObj;
 }
 
@@ -409,7 +405,9 @@ nsXPCWrappedJS::nsXPCWrappedJS(JSContext* cx,
 
     if (IsRootWrapper()) {
         MOZ_ASSERT(!IsMultiCompartment(), "mNext is always nullptr here");
-        xpc::CompartmentPrivate::Get(mJSObj)->GetWrappedJSMap()->Add(cx, this);
+        if (!xpc::CompartmentPrivate::Get(mJSObj)->GetWrappedJSMap()->Add(cx, this)) {
+            *rv = NS_ERROR_OUT_OF_MEMORY;
+        }
     } else {
         NS_ADDREF(mRoot);
         mNext = mRoot->mNext;
@@ -420,8 +418,10 @@ nsXPCWrappedJS::nsXPCWrappedJS(JSContext* cx,
         // to migrate the chain to the global table on the XPCJSContext.
         if (mRoot->IsMultiCompartment()) {
             xpc::CompartmentPrivate::Get(mRoot->mJSObj)->GetWrappedJSMap()->Remove(mRoot);
-            MOZ_RELEASE_ASSERT(nsXPConnect::GetContextInstance()->
-                    GetMultiCompartmentWrappedJSMap()->Add(cx, mRoot));
+            auto destMap = nsXPConnect::GetContextInstance()->GetMultiCompartmentWrappedJSMap();
+            if (!destMap->Add(cx, mRoot)) {
+                *rv = NS_ERROR_OUT_OF_MEMORY;
+            }
         }
     }
 }
@@ -697,10 +697,10 @@ NS_IMETHODIMP
 nsXPCWrappedJS::DebugDump(int16_t depth)
 {
 #ifdef DEBUG
-    XPC_LOG_ALWAYS(("nsXPCWrappedJS @ %x with mRefCnt = %d", this, mRefCnt.get()));
+    XPC_LOG_ALWAYS(("nsXPCWrappedJS @ %p with mRefCnt = %" PRIuPTR, this, mRefCnt.get()));
         XPC_LOG_INDENT();
 
-        XPC_LOG_ALWAYS(("%s wrapper around JSObject @ %x", \
+        XPC_LOG_ALWAYS(("%s wrapper around JSObject @ %p",              \
                         IsRootWrapper() ? "ROOT":"non-root", mJSObj.get()));
         char* name;
         GetClass()->GetInterfaceInfo()->GetName(&name);
@@ -711,7 +711,7 @@ nsXPCWrappedJS::DebugDump(int16_t depth)
         XPC_LOG_ALWAYS(("IID number is %s", iid ? iid : "invalid"));
         if (iid)
             free(iid);
-        XPC_LOG_ALWAYS(("nsXPCWrappedJSClass @ %x", mClass.get()));
+        XPC_LOG_ALWAYS(("nsXPCWrappedJSClass @ %p", mClass.get()));
 
         if (!IsRootWrapper())
             XPC_LOG_OUTDENT();

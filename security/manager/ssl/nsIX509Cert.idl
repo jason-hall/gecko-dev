@@ -29,11 +29,6 @@ interface nsICertVerificationListener;
 interface nsIX509Cert : nsISupports {
 
   /**
-   *  A nickname for the certificate.
-   */
-  readonly attribute AString nickname;
-
-  /**
    *  The primary email address of the certificate, if present.
    */
   readonly attribute AString emailAddress;
@@ -145,7 +140,7 @@ interface nsIX509Cert : nsISupports {
   /**
    *  A human readable identifier to label this certificate.
    */
-  readonly attribute AString windowTitle;
+  readonly attribute AString displayName;
 
   /**
    *  Constants to classify the type of a certificate.
@@ -239,19 +234,6 @@ interface nsIX509Cert : nsISupports {
    * Retrieves the NSS certificate object wrapped by this interface
    */
    [notxpcom, noscript] CERTCertificatePtr getCert();
-
-  /**
-   * Human readable names identifying all hardware or
-   * software tokens the certificate is stored on.
-   *
-   * @param length On success, the number of entries in the returned array.
-   * @return On success, an array containing the names of all tokens
-   *         the certificate is stored on (may be empty).
-   *         On failure the function throws/returns an error.
-   */
-  void getAllTokenNames(out unsigned long length,
-                       [retval, array, size_is(length)] out wstring
-                       tokenNames);
 
   /**
    * Either delete the certificate from all cert databases,

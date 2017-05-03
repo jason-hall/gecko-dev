@@ -49,6 +49,7 @@ involved:
       * `browser._remoteWebNavigationImpl.swapBrowser(browser)` (R)
       * `browser._remoteWebProgressManager.swapBrowser(browser)` (R)
       * `browser._remoteFinder.swapBrowser(browser)` (R)
+      * Emit `EndSwapDocShells`
     * `gBrowser.mTabProgressListener`
     * `filter.addProgressListener`
     * `ourBrowser.webProgress.addProgressListener`
@@ -76,7 +77,6 @@ involved:
     * `gBrowser._callProgressListeners` with `onLocationChange`
     * `gBrowser._callProgressListeners` with `onSecurityChange`
     * `gBrowser._callProgressListeners` with `onUpdateCurrentBrowser`
-    * `gBrowser._recordTabAccess`
     * `gBrowser.updateTitlebar`
     * `gBrowser._callProgressListeners` with `onStateChange`
     * `gBrowser._setCloseKeyState`

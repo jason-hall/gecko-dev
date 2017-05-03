@@ -114,6 +114,7 @@ class NurseryAwareHashMap
 
 } // namespace js
 
+
 namespace JS {
 template <typename T>
 struct GCPolicy<js::detail::UnsafeBareReadBarriered<T>>
@@ -121,9 +122,10 @@ struct GCPolicy<js::detail::UnsafeBareReadBarriered<T>>
     static void trace(JSTracer* trc, js::detail::UnsafeBareReadBarriered<T>* thingp,
                       const char* name)
     {
+        js::TraceEdge(trc, thingp, name);
     }
     static bool needsSweep(js::detail::UnsafeBareReadBarriered<T>* thingp) {
-        return false;
+        return js::gc::IsAboutToBeFinalized(thingp);
     }
 };
 } // namespace JS

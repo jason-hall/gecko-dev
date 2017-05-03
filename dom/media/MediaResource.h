@@ -16,6 +16,7 @@
 #include "nsIInterfaceRequestor.h"
 #include "Intervals.h"
 #include "MediaCache.h"
+#include "MediaContainerType.h"
 #include "MediaData.h"
 #include "MediaResourceCallback.h"
 #include "mozilla/Atomics.h"
@@ -315,7 +316,9 @@ public:
    * Create a resource, reading data from the channel. Call on main thread only.
    * The caller must follow up by calling resource->Open().
    */
-  static already_AddRefed<MediaResource> Create(MediaResourceCallback* aCallback, nsIChannel* aChannel);
+  static already_AddRefed<MediaResource>
+  Create(MediaResourceCallback* aCallback,
+         nsIChannel* aChannel, bool aIsPrivateBrowsing);
 
   /**
    * Open the stream. This creates a stream listener and returns it in
@@ -337,10 +340,10 @@ public:
   // Notify that the last data byte range was loaded.
   virtual void NotifyLastByteRange() { }
 
-  // Returns the content type of the resource. This is copied from the
+  // Returns the container content type of the resource. This is copied from the
   // nsIChannel when the MediaResource is created. Safe to call from
   // any thread.
-  virtual const nsCString& GetContentType() const = 0;
+  virtual const MediaContainerType& GetContentType() const = 0;
 
   // Return true if the stream is a live stream
   virtual bool IsRealTime() {
@@ -383,7 +386,7 @@ public:
     // Not owned:
     // - mCallback
     size_t size = MediaResource::SizeOfExcludingThis(aMallocSizeOf);
-    size += mContentType.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
+    size += mContainerType.SizeOfExcludingThis(aMallocSizeOf);
 
     return size;
   }
@@ -403,25 +406,22 @@ protected:
   BaseMediaResource(MediaResourceCallback* aCallback,
                     nsIChannel* aChannel,
                     nsIURI* aURI,
-                    const nsACString& aContentType) :
+                    const MediaContainerType& aContainerType) :
     mCallback(aCallback),
     mChannel(aChannel),
     mURI(aURI),
-    mContentType(aContentType),
+    mContainerType(aContainerType),
     mLoadInBackground(false)
   {
-    MOZ_COUNT_CTOR(BaseMediaResource);
-    NS_ASSERTION(!mContentType.IsEmpty(), "Must know content type");
     mURI->GetSpec(mContentURL);
   }
   virtual ~BaseMediaResource()
   {
-    MOZ_COUNT_DTOR(BaseMediaResource);
   }
 
-  const nsCString& GetContentType() const override
+  const MediaContainerType& GetContentType() const override
   {
-    return mContentType;
+    return mContainerType;
   }
 
   // Set the request's load flags to aFlags.  If the request is part of a
@@ -446,7 +446,7 @@ protected:
   // Content-Type of the channel. This is copied from the nsIChannel when the
   // MediaResource is created. This is constant, so accessing from any thread
   // is safe.
-  const nsCString mContentType;
+  const MediaContainerType mContainerType;
 
   // Copy of the url of the channel resource.
   nsCString mContentURL;
@@ -513,7 +513,8 @@ public:
   ChannelMediaResource(MediaResourceCallback* aDecoder,
                        nsIChannel* aChannel,
                        nsIURI* aURI,
-                       const nsACString& aContentType);
+                       const MediaContainerType& aContainerType,
+                       bool aIsPrivateBrowsing = false);
   ~ChannelMediaResource();
 
   // These are called on the main thread by MediaCache. These must
@@ -660,12 +661,17 @@ protected:
 
   void DoNotifyDataReceived();
 
-  static nsresult CopySegmentToCache(nsIInputStream *aInStream,
-                                     void *aClosure,
-                                     const char *aFromSegment,
+  static nsresult CopySegmentToCache(nsIInputStream* aInStream,
+                                     void* aClosure,
+                                     const char* aFromSegment,
                                      uint32_t aToOffset,
                                      uint32_t aCount,
-                                     uint32_t *aWriteCount);
+                                     uint32_t* aWriteCount);
+
+  nsresult CopySegmentToCache(nsIPrincipal* aPrincipal,
+                              const char* aFromSegment,
+                              uint32_t aCount,
+                              uint32_t* aWriteCount);
 
   // Main thread access only
   int64_t            mOffset;

@@ -17,7 +17,6 @@
 #include "mozilla/gfx/2D.h"             // for DrawTarget
 #include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/gfx/Types.h"          // for SurfaceFormat
-#include "mozilla/layers/FenceUtils.h"  // for FenceHandle
 #include "mozilla/ipc/Shmem.h"          // for Shmem
 #include "mozilla/layers/AtomicRefCountedWithFinalize.h"
 #include "mozilla/layers/CompositorTypes.h"  // for TextureFlags, etc
@@ -33,6 +32,7 @@
 #include "nsThreadUtils.h"
 
 class gfxImageSurface;
+struct ID3D11Device;
 
 namespace mozilla {
 
@@ -42,17 +42,12 @@ namespace mozilla {
 #define GFX_DEBUG_TRACK_CLIENTS_IN_POOL 1
 #endif
 
-namespace gl {
-class SharedSurface_Gralloc;
-}
-
 namespace layers {
 
 class AsyncTransactionWaiter;
 class BufferTextureData;
 class CompositableForwarder;
 class KnowsCompositor;
-class GrallocTextureData;
 class LayersIPCChannel;
 class CompositableClient;
 struct PlanarYCbCrData;
@@ -60,6 +55,7 @@ class Image;
 class PTextureChild;
 class TextureChild;
 class TextureData;
+class GPUVideoTextureData;
 struct RawTextureBuffer;
 class RawYCbCrTextureBuffer;
 class TextureClient;
@@ -90,6 +86,10 @@ enum TextureAllocationFlags {
   // Disable any cross-device synchronization. This is also for TextureClientD3D11,
   // and creates a texture without KeyedMutex.
   ALLOC_MANUAL_SYNCHRONIZATION = 1 << 6,
+
+  // The texture is going to be updated using UpdateFromSurface and needs to support
+  // that call.
+  ALLOC_UPDATE_FROM_SURFACE = 1 << 7,
 };
 
 #ifdef XP_WIN
@@ -104,7 +104,11 @@ public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(SyncObject)
   virtual ~SyncObject() { }
 
-  static already_AddRefed<SyncObject> CreateSyncObject(SyncHandle aHandle);
+  static already_AddRefed<SyncObject> CreateSyncObject(SyncHandle aHandle
+#ifdef XP_WIN
+                                                       , ID3D11Device* aDevice = nullptr
+#endif
+                                                       );
 
   enum class SyncType {
     D3D11,
@@ -112,6 +116,7 @@ public:
 
   virtual SyncType GetSyncType() = 0;
   virtual void FinalizeFrame() = 0;
+  virtual bool IsSyncObjectValid() = 0;
 
 protected:
   SyncObject() { }
@@ -182,6 +187,7 @@ struct MappedYCbCrTextureData {
 };
 
 class ReadLockDescriptor;
+class NonBlockingTextureReadLock;
 
 // A class to help implement copy-on-write semantics for shared textures.
 //
@@ -209,27 +215,37 @@ protected:
 public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(TextureReadLock)
 
-  virtual int32_t ReadLock() = 0;
+  virtual bool ReadLock() = 0;
+  virtual bool TryReadLock(TimeDuration aTimeout) { return ReadLock(); }
   virtual int32_t ReadUnlock() = 0;
-  virtual int32_t GetReadCount() = 0;
   virtual bool IsValid() const = 0;
-
-  static already_AddRefed<TextureReadLock>
-  Create(LayersIPCChannel* aAllocator);
 
   static already_AddRefed<TextureReadLock>
   Deserialize(const ReadLockDescriptor& aDescriptor, ISurfaceAllocator* aAllocator);
 
-  virtual bool Serialize(ReadLockDescriptor& aOutput) = 0;
+  virtual bool Serialize(ReadLockDescriptor& aOutput, base::ProcessId aOther) = 0;
 
   enum LockType {
-    TYPE_MEMORY,
-    TYPE_SHMEM
+    TYPE_NONBLOCKING_MEMORY,
+    TYPE_NONBLOCKING_SHMEM,
+    TYPE_CROSS_PROCESS_SEMAPHORE
   };
   virtual LockType GetType() = 0;
 
+  virtual NonBlockingTextureReadLock* AsNonBlockingLock() { return nullptr; }
+
 protected:
   NS_DECL_OWNINGTHREAD
+};
+
+class NonBlockingTextureReadLock : public TextureReadLock {
+public:
+  virtual int32_t GetReadCount() = 0;
+
+  static already_AddRefed<TextureReadLock>
+  Create(LayersIPCChannel* aAllocator);
+
+  virtual NonBlockingTextureReadLock* AsNonBlockingLock() override { return this; }
 };
 
 #ifdef XP_WIN
@@ -261,7 +277,7 @@ public:
 
   virtual void FillInfo(TextureData::Info& aInfo) const = 0;
 
-  virtual bool Lock(OpenMode aMode, FenceHandle* aFence) = 0;
+  virtual bool Lock(OpenMode aMode) = 0;
 
   virtual void Unlock() = 0;
 
@@ -288,10 +304,6 @@ public:
 
   virtual bool ReadBack(TextureReadbackSink* aReadbackSink) { return false; }
 
-  /// Ideally this should not be exposed and users of TextureClient would use Lock/Unlock
-  /// preoperly but that requires a few changes to SharedSurface and maybe gonk video.
-  virtual void WaitForFence(FenceHandle* aFence) {};
-
   virtual void SyncWithObject(SyncObject* aFence) {};
 
   virtual TextureFlags GetTextureFlags() const { return TextureFlags::NO_FLAGS; }
@@ -302,9 +314,9 @@ public:
   }
 #endif
 
-  virtual GrallocTextureData* AsGrallocTextureData() { return nullptr; }
-
   virtual BufferTextureData* AsBufferTextureData() { return nullptr; }
+
+  virtual GPUVideoTextureData* AsGPUVideoTextureData() { return nullptr; }
 };
 
 /**
@@ -363,6 +375,7 @@ public:
                  gfx::IntSize aYSize,
                  gfx::IntSize aCbCrSize,
                  StereoMode aStereoMode,
+                 YUVColorSpace aYUVColorSpace,
                  TextureFlags aTextureFlags);
 
   // Creates and allocates a TextureClient (can be accessed through raw
@@ -381,6 +394,7 @@ public:
   static already_AddRefed<TextureClient>
   CreateForYCbCrWithBufferSize(KnowsCompositor* aAllocator,
                                size_t aSize,
+                               YUVColorSpace aYUVColorSpace,
                                TextureFlags aTextureFlags);
 
   // Creates and allocates a TextureClient of the same type.
@@ -579,40 +593,8 @@ public:
    * If the texture flags contain TextureFlags::DEALLOCATE_CLIENT, the destruction
    * will be synchronously coordinated with the compositor side, otherwise it
    * will be done asynchronously.
-   * If sync is true, the destruction will be synchronous regardless of the
-   * texture's flags (bad for performance, use with care).
    */
-  void Destroy(bool sync = false);
-
-  virtual void SetReleaseFenceHandle(const FenceHandle& aReleaseFenceHandle)
-  {
-    mReleaseFenceHandle.Merge(aReleaseFenceHandle);
-  }
-
-  virtual FenceHandle GetAndResetReleaseFenceHandle()
-  {
-    FenceHandle fence;
-    mReleaseFenceHandle.TransferToAnotherFenceHandle(fence);
-    return fence;
-  }
-
-  virtual void SetAcquireFenceHandle(const FenceHandle& aAcquireFenceHandle)
-  {
-    mAcquireFenceHandle = aAcquireFenceHandle;
-  }
-
-  virtual const FenceHandle& GetAcquireFenceHandle() const
-  {
-    return mAcquireFenceHandle;
-  }
-
-  /**
-   * This function waits until the buffer is no longer being used.
-   *
-   * XXX - Ideally we shouldn't need this method because Lock the right
-   * thing already.
-   */
-  virtual void WaitForBufferOwnership(bool aWaitReleaseFence = true);
+  void Destroy();
 
   /**
    * Track how much of this texture is wasted.
@@ -644,22 +626,6 @@ public:
 
   uint64_t GetSerial() const { return mSerial; }
 
-  bool NeedsFenceHandle()
-  {
-#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
-    if (!mData) {
-      return false;
-    }
-    return !!mData->AsGrallocTextureData();
-#else
-    return false;
-#endif
-  }
-
-  void WaitFenceHandleOnImageBridge(Mutex& aMutex);
-  void ClearWaitFenceHandleOnImageBridge(Mutex& aMutex);
-  void CancelWaitFenceHandleOnImageBridge();
-
   void CancelWaitForRecycle();
 
   /**
@@ -681,12 +647,16 @@ public:
   uint64_t GetLastFwdTransactionId() { return mFwdTransactionId; }
 
   void EnableReadLock();
+  void EnableBlockingReadLock();
 
   TextureReadLock* GetReadLock() { return mReadLock; }
 
   bool IsReadLocked() const;
 
-  void SerializeReadLock(ReadLockDescriptor& aDescriptor);
+  bool TryReadLock();
+  void ReadUnlock();
+
+  bool SerializeReadLock(ReadLockDescriptor& aDescriptor);
 
 private:
   static void TextureClientRecycleCallback(TextureClient* aClient, void* aClosure);
@@ -725,7 +695,6 @@ private:
   void Finalize() {}
 
   friend class AtomicRefCountedWithFinalize<TextureClient>;
-  friend class gl::SharedSurface_Gralloc;
 protected:
   /**
    * Should only be called *once* per texture, in TextureClient::InitIPDLActor.
@@ -751,9 +720,6 @@ protected:
   RefPtr<gfx::DrawTarget> mBorrowedDrawTarget;
 
   TextureFlags mFlags;
-  FenceHandle mReleaseFenceHandle;
-  FenceHandle mAcquireFenceHandle;
-  RefPtr<AsyncTransactionWaiter> mFenceHandleWaiter;
 
   gl::GfxTextureWasteTracker mWasteTracker;
 
@@ -762,6 +728,7 @@ protected:
   uint32_t mExpectedDtRefs;
 #endif
   bool mIsLocked;
+  bool mIsReadLocked;
   // This member tracks that the texture was written into until the update
   // is sent to the compositor. We need this remember to lock mReadLock on
   // behalf of the compositor just before sending the notification.
@@ -783,9 +750,10 @@ protected:
   static mozilla::Atomic<uint64_t> sSerialCounter;
 
   friend class TextureChild;
-  friend class RemoveTextureFromCompositableTracker;
   friend void TestTextureClientSurface(TextureClient*, gfxImageSurface*);
   friend void TestTextureClientYCbCr(TextureClient*, PlanarYCbCrData&);
+  friend already_AddRefed<TextureHost> CreateTextureHostWithBackend(
+    TextureClient*, LayersBackend&);
 
 #ifdef GFX_DEBUG_TRACK_CLIENTS_IN_POOL
 public:

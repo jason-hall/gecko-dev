@@ -7,6 +7,8 @@
 #ifndef mozilla_ServoTypes_h
 #define mozilla_ServoTypes_h
 
+#include "mozilla/TypedEnumBits.h"
+
 /*
  * Type definitions used to interact with Servo. This gets included by nsINode,
  * so don't add significant include dependencies to this file.
@@ -34,6 +36,42 @@ struct ServoCell {
   void Set(T arg) { value.value = arg; }
   ServoCell() : value() {};
 };
+
+// Indicates whether the Servo style system should expect the style on an element
+// to have already been resolved (i.e. via a parallel traversal), or whether it
+// may be lazily computed.
+enum class LazyComputeBehavior {
+  Allow,
+  Assert,
+};
+
+// Indicates whether the Servo style system should perform normal processing or
+// whether it should only process unstyled children of the root and their
+// descendants.
+enum class TraversalRootBehavior {
+  Normal,
+  UnstyledChildrenOnly,
+};
+
+// Indicates whether the Servo style system should perform normal processing or
+// whether it should traverse in a mode that doesn't generate any change hints,
+// which is what's required when handling frame reconstruction.  The change
+// hints in this case are unneeded, since the old frames have already been
+// destroyed.
+enum class TraversalRestyleBehavior {
+  Normal,
+  ForReconstruct,
+};
+
+// Represents which tasks are performed in a SequentialTask of UpdateAnimations.
+enum class UpdateAnimationsTasks : uint8_t {
+  CSSAnimations    = 1 << 0,
+  CSSTransitions   = 1 << 1,
+  EffectProperties = 1 << 2,
+  CascadeResults   = 1 << 3,
+};
+
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(UpdateAnimationsTasks)
 
 } // namespace mozilla
 

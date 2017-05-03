@@ -70,6 +70,14 @@ GamepadPlatformService::NotifyGamepadChange(const T& aInfo)
   // mChannelParents may be accessed by background thread in the
   // same time, we use mutex to prevent possible race condtion
   MutexAutoLock autoLock(mMutex);
+
+  // Buffer all events if we have no Channel to dispatch, which
+  // may happen when performing Mochitest.
+  if (mChannelParents.IsEmpty()) {
+    mPendingEvents.AppendElement(e);
+    return;
+  }
+
   for(uint32_t i = 0; i < mChannelParents.Length(); ++i) {
     mChannelParents[i]->DispatchUpdateEvent(e);
   }
@@ -78,7 +86,9 @@ GamepadPlatformService::NotifyGamepadChange(const T& aInfo)
 uint32_t
 GamepadPlatformService::AddGamepad(const char* aID,
                                    GamepadMappingType aMapping,
-                                   uint32_t aNumButtons, uint32_t aNumAxes)
+                                   GamepadHand aHand,
+                                   uint32_t aNumButtons, uint32_t aNumAxes,
+                                   uint32_t aHaptics)
 {
   // This method is called by monitor thread populated in
   // platform-dependent backends
@@ -87,7 +97,9 @@ GamepadPlatformService::AddGamepad(const char* aID,
 
   uint32_t index = ++mGamepadIndex;
   GamepadAdded a(NS_ConvertUTF8toUTF16(nsDependentCString(aID)), index,
-                 (uint32_t)aMapping, aNumButtons, aNumAxes);
+                 aMapping, aHand, GamepadServiceType::Standard,
+                 aNumButtons, aNumAxes, aHaptics);
+
   NotifyGamepadChange<GamepadAdded>(a);
   return index;
 }
@@ -99,20 +111,34 @@ GamepadPlatformService::RemoveGamepad(uint32_t aIndex)
   // platform-dependent backends
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(!NS_IsMainThread());
-  GamepadRemoved a(aIndex);
+  GamepadRemoved a(aIndex, GamepadServiceType::Standard);
   NotifyGamepadChange<GamepadRemoved>(a);
 }
 
 void
 GamepadPlatformService::NewButtonEvent(uint32_t aIndex, uint32_t aButton,
-                                       bool aPressed, double aValue)
+                                       bool aPressed, bool aTouched,
+                                       double aValue)
 {
   // This method is called by monitor thread populated in
   // platform-dependent backends
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(!NS_IsMainThread());
-  GamepadButtonInformation a(aIndex, aButton, aPressed, aValue);
+  GamepadButtonInformation a(aIndex, GamepadServiceType::Standard,
+                             aButton, aValue, aPressed, aTouched);
   NotifyGamepadChange<GamepadButtonInformation>(a);
+}
+
+void
+GamepadPlatformService::NewButtonEvent(uint32_t aIndex, uint32_t aButton,
+                                       bool aPressed, bool aTouched)
+{
+  // This method is called by monitor thread populated in
+  // platform-dependent backends
+  MOZ_ASSERT(XRE_IsParentProcess());
+  MOZ_ASSERT(!NS_IsMainThread());
+  // When only a digital button is available the value will be synthesized.
+  NewButtonEvent(aIndex, aButton, aPressed, aTouched, aPressed ? 1.0L : 0.0L);
 }
 
 void
@@ -124,7 +150,7 @@ GamepadPlatformService::NewButtonEvent(uint32_t aIndex, uint32_t aButton,
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(!NS_IsMainThread());
   // When only a digital button is available the value will be synthesized.
-  NewButtonEvent(aIndex, aButton, aPressed, aPressed ? 1.0L : 0.0L);
+  NewButtonEvent(aIndex, aButton, aPressed, aPressed, aPressed ? 1.0L : 0.0L);
 }
 
 void
@@ -135,8 +161,22 @@ GamepadPlatformService::NewAxisMoveEvent(uint32_t aIndex, uint32_t aAxis,
   // platform-dependent backends
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(!NS_IsMainThread());
-  GamepadAxisInformation a(aIndex, aAxis, aValue);
+  GamepadAxisInformation a(aIndex, GamepadServiceType::Standard,
+                           aAxis, aValue);
   NotifyGamepadChange<GamepadAxisInformation>(a);
+}
+
+void
+GamepadPlatformService::NewPoseEvent(uint32_t aIndex,
+                                     const GamepadPoseState& aPose)
+{
+  // This method is called by monitor thread populated in
+  // platform-dependent backends
+  MOZ_ASSERT(XRE_IsParentProcess());
+  MOZ_ASSERT(!NS_IsMainThread());
+  GamepadPoseInformation a(aIndex, GamepadServiceType::Standard,
+                           aPose);
+  NotifyGamepadChange<GamepadPoseInformation>(a);
 }
 
 void
@@ -161,6 +201,27 @@ GamepadPlatformService::AddChannelParent(GamepadEventChannelParent* aParent)
   // We use mutex here to prevent race condition with monitor thread
   MutexAutoLock autoLock(mMutex);
   mChannelParents.AppendElement(aParent);
+  FlushPendingEvents();
+}
+
+void
+GamepadPlatformService::FlushPendingEvents()
+{
+  AssertIsOnBackgroundThread();
+  MOZ_ASSERT(!mChannelParents.IsEmpty());
+
+  if (mPendingEvents.IsEmpty()) {
+    return;
+  }
+
+  // NOTE: This method must be called with mMutex held because it accesses
+  // mChannelParents.
+  for (uint32_t i=0; i<mChannelParents.Length(); ++i) {
+    for (uint32_t j=0; j<mPendingEvents.Length();++j) {
+      mChannelParents[i]->DispatchUpdateEvent(mPendingEvents[j]);
+    }
+  }
+  mPendingEvents.Clear();
 }
 
 void

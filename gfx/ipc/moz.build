@@ -4,6 +4,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files('**'):
+    BUG_COMPONENT = ('Core', 'Graphics: Layers')
+
 EXPORTS.mozilla += [
     'D3DMessageUtils.h',
     'GfxMessageUtils.h'
@@ -23,6 +26,7 @@ EXPORTS.mozilla.gfx += [
 ]
 
 EXPORTS.mozilla.layers += [
+    'CompositorOptions.h',
     'CompositorSession.h',
     'InProcessCompositorSession.h',
     'RemoteCompositorSession.h',
@@ -68,7 +72,11 @@ IPDL_SOURCES = [
     'PVsyncBridge.ipdl',
 ]
 
-LOCAL_INCLUDES += ['/dom/ipc']
+LOCAL_INCLUDES += [
+    '/dom/ipc',
+    '/toolkit/crashreporter',
+    '/xpcom/threads',
+]
 
 include('/ipc/chromium/chromium-config.mozbuild')
 

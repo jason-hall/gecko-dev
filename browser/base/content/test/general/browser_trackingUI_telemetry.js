@@ -15,7 +15,7 @@ var oldCanRecord = Services.telemetry.canRecordExtended;
 Services.telemetry.canRecordExtended = true;
 Services.prefs.setBoolPref(PREF, false);
 Services.telemetry.getHistogramById("TRACKING_PROTECTION_ENABLED").clear();
-registerCleanupFunction(function () {
+registerCleanupFunction(function() {
   UrlClassifierTestUtils.cleanupTestTrackers();
   Services.telemetry.canRecordExtended = oldCanRecord;
   Services.prefs.clearUserPref(PREF);
@@ -66,7 +66,7 @@ add_task(function* setup() {
 
 add_task(function* testNewWindow() {
   let newWin = yield promiseOpenAndLoadWindow({}, true);
-  let tab = newWin.gBrowser.selectedTab = newWin.gBrowser.addTab();
+  let tab = yield BrowserTestUtils.openNewForegroundTab(newWin.gBrowser);
   let TrackingProtection = newWin.TrackingProtection;
   ok(TrackingProtection, "TP is attached to the browser window");
 
@@ -122,7 +122,7 @@ add_task(function* testNewWindow() {
 
 add_task(function* testPrivateBrowsing() {
   let privateWin = yield promiseOpenAndLoadWindow({private: true}, true);
-  let tab = privateWin.gBrowser.selectedTab = privateWin.gBrowser.addTab();
+  let tab = yield BrowserTestUtils.openNewForegroundTab(privateWin.gBrowser);
   let TrackingProtection = privateWin.TrackingProtection;
   ok(TrackingProtection, "TP is attached to the browser window");
 
@@ -137,9 +137,9 @@ add_task(function* testPrivateBrowsing() {
   yield tabReloadPromise;
 
   // Sum up all the counts to make sure that nothing got logged
-  is(getEnabledCounts().reduce((p, c) => p+c), 0, "Telemetry logging off in PB mode");
-  is(getEventCounts().reduce((p, c) => p+c), 0, "Telemetry logging off in PB mode");
-  is(getShieldCounts().reduce((p, c) => p+c), 0, "Telemetry logging off in PB mode");
+  is(getEnabledCounts().reduce((p, c) => p + c), 0, "Telemetry logging off in PB mode");
+  is(getEventCounts().reduce((p, c) => p + c), 0, "Telemetry logging off in PB mode");
+  is(getShieldCounts().reduce((p, c) => p + c), 0, "Telemetry logging off in PB mode");
 
   yield promiseWindowClosed(privateWin);
 });

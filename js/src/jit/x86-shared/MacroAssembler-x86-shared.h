@@ -66,14 +66,14 @@ class MacroAssemblerX86Shared : public Assembler
     // Containers use SystemAllocPolicy since wasm releases memory after each
     // function is compiled, and these need to live until after all functions
     // are compiled.
-    using Double = Constant<uint64_t>;
+    using Double = Constant<double>;
     Vector<Double, 0, SystemAllocPolicy> doubles_;
-    typedef HashMap<uint64_t, size_t, DefaultHasher<uint64_t>, SystemAllocPolicy> DoubleMap;
+    typedef HashMap<double, size_t, DefaultHasher<double>, SystemAllocPolicy> DoubleMap;
     DoubleMap doubleMap_;
 
-    using Float = Constant<uint32_t>;
+    using Float = Constant<float>;
     Vector<Float, 0, SystemAllocPolicy> floats_;
-    typedef HashMap<uint32_t, size_t, DefaultHasher<uint32_t>, SystemAllocPolicy> FloatMap;
+    typedef HashMap<float, size_t, DefaultHasher<float>, SystemAllocPolicy> FloatMap;
     FloatMap floatMap_;
 
     struct SimdData : public Constant<SimdConstant> {
@@ -90,8 +90,8 @@ class MacroAssemblerX86Shared : public Assembler
     template<class T, class Map>
     T* getConstant(const typename T::Pod& value, Map& map, Vector<T, 0, SystemAllocPolicy>& vec);
 
-    Float* getFloat(wasm::RawF32 f);
-    Double* getDouble(wasm::RawF64 d);
+    Float* getFloat(float f);
+    Double* getDouble(double d);
     SimdData* getSimdData(const SimdConstant& v);
 
   public:
@@ -548,7 +548,7 @@ class MacroAssemblerX86Shared : public Assembler
     void jump(const Address& addr) {
         jmp(Operand(addr));
     }
-    void jump(wasm::JumpTarget target) {
+    void jump(wasm::TrapDesc target) {
         jmp(target);
     }
 
@@ -808,6 +808,19 @@ class MacroAssemblerX86Shared : public Assembler
     }
     void convertDoubleToFloat32(FloatRegister src, FloatRegister dest) {
         vcvtsd2ss(src, dest, dest);
+    }
+
+    void loadInt32x4(const Address& addr, FloatRegister dest) {
+        vmovdqa(Operand(addr), dest);
+    }
+    void loadFloat32x4(const Address& addr, FloatRegister dest) {
+        vmovaps(Operand(addr), dest);
+    }
+    void storeInt32x4(FloatRegister src, const Address& addr) {
+        vmovdqa(src, Operand(addr));
+    }
+    void storeFloat32x4(FloatRegister src, const Address& addr) {
+        vmovaps(src, Operand(addr));
     }
 
     void convertFloat32x4ToInt32x4(FloatRegister src, FloatRegister dest) {
@@ -1210,9 +1223,9 @@ class MacroAssemblerX86Shared : public Assembler
 
     inline void clampIntToUint8(Register reg);
 
-    bool maybeInlineDouble(wasm::RawF64 d, FloatRegister dest) {
+    bool maybeInlineDouble(double d, FloatRegister dest) {
         // Loading zero with xor is specially optimized in hardware.
-        if (d.bits() == 0) {
+        if (mozilla::IsPositiveZero(d)) {
             zeroDouble(dest);
             return true;
         }
@@ -1228,9 +1241,9 @@ class MacroAssemblerX86Shared : public Assembler
         return false;
     }
 
-    bool maybeInlineFloat(wasm::RawF32 f, FloatRegister dest) {
+    bool maybeInlineFloat(float f, FloatRegister dest) {
         // See comment above
-        if (f.bits() == 0) {
+        if (mozilla::IsPositiveZero(f)) {
             zeroFloat32(dest);
             return true;
         }
@@ -1300,13 +1313,6 @@ class MacroAssemblerX86Shared : public Assembler
 
             bind(&end);
         }
-    }
-
-    template <typename T1, typename T2>
-    void cmp32Set(Assembler::Condition cond, T1 lhs, T2 rhs, Register dest)
-    {
-        cmp32(lhs, rhs);
-        emitSet(cond, dest);
     }
 
     // Emit a JMP that can be toggled to a CMP. See ToggleToJmp(), ToggleToCmp().

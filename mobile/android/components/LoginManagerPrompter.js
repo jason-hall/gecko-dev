@@ -294,7 +294,7 @@ LoginManagerPrompter.prototype = {
     const buttonFlags = Ci.nsIPrompt.STD_YES_NO_BUTTONS;
 
     var usernames = logins.map(l => l.username);
-    var dialogText  = this._getLocalizedString("userSelectText");
+    var dialogText  = this._getLocalizedString("userSelectText2");
     var dialogTitle = this._getLocalizedString("passwordChangeTitle");
     var selectedIndex = { value: null };
 
@@ -344,7 +344,7 @@ LoginManagerPrompter.prototype = {
     var chromeWin = aWindow.QueryInterface(Ci.nsIInterfaceRequestor)
       .getInterface(Ci.nsIWebNavigation)
       .QueryInterface(Ci.nsIDocShell)
-      .chromeEventHandler.ownerDocument.defaultView;
+      .chromeEventHandler.ownerGlobal;
     return chromeWin;
   },
 

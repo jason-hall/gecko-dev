@@ -32,6 +32,7 @@
 #include "nsCommandLineServiceMac.h"
 #include "MacLaunchHelper.h"
 #include "updaterfileutils_osx.h"
+#include "mozilla/Monitor.h"
 #endif
 
 #if defined(XP_WIN)
@@ -49,15 +50,8 @@
 
 using namespace mozilla;
 
-static PRLogModuleInfo *
-GetUpdateLog()
-{
-  static PRLogModuleInfo *sUpdateLog;
-  if (!sUpdateLog)
-    sUpdateLog = PR_NewLogModule("updatedriver");
-  return sUpdateLog;
-}
-#define LOG(args) MOZ_LOG(GetUpdateLog(), mozilla::LogLevel::Debug, args)
+static LazyLogModule sUpdateLog("updatedriver");
+#define LOG(args) MOZ_LOG(sUpdateLog, mozilla::LogLevel::Debug, args)
 
 #ifdef XP_WIN
 #define UPDATER_BIN "updater.exe"
@@ -89,6 +83,43 @@ static const int  kAppUpdaterPrioDefault        = 19;     // -20..19 where 19 = 
 static const int  kAppUpdaterOomScoreAdjDefault = -1000;  // -1000 = Never kill
 static const int  kAppUpdaterIOPrioClassDefault = IOPRIO_CLASS_IDLE;
 static const int  kAppUpdaterIOPrioLevelDefault = 0;      // Doesn't matter for CLASS IDLE
+#endif
+
+#ifdef XP_MACOSX
+static void
+UpdateDriverSetupMacCommandLine(int& argc, char**& argv, bool restart)
+{
+  if (NS_IsMainThread()) {
+    CommandLineServiceMac::SetupMacCommandLine(argc, argv, restart);
+    return;
+  }
+  // Bug 1335916: SetupMacCommandLine calls a CoreFoundation function that
+  // asserts that it was called from the main thread, so if we are not the main
+  // thread, we have to dispatch that call to there. But we also have to get the
+  // result from it, so we can't just dispatch and return, we have to wait
+  // until the dispatched operation actually completes. So we also set up a
+  // monitor to signal us when that happens, and block until then.
+  Monitor monitor("nsUpdateDriver SetupMacCommandLine");
+
+  nsresult rv = NS_DispatchToMainThread(
+    NS_NewRunnableFunction([&argc, &argv, restart, &monitor]() -> void
+    {
+      CommandLineServiceMac::SetupMacCommandLine(argc, argv, restart);
+      MonitorAutoLock(monitor).Notify();
+    }));
+
+  if (NS_FAILED(rv)) {
+    LOG(("Update driver error dispatching SetupMacCommandLine to main thread: %d\n", rv));
+    return;
+  }
+
+  // The length of this wait is arbitrary, but should be long enough that having
+  // it expire means something is seriously wrong.
+  rv = MonitorAutoLock(monitor).Wait(PR_SecondsToInterval(60));
+  if (NS_FAILED(rv)) {
+    LOG(("Update driver timed out waiting for SetupMacCommandLine: %d\n", rv));
+  }
+}
 #endif
 
 static nsresult
@@ -638,7 +669,7 @@ SwitchToUpdatedApp(nsIFile *greDir, nsIFile *updateDir,
   }
   _exit(0);
 #elif defined(XP_MACOSX)
-  CommandLineServiceMac::SetupMacCommandLine(argc, argv, true);
+  UpdateDriverSetupMacCommandLine(argc, argv, true);
   LaunchChildMac(argc, argv);
   exit(0);
 #else
@@ -956,7 +987,7 @@ ApplyUpdate(nsIFile *greDir, nsIFile *updateDir, nsIFile *statusFile,
     _exit(0);
   }
 #elif defined(XP_MACOSX)
-  CommandLineServiceMac::SetupMacCommandLine(argc, argv, restart);
+  UpdateDriverSetupMacCommandLine(argc, argv, restart);
   // We need to detect whether elevation is required for this update. This can
   // occur when an admin user installs the application, but another admin
   // user attempts to update (see bug 394984).
@@ -1246,7 +1277,8 @@ nsUpdateProcessor::ProcessUpdate(nsIUpdate* aUpdate)
 
   MOZ_ASSERT(NS_IsMainThread(), "not main thread");
   nsCOMPtr<nsIRunnable> r = NewRunnableMethod(this, &nsUpdateProcessor::StartStagedUpdate);
-  return NS_NewThread(getter_AddRefs(mProcessWatcher), r);
+  return NS_NewNamedThread("Update Watcher", getter_AddRefs(mProcessWatcher),
+                           r);
 }
 
 

@@ -36,32 +36,32 @@ runInParent(() => {
 
 add_task(function* test_sandbox_xhr() {
   let state = {
-    msg         : "http://mochi.test:8888 is requesting your username and password. The site says: “mochitest”",
-    title       : "Authentication Required",
-    textValue   : "mochiuser1",
-    passValue   : "mochipass1",
-    iconClass   : "authentication-icon question-icon",
-    titleHidden : true,
-    textHidden  : false,
-    passHidden  : false,
-    checkHidden : true,
-    checkMsg    : "",
-    checked     : false,
-    focused     : "textField",
-    defButton   : "button0",
+    msg: "http://mochi.test:8888 is requesting your username and password. The site says: “mochitest”",
+    title: "Authentication Required",
+    textValue: "mochiuser1",
+    passValue: "mochipass1",
+    iconClass: "authentication-icon question-icon",
+    titleHidden: true,
+    textHidden: false,
+    passHidden: false,
+    checkHidden: true,
+    checkMsg: "",
+    checked: false,
+    focused: "textField",
+    defButton: "button0",
   };
   let action = {
-    buttonClick : "ok",
+    buttonClick: "ok",
   };
   let promptDone = handlePrompt(state, action);
 
   let url = new URL("authenticate.sjs?user=mochiuser1&pass=mochipass1", window.location.href);
   let sandboxConstructor = SpecialPowers.Cu.Sandbox;
   let sandbox = new sandboxConstructor(this, {wantXrays: true});
-  function sandboxedRequest(url) {
+  function sandboxedRequest(sandboxedUrl) {
     let req = SpecialPowers.Cc["@mozilla.org/xmlextras/xmlhttprequest;1"]
                            .createInstance(SpecialPowers.Ci.nsIXMLHttpRequest);
-    req.open("GET", url, true);
+    req.open("GET", sandboxedUrl, true);
     req.send(null);
   }
 

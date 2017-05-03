@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-implementation: taskgraph.task.transform:TransformTask
+loader: taskgraph.loader.transform:loader
 
 transforms:
    - taskgraph.transforms.build:transforms
@@ -11,9 +11,9 @@ transforms:
    - taskgraph.transforms.task:transforms
 
 jobs-from:
-    - android-partner.yml
     - android.yml
     - linux.yml
     - macosx.yml
-    - mulet.yml
     - windows.yml
+
+parse-commit: taskgraph.try_option_syntax:parse_message

@@ -102,6 +102,9 @@ scheme host and port.""")
 
     debugging_group.add_argument('--pause-on-unexpected', action="store_true",
                                  help="Halt the test runner when an unexpected result is encountered")
+    debugging_group.add_argument('--no-restart-on-unexpected', dest="restart_on_unexpected",
+                                 default=True, action="store_false",
+                                 help="Don't restart on an unexpected result")
 
     debugging_group.add_argument("--symbols-path", action="store", type=url_or_path,
                                  help="Path or url to symbols file used to analyse crash minidumps.")
@@ -116,7 +119,7 @@ scheme host and port.""")
                               type=abs_path, help="Binary to run tests against")
     config_group.add_argument('--binary-arg',
                               default=[], action="append", dest="binary_args",
-                              help="Extra argument for the binary (servo)")
+                              help="Extra argument for the binary")
     config_group.add_argument("--webdriver-binary", action="store", metavar="BINARY",
                               type=abs_path, help="WebDriver server binary to use")
 
@@ -145,7 +148,7 @@ scheme host and port.""")
                                 help="Total number of chunks to use")
     chunking_group.add_argument("--this-chunk", action="store", type=int, default=1,
                                 help="Chunk number to run")
-    chunking_group.add_argument("--chunk-type", action="store", choices=["none", "equal_time", "hash"],
+    chunking_group.add_argument("--chunk-type", action="store", choices=["none", "equal_time", "hash", "dir_hash"],
                                 default=None, help="Chunking type to use")
 
     ssl_group = parser.add_argument_group("SSL/TLS")
@@ -170,18 +173,18 @@ scheme host and port.""")
                              help="Path to the folder containing browser prefs")
     gecko_group.add_argument("--disable-e10s", dest="gecko_e10s", action="store_false", default=True,
                              help="Run tests without electrolysis preferences")
-
-    b2g_group = parser.add_argument_group("B2G-specific")
-    b2g_group.add_argument("--b2g-no-backup", action="store_true", default=False,
-                           help="Don't backup device before testrun with --product=b2g")
+    gecko_group.add_argument("--stackfix-dir", dest="stackfix_dir", action="store",
+                             help="Path to directory containing assertion stack fixing scripts")
+    gecko_group.add_argument("--setpref", dest="extra_prefs", action='append',
+                             default=[], metavar="PREF=VALUE",
+                             help="Defines an extra user preference (overrides those in prefs_root)")
+    gecko_group.add_argument("--leak-check", dest="leak_check", action="store_true",
+                             help="Enable leak checking")
 
     servo_group = parser.add_argument_group("Servo-specific")
     servo_group.add_argument("--user-stylesheet",
                              default=[], action="append", dest="user_stylesheets",
                              help="Inject a user CSS stylesheet into every test.")
-    servo_group.add_argument("--servo-backend",
-                             default="cpu", choices=["cpu", "webrender"],
-                             help="Rendering backend to use with Servo.")
 
 
     parser.add_argument("test_list", nargs="*",
@@ -297,7 +300,7 @@ def check_args(kwargs):
 
     if kwargs["chunk_type"] is None:
         if kwargs["total_chunks"] > 1:
-            kwargs["chunk_type"] = "equal_time"
+            kwargs["chunk_type"] = "dir_hash"
         else:
             kwargs["chunk_type"] = "none"
 
@@ -349,6 +352,14 @@ def check_args(kwargs):
             print >> sys.stderr, "certutil-binary argument missing or not a valid executable"
             sys.exit(1)
         kwargs["certutil_binary"] = path
+
+    if kwargs['extra_prefs']:
+        missing = any('=' not in prefarg for prefarg in kwargs['extra_prefs'])
+        if missing:
+            print >> sys.stderr, "Preferences via --setpref must be in key=value format"
+            sys.exit(1)
+        kwargs['extra_prefs'] = [tuple(prefarg.split('=', 1)) for prefarg in
+                                 kwargs['extra_prefs']]
 
     return kwargs
 

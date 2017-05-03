@@ -6,7 +6,12 @@
 #ifndef mozilla_widget_AndroidCompositorWidget_h
 #define mozilla_widget_AndroidCompositorWidget_h
 
+#include "GLContext.h"
+#include "GLLibraryEGL.h"
+#include "GLTypes.h"
 #include "mozilla/widget/InProcessCompositorWidget.h"
+
+struct ANativeWindow;
 
 namespace mozilla {
 namespace widget {
@@ -28,16 +33,6 @@ public:
                                const CSSToLayerScale& aZoom,
                                const CSSRect& aCssPageRect);
 
-    void SetPageRect(const CSSRect& aCssPageRect);
-
-    void SyncViewportInfo(const LayerIntRect& aDisplayPort,
-                          const CSSToLayerScale& aDisplayResolution,
-                          bool aLayersUpdated,
-                          int32_t aPaintSyncId,
-                          ParentLayerRect& aScrollRect,
-                          CSSToParentLayerScale& aScale,
-                          ScreenMargin& aFixedLayerMargins);
-
     void SyncFrameMetrics(const ParentLayerPoint& aScrollOffset,
                           const CSSToParentLayerScale& aZoom,
                           const CSSRect& aCssPageRect,
@@ -46,6 +41,13 @@ public:
                           bool aLayersUpdated,
                           int32_t aPaintSyncId,
                           ScreenMargin& aFixedLayerMargins);
+
+    EGLNativeWindowType GetEGLNativeWindow();
+
+    EGLSurface GetPresentationEGLSurface();
+    void SetPresentationEGLSurface(EGLSurface aVal);
+
+    ANativeWindow* GetPresentationANativeWindow();
 };
 
 } // namespace widget

@@ -51,7 +51,7 @@
         Cu.import("resource://gre/modules/Downloads.jsm", {});
       Downloads.getList(Downloads.PUBLIC).then(list => {
         list.addView({
-          onDownloadAdded: function (aDownload) {
+          onDownloadAdded(aDownload) {
             list.removeView(this);
             aDownload.whenSucceeded().then(() => {
               list.removeFinished();
@@ -60,7 +60,7 @@
           },
         });
         sendAsyncMessage("navigate", "download.auto");
-      }).then(null, SpecialPowers.Cu.reportError);
+      }).then(null, Cu.reportError);
     });
     script.addMessageListener("navigate", function(url) {
       window.location = url;

@@ -59,20 +59,11 @@ enum nsCSSTokenType {
   // belonging to the string, and mSymbol holds the delimiter
   // character, which may be ', ", or zero (only for unquoted URLs).
   // Bad_String and Bad_URL tokens are emitted when the closing
-  // delimiter was missing.  Bad_URL is also emitted if there was trailing
-  // garbage after the string or unquoted url value.
+  // delimiter or parenthesis was missing.
   eCSSToken_String,         // 'foo bar' "foo bar"
   eCSSToken_Bad_String,     // 'foo bar
   eCSSToken_URL,            // url(foobar) url("foo bar")
-  // For Bad_URL tokens, we need to keep track of the following state:
-  // (1) Was there a quoted string?  If so, was it a String or Bad_String?
-  // (2) Was there trailing garbage, and if so what was it?
-  // We keep track of whether there was a quoted string by setting mSymbol as
-  // described above.  If that's nonzero, then mInteger2 indicates whether we
-  // have a String or Bad_String by taking on the values 0 and 1 respectively.
-  // mInteger indicates the start of trailing garbage in mIdent (and is set to
-  // mIdent.Length() when there is no trailing garbage).
-  eCSSToken_Bad_URL,        // url(foo') url('foo'a) url('foo
+  eCSSToken_Bad_URL,        // url(foo
 
   // Any one-character symbol.  mSymbol holds the character.
   eCSSToken_Symbol,         // . ; { } ! *
@@ -217,13 +208,6 @@ class nsCSSScanner {
   void SetErrorReporter(mozilla::css::ErrorReporter* aReporter) {
     mReporter = aReporter;
   }
-  // Set whether or not we are processing SVG
-  void SetSVGMode(bool aSVGMode) {
-    mSVGMode = aSVGMode;
-  }
-  bool IsSVGMode() const {
-    return mSVGMode;
-  }
 
   // Reset or check whether a BAD_URL or BAD_STRING token has been seen.
   void ClearSeenBadToken() { mSeenBadToken = false; }
@@ -263,10 +247,6 @@ class nsCSSScanner {
   // tokens behave like url().  Please do not add new uses to the
   // parser.
   void NextURL(nsCSSToken& aTokenResult);
-
-  // Implement the "consume the remnants of a bad url" algorithm from CSS3
-  // Syntax, except we don't consume the ')'.
-  void ConsumeBadURLRemnants(nsCSSToken& aToken);
 
   // This is exposed for use by nsCSSParser::ParsePseudoClassWithNthPairArg,
   // because "2n-1" is a single DIMENSION token, and "n-1" is a single
@@ -378,8 +358,6 @@ protected:
 
   mozilla::css::ErrorReporter *mReporter;
 
-  // True if we are in SVG mode; false in "normal" CSS
-  bool mSVGMode;
   bool mRecording;
   bool mSeenBadToken;
   bool mSeenVariableReference;

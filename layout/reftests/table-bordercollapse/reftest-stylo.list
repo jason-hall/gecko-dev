@@ -46,7 +46,7 @@
 == frame_hsides_rules_cols.html frame_hsides_rules_cols.html
 == frame_hsides_rules_groups.html frame_hsides_rules_groups.html
 == frame_hsides_rules_none.html frame_hsides_rules_none.html
-skip == frame_hsides_rules_rows.html frame_hsides_rules_rows.html
+== frame_hsides_rules_rows.html frame_hsides_rules_rows.html
 == frame_lhs_rules_all.html frame_lhs_rules_all.html
 == frame_lhs_rules_cols.html frame_lhs_rules_cols.html
 == frame_lhs_rules_groups.html frame_lhs_rules_groups.html
@@ -81,7 +81,7 @@ skip == frame_hsides_rules_rows.html frame_hsides_rules_rows.html
 == borderhandling-rules-border-none-quirks.html borderhandling-rules-border-none-quirks.html
 == borderhandling-rules-border-groups-quirks.html borderhandling-rules-border-groups-quirks.html
 == borderhandling-rules-border-rows-quirks.html borderhandling-rules-border-rows-quirks.html
-skip == borderhandling-rules-border-cols-quirks.html borderhandling-rules-border-cols-quirks.html
+== borderhandling-rules-border-cols-quirks.html borderhandling-rules-border-cols-quirks.html
 == borderhandling-rules-border-all-quirks.html borderhandling-rules-border-all-quirks.html
 == borderhandling-rules-border-empty-strict.html borderhandling-rules-border-empty-strict.html
 == borderhandling-rules-border-rules-strict.html borderhandling-rules-border-rules-strict.html

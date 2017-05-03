@@ -327,7 +327,8 @@ PACLogErrorOrWarning(const nsAString& aKind, JSErrorReport* aReport)
   nsString formattedMessage(NS_LITERAL_STRING("PAC Execution "));
   formattedMessage += aKind;
   formattedMessage += NS_LITERAL_STRING(": ");
-  formattedMessage += aReport->ucmessage;
+  if (aReport->message())
+    formattedMessage.Append(NS_ConvertUTF8toUTF16(aReport->message().c_str()));
   formattedMessage += NS_LITERAL_STRING(" [");
   formattedMessage.Append(aReport->linebuf(), aReport->linebufLength());
   formattedMessage += NS_LITERAL_STRING("]");
@@ -335,7 +336,7 @@ PACLogErrorOrWarning(const nsAString& aKind, JSErrorReport* aReport)
 }
 
 static void
-PACWarningReporter(JSContext* aCx, const char* aMessage, JSErrorReport* aReport)
+PACWarningReporter(JSContext* aCx, JSErrorReport* aReport)
 {
   MOZ_ASSERT(aReport);
   MOZ_ASSERT(JSREPORT_IS_WARNING(aReport->flags));
@@ -404,12 +405,14 @@ ProxyAutoConfig::ResolveAddress(const nsCString &aHostName,
     return false;
 
   RefPtr<PACResolver> helper = new PACResolver();
+  OriginAttributes attrs;
 
-  if (NS_FAILED(dns->AsyncResolve(aHostName,
-                                  nsIDNSService::RESOLVE_PRIORITY_MEDIUM,
-                                  helper,
-                                  NS_GetCurrentThread(),
-                                  getter_AddRefs(helper->mRequest))))
+  if (NS_FAILED(dns->AsyncResolveNative(aHostName,
+                                        nsIDNSService::RESOLVE_PRIORITY_MEDIUM,
+                                        helper,
+                                        NS_GetCurrentThread(),
+                                        attrs,
+                                        getter_AddRefs(helper->mRequest))))
     return false;
 
   if (aTimeout && helper->mRequest) {
@@ -507,64 +510,6 @@ bool PACMyIpAddress(JSContext *cx, unsigned int argc, JS::Value *vp)
   return GetRunning()->MyIPAddress(args);
 }
 
-// myAppId() javascript implementation
-static
-bool PACMyAppId(JSContext *cx, unsigned int argc, JS::Value *vp)
-{
-  JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
-
-  if (NS_IsMainThread()) {
-    NS_WARNING("PACMyAppId on Main Thread. How did that happen?");
-    return false;
-  }
-
-  if (!GetRunning()) {
-    NS_WARNING("PACMyAppId without a running ProxyAutoConfig object");
-    return false;
-  }
-
-  return GetRunning()->MyAppId(args);
-}
-
-// myAppOrigin() javascript implementation
-static
-bool PACMyAppOrigin(JSContext *cx, unsigned int argc, JS::Value *vp)
-{
-  JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
-
-  if (NS_IsMainThread()) {
-    NS_WARNING("PACMyAppOrigin on Main Thread. How did that happen?");
-    return false;
-  }
-
-  if (!GetRunning()) {
-    NS_WARNING("PACMyAppOrigin without a running ProxyAutoConfig object");
-    return false;
-  }
-
-  return GetRunning()->MyAppOrigin(args);
-}
-
-// IsInIsolatedMozBrowser() javascript implementation
-static
-bool PACIsInIsolatedMozBrowser(JSContext *cx, unsigned int argc, JS::Value *vp)
-{
-  JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
-
-  if (NS_IsMainThread()) {
-    NS_WARNING("PACIsInIsolatedMozBrowser on Main Thread. How did that happen?");
-    return false;
-  }
-
-  if (!GetRunning()) {
-    NS_WARNING("PACIsInIsolatedMozBrowser without a running ProxyAutoConfig"
-               "object");
-    return false;
-  }
-
-  return GetRunning()->IsInIsolatedMozBrowser(args);
-}
-
 // proxyAlert(msg) javascript implementation
 static
 bool PACProxyAlert(JSContext *cx, unsigned int argc, JS::Value *vp)
@@ -598,9 +543,6 @@ static const JSFunctionSpec PACGlobalFunctions[] = {
   // a global "var pacUseMultihomedDNS = true;" will change behavior
   // of myIpAddress to actively use DNS
   JS_FS("myIpAddress", PACMyIpAddress, 0, 0),
-  JS_FS("myAppId", PACMyAppId, 0, 0),
-  JS_FS("myAppOrigin", PACMyAppOrigin, 0, 0),
-  JS_FS("isInIsolatedMozBrowser", PACIsInIsolatedMozBrowser, 0, 0),
   JS_FS("alert", PACProxyAlert, 1, 0),
   JS_FS_END
 };
@@ -688,7 +630,7 @@ private:
     JSAutoRequest ar(mContext);
 
     JS::CompartmentOptions options;
-    options.creationOptions().setZone(JS::SystemZone);
+    options.creationOptions().setSystemZone();
     options.behaviors().setVersion(JSVERSION_LATEST);
     mGlobal = JS_NewGlobalObject(mContext, &sGlobalClass, nullptr,
                                  JS::DontFireOnNewGlobalHook, options);
@@ -740,11 +682,11 @@ ProxyAutoConfig::Init(const nsCString &aPACURI,
   mPACURI = aPACURI;
   mPACScript = sPacUtils;
   mPACScript.Append(aPACScript);
+  mIncludePath = aIncludePath;
 
   if (!GetRunning())
     return SetupJS();
 
-  mIncludePath = aIncludePath;
   mJSNeedsSetup = true;
   return NS_OK;
 }
@@ -774,7 +716,7 @@ ProxyAutoConfig::SetupJS()
 
   // check if this is a data: uri so that we don't spam the js console with
   // huge meaningless strings. this is not on the main thread, so it can't
-  // use nsIRUI scheme methods
+  // use nsIURI scheme methods
   bool isDataURI = nsDependentCSubstring(mPACURI, 0, 5).LowerCaseEqualsASCII("data:", 5);
 
   SetRunning(this);
@@ -819,9 +761,6 @@ ProxyAutoConfig::SetupJS()
 nsresult
 ProxyAutoConfig::GetProxyForURI(const nsCString &aTestURI,
                                 const nsCString &aTestHost,
-                                uint32_t aAppId,
-                                const nsString &aAppOrigin,
-                                bool aIsInIsolatedMozBrowser,
                                 nsACString &result)
 {
   if (mJSNeedsSetup)
@@ -839,9 +778,6 @@ ProxyAutoConfig::GetProxyForURI(const nsCString &aTestURI,
   // while the event loop is spinning on a DNS function. Don't early return.
   SetRunning(this);
   mRunningHost = aTestHost;
-  mRunningAppId = aAppId;
-  mRunningAppOrigin = aAppOrigin;
-  mRunningIsInIsolatedMozBrowser = aIsInIsolatedMozBrowser;
 
   nsresult rv = NS_ERROR_FAILURE;
   nsCString clensedURI = aTestURI;
@@ -1074,34 +1010,6 @@ ProxyAutoConfig::MyIPAddress(const JS::CallArgs &aArgs)
   }
 
   aArgs.rval().setString(dottedDecimalString);
-  return true;
-}
-
-bool
-ProxyAutoConfig::MyAppId(const JS::CallArgs &aArgs)
-{
-  aArgs.rval().setNumber(mRunningAppId);
-  return true;
-}
-
-bool
-ProxyAutoConfig::MyAppOrigin(const JS::CallArgs &aArgs)
-{
-  JSContext *cx = mJSContext->Context();
-  JSString *origin =
-    JS_NewStringCopyZ(cx, NS_ConvertUTF16toUTF8(mRunningAppOrigin).get());
-  if (!origin) {
-    return false;
-  }
-
-  aArgs.rval().setString(origin);
-  return true;
-}
-
-bool
-ProxyAutoConfig::IsInIsolatedMozBrowser(const JS::CallArgs &aArgs)
-{
-  aArgs.rval().setBoolean(mRunningIsInIsolatedMozBrowser);
   return true;
 }
 

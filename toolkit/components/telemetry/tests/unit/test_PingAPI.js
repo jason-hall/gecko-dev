@@ -11,7 +11,6 @@ Cu.import("resource://gre/modules/TelemetryController.jsm", this);
 Cu.import("resource://gre/modules/TelemetryArchive.jsm", this);
 Cu.import("resource://gre/modules/XPCOMUtils.jsm", this);
 Cu.import("resource://gre/modules/osfile.jsm", this);
-Cu.import("resource://gre/modules/Task.jsm", this);
 Cu.import("resource://gre/modules/Services.jsm", this);
 
 XPCOMUtils.defineLazyGetter(this, "gPingsArchivePath", function() {
@@ -23,7 +22,7 @@ XPCOMUtils.defineLazyGetter(this, "gPingsArchivePath", function() {
  * @param {Integer} aArchiveQuota The new quota, in bytes.
  */
 function fakeStorageQuota(aArchiveQuota) {
-  let storage = Cu.import("resource://gre/modules/TelemetryStorage.jsm");
+  let storage = Cu.import("resource://gre/modules/TelemetryStorage.jsm", {});
   storage.Policy.getArchiveQuota = () => aArchiveQuota;
 }
 
@@ -37,15 +36,15 @@ function fakeStorageQuota(aArchiveQuota) {
  *                    type: <string>,
  *                    size: <integer> }
  */
-var getArchivedPingsInfo = Task.async(function*() {
+var getArchivedPingsInfo = async function() {
   let dirIterator = new OS.File.DirectoryIterator(gPingsArchivePath);
-  let subdirs = (yield dirIterator.nextBatch()).filter(e => e.isDir);
+  let subdirs = (await dirIterator.nextBatch()).filter(e => e.isDir);
   let archivedPings = [];
 
   // Iterate through the subdirs of |gPingsArchivePath|.
   for (let dir of subdirs) {
     let fileIterator = new OS.File.DirectoryIterator(dir.path);
-    let files = (yield fileIterator.nextBatch()).filter(e => !e.isDir);
+    let files = (await fileIterator.nextBatch()).filter(e => !e.isDir);
 
     // Then get a list of the files for the current subdir.
     for (let f of files) {
@@ -55,7 +54,7 @@ var getArchivedPingsInfo = Task.async(function*() {
         continue;
       }
       // Find the size of the ping and then add the info to the array.
-      pingInfo.size = (yield OS.File.stat(f.path)).size;
+      pingInfo.size = (await OS.File.stat(f.path)).size;
       archivedPings.push(pingInfo);
     }
   }
@@ -63,7 +62,7 @@ var getArchivedPingsInfo = Task.async(function*() {
   // Sort the list by creation date and then return it.
   archivedPings.sort((a, b) => b.timestamp - a.timestamp);
   return archivedPings;
-});
+};
 
 add_task(function* test_setup() {
   do_get_profile(true);
@@ -106,16 +105,15 @@ add_task(function* test_archivedPings() {
   }
 
   // Check loading the archived pings.
-  let ids = PINGS.map(p => p.id);
-  let checkLoadingPings = Task.async(function*() {
+  let checkLoadingPings = async function() {
     for (let data of PINGS) {
-      let ping = yield TelemetryArchive.promiseArchivedPingById(data.id);
+      let ping = await TelemetryArchive.promiseArchivedPingById(data.id);
       Assert.equal(ping.id, data.id, "Archived ping should have matching id");
       Assert.equal(ping.type, data.type, "Archived ping should have matching type");
       Assert.equal(ping.creationDate, data.dateCreated.toISOString(),
                    "Archived ping should have matching creation date");
     }
-  });
+  };
 
   yield checkLoadingPings();
 
@@ -128,16 +126,16 @@ add_task(function* test_archivedPings() {
   yield checkLoadingPings();
 
   // Write invalid pings into the archive with both valid and invalid names.
-  let writeToArchivedDir = Task.async(function*(dirname, filename, content, compressed) {
+  let writeToArchivedDir = async function(dirname, filename, content, compressed) {
     const dirPath = OS.Path.join(gPingsArchivePath, dirname);
-    yield OS.File.makeDir(dirPath, { ignoreExisting: true });
+    await OS.File.makeDir(dirPath, { ignoreExisting: true });
     const filePath = OS.Path.join(dirPath, filename);
     const options = { tmpPath: filePath + ".tmp", noOverwrite: false };
     if (compressed) {
       options.compression = "lz4";
     }
-    yield OS.File.writeAtomic(filePath, content, options);
-  });
+    await OS.File.writeAtomic(filePath, content, options);
+  };
 
   const FAKE_ID1 = "10000000-0123-0123-0123-0123456789a1";
   const FAKE_ID2 = "20000000-0123-0123-0123-0123456789a2";
@@ -215,27 +213,28 @@ add_task(function* test_archiveCleanup() {
   let expectedPrunedInfo = [];
   let expectedNotPrunedInfo = [];
 
-  let checkArchive = Task.async(function*() {
+  let checkArchive = async function() {
     // Check that the pruned pings are not on disk anymore.
     for (let prunedInfo of expectedPrunedInfo) {
-      yield Assert.rejects(TelemetryArchive.promiseArchivedPingById(prunedInfo.id),
+      await Assert.rejects(TelemetryArchive.promiseArchivedPingById(prunedInfo.id),
                            "Ping " + prunedInfo.id + " should have been pruned.");
       const pingPath =
         TelemetryStorage._testGetArchivedPingPath(prunedInfo.id, prunedInfo.creationDate, PING_TYPE);
-      Assert.ok(!(yield OS.File.exists(pingPath)), "The ping should not be on the disk anymore.");
+      Assert.ok(!(await OS.File.exists(pingPath)), "The ping should not be on the disk anymore.");
     }
 
     // Check that the expected pings are there.
     for (let expectedInfo of expectedNotPrunedInfo) {
-      Assert.ok((yield TelemetryArchive.promiseArchivedPingById(expectedInfo.id)),
+      Assert.ok((await TelemetryArchive.promiseArchivedPingById(expectedInfo.id)),
                 "Ping" + expectedInfo.id + " should be in the archive.");
     }
-  });
+  };
 
   Telemetry.getHistogramById("TELEMETRY_ARCHIVE_SESSION_PING_COUNT").clear();
 
   // Create a ping which should be pruned because it is past the retention period.
   let date = fakeNow(2010, 1, 1, 1, 0, 0);
+  let firstDate = date;
   let pingId = yield TelemetryController.submitExternalPing(PING_TYPE, {}, {});
   expectedPrunedInfo.push({ id: pingId, creationDate: date });
 
@@ -261,8 +260,8 @@ add_task(function* test_archiveCleanup() {
   Telemetry.getHistogramById("TELEMETRY_ARCHIVE_EVICTED_OLD_DIRS").clear();
   Telemetry.getHistogramById("TELEMETRY_ARCHIVE_OLDEST_DIRECTORY_AGE").clear();
 
-  // Move the current date 180 days ahead of the first ping.
-  let now = fakeNow(2010, 7, 1, 1, 0, 0);
+  // Move the current date 60 days ahead of the first ping.
+  fakeNow(futureDate(firstDate, 60 * MILLISECONDS_PER_DAY));
   // Reset TelemetryArchive and TelemetryController to start the startup cleanup.
   yield TelemetryController.testReset();
   // Wait for the cleanup to finish.
@@ -283,7 +282,7 @@ add_task(function* test_archiveCleanup() {
   h = Telemetry.getHistogramById("TELEMETRY_ARCHIVE_DIRECTORIES_COUNT").snapshot();
   Assert.equal(h.sum, 3, "Telemetry must correctly report the remaining archive directories.");
   // Check that the remaining directories are correctly counted.
-  const oldestAgeInMonths = 5;
+  const oldestAgeInMonths = 1;
   h = Telemetry.getHistogramById("TELEMETRY_ARCHIVE_OLDEST_DIRECTORY_AGE").snapshot();
   Assert.equal(h.sum, oldestAgeInMonths,
                "Telemetry must correctly report age of the oldest directory in the archive.");
@@ -294,8 +293,8 @@ add_task(function* test_archiveCleanup() {
   Telemetry.getHistogramById("TELEMETRY_ARCHIVE_EVICTED_OVER_QUOTA").clear();
   Telemetry.getHistogramById("TELEMETRY_ARCHIVE_EVICTING_OVER_QUOTA_MS").clear();
 
-  // Move the current date 180 days ahead of the second ping.
-  fakeNow(2010, 8, 1, 1, 0, 0);
+  // Move the current date 60 days ahead of the second ping.
+  fakeNow(futureDate(oldestDirectoryDate, 60 * MILLISECONDS_PER_DAY));
   // Reset TelemetryController and TelemetryArchive.
   yield TelemetryController.testReset();
   // Wait for the cleanup to finish.

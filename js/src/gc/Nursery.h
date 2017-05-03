@@ -9,6 +9,7 @@
 #define gc_Nursery_h
 
 #include "mozilla/EnumeratedArray.h"
+#include "mozilla/TimeStamp.h"
 
 #include "jsalloc.h"
 #include "jspubtd.h"
@@ -36,10 +37,12 @@ class ObjectElements;
 class NativeObject;
 class Nursery;
 class HeapSlot;
+class ZoneGroup;
 
-inline void SetGCZeal(JSRuntime*, uint8_t, uint32_t) {}
+void SetGCZeal(JSRuntime*, uint8_t, uint32_t);
 
 namespace gc {
+class AutoMaybeStartBackgroundAllocation;
 struct Cell;
 class MinorCollectionTracer;
 class RelocationOverlay;

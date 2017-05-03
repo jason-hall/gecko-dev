@@ -360,7 +360,20 @@ function synthesizeMouseAtPoint(left, top, aEvent, aWindow = window)
     var clickCount = aEvent.clickCount || 1;
     var modifiers = _parseModifiers(aEvent, aWindow);
     var pressure = ("pressure" in aEvent) ? aEvent.pressure : 0;
-    var inputSource = ("inputSource" in aEvent) ? aEvent.inputSource : 0;
+
+    // Default source to mouse.
+    var inputSource = ("inputSource" in aEvent) ? aEvent.inputSource :
+                                                  _EU_Ci.nsIDOMMouseEvent.MOZ_SOURCE_MOUSE;
+    // Compute a pointerId if needed.
+    var id;
+    if ("id" in aEvent) {
+      id = aEvent.id;
+    } else {
+      var isFromPen = inputSource === _EU_Ci.nsIDOMMouseEvent.MOZ_SOURCE_PEN;
+      id = isFromPen ? utils.DEFAULT_PEN_POINTER_ID :
+                       utils.DEFAULT_MOUSE_POINTER_ID;
+    }
+
     var isDOMEventSynthesized =
       ("isSynthesized" in aEvent) ? aEvent.isSynthesized : true;
     var isWidgetEventSynthesized =
@@ -373,15 +386,15 @@ function synthesizeMouseAtPoint(left, top, aEvent, aWindow = window)
                                               pressure, inputSource,
                                               isDOMEventSynthesized,
                                               isWidgetEventSynthesized,
-                                              buttons);
+                                              buttons, id);
     }
     else {
       utils.sendMouseEvent("mousedown", left, top, button, clickCount, modifiers,
                            false, pressure, inputSource, isDOMEventSynthesized,
-                           isWidgetEventSynthesized, buttons);
+                           isWidgetEventSynthesized, buttons, id);
       utils.sendMouseEvent("mouseup", left, top, button, clickCount, modifiers,
                            false, pressure, inputSource, isDOMEventSynthesized,
-                           isWidgetEventSynthesized, buttons);
+                           isWidgetEventSynthesized, buttons, id);
     }
   }
 
@@ -393,7 +406,7 @@ function synthesizeTouchAtPoint(left, top, aEvent, aWindow = window)
   var utils = _getDOMWindowUtils(aWindow);
 
   if (utils) {
-    var id = aEvent.id || 0;
+    var id = aEvent.id || utils.DEFAULT_TOUCH_POINTER_ID;
     var rx = aEvent.rx || 1;
     var ry = aEvent.rx || 1;
     var angle = aEvent.angle || 0;
@@ -600,7 +613,7 @@ function sendWheelAndPaint(aTarget, aOffsetX, aOffsetY, aEvent, aCallback, aWind
       }
 
       var waitForPaints = function () {
-        SpecialPowers.Services.obs.removeObserver(waitForPaints, "apz-repaints-flushed", false);
+        SpecialPowers.Services.obs.removeObserver(waitForPaints, "apz-repaints-flushed");
         aWindow.waitForAllPaintsFlushed(function() {
           utils.restoreNormalRefresh();
           aCallback();
@@ -854,6 +867,8 @@ function _parseNativeModifiers(aModifiers, aWindow = window)
 
 const KEYBOARD_LAYOUT_ARABIC =
   { name: "Arabic",             Mac: 6,    Win: 0x00000401 };
+const KEYBOARD_LAYOUT_ARABIC_PC =
+  { name: "Arabic - PC",        Mac: 7,    Win: null       };
 const KEYBOARD_LAYOUT_BRAZILIAN_ABNT =
   { name: "Brazilian ABNT",     Mac: null, Win: 0x00000416 };
 const KEYBOARD_LAYOUT_DVORAK_QWERTY =
@@ -861,21 +876,25 @@ const KEYBOARD_LAYOUT_DVORAK_QWERTY =
 const KEYBOARD_LAYOUT_EN_US =
   { name: "US",                 Mac: 0,    Win: 0x00000409 };
 const KEYBOARD_LAYOUT_FRENCH =
-  { name: "French",             Mac: 7,    Win: 0x0000040C };
+  { name: "French",             Mac: 8,    Win: 0x0000040C };
 const KEYBOARD_LAYOUT_GREEK =
   { name: "Greek",              Mac: 1,    Win: 0x00000408 };
 const KEYBOARD_LAYOUT_GERMAN =
   { name: "German",             Mac: 2,    Win: 0x00000407 };
 const KEYBOARD_LAYOUT_HEBREW =
-  { name: "Hebrew",             Mac: 8,    Win: 0x0000040D };
+  { name: "Hebrew",             Mac: 9,    Win: 0x0000040D };
 const KEYBOARD_LAYOUT_JAPANESE =
   { name: "Japanese",           Mac: null, Win: 0x00000411 };
+const KEYBOARD_LAYOUT_KHMER =
+  { name: "Khmer",              Mac: null, Win: 0x00000453 }; // available on Win7 or later.
 const KEYBOARD_LAYOUT_LITHUANIAN =
-  { name: "Lithuanian",         Mac: 9,    Win: 0x00010427 };
+  { name: "Lithuanian",         Mac: 10,   Win: 0x00010427 };
 const KEYBOARD_LAYOUT_NORWEGIAN =
-  { name: "Norwegian",          Mac: 10,   Win: 0x00000414 };
+  { name: "Norwegian",          Mac: 11,   Win: 0x00000414 };
+const KEYBOARD_LAYOUT_RUSSIAN_MNEMONIC =
+  { name: "Russian - Mnemonic", Mac: null, Win: 0x00020419 }; // available on Win8 or later.
 const KEYBOARD_LAYOUT_SPANISH =
-  { name: "Spanish",            Mac: 11,   Win: 0x0000040A };
+  { name: "Spanish",            Mac: 12,   Win: 0x0000040A };
 const KEYBOARD_LAYOUT_SWEDISH =
   { name: "Swedish",            Mac: 3,    Win: 0x0000041D };
 const KEYBOARD_LAYOUT_THAI =
@@ -961,7 +980,7 @@ function _expectEvent(aExpectedTarget, aExpectedEvent, aTestName)
     _gSeenEvent = true;
   };
 
-  aExpectedTarget.addEventListener(type, eventHandler, false);
+  aExpectedTarget.addEventListener(type, eventHandler);
   return eventHandler;
 }
 
@@ -974,7 +993,7 @@ function _checkExpectedEvent(aExpectedTarget, aExpectedEvent, aEventHandler, aTe
   if (aEventHandler) {
     var expectEvent = (aExpectedEvent.charAt(0) != "!");
     var type = expectEvent ? aExpectedEvent : aExpectedEvent.substring(1);
-    aExpectedTarget.removeEventListener(type, aEventHandler, false);
+    aExpectedTarget.removeEventListener(type, aEventHandler);
     var desc = type + " event";
     if (!expectEvent)
       desc += " not";
@@ -1809,7 +1828,10 @@ function synthesizeDragStart(element, expectedDragData, aWindow, x, y)
   var result = "trapDrag was not called";
   var trapDrag = function(event) {
     try {
-      var dataTransfer = event.dataTransfer;
+      // We must wrap only in plain mochitests, not chrome
+      var c = Object.getOwnPropertyDescriptor(window, 'Components');
+      var dataTransfer = c.value && !c.writable
+        ? event.dataTransfer : SpecialPowers.wrap(event.dataTransfer);
       result = null;
       if (!dataTransfer)
         throw "no dataTransfer";
@@ -1838,13 +1860,13 @@ function synthesizeDragStart(element, expectedDragData, aWindow, x, y)
     event.preventDefault();
     event.stopPropagation();
   }
-  aWindow.addEventListener("dragstart", trapDrag, false);
+  aWindow.addEventListener("dragstart", trapDrag);
   synthesizeMouse(element, x, y, { type: "mousedown" }, aWindow);
   x += step; y += step;
   synthesizeMouse(element, x, y, { type: "mousemove" }, aWindow);
   x += step; y += step;
   synthesizeMouse(element, x, y, { type: "mousemove" }, aWindow);
-  aWindow.removeEventListener("dragstart", trapDrag, false);
+  aWindow.removeEventListener("dragstart", trapDrag);
   synthesizeMouse(element, x, y, { type: "mouseup" }, aWindow);
   return result;
 }
@@ -2109,7 +2131,7 @@ function synthesizeDrop(aSrcElement, aDestElement, aDragData, aDropEffect, aWind
     return synthesizeDropAfterDragOver(result, dataTransfer, aDestElement,
                                        aDestWindow, aDragEvent);
   } finally {
-    ds.endDragSession(true);
+    ds.endDragSession(true, _parseModifiers(aDragEvent));
   }
 }
 

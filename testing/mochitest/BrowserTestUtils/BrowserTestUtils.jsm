@@ -42,6 +42,9 @@ var gSynthesizeKeyCount = 0;
 var gSynthesizeCompositionCount = 0;
 var gSynthesizeCompositionChangeCount = 0;
 
+const kAboutPageRegistrationContentScript =
+  "chrome://mochikit/content/tests/BrowserTestUtils/content-about-page-utils.js";
+
 this.BrowserTestUtils = {
   /**
    * Loads a page in a new tab, executes a Task and closes the tab.
@@ -75,9 +78,9 @@ this.BrowserTestUtils = {
       }
     }
     let tab = yield BrowserTestUtils.openNewForegroundTab(options.gBrowser, options.url);
-    let originalWindow = tab.ownerDocument.defaultView;
+    let originalWindow = tab.ownerGlobal;
     let result = yield taskFn(tab.linkedBrowser);
-    let finalWindow = tab.ownerDocument.defaultView;
+    let finalWindow = tab.ownerGlobal;
     if (originalWindow == finalWindow && !tab.closing && tab.linkedBrowser) {
       yield BrowserTestUtils.removeTab(tab);
     } else {
@@ -144,10 +147,9 @@ this.BrowserTestUtils = {
    */
   switchTab(tabbrowser, tab) {
     let promise = new Promise(resolve => {
-      tabbrowser.addEventListener("TabSwitchDone", function onSwitch() {
-        tabbrowser.removeEventListener("TabSwitchDone", onSwitch);
+      tabbrowser.addEventListener("TabSwitchDone", function() {
         TestUtils.executeSoon(() => resolve(tabbrowser.selectedTab));
-      });
+      }, {once: true});
     });
 
     if (typeof tab == "function") {
@@ -181,6 +183,13 @@ this.BrowserTestUtils = {
    * @resolves When a load event is triggered for the browser.
    */
   browserLoaded(browser, includeSubFrames=false, wantLoad=null) {
+    // If browser belongs to tabbrowser-tab, ensure it has been
+    // inserted into the document.
+    let tabbrowser = browser.ownerGlobal.gBrowser;
+    if (tabbrowser && tabbrowser.getTabForBrowser) {
+      tabbrowser._insertBrowser(tabbrowser.getTabForBrowser(browser));
+    }
+
     function isWanted(url) {
       if (!wantLoad) {
         return true;
@@ -193,7 +202,7 @@ this.BrowserTestUtils = {
     }
 
     return new Promise(resolve => {
-      let mm = browser.ownerDocument.defaultView.messageManager;
+      let mm = browser.ownerGlobal.messageManager;
       mm.addMessageListener("browser-test-utils:loadEvent", function onLoad(msg) {
         if (msg.target == browser && (!msg.data.subframe || includeSubFrames) &&
             isWanted(msg.data.url)) {
@@ -217,11 +226,12 @@ this.BrowserTestUtils = {
    * @return {Promise}
    * @resolves Once the selected browser fires its load event.
    */
-  firstBrowserLoaded(win) {
+  firstBrowserLoaded(win, aboutBlank = true) {
     let mm = win.messageManager;
     return this.waitForMessage(mm, "browser-test-utils:loadEvent", (msg) => {
       let selectedBrowser = win.gBrowser.selectedBrowser;
-      return msg.target == selectedBrowser;
+      return msg.target == selectedBrowser &&
+             (aboutBlank || selectedBrowser.currentURI.spec != "about:blank")
     });
   },
 
@@ -279,9 +289,7 @@ this.BrowserTestUtils = {
    */
   waitForNewTab(tabbrowser, url) {
     return new Promise((resolve, reject) => {
-      tabbrowser.tabContainer.addEventListener("TabOpen", function onTabOpen(openEvent) {
-        tabbrowser.tabContainer.removeEventListener("TabOpen", onTabOpen);
-
+      tabbrowser.tabContainer.addEventListener("TabOpen", function(openEvent) {
         let progressListener = {
           onLocationChange(aBrowser) {
             if (aBrowser != openEvent.target.linkedBrowser ||
@@ -296,7 +304,7 @@ this.BrowserTestUtils = {
         };
         tabbrowser.addTabsProgressListener(progressListener);
 
-      });
+      }, {once: true});
     });
   },
 
@@ -393,7 +401,7 @@ this.BrowserTestUtils = {
     browser.loadURI(uri);
 
     // Nothing to do in non-e10s mode.
-    if (!browser.ownerDocument.defaultView.gMultiProcessBrowser) {
+    if (!browser.ownerGlobal.gMultiProcessBrowser) {
       return;
     }
 
@@ -468,6 +476,8 @@ this.BrowserTestUtils = {
    *          remote:  A boolean indicating if the window should run
    *                   remote browser tabs or not. If omitted, the window
    *                   will choose the profile default state.
+   *          width: Desired width of window
+   *          height: Desired height of window
    *        }
    * @return {Promise}
    *         Resolves with the new window once it is loaded.
@@ -477,9 +487,21 @@ this.BrowserTestUtils = {
                     createInstance(Ci.nsISupportsString);
     argString.data = "";
     let features = "chrome,dialog=no,all";
+    let opener = null;
+
+    if (options.opener) {
+      opener = options.opener;
+    }
 
     if (options.private) {
       features += ",private";
+    }
+
+    if (options.width) {
+      features += ",width=" + options.width;
+    }
+    if (options.height) {
+      features += ",height=" + options.height;
     }
 
     if (options.hasOwnProperty("remote")) {
@@ -488,7 +510,7 @@ this.BrowserTestUtils = {
     }
 
     let win = Services.ww.openWindow(
-      null, Services.prefs.getCharPref("browser.chromeURL"), "_blank",
+      opener, Services.prefs.getCharPref("browser.chromeURL"), "_blank",
       features, argString);
 
     // Wait for browser-delayed-startup-finished notification, it indicates
@@ -684,7 +706,7 @@ this.BrowserTestUtils = {
     let waitForLoad = () =>
       this.waitForContentEvent(browser, "AboutNetErrorLoad", false, null, true);
 
-    let win = browser.ownerDocument.defaultView;
+    let win = browser.ownerGlobal;
     let tab = win.gBrowser.getTabForBrowser(browser);
     if (!tab || browser.isRemoteBrowser || !win.gMultiProcessBrowser) {
       return waitForLoad();
@@ -694,10 +716,9 @@ this.BrowserTestUtils = {
     // quite careful in order to make sure we're adding the listener in time to
     // get this event:
     return new Promise((resolve, reject) => {
-      tab.addEventListener("TabRemotenessChange", function onTRC() {
-        tab.removeEventListener("TabRemotenessChange", onTRC);
+      tab.addEventListener("TabRemotenessChange", function() {
         waitForLoad().then(resolve, reject);
-      });
+      }, {once: true});
     });
   },
 
@@ -729,11 +750,15 @@ this.BrowserTestUtils = {
    */
   synthesizeMouse(target, offsetX, offsetY, event, browser)
   {
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       let mm = browser.messageManager;
       mm.addMessageListener("Test:SynthesizeMouseDone", function mouseMsg(message) {
         mm.removeMessageListener("Test:SynthesizeMouseDone", mouseMsg);
-        resolve(message.data.defaultPrevented);
+        if (message.data.hasOwnProperty("defaultPrevented")) {
+          resolve(message.data.defaultPrevented);
+        } else {
+          reject(new Error(message.data.error));
+        }
       });
 
       let cpowObject = null;
@@ -797,10 +822,31 @@ this.BrowserTestUtils = {
   /**
    * Removes the given tab from its parent tabbrowser and
    * waits until its final message has reached the parent.
+   *
+   * @param (tab) tab
+   *        The tab to remove.
+   * @param (Object) options
+   *        Extra options to pass to tabbrowser's removeTab method.
+   * @returns (Promise)
+   * @resolves When the tab is removed. Does not get passed a value.
    */
   removeTab(tab, options = {}) {
-    let dontRemove = options && options.dontRemove;
+    let tabRemoved = BrowserTestUtils.tabRemoved(tab);
+    if (!tab.closing) {
+      tab.ownerGlobal.gBrowser.removeTab(tab, options);
+    }
+    return tabRemoved;
+  },
 
+  /**
+   * Returns a Promise that resolves once a tab has been removed.
+   *
+   * @param (tab) tab
+   *        The tab that will be removed.
+   * @returns (Promise)
+   * @resolves When the tab is removed. Does not get passed a value.
+   */
+  tabRemoved(tab) {
     return new Promise(resolve => {
       let {messageManager: mm, frameLoader} = tab.linkedBrowser;
       mm.addMessageListener("SessionStore:update", function onMessage(msg) {
@@ -809,10 +855,6 @@ this.BrowserTestUtils = {
           resolve();
         }
       }, true);
-
-      if (!dontRemove && !tab.closing) {
-        tab.ownerDocument.defaultView.gBrowser.removeTab(tab);
-      }
     });
   },
 
@@ -822,12 +864,16 @@ this.BrowserTestUtils = {
    *
    * @param (Browser) browser
    *        A remote <xul:browser> element. Must not be null.
+   * @param (bool) shouldShowTabCrashPage
+   *        True if it is expected that the tab crashed page will be shown
+   *        for this browser. If so, the Promise will only resolve once the
+   *        tab crash page has loaded.
    *
    * @returns (Promise)
    * @resolves An Object with key-value pairs representing the data from the
    *           crash report's extra file (if applicable).
    */
-  crashBrowser: Task.async(function*(browser) {
+  crashBrowser: Task.async(function*(browser, shouldShowTabCrashPage=true) {
     let extra = {};
     let KeyValueParser = {};
     if (AppConstants.MOZ_CRASHREPORTER) {
@@ -885,6 +931,8 @@ this.BrowserTestUtils = {
       dies();
     }
 
+    let expectedPromises = [];
+
     let crashCleanupPromise = new Promise((resolve, reject) => {
       let observer = (subject, topic, data) => {
         if (topic != "ipc:content-shutdown") {
@@ -909,50 +957,66 @@ this.BrowserTestUtils = {
           }
         }
 
-        if (dumpID) {
-          let minidumpDirectory = getMinidumpDirectory();
-          let extrafile = minidumpDirectory.clone();
-          extrafile.append(dumpID + '.extra');
-          if (extrafile.exists()) {
-            dump(`\nNo .extra file for dumpID: ${dumpID}\n`);
-            if (AppConstants.MOZ_CRASHREPORTER) {
-              extra = KeyValueParser.parseKeyValuePairsFromFile(extrafile);
-            } else {
-              dump('\nCrashReporter not enabled - will not return any extra data\n');
-            }
-          }
+        let removalPromise = Promise.resolve();
 
-          removeFile(minidumpDirectory, dumpID + '.dmp');
-          removeFile(minidumpDirectory, dumpID + '.extra');
+        if (dumpID) {
+          removalPromise = Services.crashmanager.ensureCrashIsPresent(dumpID)
+                                                .then(() => {
+            let minidumpDirectory = getMinidumpDirectory();
+            let extrafile = minidumpDirectory.clone();
+            extrafile.append(dumpID + '.extra');
+            if (extrafile.exists()) {
+              dump(`\nNo .extra file for dumpID: ${dumpID}\n`);
+              if (AppConstants.MOZ_CRASHREPORTER) {
+                extra = KeyValueParser.parseKeyValuePairsFromFile(extrafile);
+              } else {
+                dump('\nCrashReporter not enabled - will not return any extra data\n');
+              }
+            }
+
+            removeFile(minidumpDirectory, dumpID + '.dmp');
+            removeFile(minidumpDirectory, dumpID + '.extra');
+          });
         }
 
-        Services.obs.removeObserver(observer, 'ipc:content-shutdown');
-        dump("\nCrash cleaned up\n");
-        resolve();
+        removalPromise.then(() => {
+          Services.obs.removeObserver(observer, 'ipc:content-shutdown');
+          dump("\nCrash cleaned up\n");
+          // There might be other ipc:content-shutdown handlers that need to
+          // run before we want to continue, so we'll resolve on the next tick
+          // of the event loop.
+          TestUtils.executeSoon(() => resolve());
+        });
       };
 
       Services.obs.addObserver(observer, 'ipc:content-shutdown', false);
     });
 
-    let aboutTabCrashedLoadPromise = new Promise((resolve, reject) => {
-      browser.addEventListener("AboutTabCrashedReady", function onCrash() {
-        browser.removeEventListener("AboutTabCrashedReady", onCrash, false);
-        dump("\nabout:tabcrashed loaded and ready\n");
-        resolve();
-      }, false, true);
-    });
+    expectedPromises.push(crashCleanupPromise);
+
+    if (shouldShowTabCrashPage) {
+      expectedPromises.push(new Promise((resolve, reject) => {
+        browser.addEventListener("AboutTabCrashedReady", function onCrash() {
+          browser.removeEventListener("AboutTabCrashedReady", onCrash);
+          dump("\nabout:tabcrashed loaded and ready\n");
+          resolve();
+        }, false, true);
+      }));
+    }
 
     // This frame script will crash the remote browser as soon as it is
     // evaluated.
     let mm = browser.messageManager;
     mm.loadFrameScript("data:,(" + frame_script.toString() + ")();", false);
 
-    yield Promise.all([crashCleanupPromise, aboutTabCrashedLoadPromise]);
+    yield Promise.all(expectedPromises);
 
-    let gBrowser = browser.ownerDocument.defaultView.gBrowser;
-    let tab = gBrowser.getTabForBrowser(browser);
-    if (tab.getAttribute("crashed") != "true") {
-      throw new Error("Tab should be marked as crashed");
+    if (shouldShowTabCrashPage) {
+      let gBrowser = browser.ownerGlobal.gBrowser;
+      let tab = gBrowser.getTabForBrowser(browser);
+      if (tab.getAttribute("crashed") != "true") {
+        throw new Error("Tab should be marked as crashed");
+      }
     }
 
     return extra;
@@ -971,7 +1035,7 @@ this.BrowserTestUtils = {
    * @returns {Promise}
    */
   waitForAttribute(attr, element, value) {
-    let MutationObserver = element.ownerDocument.defaultView.MutationObserver;
+    let MutationObserver = element.ownerGlobal.MutationObserver;
     return new Promise(resolve => {
       let mut = new MutationObserver(mutations => {
         if ((!value && element.getAttribute(attr)) ||
@@ -1179,6 +1243,31 @@ this.BrowserTestUtils = {
    */
   waitForNotificationBar(tabbrowser, browser, notificationValue) {
     let notificationBox = tabbrowser.getNotificationBox(browser);
+    return this.waitForNotificationInNotificationBox(notificationBox,
+                                                     notificationValue);
+  },
+
+  /**
+   * Waits for a <xul:notification> with a particular value to appear
+   * in the global <xul:notificationbox> of the given browser window.
+   *
+   * @param win (<xul:window>)
+   *        The browser window in whose global notificationbox the
+   *        notification is expected to appear.
+   * @param notificationValue (string)
+   *        The "value" of the notification, which is often used as
+   *        a unique identifier. Example: "captive-portal-detected".
+   * @return Promise
+   *        Resolves to the <xul:notification> that is being shown.
+   */
+  waitForGlobalNotificationBar(win, notificationValue) {
+    let notificationBox =
+      win.document.getElementById("high-priority-global-notificationbox");
+    return this.waitForNotificationInNotificationBox(notificationBox,
+                                                     notificationValue);
+  },
+
+  waitForNotificationInNotificationBox(notificationBox, notificationValue) {
     return new Promise((resolve) => {
       let check = (event) => {
         return event.target.value == notificationValue;
@@ -1211,5 +1300,63 @@ this.BrowserTestUtils = {
         })
       });
     });
+  },
+
+  _knownAboutPages: new Set(),
+  _loadedAboutContentScript: false,
+  /**
+   * Registers an about: page with particular flags in both the parent
+   * and any content processes. Returns a promise that resolves when
+   * registration is complete.
+   *
+   * @param registerCleanupFunction (Function)
+   *        The test framework doesn't keep its cleanup stuff anywhere accessible,
+   *        so the first argument is a reference to your cleanup registration
+   *        function, allowing us to clean up after you if necessary.
+   * @param aboutModule (String)
+   *        The name of the about page.
+   * @param pageURI (String)
+   *        The URI the about: page should point to.
+   * @param flags (Number)
+   *        The nsIAboutModule flags to use for registration.
+   * @returns Promise that resolves when registration has finished.
+   */
+  registerAboutPage(registerCleanupFunction, aboutModule, pageURI, flags) {
+    // Return a promise that resolves when registration finished.
+    const kRegistrationMsgId = "browser-test-utils:about-registration:registered";
+    let rv = this.waitForMessage(Services.ppmm, kRegistrationMsgId, msg => {
+      return msg.data == aboutModule;
+    });
+    // Load a script that registers our page, then send it a message to execute the registration.
+    if (!this._loadedAboutContentScript) {
+      Services.ppmm.loadProcessScript(kAboutPageRegistrationContentScript, true);
+      this._loadedAboutContentScript = true;
+      registerCleanupFunction(this._removeAboutPageRegistrations.bind(this));
+    }
+    Services.ppmm.broadcastAsyncMessage("browser-test-utils:about-registration:register",
+                                        {aboutModule, pageURI, flags});
+    return rv.then(() => {
+      this._knownAboutPages.add(aboutModule);
+    });
+  },
+
+  unregisterAboutPage(aboutModule) {
+    if (!this._knownAboutPages.has(aboutModule)) {
+      return Promise.reject(new Error("We don't think this about page exists!"));
+    }
+    const kUnregistrationMsgId = "browser-test-utils:about-registration:unregistered";
+    let rv = this.waitForMessage(Services.ppmm, kUnregistrationMsgId, msg => {
+      return msg.data == aboutModule;
+    });
+    Services.ppmm.broadcastAsyncMessage("browser-test-utils:about-registration:unregister",
+                                        aboutModule);
+    return rv.then(() => this._knownAboutPages.delete(aboutModule));
+  },
+
+  *_removeAboutPageRegistrations() {
+    for (let aboutModule of this._knownAboutPages) {
+      yield this.unregisterAboutPage(aboutModule);
+    }
+    Services.ppmm.removeDelayedProcessScript(kAboutPageRegistrationContentScript);
   },
 };

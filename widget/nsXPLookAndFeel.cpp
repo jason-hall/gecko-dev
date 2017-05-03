@@ -9,10 +9,12 @@
 
 #include "nsXPLookAndFeel.h"
 #include "nsLookAndFeel.h"
+#include "HeadlessLookAndFeel.h"
 #include "nsCRT.h"
 #include "nsFont.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ServoStyleSet.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/widget/WidgetMessageUtils.h"
 
@@ -249,11 +251,11 @@ bool nsXPLookAndFeel::sUseNativeColors = true;
 bool nsXPLookAndFeel::sUseStandinsForNativeColors = false;
 bool nsXPLookAndFeel::sFindbarModalHighlight = false;
 
-nsLookAndFeel* nsXPLookAndFeel::sInstance = nullptr;
+nsXPLookAndFeel* nsXPLookAndFeel::sInstance = nullptr;
 bool nsXPLookAndFeel::sShutdown = false;
 
 // static
-nsLookAndFeel*
+nsXPLookAndFeel*
 nsXPLookAndFeel::GetInstance()
 {
   if (sInstance) {
@@ -262,7 +264,11 @@ nsXPLookAndFeel::GetInstance()
 
   NS_ENSURE_TRUE(!sShutdown, nullptr);
 
-  sInstance = new nsLookAndFeel();
+  if (gfxPlatform::IsHeadless()) {
+    sInstance = new widget::HeadlessLookAndFeel();
+  } else {
+    sInstance = new nsLookAndFeel();
+  }
   return sInstance;
 }
 
@@ -437,6 +443,8 @@ nsXPLookAndFeel::OnPrefChanged(const char* aPref, void* aClosure)
 void
 nsXPLookAndFeel::Init()
 {
+  MOZ_RELEASE_ASSERT(NS_IsMainThread());
+
   // Say we're already initialized, and take the chance that it might fail;
   // protects against some other process writing to our static variables.
   sInitialized = true;
@@ -444,7 +452,9 @@ nsXPLookAndFeel::Init()
   // XXX If we could reorganize the pref names, we should separate the branch
   //     for each types.  Then, we could reduce the unnecessary loop from
   //     nsXPLookAndFeel::OnPrefChanged().
-  Preferences::RegisterCallback(OnPrefChanged, "ui.");
+  Preferences::RegisterPrefixCallback(OnPrefChanged, "ui.");
+  // We really do just want the accessibility.tabfocus pref, not other prefs
+  // that start with that string.
   Preferences::RegisterCallback(OnPrefChanged, "accessibility.tabfocus");
 
   unsigned int i;
@@ -474,9 +484,9 @@ nsXPLookAndFeel::Init()
     mozilla::dom::ContentChild* cc =
       mozilla::dom::ContentChild::GetSingleton();
 
-    nsTArray<LookAndFeelInt> lookAndFeelIntCache;
-    cc->SendGetLookAndFeelCache(&lookAndFeelIntCache);
-    LookAndFeel::SetIntCache(lookAndFeelIntCache);
+    LookAndFeel::SetIntCache(cc->LookAndFeelCache());
+    // This is only ever used once during initialization, and can be cleared now.
+    cc->LookAndFeelCache().Clear();
   }
 }
 
@@ -769,12 +779,14 @@ nsXPLookAndFeel::GetColorImpl(ColorID aID, bool aUseStandinsForNativeColors,
   }
 
   // There are no system color settings for these, so set them manually
+#ifndef XP_MACOSX
   if (aID == eColorID_TextSelectBackgroundDisabled) {
     // This is used to gray out the selection when it's not focused
     // Used with nsISelectionController::SELECTION_DISABLED
     aResult = NS_RGB(0xb0, 0xb0, 0xb0);
     return NS_OK;
   }
+#endif
 
   if (aID == eColorID_TextSelectBackgroundAttention) {
     if (sFindbarModalHighlight) {
@@ -821,7 +833,10 @@ nsXPLookAndFeel::GetColorImpl(ColorID aID, bool aUseStandinsForNativeColors,
       }
     }
 
-    CACHE_COLOR(aID, aResult);
+    if (!mozilla::ServoStyleSet::IsInServoTraversal()) {
+      MOZ_ASSERT(NS_IsMainThread());
+      CACHE_COLOR(aID, aResult);
+    }
     return NS_OK;
   }
 

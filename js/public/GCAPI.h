@@ -7,6 +7,7 @@
 #ifndef js_GCAPI_h
 #define js_GCAPI_h
 
+#include "mozilla/TimeStamp.h"
 #include "mozilla/Vector.h"
 
 #include "js/GCAnnotations.h"
@@ -287,8 +288,8 @@ class GarbageCollectionEvent
     // Represents a single slice of a possibly multi-slice incremental garbage
     // collection.
     struct Collection {
-        double startTimestamp;
-        double endTimestamp;
+        mozilla::TimeStamp startTimestamp;
+        mozilla::TimeStamp endTimestamp;
     };
 
     // The set of garbage collection slices that made up this GC cycle.
@@ -424,25 +425,27 @@ extern JS_PUBLIC_API(bool)
 IsIncrementalGCInProgress(JSContext* cx);
 
 /*
- * Returns true when writes to GC things must call an incremental (pre) barrier.
- * This is generally only true when running mutator code in-between GC slices.
- * At other times, the barrier may be elided for performance.
+ * Returns true when writes to GC thing pointers (and reads from weak pointers)
+ * must call an incremental barrier. This is generally only true when running
+ * mutator code in-between GC slices. At other times, the barrier may be elided
+ * for performance.
  */
 extern JS_PUBLIC_API(bool)
 IsIncrementalBarrierNeeded(JSContext* cx);
 
 /*
- * Notify the GC that a reference to a GC thing is about to be overwritten.
- * These methods must be called if IsIncrementalBarrierNeeded.
+ * Notify the GC that a reference to a JSObject is about to be overwritten.
+ * This method must be called if IsIncrementalBarrierNeeded.
  */
 extern JS_PUBLIC_API(void)
-IncrementalReferenceBarrier(GCCellPtr thing);
+IncrementalPreWriteBarrier(JSObject* obj);
 
+/*
+ * Notify the GC that a weak reference to a GC thing has been read.
+ * This method must be called if IsIncrementalBarrierNeeded.
+ */
 extern JS_PUBLIC_API(void)
-IncrementalValueBarrier(const Value& v);
-
-extern JS_PUBLIC_API(void)
-IncrementalObjectBarrier(JSObject* obj);
+IncrementalReadBarrier(GCCellPtr thing);
 
 /**
  * Returns true if the most recent GC ran incrementally.
@@ -461,10 +464,10 @@ WasIncrementalGC(JSContext* cx);
 /** Ensure that generational GC is disabled within some scope. */
 class JS_PUBLIC_API(AutoDisableGenerationalGC)
 {
-    js::gc::GCRuntime* gc;
+    JSContext* cx;
 
   public:
-    explicit AutoDisableGenerationalGC(JSRuntime* rt);
+    explicit AutoDisableGenerationalGC(JSContext* cx);
     ~AutoDisableGenerationalGC();
 };
 
@@ -484,29 +487,32 @@ extern JS_PUBLIC_API(size_t)
 GetGCNumber();
 
 /**
- * Assert if a GC occurs while this class is live. This class does not disable
- * the static rooting hazard analysis.
+ * Pass a subclass of this "abstract" class to callees to require that they
+ * never GC. Subclasses can use assertions or the hazard analysis to ensure no
+ * GC happens.
  */
-class JS_PUBLIC_API(AutoAssertOnGC)
+class JS_PUBLIC_API(AutoRequireNoGC)
 {
-#ifdef DEBUG
-    js::gc::GCRuntime* gc;
-    size_t gcNumber;
+  protected:
+    AutoRequireNoGC() {}
+    ~AutoRequireNoGC() {}
+};
+
+/**
+ * Diagnostic assert (see MOZ_DIAGNOSTIC_ASSERT) that GC cannot occur while this
+ * class is live. This class does not disable the static rooting hazard
+ * analysis.
+ *
+ * This works by entering a GC unsafe region, which is checked on allocation and
+ * on GC.
+ */
+class JS_PUBLIC_API(AutoAssertNoGC) : public AutoRequireNoGC
+{
+    JSContext* cx_;
 
   public:
-    AutoAssertOnGC();
-    explicit AutoAssertOnGC(JSContext* cx);
-    ~AutoAssertOnGC();
-
-    static void VerifyIsSafeToGC(JSRuntime* rt);
-#else
-  public:
-    AutoAssertOnGC() {}
-    explicit AutoAssertOnGC(JSContext* cx) {}
-    ~AutoAssertOnGC() {}
-
-    static void VerifyIsSafeToGC(JSRuntime* rt) {}
-#endif
+    explicit AutoAssertNoGC(JSContext* cx = nullptr);
+    ~AutoAssertNoGC();
 };
 
 /**
@@ -529,6 +535,20 @@ class JS_PUBLIC_API(AutoAssertNoAlloc)
     explicit AutoAssertNoAlloc(JSContext* cx) {}
     void disallowAlloc(JSRuntime* rt) {}
 #endif
+};
+
+/**
+ * Assert if a GC barrier is invoked while this class is live. This class does
+ * not disable the static rooting hazard analysis.
+ */
+class JS_PUBLIC_API(AutoAssertOnBarrier)
+{
+    JSContext* context;
+    bool prev;
+
+  public:
+    explicit AutoAssertOnBarrier(JSContext* cx);
+    ~AutoAssertOnBarrier();
 };
 
 /**
@@ -568,20 +588,29 @@ class JS_PUBLIC_API(AutoAssertGCCallback) : public AutoSuppressGCAnalysis
 
 /**
  * Place AutoCheckCannotGC in scopes that you believe can never GC. These
- * annotations will be verified both dynamically via AutoAssertOnGC, and
+ * annotations will be verified both dynamically via AutoAssertNoGC, and
  * statically with the rooting hazard analysis (implemented by making the
  * analysis consider AutoCheckCannotGC to be a GC pointer, and therefore
  * complain if it is live across a GC call.) It is useful when dealing with
  * internal pointers to GC things where the GC thing itself may not be present
  * for the static analysis: e.g. acquiring inline chars from a JSString* on the
  * heap.
+ *
+ * We only do the assertion checking in DEBUG builds.
  */
-class JS_PUBLIC_API(AutoCheckCannotGC) : public AutoAssertOnGC
+#ifdef DEBUG
+class JS_PUBLIC_API(AutoCheckCannotGC) : public AutoAssertNoGC
 {
   public:
-    AutoCheckCannotGC() : AutoAssertOnGC() {}
-    explicit AutoCheckCannotGC(JSContext* cx) : AutoAssertOnGC(cx) {}
+    explicit AutoCheckCannotGC(JSContext* cx = nullptr) : AutoAssertNoGC(cx) {}
 } JS_HAZ_GC_INVALIDATED;
+#else
+class JS_PUBLIC_API(AutoCheckCannotGC) : public AutoRequireNoGC
+{
+  public:
+    explicit AutoCheckCannotGC(JSContext* cx = nullptr) {}
+} JS_HAZ_GC_INVALIDATED;
+#endif
 
 /**
  * Unsets the gray bit for anything reachable from |thing|. |kind| should not be
@@ -596,36 +625,50 @@ UnmarkGrayGCThingRecursively(GCCellPtr thing);
 namespace js {
 namespace gc {
 
+extern JS_FRIEND_API(bool)
+BarriersAreAllowedOnCurrentThread();
+
 static MOZ_ALWAYS_INLINE void
 ExposeGCThingToActiveJS(JS::GCCellPtr thing)
 {
-    MOZ_ASSERT(thing.kind() != JS::TraceKind::Shape);
-
-    /*
-     * GC things residing in the nursery cannot be gray: they have no mark bits.
-     * All live objects in the nursery are moved to tenured at the beginning of
-     * each GC slice, so the gray marker never sees nursery things.
-     */
+    // GC things residing in the nursery cannot be gray: they have no mark bits.
+    // All live objects in the nursery are moved to tenured at the beginning of
+    // each GC slice, so the gray marker never sees nursery things.
     if (IsInsideNursery(thing.asCell()))
         return;
-    JS::shadow::Runtime* rt = detail::GetGCThingRuntime(thing.unsafeAsUIntPtr());
-    if (IsIncrementalBarrierNeededOnTenuredGCThing(rt, thing))
-        JS::IncrementalReferenceBarrier(thing);
-    else if (JS::GCThingIsMarkedGray(thing))
+
+    // There's nothing to do for permanent GC things that might be owned by
+    // another runtime.
+    if (thing.mayBeOwnedByOtherRuntime())
+        return;
+
+    MOZ_DIAGNOSTIC_ASSERT(BarriersAreAllowedOnCurrentThread());
+
+    if (IsIncrementalBarrierNeededOnTenuredGCThing(thing))
+        JS::IncrementalReadBarrier(thing);
+    else if (js::gc::detail::CellIsMarkedGray(thing.asCell()))
         JS::UnmarkGrayGCThingRecursively(thing);
+
+    MOZ_ASSERT(!js::gc::detail::CellIsMarkedGray(thing.asCell()));
 }
 
 static MOZ_ALWAYS_INLINE void
-MarkGCThingAsLive(JSRuntime* aRt, JS::GCCellPtr thing)
+GCThingReadBarrier(JS::GCCellPtr thing)
 {
-    JS::shadow::Runtime* rt = JS::shadow::Runtime::asShadowRuntime(aRt);
-    /*
-     * Any object in the nursery will not be freed during any GC running at that time.
-     */
+    // Any object in the nursery will not be freed during any GC running at that
+    // time.
     if (IsInsideNursery(thing.asCell()))
         return;
-    if (IsIncrementalBarrierNeededOnTenuredGCThing(rt, thing))
-        JS::IncrementalReferenceBarrier(thing);
+
+    // There's nothing to do for permanent GC things that might be owned by
+    // another runtime.
+    if (thing.mayBeOwnedByOtherRuntime())
+        return;
+
+    MOZ_DIAGNOSTIC_ASSERT(BarriersAreAllowedOnCurrentThread());
+
+    if (IsIncrementalBarrierNeededOnTenuredGCThing(thing))
+        JS::IncrementalReadBarrier(thing);
 }
 
 } /* namespace gc */
@@ -656,10 +699,10 @@ ExposeScriptToActiveJS(JSScript* script)
  * If a GC is currently marking, mark the string black.
  */
 static MOZ_ALWAYS_INLINE void
-MarkStringAsLive(Zone* zone, JSString* string)
+StringReadBarrier(JSString* string)
 {
-    JSRuntime* rt = JS::shadow::Zone::asShadowZone(zone)->runtimeFromMainThread();
-    js::gc::MarkGCThingAsLive(rt, GCCellPtr(string));
+    MOZ_ASSERT(js::CurrentThreadCanAccessZone(GetStringZone(string)));
+    js::gc::GCThingReadBarrier(GCCellPtr(string));
 }
 
 /*

@@ -103,19 +103,6 @@ DOM_MSG_DEF(NS_ERROR_DOM_QUOTA_REACHED, "Persistent storage maximum size reached
 DOM4_MSG_DEF(NotFoundError, "File was not found", NS_ERROR_DOM_FILE_NOT_FOUND_ERR)
 DOM4_MSG_DEF(NotReadableError, "File could not be read", NS_ERROR_DOM_FILE_NOT_READABLE_ERR)
 
-/* Non-standard Bluetooth DOM errors. */
-DOM4_MSG_DEF(BtFailError,         "Fail",  NS_ERROR_DOM_BLUETOOTH_FAIL)
-DOM4_MSG_DEF(BtNotReadyError,     "Not ready",  NS_ERROR_DOM_BLUETOOTH_NOT_READY)
-DOM4_MSG_DEF(BtNoMemError,        "No memory",  NS_ERROR_DOM_BLUETOOTH_NOMEM)
-DOM4_MSG_DEF(BtBusyError,         "Device busy with another command",  NS_ERROR_DOM_BLUETOOTH_BUSY)
-DOM4_MSG_DEF(BtDoneError,         "Request already done",  NS_ERROR_DOM_BLUETOOTH_DONE)
-DOM4_MSG_DEF(BtUnsupportedError,  "Unsupported",  NS_ERROR_DOM_BLUETOOTH_UNSUPPORTED)
-DOM4_MSG_DEF(BtParmInvalidError,  "Invalid parameter",  NS_ERROR_DOM_BLUETOOTH_PARM_INVALID)
-DOM4_MSG_DEF(BtUnhandledError,    "Unhandled",  NS_ERROR_DOM_BLUETOOTH_UNHANDLED)
-DOM4_MSG_DEF(BtAuthFailureError,  "Authentication failure",  NS_ERROR_DOM_BLUETOOTH_AUTH_FAILURE)
-DOM4_MSG_DEF(BtRmtDevDownError,   "Remote device down",  NS_ERROR_DOM_BLUETOOTH_RMT_DEV_DOWN)
-DOM4_MSG_DEF(BtAuthRejectedError, "Authentication rejected",  NS_ERROR_DOM_BLUETOOTH_AUTH_REJECTED)
-
 /* Web Animations errors */
 
 DOM4_MSG_DEF(NotSupportedError, "Animation to or from an underlying value is not yet supported.", NS_ERROR_DOM_ANIM_MISSING_PROPS_ERR)
@@ -158,9 +145,6 @@ DOM4_MSG_DEF(AbortError, "Error retrieving push subscription.", NS_ERROR_DOM_PUS
 DOM4_MSG_DEF(NetworkError, "Push service unreachable.", NS_ERROR_DOM_PUSH_SERVICE_UNREACHABLE)
 DOM4_MSG_DEF(InvalidAccessError, "Invalid raw ECDSA P-256 public key.", NS_ERROR_DOM_PUSH_INVALID_KEY_ERR)
 DOM4_MSG_DEF(InvalidStateError, "A subscription with a different application server key already exists.", NS_ERROR_DOM_PUSH_MISMATCHED_KEY_ERR)
-
-DOM_MSG_DEF(NS_ERROR_DOM_JS_EXCEPTION, "A callback threw an exception")
-DOM_MSG_DEF(NS_ERROR_DOM_DOMEXCEPTION, "A DOMException was thrown")
 
 /* Media errors */
 DOM4_MSG_DEF(AbortError,        "The fetching process for the media resource was aborted by the user agent at the user's request.", NS_ERROR_DOM_MEDIA_ABORT_ERR)

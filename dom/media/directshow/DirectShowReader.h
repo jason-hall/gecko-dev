@@ -46,19 +46,18 @@ class SourceFilter;
 class DirectShowReader : public MediaDecoderReader
 {
 public:
-  DirectShowReader(AbstractMediaDecoder* aDecoder);
+  explicit DirectShowReader(AbstractMediaDecoder* aDecoder);
 
   virtual ~DirectShowReader();
 
   bool DecodeAudioData() override;
-  bool DecodeVideoFrame(bool &aKeyframeSkip,
-                        int64_t aTimeThreshold) override;
+  bool DecodeVideoFrame(bool& aKeyframeSkip,
+                        const media::TimeUnit& aTimeThreshold) override;
 
   nsresult ReadMetadata(MediaInfo* aInfo,
                         MetadataTags** aTags) override;
 
-  RefPtr<SeekPromise>
-  Seek(SeekTarget aTarget, int64_t aEndTime) override;
+  RefPtr<SeekPromise> Seek(const SeekTarget& aTarget) override;
 
   static const GUID CLSID_MPEG_LAYER_3_DECODER_FILTER;
 

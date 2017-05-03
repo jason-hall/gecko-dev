@@ -9,6 +9,8 @@
 
 #include "ScopedNSSTypes.h"
 #include "certt.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/RefPtr.h"
 #include "nsDataHashtable.h"
@@ -18,6 +20,7 @@
 #include "nsITransportSecurityInfo.h"
 #include "nsNSSShutDown.h"
 #include "nsSSLStatus.h"
+#include "nsString.h"
 #include "pkix/pkixtypes.h"
 
 namespace mozilla { namespace psm {
@@ -50,17 +53,20 @@ public:
   NS_DECL_NSICLASSINFO
 
   nsresult SetSecurityState(uint32_t aState);
-  nsresult SetShortSecurityDescription(const char16_t *aText);
 
   const nsACString & GetHostName() const { return mHostName; }
   const char * GetHostNameRaw() const { return mHostName.get(); }
 
-  nsresult GetHostName(char **aHostName);
-  nsresult SetHostName(const char *aHostName);
+  void SetHostName(const char* host);
 
   int32_t GetPort() const { return mPort; }
   nsresult GetPort(int32_t *aPort);
   nsresult SetPort(int32_t aPort);
+
+  const OriginAttributes& GetOriginAttributes() const {
+    return mOriginAttributes;
+  }
+  nsresult SetOriginAttributes(const OriginAttributes& aOriginAttributes);
 
   PRErrorCode GetErrorCode() const;
   
@@ -99,7 +105,8 @@ private:
                               nsString &result);
 
   int32_t mPort;
-  nsXPIDLCString mHostName;
+  nsCString mHostName;
+  OriginAttributes mOriginAttributes;
 
   /* SSL Status */
   RefPtr<nsSSLStatus> mSSLStatus;

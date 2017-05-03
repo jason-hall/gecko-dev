@@ -12,11 +12,13 @@
 #include "mozilla/gfx/2D.h"             // for DrawTarget
 #include "mozilla/gfx/MatrixFwd.h"      // for Matrix4x4
 #include "mozilla/gfx/Point.h"          // for IntSize, Point
+#include "mozilla/gfx/Polygon.h"        // for Polygon
 #include "mozilla/gfx/Rect.h"           // for Rect, IntRect
 #include "mozilla/gfx/Types.h"          // for Float
+#include "mozilla/gfx/Triangle.h"       // for Triangle, TexturedTriangle
 #include "mozilla/layers/CompositorTypes.h"  // for DiagnosticTypes, etc
-#include "mozilla/layers/FenceUtils.h"  // for FenceHandle
 #include "mozilla/layers/LayersTypes.h"  // for LayersBackend
+#include "mozilla/layers/TextureSourceProvider.h"
 #include "mozilla/widget/CompositorWidget.h"
 #include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "nsRegion.h"
@@ -122,7 +124,6 @@ namespace layers {
 struct Effect;
 struct EffectChain;
 class Image;
-class ImageHostOverlay;
 class Layer;
 class TextureSource;
 class DataTextureSource;
@@ -130,11 +131,10 @@ class CompositingRenderTarget;
 class CompositorBridgeParent;
 class LayerManagerComposite;
 class CompositorOGL;
-class CompositorD3D9;
 class CompositorD3D11;
 class BasicCompositor;
-class TextureHost;
 class TextureReadLock;
+struct GPUStats;
 
 enum SurfaceInitMode
 {
@@ -172,10 +172,6 @@ enum SurfaceInitMode
  *    construct an EffectChain for the quad,
  *    call DrawQuad,
  *  call EndFrame.
- * If the compositor is usually used for compositing but compositing is
- * temporarily done without the compositor, call EndFrameForExternalComposition
- * after compositing each frame so the compositor can remain internally
- * consistent.
  *
  * By default, the compositor will render to the screen, to render to a target,
  * call SetTargetContext or SetRenderTarget, the latter with a target created
@@ -184,39 +180,20 @@ enum SurfaceInitMode
  * The target and viewport methods can be called before any DrawQuad call and
  * affect any subsequent DrawQuad calls.
  */
-class Compositor
+class Compositor : public TextureSourceProvider
 {
 protected:
   virtual ~Compositor();
 
 public:
-  NS_INLINE_DECL_REFCOUNTING(Compositor)
-
   explicit Compositor(widget::CompositorWidget* aWidget,
                       CompositorBridgeParent* aParent = nullptr);
 
-  virtual already_AddRefed<DataTextureSource> CreateDataTextureSource(TextureFlags aFlags = TextureFlags::NO_FLAGS) = 0;
-
-  virtual already_AddRefed<DataTextureSource>
-  CreateDataTextureSourceAround(gfx::DataSourceSurface* aSurface) { return nullptr; }
-
-  virtual already_AddRefed<DataTextureSource>
-  CreateDataTextureSourceAroundYCbCr(TextureHost* aTexture) { return nullptr; }
-
   virtual bool Initialize(nsCString* const out_failureReason) = 0;
-  virtual void Destroy();
+  virtual void Destroy() override;
   bool IsDestroyed() const { return mIsDestroyed; }
 
   virtual void DetachWidget() { mWidget = nullptr; }
-
-  /**
-   * Return true if the effect type is supported.
-   *
-   * By default Compositor implementations should support all effects but in
-   * some rare cases it is not possible to support an effect efficiently.
-   * This is the case for BasicCompositor with EffectYCbCr.
-   */
-  virtual bool SupportsEffect(EffectTypes aEffect) { return true; }
 
   /**
    * Request a texture host identifier that may be used for creating textures
@@ -229,7 +206,6 @@ public:
    * Properties of the compositor.
    */
   virtual bool CanUseCanvasLayerForSize(const gfx::IntSize& aSize) = 0;
-  virtual int32_t GetMaxTextureSize() const = 0;
 
   /**
    * Set the target for rendering. Results will have been written to aTarget by
@@ -310,6 +286,25 @@ public:
    */
   virtual void SetScreenRenderOffset(const ScreenPoint& aOffset) = 0;
 
+  void DrawGeometry(const gfx::Rect& aRect,
+                    const gfx::IntRect& aClipRect,
+                    const EffectChain &aEffectChain,
+                    gfx::Float aOpacity,
+                    const gfx::Matrix4x4& aTransform,
+                    const gfx::Rect& aVisibleRect,
+                    const Maybe<gfx::Polygon>& aGeometry);
+
+  void DrawGeometry(const gfx::Rect& aRect,
+                    const gfx::IntRect& aClipRect,
+                    const EffectChain &aEffectChain,
+                    gfx::Float aOpacity,
+                    const gfx::Matrix4x4& aTransform,
+                    const Maybe<gfx::Polygon>& aGeometry)
+  {
+    DrawGeometry(aRect, aClipRect, aEffectChain, aOpacity,
+                 aTransform, aRect, aGeometry);
+  }
+
   /**
    * Tell the compositor to draw a quad. What to do draw and how it is
    * drawn is specified by aEffectChain. aRect is the quad to draw, in user space.
@@ -332,6 +327,21 @@ public:
                         const EffectChain& aEffectChain,
                         gfx::Float aOpacity, const gfx::Matrix4x4& aTransform) {
       DrawQuad(aRect, aClipRect, aEffectChain, aOpacity, aTransform, aRect);
+  }
+
+  virtual void DrawTriangle(const gfx::TexturedTriangle& aTriangle,
+                            const gfx::IntRect& aClipRect,
+                            const EffectChain& aEffectChain,
+                            gfx::Float aOpacity,
+                            const gfx::Matrix4x4& aTransform,
+                            const gfx::Rect& aVisibleRect)
+  {
+    MOZ_CRASH("Compositor::DrawTriangle is not implemented for the current platform!");
+  }
+
+  virtual bool SupportsLayerGeometry() const
+  {
+    return false;
   }
 
   /**
@@ -396,22 +406,21 @@ public:
                           gfx::IntRect* aRenderBoundsOut = nullptr) = 0;
 
   /**
+   * Notification that we've finished issuing draw commands for normal
+   * layers (as opposed to the diagnostic overlay which comes after).
+   */
+  virtual void NormalDrawingDone() {}
+
+  /**
    * Flush the current frame to the screen and tidy up.
    *
    * Derived class overriding this should call Compositor::EndFrame.
    */
   virtual void EndFrame();
 
+  virtual void CancelFrame() { ReadUnlockTextures(); }
+
   virtual void SetDispAcquireFence(Layer* aLayer);
-
-  virtual FenceHandle GetReleaseFence();
-
-  /**
-   * Post-rendering stuff if the rendering is done outside of this Compositor
-   * e.g., by Composer2D.
-   * aTransform is the transform from user space to window space.
-   */
-  virtual void EndFrameForExternalComposition(const gfx::Matrix& aTransform) = 0;
 
   /**
    * Whether textures created by this compositor can receive partial updates.
@@ -447,9 +456,18 @@ public:
   virtual LayersBackend GetBackendType() const = 0;
 
   virtual CompositorOGL* AsCompositorOGL() { return nullptr; }
-  virtual CompositorD3D9* AsCompositorD3D9() { return nullptr; }
   virtual CompositorD3D11* AsCompositorD3D11() { return nullptr; }
   virtual BasicCompositor* AsBasicCompositor() { return nullptr; }
+
+  virtual Compositor* AsCompositor() override {
+    return this;
+  }
+
+  TimeStamp GetLastCompositionEndTime() const override {
+    return mLastCompositionEndTime;
+  }
+
+  bool NotifyNotUsedAfterComposition(TextureHost* aTextureHost) override;
 
   /**
    * Each Compositor has a unique ID.
@@ -495,28 +513,14 @@ public:
 
   widget::CompositorWidget* GetWidget() const { return mWidget; }
 
-  virtual bool HasImageHostOverlays() { return false; }
-
-  virtual void AddImageHostOverlay(ImageHostOverlay* aOverlay) {}
-
-  virtual void RemoveImageHostOverlay(ImageHostOverlay* aOverlay) {}
-
   /**
    * Debug-build assertion that can be called to ensure code is running on the
    * compositor thread.
    */
   static void AssertOnCompositorThread();
 
-  size_t GetFillRatio() {
-    float fillRatio = 0;
-    if (mPixelsFilled > 0 && mPixelsPerFrame > 0) {
-      fillRatio = 100.0f * float(mPixelsFilled) / float(mPixelsPerFrame);
-      if (fillRatio > 999.0f) {
-        fillRatio = 999.0f;
-      }
-    }
-    return fillRatio;
-  }
+  // Return statistics for the most recent frame we computed statistics for.
+  virtual void GetFrameStats(GPUStats* aStats);
 
   ScreenRotation GetScreenRotation() const {
     return mScreenRotation;
@@ -525,52 +529,13 @@ public:
     mScreenRotation = aRotation;
   }
 
-  TimeStamp GetCompositionTime() const {
-    return mCompositionTime;
-  }
-  void SetCompositionTime(TimeStamp aTimeStamp) {
-    mCompositionTime = aTimeStamp;
-    if (!mCompositionTime.IsNull() && !mCompositeUntilTime.IsNull() &&
-        mCompositionTime >= mCompositeUntilTime) {
-      mCompositeUntilTime = TimeStamp();
-    }
-  }
-
-  void CompositeUntil(TimeStamp aTimeStamp) {
-    if (mCompositeUntilTime.IsNull() ||
-        mCompositeUntilTime < aTimeStamp) {
-      mCompositeUntilTime = aTimeStamp;
-    }
-  }
-  TimeStamp GetCompositeUntilTime() const {
-    return mCompositeUntilTime;
-  }
-
   // A stale Compositor has no CompositorBridgeParent; it will not process
   // frames and should not be used.
   void SetInvalid();
-  bool IsValid() const;
+  virtual bool IsValid() const override;
   CompositorBridgeParent* GetCompositorBridgeParent() const {
     return mParent;
   }
-
-  /// Most compositor backends operate asynchronously under the hood. This
-  /// means that when a layer stops using a texture it is often desirable to
-  /// wait for the end of the next composition before releasing the texture's
-  /// ReadLock.
-  /// This function provides a convenient way to do this delayed unlocking, if
-  /// the texture itself requires it.
-  void UnlockAfterComposition(TextureHost* aTexture);
-
-  /// Most compositor backends operate asynchronously under the hood. This
-  /// means that when a layer stops using a texture it is often desirable to
-  /// wait for the end of the next composition before NotifyNotUsed() call.
-  /// This function provides a convenient way to do this delayed NotifyNotUsed()
-  /// call, if the texture itself requires it.
-  /// See bug 1260611 and bug 1252835
-  void NotifyNotUsedAfterComposition(TextureHost* aTextureHost);
-
-  void FlushPendingNotifyNotUsed();
 
 protected:
   void DrawDiagnosticsInternal(DiagnosticFlags aFlags,
@@ -581,9 +546,6 @@ protected:
 
   bool ShouldDrawDiagnostics(DiagnosticFlags);
 
-  // Should be called at the end of each composition.
-  void ReadUnlockTextures();
-
   /**
    * Given a layer rect, clip, and transform, compute the area of the backdrop that
    * needs to be copied for mix-blending. The output transform translates from 0..1
@@ -592,38 +554,38 @@ protected:
    * The transformed layer quad is also optionally returned - this is the same as
    * the result rect, before rounding.
    */
-  gfx::IntRect ComputeBackdropCopyRect(
-    const gfx::Rect& aRect,
-    const gfx::IntRect& aClipRect,
-    const gfx::Matrix4x4& aTransform,
-    gfx::Matrix4x4* aOutTransform,
-    gfx::Rect* aOutLayerQuad = nullptr);
+  gfx::IntRect ComputeBackdropCopyRect(const gfx::Rect& aRect,
+                                       const gfx::IntRect& aClipRect,
+                                       const gfx::Matrix4x4& aTransform,
+                                       gfx::Matrix4x4* aOutTransform,
+                                       gfx::Rect* aOutLayerQuad = nullptr);
 
-  /**
-   * An array of locks that will need to be unlocked after the next composition.
-   */
-  nsTArray<RefPtr<TextureHost>> mUnlockAfterComposition;
+  gfx::IntRect ComputeBackdropCopyRect(const gfx::Triangle& aTriangle,
+                                       const gfx::IntRect& aClipRect,
+                                       const gfx::Matrix4x4& aTransform,
+                                       gfx::Matrix4x4* aOutTransform,
+                                       gfx::Rect* aOutLayerQuad = nullptr);
 
-  /**
-   * An array of TextureHosts that will need to call NotifyNotUsed() after the next composition.
-   */
-  nsTArray<RefPtr<TextureHost>> mNotifyNotUsedAfterComposition;
+  virtual void DrawTriangles(const nsTArray<gfx::TexturedTriangle>& aTriangles,
+                             const gfx::Rect& aRect,
+                             const gfx::IntRect& aClipRect,
+                             const EffectChain& aEffectChain,
+                             gfx::Float aOpacity,
+                             const gfx::Matrix4x4& aTransform,
+                             const gfx::Rect& aVisibleRect);
+
+  virtual void DrawPolygon(const gfx::Polygon& aPolygon,
+                           const gfx::Rect& aRect,
+                           const gfx::IntRect& aClipRect,
+                           const EffectChain& aEffectChain,
+                           gfx::Float aOpacity,
+                           const gfx::Matrix4x4& aTransform,
+                           const gfx::Rect& aVisibleRect);
 
   /**
    * Last Composition end time.
    */
   TimeStamp mLastCompositionEndTime;
-
-  /**
-   * Render time for the current composition.
-   */
-  TimeStamp mCompositionTime;
-  /**
-   * When nonnull, during rendering, some compositable indicated that it will
-   * change its rendering at this time. In order not to miss it, we composite
-   * on every vsync until this time occurs (this is the latest such time).
-   */
-  TimeStamp mCompositeUntilTime;
 
   uint32_t mCompositorID;
   DiagnosticTypes mDiagnosticTypes;
@@ -645,10 +607,6 @@ protected:
   widget::CompositorWidget* mWidget;
 
   bool mIsDestroyed;
-
-#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
-  FenceHandle mReleaseFenceHandle;
-#endif
 
   gfx::Color mClearColor;
   gfx::Color mDefaultClearColor;

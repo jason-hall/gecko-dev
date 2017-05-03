@@ -17,6 +17,8 @@ import android.view.KeyEvent;
 interface GeckoEditableListener {
     // IME notification type for notifyIME(), corresponding to NotificationToIME enum in Gecko
     @WrapForJNI
+    int NOTIFY_IME_OF_TOKEN = -3;
+    @WrapForJNI
     int NOTIFY_IME_OPEN_VKB = -2;
     @WrapForJNI
     int NOTIFY_IME_REPLY_EVENT = -1;
@@ -36,8 +38,8 @@ interface GeckoEditableListener {
 
     void notifyIME(int type);
     void notifyIMEContext(int state, String typeHint, String modeHint, String actionHint);
-    void onSelectionChange(int start, int end);
-    void onTextChange(CharSequence text, int start, int oldEnd, int newEnd);
+    void onSelectionChange();
+    void onTextChange();
     void onDefaultKeyEvent(KeyEvent event);
     void updateCompositionRects(final RectF[] aRects);
 }

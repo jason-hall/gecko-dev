@@ -7,8 +7,10 @@
 #ifndef gc_Statistics_h
 #define gc_Statistics_h
 
+#include "mozilla/Array.h"
 #include "mozilla/EnumeratedArray.h"
 #include "mozilla/IntegerRange.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
 
 #include "jsalloc.h"
@@ -18,6 +20,8 @@
 #include "js/GCAPI.h"
 #include "js/Vector.h"
 
+using mozilla::Maybe;
+
 namespace js {
 
 class GCParallelTask;
@@ -25,7 +29,9 @@ class GCParallelTask;
 namespace gcstats {
 
 enum Phase : uint8_t {
-    PHASE_MUTATOR,
+    PHASE_FIRST,
+
+    PHASE_MUTATOR = PHASE_FIRST,
     PHASE_GC_BEGIN,
     PHASE_WAIT_BACKGROUND_THREAD,
     PHASE_MARK_DISCARD_CODE,
@@ -43,10 +49,9 @@ enum Phase : uint8_t {
     PHASE_SWEEP_MARK_GRAY,
     PHASE_SWEEP_MARK_GRAY_WEAK,
     PHASE_FINALIZE_START,
-    PHASE_WEAK_ZONEGROUP_CALLBACK,
+    PHASE_WEAK_ZONES_CALLBACK,
     PHASE_WEAK_COMPARTMENT_CALLBACK,
     PHASE_SWEEP_ATOMS,
-    PHASE_SWEEP_SYMBOL_REGISTRY,
     PHASE_SWEEP_COMPARTMENTS,
     PHASE_SWEEP_DISCARD_CODE,
     PHASE_SWEEP_INNER_VIEWS,
@@ -64,6 +69,7 @@ enum Phase : uint8_t {
     PHASE_SWEEP_STRING,
     PHASE_SWEEP_SCRIPT,
     PHASE_SWEEP_SCOPE,
+    PHASE_SWEEP_REGEXP_SHARED,
     PHASE_SWEEP_SHAPE,
     PHASE_SWEEP_JITCODE,
     PHASE_FINALIZE_END,
@@ -85,6 +91,7 @@ enum Phase : uint8_t {
     PHASE_MARK_RUNTIME_DATA,
     PHASE_MARK_EMBEDDING,
     PHASE_MARK_COMPARTMENTS,
+    PHASE_PURGE_SHAPE_TABLES,
 
     PHASE_LIMIT,
     PHASE_NONE = PHASE_LIMIT,
@@ -183,25 +190,53 @@ struct MOZ_RAII AutoPhase
     AutoPhase(Statistics& stats, Phase phase)
       : stats(stats), task(nullptr), phase(phase), enabled(true)
     {
+        stats.beginPhase(phase);
     }
 
     AutoPhase(Statistics& stats, bool condition, Phase phase)
       : stats(stats), task(nullptr), phase(phase), enabled(condition)
     {
+        if (enabled)
+            stats.beginPhase(phase);
     }
 
     AutoPhase(Statistics& stats, const GCParallelTask& task, Phase phase)
       : stats(stats), task(&task), phase(phase), enabled(true)
     {
+        if (enabled)
+            stats.beginPhase(phase);
     }
 
     ~AutoPhase() {
+        if (enabled) {
+            // Bug 1309651 - we only record active thread time (including time
+            // spent waiting to join with helper threads), but should start
+            // recording total work on helper threads sometime by calling
+            // endParallelPhase here if task is nonnull.
+            stats.endPhase(phase);
+        }
     }
 
     Statistics& stats;
     const GCParallelTask* task;
     Phase phase;
     bool enabled;
+};
+
+struct MOZ_RAII AutoSCC
+{
+    AutoSCC(Statistics& stats, unsigned scc)
+      : stats(stats), scc(scc)
+    {
+        start = stats.beginSCC();
+    }
+    ~AutoSCC() {
+        stats.endSCC(scc, start);
+    }
+
+    Statistics& stats;
+    unsigned scc;
+    mozilla::TimeStamp start;
 };
 
 } /* namespace gcstats */

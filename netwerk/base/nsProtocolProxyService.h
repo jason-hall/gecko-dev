@@ -51,12 +51,10 @@ public:
     nsProtocolProxyService();
 
     nsresult Init();
-    nsresult DeprecatedBlockingResolve(nsIChannel *aChannel,
-                                       uint32_t aFlags,
-                                       nsIProxyInfo **retval);
 
 protected:
     friend class nsAsyncResolveRequest;
+    friend class TestProtocolProxyService_LoadHostFilters_Test; // for gtest
 
     ~nsProtocolProxyService();
 
@@ -215,10 +213,6 @@ protected:
      *
      * @param channel
      *        The channel to test.
-     * @param appId
-     *        The id of the app making the query.
-     * @param isInBrowser
-     *        True if the iframe has mozbrowser but has no mozapp attribute.
      * @param info
      *        Information about the URI's protocol.
      * @param flags
@@ -230,8 +224,6 @@ protected:
      *        The resulting proxy info or null.
      */
     nsresult Resolve_Internal(nsIChannel *channel,
-                              uint32_t appId,
-                              bool isInBrowser,
                               const nsProtocolInfo &info,
                               uint32_t flags,
                               bool *usePAC,
@@ -282,7 +274,7 @@ protected:
      * @param hostFilters
      *        A "no-proxy-for" exclusion list.
      */
-    void LoadHostFilters(const char *hostFilters);
+    void LoadHostFilters(const nsACString& hostFilters);
 
     /**
      * This method checks the given URI against mHostFiltersArray.
@@ -388,7 +380,8 @@ protected:
     nsCString                    mHTTPSProxyHost;
     int32_t                      mHTTPSProxyPort;
 
-    // mSOCKSProxyTarget could be a host or a domain socket path.
+    // mSOCKSProxyTarget could be a host, a domain socket path,
+    // or a named-pipe name.
     nsCString                    mSOCKSProxyTarget;
     int32_t                      mSOCKSProxyPort;
     int32_t                      mSOCKSProxyVersion;

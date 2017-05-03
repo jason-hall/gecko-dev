@@ -18,7 +18,7 @@ add_task(function* setup() {
   Services.prefs.setCharPref(kApiKeyPref, "yandexValidKey");
   Services.prefs.setBoolPref(kShowUIPref, true);
 
-  registerCleanupFunction(function () {
+  registerCleanupFunction(function() {
     Services.prefs.clearUserPref(kEnginePref);
     Services.prefs.clearUserPref(kApiKeyPref);
     Services.prefs.clearUserPref(kShowUIPref);
@@ -72,7 +72,7 @@ add_task(function* test_yandex_attribution() {
 
 add_task(function* test_preference_attribution() {
 
-    let prefUrl = "about:preferences#content";
+    let prefUrl = "about:preferences#general";
     let tab = yield promiseTestPageLoad(prefUrl);
 
     let browser = gBrowser.getBrowserForTab(tab);
@@ -91,7 +91,7 @@ add_task(function* test_preference_attribution() {
  *
  * @param filename  Name of a fixture file.
  */
-function constructFixtureURL(filename){
+function constructFixtureURL(filename) {
   // Deduce the Mochitest server address in use from a pref that was pre-processed.
   let server = Services.prefs.getCharPref("browser.translation.yandex.translateURLOverride")
                              .replace("http://", "");

@@ -250,7 +250,7 @@ ChromeProcessController::NotifyAPZStateChange(const ScrollableLayerGuid& aGuid,
     return;
   }
 
-  mAPZEventState->ProcessAPZStateChange(GetRootDocument(), aGuid.mScrollId, aChange, aArg);
+  mAPZEventState->ProcessAPZStateChange(aGuid.mScrollId, aChange, aArg);
 }
 
 void
@@ -273,4 +273,17 @@ ChromeProcessController::NotifyFlushComplete()
   MOZ_ASSERT(IsRepaintThread());
 
   APZCCallbackHelper::NotifyFlushComplete(GetPresShell());
+}
+
+void
+ChromeProcessController::NotifyAsyncScrollbarDragRejected(const FrameMetrics::ViewID& aScrollId)
+{
+  if (MessageLoop::current() != mUILoop) {
+    mUILoop->PostTask(NewRunnableMethod<FrameMetrics::ViewID>(this,
+                        &ChromeProcessController::NotifyAsyncScrollbarDragRejected,
+                        aScrollId));
+    return;
+  }
+
+  APZCCallbackHelper::NotifyAsyncScrollbarDragRejected(aScrollId);
 }

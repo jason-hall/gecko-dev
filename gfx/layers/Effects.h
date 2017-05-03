@@ -38,6 +38,8 @@ namespace layers {
  * to the compositor by the compositable host as a parameter to DrawQuad.
  */
 
+struct TexturedEffect;
+
 struct Effect
 {
   NS_INLINE_DECL_REFCOUNTING(Effect)
@@ -46,6 +48,7 @@ struct Effect
 
   EffectTypes mType;
 
+  virtual TexturedEffect* AsTexturedEffect() { return nullptr; }
   virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix) = 0;
 
 protected:
@@ -66,6 +69,7 @@ struct TexturedEffect : public Effect
      , mSamplingFilter(aSamplingFilter)
   {}
 
+  virtual TexturedEffect* AsTexturedEffect() { return this; }
   virtual const char* Name() = 0;
   virtual void PrintInfo(std::stringstream& aStream, const char* aPrefix);
 
@@ -73,7 +77,6 @@ struct TexturedEffect : public Effect
   TextureSource* mTexture;
   bool mPremultiplied;
   gfx::SamplingFilter mSamplingFilter;
-  LayerRenderState mState;
 };
 
 // Support an alpha mask.
@@ -158,11 +161,14 @@ struct EffectRGB : public TexturedEffect
 
 struct EffectYCbCr : public TexturedEffect
 {
-  EffectYCbCr(TextureSource *aSource, gfx::SamplingFilter aSamplingFilter)
+  EffectYCbCr(TextureSource *aSource, YUVColorSpace aYUVColorSpace, gfx::SamplingFilter aSamplingFilter)
     : TexturedEffect(EffectTypes::YCBCR, aSource, false, aSamplingFilter)
+    , mYUVColorSpace(aYUVColorSpace)
   {}
 
   virtual const char* Name() { return "EffectYCbCr"; }
+
+  YUVColorSpace mYUVColorSpace;
 };
 
 struct EffectNV12 : public TexturedEffect
@@ -226,8 +232,7 @@ inline already_AddRefed<TexturedEffect>
 CreateTexturedEffect(gfx::SurfaceFormat aFormat,
                      TextureSource* aSource,
                      const gfx::SamplingFilter aSamplingFilter,
-                     bool isAlphaPremultiplied,
-                     const LayerRenderState &state = LayerRenderState())
+                     bool isAlphaPremultiplied)
 {
   MOZ_ASSERT(aSource);
   RefPtr<TexturedEffect> result;
@@ -239,19 +244,39 @@ CreateTexturedEffect(gfx::SurfaceFormat aFormat,
   case gfx::SurfaceFormat::R8G8B8A8:
     result = new EffectRGB(aSource, isAlphaPremultiplied, aSamplingFilter);
     break;
-  case gfx::SurfaceFormat::YUV:
-    result = new EffectYCbCr(aSource, aSamplingFilter);
-    break;
   case gfx::SurfaceFormat::NV12:
     result = new EffectNV12(aSource, aSamplingFilter);
+    break;
+  case gfx::SurfaceFormat::YUV:
+    MOZ_ASSERT_UNREACHABLE("gfx::SurfaceFormat::YUV is invalid");
     break;
   default:
     NS_WARNING("unhandled program type");
     break;
   }
 
-  result->mState = state;
+  return result.forget();
+}
 
+inline already_AddRefed<TexturedEffect>
+CreateTexturedEffect(TextureHost* aHost,
+                     TextureSource* aSource,
+                     const gfx::SamplingFilter aSamplingFilter,
+                     bool isAlphaPremultiplied)
+{
+  MOZ_ASSERT(aHost);
+  MOZ_ASSERT(aSource);
+
+  RefPtr<TexturedEffect> result;
+  if (aHost->GetReadFormat() == gfx::SurfaceFormat::YUV) {
+    MOZ_ASSERT(aHost->GetYUVColorSpace() != YUVColorSpace::UNKNOWN);
+    result = new EffectYCbCr(aSource, aHost->GetYUVColorSpace(), aSamplingFilter);
+  } else {
+    result = CreateTexturedEffect(aHost->GetReadFormat(),
+                                  aSource,
+                                  aSamplingFilter,
+                                  isAlphaPremultiplied);
+  }
   return result.forget();
 }
 
@@ -265,8 +290,7 @@ inline already_AddRefed<TexturedEffect>
 CreateTexturedEffect(TextureSource* aSource,
                      TextureSource* aSourceOnWhite,
                      const gfx::SamplingFilter aSamplingFilter,
-                     bool isAlphaPremultiplied,
-                     const LayerRenderState &state = LayerRenderState())
+                     bool isAlphaPremultiplied)
 {
   MOZ_ASSERT(aSource);
   if (aSourceOnWhite) {
@@ -280,8 +304,7 @@ CreateTexturedEffect(TextureSource* aSource,
   return CreateTexturedEffect(aSource->GetFormat(),
                               aSource,
                               aSamplingFilter,
-                              isAlphaPremultiplied,
-                              state);
+                              isAlphaPremultiplied);
 }
 
 /**
@@ -291,10 +314,9 @@ CreateTexturedEffect(TextureSource* aSource,
  */
 inline already_AddRefed<TexturedEffect>
 CreateTexturedEffect(TextureSource *aTexture,
-                     const gfx::SamplingFilter aSamplingFilter,
-                     const LayerRenderState &state = LayerRenderState())
+                     const gfx::SamplingFilter aSamplingFilter)
 {
-  return CreateTexturedEffect(aTexture, nullptr, aSamplingFilter, true, state);
+  return CreateTexturedEffect(aTexture, nullptr, aSamplingFilter, true);
 }
 
 

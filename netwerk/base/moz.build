@@ -32,11 +32,9 @@ XPIDL_SOURCES += [
     'nsIChannelEventSink.idl',
     'nsIChannelWithDivertableParentListener.idl',
     'nsIChildChannel.idl',
+    'nsIClassifiedChannel.idl',
     'nsIClassOfService.idl',
     'nsIContentSniffer.idl',
-    'nsICryptoFIPSInfo.idl',
-    'nsICryptoHash.idl',
-    'nsICryptoHMAC.idl',
     'nsIDashboard.idl',
     'nsIDashboardEventNotifier.idl',
     'nsIDeprecationWarner.idl',
@@ -71,12 +69,7 @@ XPIDL_SOURCES += [
     'nsINetworkPredictor.idl',
     'nsINetworkPredictorVerifier.idl',
     'nsINetworkProperties.idl',
-    'nsINSSErrorsService.idl',
     'nsINullChannel.idl',
-    'nsIPACGenerator.idl',
-    'nsIPackagedAppService.idl',
-    'nsIPackagedAppUtils.idl',
-    'nsIPackagedAppVerifier.idl',
     'nsIParentChannel.idl',
     'nsIParentRedirectingChannel.idl',
     'nsIPermission.idl',
@@ -99,7 +92,6 @@ XPIDL_SOURCES += [
     'nsIRequestContext.idl',
     'nsIRequestObserver.idl',
     'nsIRequestObserverProxy.idl',
-    'nsIResponseHeadProvider.idl',
     'nsIResumableChannel.idl',
     'nsISecCheckWrapChannel.idl',
     'nsISecureBrowserUI.idl',
@@ -125,6 +117,7 @@ XPIDL_SOURCES += [
     'nsIThreadRetargetableRequest.idl',
     'nsIThreadRetargetableStreamListener.idl',
     'nsIThrottledInputChannel.idl',
+    'nsIThrottlingService.idl',
     'nsITimedChannel.idl',
     'nsITLSServerSocket.idl',
     'nsITraceableChannel.idl',
@@ -158,7 +151,6 @@ EXPORTS += [
     'nsInputStreamPump.h',
     'nsMIMEInputStream.h',
     'nsNetUtil.h',
-    'nsNetUtilInlines.h',
     'nsReadLine.h',
     'nsSerializationHelper.h',
     'nsSimpleNestedURI.h',
@@ -168,6 +160,7 @@ EXPORTS += [
     'nsURIHashKey.h',
     'nsURLHelper.h',
     'nsURLParsers.h',
+    'SimpleChannel.h',
 ]
 
 EXPORTS.mozilla += [
@@ -183,7 +176,6 @@ EXPORTS.mozilla.net += [
     'Dashboard.h',
     'DashboardTypes.h',
     'MemoryDownloader.h',
-    'OfflineObserver.h',
     'Predictor.h',
     'ReferrerPolicy.h',
 ]
@@ -252,18 +244,23 @@ UNIFIED_SOURCES += [
     'nsUnicharStreamLoader.cpp',
     'nsURLHelper.cpp',
     'nsURLParsers.cpp',
-    'OfflineObserver.cpp',
     'PollableEvent.cpp',
     'Predictor.cpp',
     'ProxyAutoConfig.cpp',
     'RedirectChannelRegistrar.cpp',
     'RequestContextService.cpp',
     'SimpleBuffer.cpp',
+    'SimpleChannel.cpp',
     'StreamingProtocolService.cpp',
     'ThrottleQueue.cpp',
+    'ThrottlingService.cpp',
     'Tickler.cpp',
     'TLSServerSocket.cpp',
 ]
+
+if CONFIG['MOZ_RUST'] and CONFIG['MOZ_RUST_URLPARSE']:
+    EXPORTS.mozilla.net += [ 'RustURL.h' ]
+    UNIFIED_SOURCES += [ 'RustURL.cpp' ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
     SOURCES += [
@@ -296,11 +293,6 @@ elif CONFIG['OS_ARCH'] == 'Linux':
         'nsNetworkInfoService.cpp',
     ]
 
-EXTRA_COMPONENTS += [
-    'PACGenerator.js',
-    'PACGenerator.manifest'
-]
-
 EXTRA_JS_MODULES += [
     'NetUtil.jsm',
 ]
@@ -312,7 +304,9 @@ FINAL_LIBRARY = 'xul'
 LOCAL_INCLUDES += [
     '/docshell/base',
     '/dom/base',
-    '/netwerk/protocol/http'
+    '/netwerk/protocol/http',
+    '/netwerk/socket',
+    '/security/pkix/include'
 ]
 
 if 'rtsp' in CONFIG['NECKO_PROTOCOLS']:

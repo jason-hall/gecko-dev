@@ -65,10 +65,11 @@ BEGIN_TEST(testSharedImmutableStringsCache)
     js::Vector<js::Thread> threads(cx);
     CHECK(threads.reserve(NUM_THREADS));
 
-    for (auto i : mozilla::MakeRange(NUM_THREADS)) {
+    for (auto i : mozilla::IntegerRange(NUM_THREADS)) {
         auto cacheAndIndex = js_new<CacheAndIndex>(&cache, i);
         CHECK(cacheAndIndex);
-        threads.infallibleEmplaceBack(getString, cacheAndIndex);
+        threads.infallibleEmplaceBack();
+        CHECK(threads.back().init(getString, cacheAndIndex));
     }
 
     for (auto& thread : threads)

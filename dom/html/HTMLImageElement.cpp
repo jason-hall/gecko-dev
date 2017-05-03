@@ -41,11 +41,10 @@
 
 #include "nsILoadGroup.h"
 
-#include "nsRuleData.h"
-
 #include "nsIDOMHTMLMapElement.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventStates.h"
+#include "mozilla/GenericSpecifiedValuesInlines.h"
 #include "mozilla/net/ReferrerPolicy.h"
 
 #include "nsLayoutUtils.h"
@@ -166,6 +165,12 @@ HTMLImageElement::IsInteractiveHTMLContent(bool aIgnoreTabindex) const
           nsGenericHTMLElement::IsInteractiveHTMLContent(aIgnoreTabindex);
 }
 
+void
+HTMLImageElement::AsyncEventRunning(AsyncEventDispatcher* aEvent)
+{
+  nsImageLoadingContent::AsyncEventRunning(aEvent);
+}
+
 nsresult
 HTMLImageElement::GetCurrentSrc(nsAString& aValue)
 {
@@ -221,7 +226,7 @@ HTMLImageElement::GetComplete(bool* aComplete)
 CSSIntPoint
 HTMLImageElement::GetXY()
 {
-  nsIFrame* frame = GetPrimaryFrame(Flush_Layout);
+  nsIFrame* frame = GetPrimaryFrame(FlushType::Layout);
   if (!frame) {
     return CSSIntPoint(0, 0);
   }
@@ -313,7 +318,7 @@ HTMLImageElement::ParseAttribute(int32_t aNamespaceID,
 
 void
 HTMLImageElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                                        nsRuleData* aData)
+                                        GenericSpecifiedValues* aData)
 {
   nsGenericHTMLElement::MapImageAlignAttributeInto(aAttributes, aData);
   nsGenericHTMLElement::MapImageBorderAttributeInto(aAttributes, aData);
@@ -363,7 +368,7 @@ HTMLImageElement::GetAttributeMappingFunction() const
 
 nsresult
 HTMLImageElement::BeforeSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                                nsAttrValueOrString* aValue,
+                                const nsAttrValueOrString* aValue,
                                 bool aNotify)
 {
 
@@ -374,8 +379,7 @@ HTMLImageElement::BeforeSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
     GetAttr(kNameSpaceID_None, aName, tmp);
 
     if (!tmp.IsEmpty()) {
-      mForm->RemoveImageElementFromTable(this, tmp,
-                                         HTMLFormElement::AttributeUpdated);
+      mForm->RemoveImageElementFromTable(this, tmp);
     }
   }
 
@@ -431,7 +435,7 @@ HTMLImageElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
 }
 
 nsresult
-HTMLImageElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
+HTMLImageElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   // We handle image element with attribute ismap in its corresponding frame
   // element. Set mMultipleActionsPrevented here to prevent the click event
@@ -440,7 +444,7 @@ HTMLImageElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
   if (mouseEvent && mouseEvent->IsLeftClickEvent() && IsMap()) {
     mouseEvent->mFlags.mMultipleActionsPrevented = true;
   }
-  return nsGenericHTMLElement::PreHandleEvent(aVisitor);
+  return nsGenericHTMLElement::GetEventTargetParent(aVisitor);
 }
 
 bool
@@ -649,6 +653,8 @@ HTMLImageElement::UnbindFromTree(bool aDeep, bool aNullParent)
     }
   }
 
+  mLastSelectedSource = nullptr;
+
   nsImageLoadingContent::UnbindFromTree(aDeep, aNullParent);
   nsGenericHTMLElement::UnbindFromTree(aDeep, aNullParent);
 }
@@ -701,6 +707,14 @@ HTMLImageElement::IntrinsicState() const
 {
   return nsGenericHTMLElement::IntrinsicState() |
     nsImageLoadingContent::ImageState();
+}
+
+void
+HTMLImageElement::NodeInfoChanged(nsIDocument* aOldDoc)
+{
+  nsGenericHTMLElement::NodeInfoChanged(aOldDoc);
+  // Resetting the last selected source if adoption steps are run.
+  mLastSelectedSource = nullptr;
 }
 
 // static
@@ -756,7 +770,6 @@ HTMLImageElement::NaturalHeight()
     double density = mResponsiveSelector->GetSelectedImageDensity();
     MOZ_ASSERT(density >= 0.0);
     height = NSToIntRound(double(height) / density);
-    height = std::max(height, 0u);
   }
 
   return height;
@@ -784,7 +797,6 @@ HTMLImageElement::NaturalWidth()
     double density = mResponsiveSelector->GetSelectedImageDensity();
     MOZ_ASSERT(density >= 0.0);
     width = NSToIntRound(double(width) / density);
-    width = std::max(width, 0u);
   }
 
   return width;
@@ -874,13 +886,11 @@ HTMLImageElement::ClearForm(bool aRemoveFromForm)
     mForm->RemoveImageElement(this);
 
     if (!nameVal.IsEmpty()) {
-      mForm->RemoveImageElementFromTable(this, nameVal,
-                                         HTMLFormElement::ElementRemoved);
+      mForm->RemoveImageElementFromTable(this, nameVal);
     }
 
     if (!idVal.IsEmpty()) {
-      mForm->RemoveImageElementFromTable(this, idVal,
-                                         HTMLFormElement::ElementRemoved);
+      mForm->RemoveImageElementFromTable(this, idVal);
     }
   }
 

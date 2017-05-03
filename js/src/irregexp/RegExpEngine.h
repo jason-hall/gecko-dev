@@ -86,7 +86,7 @@ struct RegExpCode
 };
 
 RegExpCode
-CompilePattern(JSContext* cx, RegExpShared* shared, RegExpCompileData* data,
+CompilePattern(JSContext* cx, HandleRegExpShared shared, RegExpCompileData* data,
                HandleLinearString sample,  bool is_global, bool ignore_case,
                bool is_ascii, bool match_only, bool force_bytecode, bool sticky,
                bool unicode);
@@ -153,6 +153,7 @@ class InfallibleVector
     T popCopy() { return vector_.popCopy(); }
 
     T* begin() { return vector_.begin(); }
+    const T* begin() const { return vector_.begin(); }
 
     T& operator[](size_t index) { return vector_[index]; }
     const T& operator[](size_t index) const { return vector_[index]; }
@@ -798,8 +799,9 @@ class TextNode : public SeqRegExpNode
     enum TextEmitPassType {
         NON_ASCII_MATCH,             // Check for characters that can't match.
         SIMPLE_CHARACTER_MATCH,      // Case-dependent single character check.
-        NON_LETTER_CHARACTER_MATCH,  // Check characters that have no case equivs.
-        CASE_CHARACTER_MATCH,        // Case-independent single character check.
+        CASE_SINGLE_CHARACTER_MATCH, // Case-independent single character check.
+        CASE_MUTLI_CHARACTER_MATCH,  // Case-independent single character with
+                                     // multiple variation.
         CHARACTER_CLASS_MATCH        // Character class.
     };
     static bool SkipPass(int pass, bool ignore_case);
@@ -1194,13 +1196,14 @@ AddRange(ContainedInLattice a,
 class BoyerMoorePositionInfo
 {
   public:
-    explicit BoyerMoorePositionInfo(LifoAlloc* alloc)
+    explicit BoyerMoorePositionInfo(LifoAlloc* alloc, bool unicode_ignore_case)
       : map_(*alloc),
         map_count_(0),
         w_(kNotYet),
         s_(kNotYet),
         d_(kNotYet),
-        surrogate_(kNotYet)
+        surrogate_(kNotYet),
+        unicode_ignore_case_(unicode_ignore_case)
     {
         map_.reserve(kMapSize);
         for (int i = 0; i < kMapSize; i++)
@@ -1227,6 +1230,9 @@ class BoyerMoorePositionInfo
     ContainedInLattice s_;  // The \s character class.
     ContainedInLattice d_;  // The \d character class.
     ContainedInLattice surrogate_;  // Surrogate UTF-16 code units.
+
+    // True if the RegExp has unicode and ignoreCase flags.
+    bool unicode_ignore_case_;
 };
 
 typedef InfallibleVector<BoyerMoorePositionInfo*, 1> BoyerMoorePositionInfoVector;

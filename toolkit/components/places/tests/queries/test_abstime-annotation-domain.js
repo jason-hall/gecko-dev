@@ -22,7 +22,7 @@ var jan6_815 = (beginTime + (MIN_MSEC * 15)) * 1000;
 var jan11_800 = (beginTime + (DAY_MSEC * 5)) * 1000;
 var jan14_2130 = (endTime - DAY_MSEC) * 1000;
 var jan15_2045 = (endTime - (MIN_MSEC * 45)) * 1000;
-var jan12_1730 = (endTime - (DAY_MSEC * 3) - (HOUR_MSEC*4)) * 1000;
+var jan12_1730 = (endTime - (DAY_MSEC * 3) - (HOUR_MSEC * 4)) * 1000;
 
 // Dates outside our query - mult by 1000 to convert to PRTIME
 var jan6_700 = (beginTime - HOUR_MSEC) * 1000;
@@ -79,7 +79,7 @@ var testData = [
   {isInQuery: true, isVisit: true, isDetails: true, title: "moz mozilla",
    uri: "https://foo.com/begin.html", lastVisit: beginTime},
 
-  //Test end edge of time
+  // Test end edge of time
   {isInQuery: true, isVisit: true, isDetails: true, title: "moz mozilla",
    uri: "https://foo.com/end.html", lastVisit: endTime},
 
@@ -89,28 +89,28 @@ var testData = [
    annoName: goodAnnoName, annoVal: val, lastVisit: jan14_2130},
 
   // Begin the invalid queries: Test too early
-  {isInQuery: false, isVisit:true, isDetails: true, title: "moz",
+  {isInQuery: false, isVisit: true, isDetails: true, title: "moz",
    uri: "http://foo.com/tooearly.php", lastVisit: jan6_700},
 
   // Test Bad Annotation
-  {isInQuery: false, isVisit:true, isDetails: true, isPageAnnotation: true,
+  {isInQuery: false, isVisit: true, isDetails: true, isPageAnnotation: true,
    title: "moz", uri: "http://foo.com/badanno.htm", lastVisit: jan12_1730,
    annoName: badAnnoName, annoVal: val},
 
   // Test bad URI
-  {isInQuery: false, isVisit:true, isDetails: true, title: "moz",
+  {isInQuery: false, isVisit: true, isDetails: true, title: "moz",
    uri: "http://somefoo.com/justwrong.htm", lastVisit: jan11_800},
 
   // Test afterward, one to update
-  {isInQuery: false, isVisit:true, isDetails: true, title: "changeme",
+  {isInQuery: false, isVisit: true, isDetails: true, title: "changeme",
    uri: "http://foo.com/changeme1.htm", lastVisit: jan12_1730},
 
   // Test invalid title
-  {isInQuery: false, isVisit:true, isDetails: true, title: "changeme2",
+  {isInQuery: false, isVisit: true, isDetails: true, title: "changeme2",
    uri: "http://foo.com/changeme2.htm", lastVisit: jan7_800},
 
   // Test changing the lastVisit
-  {isInQuery: false, isVisit:true, isDetails: true, title: "moz",
+  {isInQuery: false, isVisit: true, isDetails: true, title: "moz",
    uri: "http://foo.com/changeme3.htm", lastVisit: dec27_800}];
 
 /**
@@ -120,14 +120,12 @@ var testData = [
  *                 AND annotationIsNot(match) GROUP BY Domain, Day SORT BY uri,ascending
  *                 excludeITems(should be ignored)
  */
-function run_test()
-{
+function run_test() {
   run_next_test();
 }
 
-add_task(function* test_abstime_annotation_domain()
-{
-  //Initialize database
+add_task(function* test_abstime_annotation_domain() {
+  // Initialize database
   yield task_populateDB(testData);
 
   // Query
@@ -179,7 +177,7 @@ add_task(function* test_abstime_annotation_domain()
   // query set, because this visit fits all theother specified criteria once the
   // annotation is removed. Uncommenting this will fail the test.
   // Bug 424050
-  /*var change2 = [{isPageAnnotation: true, uri: "http://foo.com/badannotaion.html",
+  /* var change2 = [{isPageAnnotation: true, uri: "http://foo.com/badannotaion.html",
                   annoName: "text/mozilla", annoVal: "test"}];
   yield task_populateDB(change2);
   do_print("LiveUpdate by removing annotation");
@@ -194,7 +192,7 @@ add_task(function* test_abstime_annotation_domain()
 
   // And delete something from the result set - using annotation
   // Once again, bug 424050 prevents this from passing
-  /*var change4 = [{isPageAnnotation: true, uri: "ftp://foo.com/ftp",
+  /* var change4 = [{isPageAnnotation: true, uri: "ftp://foo.com/ftp",
                   annoVal: "test", annoName: badAnnoName}];
   yield task_populateDB(change4);
   do_print("LiveUpdate by deleting item from set by adding annotation");

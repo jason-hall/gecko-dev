@@ -6,6 +6,7 @@
 #include "mozilla/layers/Compositor.h"
 #include "base/message_loop.h"          // for MessageLoop
 #include "mozilla/layers/CompositorBridgeParent.h"  // for CompositorBridgeParent
+#include "mozilla/layers/Diagnostics.h"
 #include "mozilla/layers/Effects.h"     // for Effect, EffectChain, etc
 #include "mozilla/layers/TextureClient.h"
 #include "mozilla/layers/TextureHost.h"
@@ -13,13 +14,6 @@
 #include "mozilla/mozalloc.h"           // for operator delete, etc
 #include "gfx2DGlue.h"
 #include "nsAppRunner.h"
-
-#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
-#include "libdisplay/GonkDisplay.h"     // for GonkDisplay
-#include <ui/Fence.h>
-#include "nsWindow.h"
-#include "nsScreenManagerGonk.h"
-#endif
 
 namespace mozilla {
 
@@ -55,7 +49,7 @@ Compositor::~Compositor()
 void
 Compositor::Destroy()
 {
-  ReadUnlockTextures();
+  TextureSourceProvider::Destroy();
   FlushPendingNotifyNotUsed();
   mIsDestroyed = true;
 }
@@ -65,50 +59,6 @@ Compositor::EndFrame()
 {
   ReadUnlockTextures();
   mLastCompositionEndTime = TimeStamp::Now();
-}
-
-void
-Compositor::ReadUnlockTextures()
-{
-  for (auto& texture : mUnlockAfterComposition) {
-    texture->ReadUnlock();
-  }
-  mUnlockAfterComposition.Clear();
-}
-
-void
-Compositor::UnlockAfterComposition(TextureHost* aTexture)
-{
-  mUnlockAfterComposition.AppendElement(aTexture);
-}
-
-void
-Compositor::NotifyNotUsedAfterComposition(TextureHost* aTextureHost)
-{
-  MOZ_ASSERT(!mIsDestroyed);
-
-  mNotifyNotUsedAfterComposition.AppendElement(aTextureHost);
-
-  // If Compositor holds many TextureHosts without compositing,
-  // the TextureHosts should be flushed to reduce memory consumption.
-  const int thresholdCount = 5;
-  const double thresholdSec = 2.0f;
-  if (mNotifyNotUsedAfterComposition.Length() > thresholdCount) {
-    TimeDuration duration = TimeStamp::Now() - mLastCompositionEndTime;
-    // Check if we could flush
-    if (duration.ToSeconds() > thresholdSec) {
-      FlushPendingNotifyNotUsed();
-    }
-  }
-}
-
-void
-Compositor::FlushPendingNotifyNotUsed()
-{
-  for (auto& textureHost : mNotifyNotUsedAfterComposition) {
-    textureHost->CallNotifyNotUsed();
-  }
-  mNotifyNotUsedAfterComposition.Clear();
 }
 
 /* static */ void
@@ -180,9 +130,7 @@ Compositor::DrawDiagnosticsInternal(DiagnosticFlags aFlags,
                                     const gfx::Matrix4x4& aTransform,
                                     uint32_t aFlashCounter)
 {
-#ifdef MOZ_B2G
-  int lWidth = 4;
-#elif defined(ANDROID)
+#ifdef ANDROID
   int lWidth = 10;
 #else
   int lWidth = 2;
@@ -230,6 +178,170 @@ Compositor::DrawDiagnosticsInternal(DiagnosticFlags aFlags,
   }
 
   SlowDrawRect(aVisibleRect, color, aClipRect, aTransform, lWidth);
+}
+
+static void
+UpdateTextureCoordinates(gfx::TexturedTriangle& aTriangle,
+                         const gfx::Rect& aRect,
+                         const gfx::Rect& aIntersection,
+                         const gfx::Rect& aTextureCoords)
+{
+  // Calculate the relative offset of the intersection within the layer.
+  float dx = (aIntersection.x - aRect.x) / aRect.width;
+  float dy = (aIntersection.y - aRect.y) / aRect.height;
+
+  // Update the texture offset.
+  float x = aTextureCoords.x + dx * aTextureCoords.width;
+  float y = aTextureCoords.y + dy * aTextureCoords.height;
+
+  // Scale the texture width and height.
+  float w = aTextureCoords.width * aIntersection.width / aRect.width;
+  float h = aTextureCoords.height * aIntersection.height / aRect.height;
+
+  static const auto Clamp = [](float& f)
+  {
+    if (f >= 1.0f) f = 1.0f;
+    if (f <= 0.0f) f = 0.0f;
+  };
+
+  auto UpdatePoint = [&](const gfx::Point& p, gfx::Point& t)
+  {
+    t.x = x + (p.x - aIntersection.x) / aIntersection.width * w;
+    t.y = y + (p.y - aIntersection.y) / aIntersection.height * h;
+
+    Clamp(t.x);
+    Clamp(t.y);
+  };
+
+  UpdatePoint(aTriangle.p1, aTriangle.textureCoords.p1);
+  UpdatePoint(aTriangle.p2, aTriangle.textureCoords.p2);
+  UpdatePoint(aTriangle.p3, aTriangle.textureCoords.p3);
+}
+
+void
+Compositor::DrawGeometry(const gfx::Rect& aRect,
+                         const gfx::IntRect& aClipRect,
+                         const EffectChain& aEffectChain,
+                         gfx::Float aOpacity,
+                         const gfx::Matrix4x4& aTransform,
+                         const gfx::Rect& aVisibleRect,
+                         const Maybe<gfx::Polygon>& aGeometry)
+{
+  if (aRect.IsEmpty()) {
+    return;
+  }
+
+  if (!aGeometry || !SupportsLayerGeometry()) {
+    DrawQuad(aRect, aClipRect, aEffectChain,
+             aOpacity, aTransform, aVisibleRect);
+    return;
+  }
+
+  // Cull completely invisible polygons.
+  if (aRect.Intersect(aGeometry->BoundingBox()).IsEmpty()) {
+    return;
+  }
+
+  const gfx::Polygon clipped = aGeometry->ClipPolygon(aRect);
+
+  // Cull polygons with no area.
+  if (clipped.IsEmpty()) {
+    return;
+  }
+
+  DrawPolygon(clipped, aRect, aClipRect, aEffectChain,
+              aOpacity, aTransform, aVisibleRect);
+}
+
+void
+Compositor::DrawTriangles(const nsTArray<gfx::TexturedTriangle>& aTriangles,
+                          const gfx::Rect& aRect,
+                          const gfx::IntRect& aClipRect,
+                          const EffectChain& aEffectChain,
+                          gfx::Float aOpacity,
+                          const gfx::Matrix4x4& aTransform,
+                          const gfx::Rect& aVisibleRect)
+{
+  for (const gfx::TexturedTriangle& triangle : aTriangles) {
+    DrawTriangle(triangle, aClipRect, aEffectChain,
+                 aOpacity, aTransform, aVisibleRect);
+  }
+}
+
+static nsTArray<gfx::TexturedTriangle>
+GenerateTexturedTriangles(const gfx::Polygon& aPolygon,
+                          const gfx::Rect& aRect,
+                          const gfx::Rect& aTexRect)
+{
+  nsTArray<gfx::TexturedTriangle> texturedTriangles;
+
+  gfx::Rect layerRects[4];
+  gfx::Rect textureRects[4];
+  size_t rects = DecomposeIntoNoRepeatRects(aRect, aTexRect,
+                                            &layerRects, &textureRects);
+  for (size_t i = 0; i < rects; ++i) {
+    const gfx::Rect& rect = layerRects[i];
+    const gfx::Rect& texRect = textureRects[i];
+    const gfx::Polygon clipped = aPolygon.ClipPolygon(rect);
+
+    if (clipped.IsEmpty()) {
+      continue;
+    }
+
+    for (const gfx::Triangle& triangle : clipped.ToTriangles()) {
+      const gfx::Rect intersection = rect.Intersect(triangle.BoundingBox());
+
+      // Cull completely invisible triangles.
+      if (intersection.IsEmpty()) {
+        continue;
+      }
+
+      MOZ_ASSERT(rect.width > 0.0f && rect.height > 0.0f);
+      MOZ_ASSERT(intersection.width > 0.0f && intersection.height > 0.0f);
+
+      // Since the texture was created for non-split geometry, we need to
+      // update the texture coordinates to account for the split.
+      gfx::TexturedTriangle t(triangle);
+      t.width = rect.width;
+      t.height = rect.height;
+      UpdateTextureCoordinates(t, rect, intersection, texRect);
+      texturedTriangles.AppendElement(Move(t));
+    }
+  }
+
+  return texturedTriangles;
+}
+
+void
+Compositor::DrawPolygon(const gfx::Polygon& aPolygon,
+                        const gfx::Rect& aRect,
+                        const gfx::IntRect& aClipRect,
+                        const EffectChain& aEffectChain,
+                        gfx::Float aOpacity,
+                        const gfx::Matrix4x4& aTransform,
+                        const gfx::Rect& aVisibleRect)
+{
+  nsTArray<gfx::TexturedTriangle> texturedTriangles;
+
+  TexturedEffect* texturedEffect =
+    aEffectChain.mPrimaryEffect->AsTexturedEffect();
+
+  if (texturedEffect) {
+    texturedTriangles =
+      GenerateTexturedTriangles(aPolygon, aRect, texturedEffect->mTextureCoords);
+  } else {
+    for (const gfx::Triangle& triangle : aPolygon.ToTriangles()) {
+      texturedTriangles.AppendElement(gfx::TexturedTriangle(triangle));
+    }
+  }
+
+  if (texturedTriangles.IsEmpty()) {
+    // Nothing to render.
+    return;
+  }
+
+  DrawTriangles(texturedTriangles, aRect, aClipRect, aEffectChain,
+                aOpacity, aTransform, aVisibleRect);
 }
 
 void
@@ -490,6 +602,18 @@ Compositor::ComputeBackdropCopyRect(const gfx::Rect& aRect,
   return result;
 }
 
+gfx::IntRect
+Compositor::ComputeBackdropCopyRect(const gfx::Triangle& aTriangle,
+                                    const gfx::IntRect& aClipRect,
+                                    const gfx::Matrix4x4& aTransform,
+                                    gfx::Matrix4x4* aOutTransform,
+                                    gfx::Rect* aOutLayerQuad)
+{
+  gfx::Rect boundingBox = aTriangle.BoundingBox();
+  return ComputeBackdropCopyRect(boundingBox, aClipRect, aTransform,
+                                 aOutTransform, aOutLayerQuad);
+}
+
 void
 Compositor::SetInvalid()
 {
@@ -502,48 +626,26 @@ Compositor::IsValid() const
   return !!mParent;
 }
 
-#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
-void
-Compositor::SetDispAcquireFence(Layer* aLayer)
-{
-  // OpenGL does not provide ReleaseFence for rendering.
-  // Instead use DispAcquireFence as layer buffer's ReleaseFence
-  // to prevent flickering and tearing.
-  // DispAcquireFence is DisplaySurface's AcquireFence.
-  // AcquireFence will be signaled when a buffer's content is available.
-  // See Bug 974152.
-  if (!aLayer || !mWidget) {
-    return;
-  }
-  nsWindow* window = static_cast<nsWindow*>(mWidget->RealWidget());
-  RefPtr<FenceHandle::FdObj> fence = new FenceHandle::FdObj(
-      window->GetScreen()->GetPrevDispAcquireFd());
-  mReleaseFenceHandle.Merge(FenceHandle(fence));
-}
-
-FenceHandle
-Compositor::GetReleaseFence()
-{
-  if (!mReleaseFenceHandle.IsValid()) {
-    return FenceHandle();
-  }
-
-  RefPtr<FenceHandle::FdObj> fdObj = mReleaseFenceHandle.GetDupFdObj();
-  return FenceHandle(fdObj);
-}
-
-#else
 void
 Compositor::SetDispAcquireFence(Layer* aLayer)
 {
 }
 
-FenceHandle
-Compositor::GetReleaseFence()
+bool
+Compositor::NotifyNotUsedAfterComposition(TextureHost* aTextureHost)
 {
-  return FenceHandle();
+  if (IsDestroyed() || AsBasicCompositor()) {
+    return false;
+  }
+  return TextureSourceProvider::NotifyNotUsedAfterComposition(aTextureHost);
 }
-#endif
+
+void
+Compositor::GetFrameStats(GPUStats* aStats)
+{
+  aStats->mInvalidPixels = mPixelsPerFrame;
+  aStats->mPixelsFilled = mPixelsFilled;
+}
 
 } // namespace layers
 } // namespace mozilla

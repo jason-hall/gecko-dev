@@ -33,9 +33,6 @@ public:
 protected:
 #if (MOZ_WIDGET_GTK == 2)
     struct _GtkStyle *mStyle;
-#else
-    struct _GtkStyleContext *mBackgroundStyle;
-    struct _GtkStyleContext *mButtonStyle;
 #endif
 
     // Cached fonts
@@ -84,8 +81,9 @@ protected:
     char16_t sInvisibleCharacter;
     float   sCaretRatio;
     bool    sMenuSupportsDrag;
+    bool    mInitialized;
 
-    void Init();
+    void EnsureInit();
 };
 
 #endif

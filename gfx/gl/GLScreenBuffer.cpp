@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include "CompositorTypes.h"
+#include "gfxPrefs.h"
 #include "GLContext.h"
 #include "GLBlitHelper.h"
 #include "GLReadTexImageHelper.h"
@@ -22,11 +23,6 @@
 #include "SharedSurfaceANGLE.h"         // for SurfaceFactory_ANGLEShareHandle
 #include "SharedSurfaceD3D11Interop.h"  // for SurfaceFactory_D3D11Interop
 #include "mozilla/gfx/DeviceManagerDx.h"
-#endif
-
-#ifdef MOZ_WIDGET_GONK
-#include "SharedSurfaceGralloc.h"
-#include "nsXULAppAPI.h"
 #endif
 
 #ifdef XP_MACOSX
@@ -89,8 +85,6 @@ GLScreenBuffer::CreateFactory(GLContext* gl,
             case mozilla::layers::LayersBackend::LAYERS_OPENGL: {
 #if defined(XP_MACOSX)
                 factory = SurfaceFactory_IOSurface::Create(gl, caps, ipcChannel, flags);
-#elif defined(MOZ_WIDGET_GONK)
-                factory = MakeUnique<SurfaceFactory_Gralloc>(gl, caps, ipcChannel, flags);
 #elif defined(GL_PROVIDER_GLX)
                 if (sGLXLibrary.UseTextureFromPixmap())
                   factory = SurfaceFactory_GLXDrawable::Create(gl, caps, ipcChannel, flags);
@@ -478,7 +472,7 @@ GLScreenBuffer::AssureBlitted()
 void
 GLScreenBuffer::Morph(UniquePtr<SurfaceFactory> newFactory)
 {
-    MOZ_ASSERT(newFactory);
+    MOZ_RELEASE_ASSERT(newFactory, "newFactory must not be null");
     mFactory = Move(newFactory);
 }
 
@@ -885,7 +879,7 @@ DrawBuffer::~DrawBuffer()
     GLuint rbs[] = {
         mColorMSRB,
         mDepthRB,
-        mStencilRB
+        (mStencilRB != mDepthRB) ? mStencilRB : 0, // Don't double-delete DEPTH_STENCIL RBs.
     };
 
     mGL->fDeleteFramebuffers(1, &fb);
@@ -973,11 +967,12 @@ ReadBuffer::~ReadBuffer()
     GLuint fb = mFB;
     GLuint rbs[] = {
         mDepthRB,
-        mStencilRB
+        (mStencilRB != mDepthRB) ? mStencilRB : 0, // Don't double-delete DEPTH_STENCIL RBs.
     };
 
     mGL->fDeleteFramebuffers(1, &fb);
     mGL->fDeleteRenderbuffers(2, rbs);
+
     mGL->mFBOMapping.erase(mFB);
 }
 

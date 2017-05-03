@@ -15,14 +15,6 @@
 #include "nsHashKeys.h"
 #include "nsTHashtable.h"
 
-// https://drafts.csswg.org/css-align-3/#baseline-sharing-group
-enum BaselineSharingGroup
-{
-  // NOTE Used as an array index so must be 0 and 1.
-  eFirst = 0,
-  eLast = 1,
-};
-
 /**
  * Factory function.
  * @return a newly allocated nsGridContainerFrame (infallible)
@@ -31,6 +23,14 @@ nsContainerFrame* NS_NewGridContainerFrame(nsIPresShell* aPresShell,
                                            nsStyleContext* aContext);
 
 namespace mozilla {
+
+// Forward-declare typedefs for grid item iterator helper-class:
+template<typename Iterator> class CSSOrderAwareFrameIteratorT;
+typedef CSSOrderAwareFrameIteratorT<nsFrameList::iterator>
+  CSSOrderAwareFrameIterator;
+typedef CSSOrderAwareFrameIteratorT<nsFrameList::reverse_iterator>
+  ReverseCSSOrderAwareFrameIterator;
+
 /**
  * The number of implicit / explicit tracks and their sizes.
  */
@@ -111,9 +111,29 @@ public:
 
   nscoord GetLogicalBaseline(mozilla::WritingMode aWM) const override
   {
+    if (HasAnyStateBits(NS_STATE_GRID_SYNTHESIZE_BASELINE)) {
+      // Return a baseline synthesized from our margin-box.
+      return nsContainerFrame::GetLogicalBaseline(aWM);
+    }
     nscoord b;
     GetBBaseline(BaselineSharingGroup::eFirst, &b);
     return b;
+  }
+
+  bool GetVerticalAlignBaseline(mozilla::WritingMode aWM,
+                                nscoord* aBaseline) const override
+  {
+    return GetNaturalBaselineBOffset(aWM, BaselineSharingGroup::eFirst, aBaseline);
+  }
+
+  bool GetNaturalBaselineBOffset(mozilla::WritingMode aWM,
+                                 BaselineSharingGroup aBaselineGroup,
+                                 nscoord*             aBaseline) const override
+  {
+    if (HasAnyStateBits(NS_STATE_GRID_SYNTHESIZE_BASELINE)) {
+      return false;
+    }
+    return GetBBaseline(aBaselineGroup, aBaseline);
   }
 
 #ifdef DEBUG_FRAME_DUMP
@@ -126,6 +146,9 @@ public:
   void InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
                     nsFrameList& aFrameList) override;
   void RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) override;
+  uint16_t CSSAlignmentForAbsPosChild(
+            const ReflowInput& aChildRI,
+            mozilla::LogicalAxis aLogicalAxis) const override;
 
 #ifdef DEBUG
   void SetInitialChildList(ChildListID  aListID,
@@ -204,11 +227,6 @@ public:
   struct TrackSize;
   struct GridItemInfo;
   struct GridReflowInput;
-  template<typename Iterator> class GridItemCSSOrderIteratorT;
-  typedef GridItemCSSOrderIteratorT<nsFrameList::iterator>
-    GridItemCSSOrderIterator;
-  typedef GridItemCSSOrderIteratorT<nsFrameList::reverse_iterator>
-    ReverseGridItemCSSOrderIterator;
   struct FindItemInGridOrderResult
   {
     // The first(last) item in (reverse) grid order.
@@ -223,6 +241,9 @@ protected:
   typedef mozilla::LogicalPoint LogicalPoint;
   typedef mozilla::LogicalRect LogicalRect;
   typedef mozilla::LogicalSize LogicalSize;
+  typedef mozilla::CSSOrderAwareFrameIterator CSSOrderAwareFrameIterator;
+  typedef mozilla::ReverseCSSOrderAwareFrameIterator
+    ReverseCSSOrderAwareFrameIterator;
   typedef mozilla::WritingMode WritingMode;
   typedef mozilla::css::GridNamedArea GridNamedArea;
   typedef mozilla::layout::AutoFrameListPtr AutoFrameListPtr;
@@ -309,7 +330,7 @@ protected:
     eBoth  = eFirst | eLast,
   };
   void CalculateBaselines(BaselineSet                   aBaselineSet,
-                          GridItemCSSOrderIterator*     aIter,
+                          CSSOrderAwareFrameIterator*   aIter,
                           const nsTArray<GridItemInfo>* aGridItems,
                           const Tracks&    aTracks,
                           uint32_t         aFragmentStartTrack,
@@ -336,7 +357,7 @@ protected:
    * axis as aMajor.  Pass zero if that's not the axis we're fragmenting in.
    */
   static FindItemInGridOrderResult
-  FindFirstItemInGridOrder(GridItemCSSOrderIterator& aIter,
+  FindFirstItemInGridOrder(CSSOrderAwareFrameIterator& aIter,
                            const nsTArray<GridItemInfo>& aGridItems,
                            LineRange GridArea::* aMajor,
                            LineRange GridArea::* aMinor,
@@ -350,7 +371,7 @@ protected:
    * Pass the number of tracks if that's not the axis we're fragmenting in.
    */
   static FindItemInGridOrderResult
-  FindLastItemInGridOrder(ReverseGridItemCSSOrderIterator& aIter,
+  FindLastItemInGridOrder(ReverseCSSOrderAwareFrameIterator& aIter,
                           const nsTArray<GridItemInfo>& aGridItems,
                           LineRange GridArea::* aMajor,
                           LineRange GridArea::* aMinor,
@@ -416,7 +437,7 @@ private:
   void ReflowInFlowChild(nsIFrame*               aChild,
                          const GridItemInfo*     aGridItemInfo,
                          nsSize                  aContainerSize,
-                         mozilla::Maybe<nscoord> aStretchBSize,
+                         const mozilla::Maybe<nscoord>& aStretchBSize,
                          const Fragmentainer*    aFragmentainer,
                          const GridReflowInput&  aState,
                          const LogicalRect&      aContentArea,

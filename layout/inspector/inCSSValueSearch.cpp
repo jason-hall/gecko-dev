@@ -18,6 +18,7 @@
 #include "nsIDOMCSSImportRule.h"
 #include "nsIDOMCSSMediaRule.h"
 #include "nsIDOMCSSSupportsRule.h"
+#include "nsIDOMCSSRule.h"
 #include "nsIURI.h"
 #include "nsIDocument.h"
 #include "nsNetUtil.h"
@@ -98,7 +99,7 @@ inCSSValueSearch::SearchSync()
 
   uint32_t length = sheets->Length();
   for (uint32_t i = 0; i < length; ++i) {
-    RefPtr<CSSStyleSheet> sheet = sheets->Item(i);
+    RefPtr<StyleSheet> sheet = sheets->Item(i);
     SearchStyleSheet(sheet, baseURI);
   }
 

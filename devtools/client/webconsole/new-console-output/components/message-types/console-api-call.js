@@ -14,6 +14,7 @@ const {
 } = require("devtools/client/shared/vendor/react");
 const GripMessageBody = createFactory(require("devtools/client/webconsole/new-console-output/components/grip-message-body"));
 const ConsoleTable = createFactory(require("devtools/client/webconsole/new-console-output/components/console-table"));
+const {isGroupType, l10n} = require("devtools/client/webconsole/new-console-output/utils/messages");
 
 const Message = createFactory(require("devtools/client/webconsole/new-console-output/components/message"));
 
@@ -21,35 +22,37 @@ ConsoleApiCall.displayName = "ConsoleApiCall";
 
 ConsoleApiCall.propTypes = {
   message: PropTypes.object.isRequired,
-  sourceMapService: PropTypes.object,
-  onViewSourceInDebugger: PropTypes.func.isRequired,
   open: PropTypes.bool,
-  hudProxyClient: PropTypes.object.isRequired,
+  serviceContainer: PropTypes.object.isRequired,
+  indent: PropTypes.number.isRequired,
 };
 
 ConsoleApiCall.defaultProps = {
-  open: false
+  open: false,
+  indent: 0,
 };
 
 function ConsoleApiCall(props) {
   const {
     dispatch,
     message,
-    sourceMapService,
-    onViewSourceInDebugger,
     open,
-    hudProxyClient,
     tableData,
-    emitNewMessage,
+    serviceContainer,
+    indent,
   } = props;
   const {
     id: messageId,
-    source, type,
+    source,
+    type,
     level,
     repeat,
     stacktrace,
     frame,
-    parameters
+    timeStamp,
+    parameters,
+    messageText,
+    userProvidedStyles,
   } = message;
 
   let messageBody;
@@ -62,9 +65,9 @@ function ConsoleApiCall(props) {
     // TODO: Chrome does not output anything, see if we want to keep this
     messageBody = dom.span({className: "cm-variable"}, "console.table()");
   } else if (parameters) {
-    messageBody = formatReps(parameters);
+    messageBody = formatReps(parameters, userProvidedStyles, serviceContainer);
   } else {
-    messageBody = message.messageText;
+    messageBody = messageText;
   }
 
   let attachment = null;
@@ -72,17 +75,26 @@ function ConsoleApiCall(props) {
     attachment = ConsoleTable({
       dispatch,
       id: message.id,
-      hudProxyClient,
+      serviceContainer,
       parameters: message.parameters,
       tableData
     });
   }
 
+  let collapseTitle = null;
+  if (isGroupType(type)) {
+    collapseTitle = l10n.getStr("groupToggle");
+  }
+
+  const collapsible = isGroupType(type)
+    || (type === "error" && Array.isArray(stacktrace));
   const topLevelClasses = ["cm-s-mozilla"];
 
   return Message({
     messageId,
     open,
+    collapsible,
+    collapseTitle,
     source,
     type,
     level,
@@ -92,18 +104,24 @@ function ConsoleApiCall(props) {
     frame,
     stacktrace,
     attachment,
-    onViewSourceInDebugger,
-    sourceMapService,
-    emitNewMessage,
+    serviceContainer,
     dispatch,
+    indent,
+    timeStamp,
   });
 }
 
-function formatReps(parameters) {
+function formatReps(parameters, userProvidedStyles, serviceContainer) {
   return (
     parameters
       // Get all the grips.
-      .map((grip, key) => GripMessageBody({ grip, key }))
+      .map((grip, key) => GripMessageBody({
+        grip,
+        key,
+        userProvidedStyle: userProvidedStyles ? userProvidedStyles[key] : null,
+        serviceContainer,
+        useQuotes: false,
+      }))
       // Interleave spaces.
       .reduce((arr, v, i) => {
         return i + 1 < parameters.length
@@ -114,3 +132,4 @@ function formatReps(parameters) {
 }
 
 module.exports = ConsoleApiCall;
+

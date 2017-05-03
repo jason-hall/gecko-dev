@@ -50,6 +50,7 @@ TraceLoggerGraphState* traceLoggerGraphState = nullptr;
 // are allowed, with %u standing for a full 32-bit number and %d standing for
 // an up to 3-digit number.
 static js::UniqueChars
+MOZ_FORMAT_PRINTF(1, 2)
 AllocTraceLogFilename(const char* pattern, ...) {
     js::UniqueChars filename;
 
@@ -628,10 +629,8 @@ TraceLoggerGraph::addTextId(uint32_t id, const char* text)
         return;
 
     // Assume ids are given in order. Which is currently true.
-#ifdef DEBUG
-    MOZ_ASSERT(id == nextTextId);
-    nextTextId++;
-#endif
+    MOZ_ASSERT(id == nextTextId_);
+    nextTextId_++;
 
     if (id > 0) {
         int written = fprintf(dictFile, ",\n");

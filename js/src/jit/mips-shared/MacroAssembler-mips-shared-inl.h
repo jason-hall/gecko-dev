@@ -490,8 +490,9 @@ MacroAssembler::branch32(Condition cond, wasm::SymbolicAddress addr, Imm32 imm, 
     ma_b(SecondScratchReg, imm, label, cond);
 }
 
+template <class L>
 void
-MacroAssembler::branchPtr(Condition cond, Register lhs, Register rhs, Label* label)
+MacroAssembler::branchPtr(Condition cond, Register lhs, Register rhs, L label)
 {
     ma_b(lhs, rhs, label, cond);
 }
@@ -520,8 +521,9 @@ MacroAssembler::branchPtr(Condition cond, Register lhs, ImmWord rhs, Label* labe
     ma_b(lhs, rhs, label, cond);
 }
 
+template <class L>
 void
-MacroAssembler::branchPtr(Condition cond, const Address& lhs, Register rhs, Label* label)
+MacroAssembler::branchPtr(Condition cond, const Address& lhs, Register rhs, L label)
 {
     loadPtr(lhs, SecondScratchReg);
     branchPtr(cond, SecondScratchReg, rhs, label);
@@ -988,6 +990,19 @@ void
 MacroAssembler::storeFloat32x3(FloatRegister src, const BaseIndex& dest)
 {
     MOZ_CRASH("NYI");
+}
+
+void
+MacroAssembler::memoryBarrier(MemoryBarrierBits barrier)
+{
+    if (barrier == MembarLoadLoad)
+        as_sync(19);
+    else if (barrier == MembarStoreStore)
+        as_sync(4);
+    else if (barrier & MembarSynchronizing)
+        as_sync();
+    else if (barrier)
+        as_sync(16);
 }
 
 // ===============================================================

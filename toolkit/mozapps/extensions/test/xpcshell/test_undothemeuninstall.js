@@ -34,17 +34,6 @@ var theme1 = {
 const profileDir = gProfD.clone();
 profileDir.append("extensions");
 
-function dummyLWTheme(id) {
-  return {
-    id: id || Math.random().toString(),
-    name: Math.random().toString(),
-    headerURL: "http://lwttest.invalid/a.png",
-    footerURL: "http://lwttest.invalid/b.png",
-    textcolor: Math.random().toString(),
-    accentcolor: Math.random().toString()
-  };
-}
-
 // Sets up the profile by installing an add-on.
 function run_test() {
   createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1", "1.9.2");
@@ -133,7 +122,7 @@ add_task(function* uninstallEnabledOffersUndo() {
   do_check_eq(Services.prefs.getCharPref(PREF_GENERAL_SKINS_SELECTEDSKIN), "classic/1.0");
 });
 
-//Tests that uninstalling an enabled theme can be undone
+// Tests that uninstalling an enabled theme can be undone
 add_task(function* canUndoUninstallEnabled() {
   writeInstallRDFForExtension(theme1, profileDir);
 
@@ -228,7 +217,7 @@ add_task(function* canUndoUninstallEnabled() {
   yield promiseRestartManager();
 });
 
-//Tests that uninstalling a disabled theme offers the option to undo
+// Tests that uninstalling a disabled theme offers the option to undo
 add_task(function* uninstallDisabledOffersUndo() {
   writeInstallRDFForExtension(theme1, profileDir);
 
@@ -283,7 +272,7 @@ add_task(function* uninstallDisabledOffersUndo() {
   do_check_eq(Services.prefs.getCharPref(PREF_GENERAL_SKINS_SELECTEDSKIN), "classic/1.0");
 });
 
-//Tests that uninstalling a disabled theme can be undone
+// Tests that uninstalling a disabled theme can be undone
 add_task(function* canUndoUninstallDisabled() {
   writeInstallRDFForExtension(theme1, profileDir);
 
@@ -362,10 +351,78 @@ add_task(function* canUndoUninstallDisabled() {
   yield promiseRestartManager();
 });
 
-//Tests that uninstalling an enabled lightweight theme offers the option to undo
+add_task(function* uninstallWebExtensionOffersUndo() {
+  let { id: addonId } = yield promiseInstallWebExtension({
+    manifest: {
+      "author": "Some author",
+      manifest_version: 2,
+      name: "Web Extension Name",
+      version: "1.0",
+      theme: { images: { headerURL: "example.png" } },
+    }
+  });
+
+  let [ t1, d ] = yield promiseAddonsByIDs([addonId, "default@tests.mozilla.org"]);
+
+  Assert.ok(t1, "Addon should be there");
+  Assert.ok(!t1.isActive);
+  Assert.ok(t1.userDisabled);
+  Assert.equal(t1.pendingOperations, AddonManager.PENDING_NONE);
+
+  Assert.ok(d, "Addon should be there");
+  Assert.ok(d.isActive);
+  Assert.ok(!d.userDisabled);
+  Assert.equal(d.pendingOperations, AddonManager.PENDING_NONE);
+
+  Assert.equal(Services.prefs.getCharPref(PREF_GENERAL_SKINS_SELECTEDSKIN), "classic/1.0");
+
+  prepare_test({ [addonId]: [ "onUninstalling" ] });
+  t1.uninstall(true);
+  ensure_test_completed();
+
+  Assert.ok(!t1.isActive);
+  Assert.ok(t1.userDisabled);
+  Assert.ok(hasFlag(t1.pendingOperations, AddonManager.PENDING_UNINSTALL));
+
+  Assert.equal(Services.prefs.getCharPref(PREF_GENERAL_SKINS_SELECTEDSKIN), "classic/1.0");
+
+  prepare_test({
+    [addonId]: [
+      "onOperationCancelled"
+    ]
+  });
+  t1.cancelUninstall();
+  ensure_test_completed();
+
+  Assert.ok(!t1.isActive);
+  Assert.ok(t1.userDisabled);
+  Assert.equal(t1.pendingOperations, AddonManager.PENDING_NONE);
+
+  yield promiseRestartManager();
+
+  [ t1, d ] = yield promiseAddonsByIDs([addonId, "default@tests.mozilla.org"]);
+
+  Assert.ok(d);
+  Assert.ok(d.isActive);
+  Assert.ok(!d.userDisabled);
+  Assert.equal(d.pendingOperations, AddonManager.PENDING_NONE);
+
+  Assert.ok(t1);
+  Assert.ok(!t1.isActive);
+  Assert.ok(t1.userDisabled);
+  Assert.equal(t1.pendingOperations, AddonManager.PENDING_NONE);
+
+  Assert.equal(Services.prefs.getCharPref(PREF_GENERAL_SKINS_SELECTEDSKIN), "classic/1.0");
+
+  t1.uninstall();
+  yield promiseRestartManager();
+});
+
+// Tests that uninstalling an enabled lightweight theme offers the option to undo
 add_task(function* uninstallLWTOffersUndo() {
   // skipped since lightweight themes don't support undoable uninstall yet
-  return;
+
+  /*
   LightweightThemeManager.currentTheme = dummyLWTheme("theme1");
 
   let [ t1, d ] = yield promiseAddonsByIDs(["theme1@personas.mozilla.org",
@@ -418,4 +475,5 @@ add_task(function* uninstallLWTOffersUndo() {
   do_check_eq(t1, null);
 
   do_check_eq(Services.prefs.getCharPref(PREF_GENERAL_SKINS_SELECTEDSKIN), "classic/1.0");
+  */
 });

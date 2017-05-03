@@ -23,6 +23,7 @@ this.Preferences = {
       ["paneApplications", null],
       ["panePrivacy", null],
       ["panePrivacy", null, DNTDialog],
+      ["panePrivacy", null, clearRecentHistoryDialog],
       ["paneSecurity", null],
       ["paneSync", null],
       ["paneAdvanced", "generalTab"],
@@ -88,10 +89,9 @@ let prefHelper = Task.async(function*(primary, advanced = null, customFn = null)
 
 function paintPromise(browserWindow) {
   return new Promise((resolve) => {
-    browserWindow.addEventListener("MozAfterPaint", function onPaint() {
-      browserWindow.removeEventListener("MozAfterPaint", onPaint);
+    browserWindow.addEventListener("MozAfterPaint", function() {
       resolve();
-    });
+    }, {once: true});
   });
 }
 
@@ -104,6 +104,12 @@ function* DNTDialog(aBrowser) {
 function* connectionDialog(aBrowser) {
   yield ContentTask.spawn(aBrowser, null, function* () {
     content.document.getElementById("connectionSettings").click();
+  });
+}
+
+function* clearRecentHistoryDialog(aBrowser) {
+  yield ContentTask.spawn(aBrowser, null, function* () {
+    content.document.getElementById("historyRememberClear").click();
   });
 }
 

@@ -2,6 +2,17 @@
    - License, v. 2.0. If a copy of the MPL was not distributed with this file,
    - You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// Import globals from the files imported by the .xul files.
+/* import-globals-from subdialogs.js */
+/* import-globals-from advanced.js */
+/* import-globals-from main.js */
+/* import-globals-from containers.js */
+/* import-globals-from privacy.js */
+/* import-globals-from applications.js */
+/* import-globals-from sync.js */
+/* import-globals-from findInPage.js */
+/* import-globals-from ../../../base/content/utilityOverlay.js */
+
 "use strict";
 
 var Cc = Components.classes;
@@ -30,30 +41,27 @@ function init_category_if_required(category) {
 function register_module(categoryName, categoryObject) {
   gCategoryInits.set(categoryName, {
     inited: false,
-    init: function() {
+    init() {
       categoryObject.init();
       this.inited = true;
     }
   });
 }
 
-addEventListener("DOMContentLoaded", function onLoad() {
-  removeEventListener("DOMContentLoaded", onLoad);
-  init_all();
-});
+document.addEventListener("DOMContentLoaded", init_all, {once: true});
 
 function init_all() {
   document.documentElement.instantApply = true;
 
   gSubDialog.init();
   register_module("paneGeneral", gMainPane);
-  register_module("paneSearch", gSearchPane);
   register_module("panePrivacy", gPrivacyPane);
+  register_module("paneContainers", gContainersPane);
   register_module("paneAdvanced", gAdvancedPane);
   register_module("paneApplications", gApplicationsPane);
-  register_module("paneContent", gContentPane);
   register_module("paneSync", gSyncPane);
-  register_module("paneSecurity", gSecurityPane);
+  register_module("paneSearchResults", gSearchResultsPane);
+  gSearchResultsPane.init();
 
   let categories = document.getElementById("categories");
   categories.addEventListener("select", event => gotoPref(event.target.value));
@@ -73,8 +81,8 @@ function init_all() {
   init_dynamic_padding();
 
   var initFinished = new CustomEvent("Initialized", {
-    'bubbles': true,
-    'cancelable': true
+    "bubbles": true,
+    "cancelable": true
   });
   document.dispatchEvent(initFinished);
 
@@ -95,7 +103,7 @@ function init_all() {
 function init_dynamic_padding() {
   let categories = document.getElementById("categories");
   let catPadding = Number.parseInt(getComputedStyle(categories)
-                                     .getPropertyValue('padding-top'));
+                                     .getPropertyValue("padding-top"));
   let fullHeight = categories.lastElementChild.getBoundingClientRect().bottom;
   let mediaRule = `
   @media (max-height: ${fullHeight}px) {
@@ -104,10 +112,26 @@ function init_dynamic_padding() {
     }
   }
   `;
-  let mediaStyle = document.createElementNS('http://www.w3.org/1999/xhtml', 'html:style');
-  mediaStyle.setAttribute('type', 'text/css');
+  let mediaStyle = document.createElementNS("http://www.w3.org/1999/xhtml", "html:style");
+  mediaStyle.setAttribute("type", "text/css");
   mediaStyle.appendChild(document.createCDATASection(mediaRule));
   document.documentElement.appendChild(mediaStyle);
+}
+
+function telemetryBucketForCategory(category) {
+  category = category.toLowerCase();
+  switch (category) {
+    case "applications":
+    case "advanced":
+    case "containers":
+    case "general":
+    case "privacy":
+    case "sync":
+    case "searchresults":
+      return category;
+    default:
+      return "unknown";
+  }
 }
 
 function onHashChange() {
@@ -116,7 +140,7 @@ function onHashChange() {
 
 function gotoPref(aCategory) {
   let categories = document.getElementById("categories");
-  const kDefaultCategoryInternalName = categories.firstElementChild.value;
+  const kDefaultCategoryInternalName = "paneGeneral";
   let hash = document.location.hash;
   let category = aCategory || hash.substr(1) || kDefaultCategoryInternalName;
   category = friendlyPrefCategoryNameToInternalName(category);
@@ -138,9 +162,9 @@ function gotoPref(aCategory) {
     throw ex;
   }
 
-  let newHash = internalPrefCategoryNameToFriendlyName(category);
+  let friendlyName = internalPrefCategoryNameToFriendlyName(category);
   if (gLastHash || category != kDefaultCategoryInternalName) {
-    document.location.hash = newHash;
+    document.location.hash = friendlyName;
   }
   // Need to set the gLastHash before setting categories.selectedItem since
   // the categories 'select' event will re-enter the gotoPref codepath.
@@ -150,13 +174,33 @@ function gotoPref(aCategory) {
   search(category, "data-category");
   let mainContent = document.querySelector(".main-content");
   mainContent.scrollTop = 0;
+
+  Services.telemetry
+          .getHistogramById("FX_PREFERENCES_CATEGORY_OPENED_V2")
+          .add(telemetryBucketForCategory(friendlyName));
 }
 
 function search(aQuery, aAttribute) {
-  let elements = document.getElementById("mainPrefPane").children;
+  let mainPrefPane = document.getElementById("mainPrefPane");
+  let elements = mainPrefPane.children;
   for (let element of elements) {
+    // If the "data-hidden-from-search" is "true", the
+    // element will not get considered during search. This
+    // should only be used when an element is still under
+    // development and should not be shown for any reason.
+    if (element.getAttribute("data-hidden-from-search") != "true") {
+      let attributeValue = element.getAttribute(aAttribute);
+      element.hidden = (attributeValue != aQuery);
+    }
+  }
+
+  let keysets = mainPrefPane.getElementsByTagName("keyset");
+  for (let element of keysets) {
     let attributeValue = element.getAttribute(aAttribute);
-    element.hidden = (attributeValue != aQuery);
+    if (attributeValue == aQuery)
+      element.removeAttribute("disabled");
+    else
+      element.setAttribute("disabled", true);
   }
 }
 

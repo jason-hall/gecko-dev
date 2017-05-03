@@ -132,6 +132,15 @@ SpecialPowersObserverAPI.prototype = {
     return this._crashDumpDir;
   },
 
+  _getPendingCrashDumpDir: function() {
+    if (!this._pendingCrashDumpDir) {
+      this._pendingCrashDumpDir = Services.dirsvc.get("UAppData", Ci.nsIFile);
+      this._pendingCrashDumpDir.append("Crash Reports");
+      this._pendingCrashDumpDir.append("pending");
+    }
+    return this._pendingCrashDumpDir;
+  },
+
   _getExtraData: function(dumpId) {
     let extraFile = this._getCrashDumpDir().clone();
     extraFile.append(dumpId + ".extra");
@@ -178,8 +187,24 @@ SpecialPowersObserverAPI.prototype = {
     return crashDumpFiles.concat();
   },
 
+  _deletePendingCrashDumpFiles: function() {
+    var crashDumpDir = this._getPendingCrashDumpDir();
+    var removed = false;
+    if (crashDumpDir.exists()) {
+      let entries = crashDumpDir.directoryEntries;
+      while (entries.hasMoreElements()) {
+        let file = entries.getNext().QueryInterface(Ci.nsIFile);
+        if (file.isFile()) {
+          file.remove(false);
+          removed = true;
+        }
+      }
+    }
+    return removed;
+  },
+
   _getURI: function (url) {
-    return Services.io.newURI(url, null, null);
+    return Services.io.newURI(url);
   },
 
   _readUrlAsString: function(aUrl) {
@@ -208,14 +233,8 @@ SpecialPowersObserverAPI.prototype = {
     input.close();
 
     var status;
-    try {
-      channel.QueryInterface(Ci.nsIHttpChannel);
+    if (channel instanceof Ci.nsIHttpChannel) {
       status = channel.responseStatus;
-    } catch(e) {
-      /* The channel is not a nsIHttpCHannel, but that's fine */
-      dump("-*- _readUrlAsString: Got an error while fetching " +
-           "chrome script '" + aUrl + "': (" + e.name + ") " + e.message + ". " +
-           "Ignoring.\n");
     }
 
     if (status == 404) {
@@ -362,6 +381,8 @@ SpecialPowersObserverAPI.prototype = {
             return this._deleteCrashDumpFiles(aMessage.json.filenames);
           case "find-crash-dump-files":
             return this._findCrashDumpFiles(aMessage.json.crashDumpFilesToIgnore);
+          case "delete-pending-crash-dump-files":
+            return this._deletePendingCrashDumpFiles();
           default:
             throw new SpecialPowersError("Invalid operation for SPProcessCrashService");
         }
@@ -383,7 +404,7 @@ SpecialPowersObserverAPI.prototype = {
             let hasPerm = Services.perms.testPermissionFromPrincipal(principal, msg.type);
             return hasPerm == Ci.nsIPermissionManager.ALLOW_ACTION;
           case "test":
-            let testPerm = Services.perms.testPermissionFromPrincipal(principal, msg.type, msg.value);
+            let testPerm = Services.perms.testPermissionFromPrincipal(principal, msg.type);
             return testPerm == msg.value;
           default:
             throw new SpecialPowersError(
@@ -400,57 +421,6 @@ SpecialPowersObserverAPI.prototype = {
         var oldEnabledState = plugin.enabledState;
         plugin.enabledState = aMessage.data.newEnabledState;
         return oldEnabledState;
-      }
-
-      case "SPWebAppService": {
-        let Webapps = {};
-        Components.utils.import("resource://gre/modules/Webapps.jsm", Webapps);
-        switch (aMessage.json.op) {
-          case "allow-unsigned-addons":
-            {
-              let utils = {};
-              Components.utils.import("resource://gre/modules/AppsUtils.jsm", utils);
-              utils.AppsUtils.allowUnsignedAddons = true;
-              return;
-            }
-          case "debug-customizations":
-            {
-              let scope = {};
-              Components.utils.import("resource://gre/modules/UserCustomizations.jsm", scope);
-              scope.UserCustomizations._debug = aMessage.json.value;
-              return;
-            }
-          case "inject-app":
-            {
-              let aAppId = aMessage.json.appId;
-              let aApp   = aMessage.json.app;
-
-              let keys = Object.keys(Webapps.DOMApplicationRegistry.webapps);
-              let exists = keys.indexOf(aAppId) !== -1;
-              if (exists) {
-                return false;
-              }
-
-              Webapps.DOMApplicationRegistry.webapps[aAppId] = aApp;
-              return true;
-            }
-          case "reject-app":
-            {
-              let aAppId = aMessage.json.appId;
-
-              let keys = Object.keys(Webapps.DOMApplicationRegistry.webapps);
-              let exists = keys.indexOf(aAppId) !== -1;
-              if (!exists) {
-                return false;
-              }
-
-              delete Webapps.DOMApplicationRegistry.webapps[aAppId];
-              return true;
-            }
-          default:
-            throw new SpecialPowersError("Invalid operation for SPWebAppsService");
-        }
-        return undefined;	// See comment at the beginning of this function.
       }
 
       case "SPObserverService": {
@@ -559,7 +529,7 @@ SpecialPowersObserverAPI.prototype = {
       case "SPCleanUpSTSData": {
         let origin = aMessage.data.origin;
         let flags = aMessage.data.flags;
-        let uri = Services.io.newURI(origin, null, null);
+        let uri = Services.io.newURI(origin);
         let sss = Cc["@mozilla.org/ssservice;1"].
                   getService(Ci.nsISiteSecurityService);
         sss.removeState(Ci.nsISiteSecurityService.HEADER_HSTS, uri, flags);
@@ -595,23 +565,19 @@ SpecialPowersObserverAPI.prototype = {
       }
 
       case "SPStartupExtension": {
-        let {ExtensionData, Management} = Components.utils.import("resource://gre/modules/Extension.jsm", {});
+        let {ExtensionData} = Components.utils.import("resource://gre/modules/Extension.jsm", {});
 
         let id = aMessage.data.id;
         let extension = this._extensions.get(id);
-        let startupListener = (msg, ext) => {
-          if (ext == extension) {
-            this._sendReply(aMessage, "SPExtensionMessage", {id, type: "extensionSetId", args: [extension.id]});
-            Management.off("startup", startupListener);
-          }
-        };
-        Management.on("startup", startupListener);
+        extension.on("startup", () => {
+          this._sendReply(aMessage, "SPExtensionMessage", {id, type: "extensionSetId", args: [extension.id]});
+        });
 
         // Make sure the extension passes the packaging checks when
         // they're run on a bare archive rather than a running instance,
         // as the add-on manager runs them.
         let extensionData = new ExtensionData(extension.rootURI);
-        extensionData.readManifest().then(
+        extensionData.loadManifest().then(
           () => {
             return extensionData.initAllLocales().then(() => {
               if (extensionData.errors.length) {
@@ -620,7 +586,7 @@ SpecialPowersObserverAPI.prototype = {
             });
           },
           () => {
-            // readManifest() will throw if we're loading an embedded
+            // loadManifest() will throw if we're loading an embedded
             // extension, so don't worry about locale errors in that
             // case.
           }
@@ -630,7 +596,6 @@ SpecialPowersObserverAPI.prototype = {
           this._sendReply(aMessage, "SPExtensionMessage", {id, type: "extensionStarted", args: []});
         }).catch(e => {
           dump(`Extension startup failed: ${e}\n${e.stack}`);
-          Management.off("startup", startupListener);
           this._sendReply(aMessage, "SPExtensionMessage", {id, type: "extensionFailed", args: []});
         });
         return undefined;
@@ -649,28 +614,6 @@ SpecialPowersObserverAPI.prototype = {
         this._extensions.delete(id);
         extension.shutdown();
         this._sendReply(aMessage, "SPExtensionMessage", {id, type: "extensionUnloaded", args: []});
-        return undefined;
-      }
-
-      case "SPClearAppPrivateData": {
-        let appId = aMessage.data.appId;
-        let browserOnly = aMessage.data.browserOnly;
-
-        let attributes = { appId: appId };
-        if (browserOnly) {
-          attributes.inIsolatedMozBrowser = true;
-        }
-        this._notifyCategoryAndObservers(null,
-                                         "clear-origin-data",
-                                         JSON.stringify(attributes));
-
-        let subject = {
-          appId: appId,
-          browserOnly: browserOnly,
-          QueryInterface: XPCOMUtils.generateQI([Ci.mozIApplicationClearPrivateDataParams])
-        };
-        this._notifyCategoryAndObservers(subject, "webapps-clear-data", null);
-
         return undefined;
       }
 

@@ -19,10 +19,13 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/AppConstants.jsm");
 Cu.import("resource://gre/modules/PlacesUtils.jsm");
+Cu.import("resource://gre/modules/FileUtils.jsm");
+Cu.import("resource://gre/modules/Timer.jsm");
 Cu.import("resource://services-common/async.js");
 Cu.import("resource://services-sync/constants.js");
 Cu.import("resource://services-sync/main.js");
 Cu.import("resource://services-sync/util.js");
+Cu.import("resource://services-sync/telemetry.js");
 Cu.import("resource://services-sync/bookmark_validator.js");
 Cu.import("resource://services-sync/engines/passwords.js");
 Cu.import("resource://services-sync/engines/forms.js");
@@ -46,7 +49,12 @@ var prefs = Cc["@mozilla.org/preferences-service;1"]
             .getService(Ci.nsIPrefBranch);
 
 var mozmillInit = {};
-Cu.import('resource://mozmill/driver/mozmill.js', mozmillInit);
+Cu.import("resource://mozmill/driver/mozmill.js", mozmillInit);
+
+XPCOMUtils.defineLazyGetter(this, "fileProtocolHandler", () => {
+  let fileHandler = Services.io.getProtocolHandler("file");
+  return fileHandler.QueryInterface(Ci.nsIFileProtocolHandler);
+});
 
 // Options for wiping data during a sync
 const SYNC_RESET_CLIENT = "resetClient";
@@ -106,6 +114,8 @@ var TPS = {
   _phaselist: {},
   _setupComplete: false,
   _syncActive: false,
+  _syncCount: 0,
+  _syncsReportedViaTelemetry: 0,
   _syncErrors: 0,
   _syncWipeAction: null,
   _tabsAdded: 0,
@@ -120,27 +130,14 @@ var TPS = {
   shouldValidateForms: false,
 
   _init: function TPS__init() {
-    // Check if Firefox Accounts is enabled
-    let service = Cc["@mozilla.org/weave/service;1"]
-                  .getService(Components.interfaces.nsISupports)
-                  .wrappedJSObject;
-    this.fxaccounts_enabled = service.fxAccountsEnabled;
-
     this.delayAutoSync();
 
-    OBSERVER_TOPICS.forEach(function (aTopic) {
+    OBSERVER_TOPICS.forEach(function(aTopic) {
       Services.obs.addObserver(this, aTopic, true);
     }, this);
 
-    // Configure some logging prefs for Sync itself.
-    Weave.Svc.Prefs.set("log.appender.dump", "Debug");
-    // Import the appropriate authentication module
-    if (this.fxaccounts_enabled) {
-      Cu.import("resource://tps/auth/fxaccounts.jsm", module);
-    }
-    else {
-      Cu.import("resource://tps/auth/sync.jsm", module);
-    }
+    /* global Authentication */
+    Cu.import("resource://tps/auth/fxaccounts.jsm", module);
   },
 
   DumpError(msg, exc = null) {
@@ -163,7 +160,7 @@ var TPS = {
     try {
       Logger.logInfo("----------event observed: " + topic);
 
-      switch(topic) {
+      switch (topic) {
         case "private-browsing":
           Logger.logInfo("private browsing " + data);
           break;
@@ -178,7 +175,14 @@ var TPS = {
           break;
 
         case "sessionstore-windows-restored":
-          Utils.nextTick(this.RunNextTestAction, this);
+          // This is a terrible hack, but fixes cases where tps (usually cleanup)
+          // fails because of sessionstore restoring windows before tps is able
+          // to initialize. This used to take only 1 tick, but at some point
+          // session store started restoring windows sooner, or tps started
+          // initializing later.
+          setTimeout(() => {
+            this.RunNextTestAction();
+          }, 1000);
           break;
 
         case "weave:service:setup-complete":
@@ -201,8 +205,7 @@ var TPS = {
             Logger.logInfo("Sync error; retrying...");
             this._syncErrors++;
             Utils.nextTick(this.RunNextTestAction, this);
-          }
-          else {
+          } else {
             this._triggeredSync = false;
             this.DumpError("Sync error; aborting test");
             return;
@@ -219,7 +222,7 @@ var TPS = {
 
           // Wait a second before continuing, otherwise we can get
           // 'sync not complete' errors.
-          Utils.namedTimer(function () {
+          Utils.namedTimer(function() {
             this.FinishAsyncOperation();
           }, 1000, this, "postsync");
 
@@ -242,10 +245,9 @@ var TPS = {
           this._isTracking = false;
           break;
       }
-    }
-    catch (e) {
+    } catch (e) {
       this.DumpError("Observer failed", e);
-      return;
+
     }
   },
 
@@ -281,10 +283,10 @@ var TPS = {
     this.goQuitApplication();
   },
 
-  HandleWindows: function (aWindow, action) {
+  HandleWindows(aWindow, action) {
     Logger.logInfo("executing action " + action.toUpperCase() +
                    " on window " + JSON.stringify(aWindow));
-    switch(action) {
+    switch (action) {
       case ACTION_ADD:
         BrowserWindows.Add(aWindow.private, function(win) {
           Logger.logInfo("window finished loading");
@@ -295,13 +297,13 @@ var TPS = {
     Logger.logPass("executing action " + action.toUpperCase() + " on windows");
   },
 
-  HandleTabs: function (tabs, action) {
+  HandleTabs(tabs, action) {
     this._tabsAdded = tabs.length;
     this._tabsFinished = 0;
     for (let tab of tabs) {
       Logger.logInfo("executing action " + action.toUpperCase() +
                      " on tab " + JSON.stringify(tab));
-      switch(action) {
+      switch (action) {
         case ACTION_ADD:
           // When adding tabs, we keep track of how many tabs we're adding,
           // and wait until we've received that many onload events from our
@@ -316,7 +318,7 @@ var TPS = {
 
               // Wait a second before continuing to be sure tabs can be synced,
               // otherwise we can get 'error locating tab'
-              Utils.namedTimer(function () {
+              Utils.namedTimer(function() {
                 that.FinishAsyncOperation();
               }, 1000, this, "postTabsOpening");
             }
@@ -342,12 +344,12 @@ var TPS = {
     Logger.logPass("executing action " + action.toUpperCase() + " on tabs");
   },
 
-  HandlePrefs: function (prefs, action) {
+  HandlePrefs(prefs, action) {
     for (let pref of prefs) {
       Logger.logInfo("executing action " + action.toUpperCase() +
                      " on pref " + JSON.stringify(pref));
       let preference = new Preference(pref);
-      switch(action) {
+      switch (action) {
         case ACTION_MODIFY:
           preference.Modify();
           break;
@@ -361,13 +363,13 @@ var TPS = {
     Logger.logPass("executing action " + action.toUpperCase() + " on pref");
   },
 
-  HandleForms: function (data, action) {
+  HandleForms(data, action) {
     this.shouldValidateForms = true;
     for (let datum of data) {
       Logger.logInfo("executing action " + action.toUpperCase() +
                      " on form entry " + JSON.stringify(datum));
       let formdata = new FormData(datum, this._usSinceEpoch);
-      switch(action) {
+      switch (action) {
         case ACTION_ADD:
           Async.promiseSpinningly(formdata.Create());
           break;
@@ -390,12 +392,12 @@ var TPS = {
                    " on formdata");
   },
 
-  HandleHistory: function (entries, action) {
+  HandleHistory(entries, action) {
     try {
       for (let entry of entries) {
         Logger.logInfo("executing action " + action.toUpperCase() +
                        " on history entry " + JSON.stringify(entry));
-        switch(action) {
+        switch (action) {
           case ACTION_ADD:
             HistoryEntry.Add(entry, this._usSinceEpoch);
             break;
@@ -416,18 +418,16 @@ var TPS = {
       }
       Logger.logPass("executing action " + action.toUpperCase() +
                      " on history");
-    }
-    catch(e) {
+    } catch (e) {
       DumpHistory();
-      throw(e);
+      throw (e);
     }
   },
 
-  HandlePasswords: function (passwords, action) {
+  HandlePasswords(passwords, action) {
     this.shouldValidatePasswords = true;
     try {
       for (let password of passwords) {
-        let password_id = -1;
         Logger.logInfo("executing action " + action.toUpperCase() +
                       " on password " + JSON.stringify(password));
         let passwordOb = new Password(password);
@@ -458,20 +458,19 @@ var TPS = {
       }
       Logger.logPass("executing action " + action.toUpperCase() +
                      " on passwords");
-    }
-    catch(e) {
+    } catch (e) {
       DumpPasswords();
-      throw(e);
+      throw (e);
     }
   },
 
-  HandleAddons: function (addons, action, state) {
+  HandleAddons(addons, action, state) {
     this.shouldValidateAddons = true;
     for (let entry of addons) {
       Logger.logInfo("executing action " + action.toUpperCase() +
                      " on addon " + JSON.stringify(entry));
       let addon = new Addon(this, entry);
-      switch(action) {
+      switch (action) {
         case ACTION_ADD:
           addon.install();
           break;
@@ -479,13 +478,13 @@ var TPS = {
           addon.uninstall();
           break;
         case ACTION_VERIFY:
-          Logger.AssertTrue(addon.find(state), 'addon ' + addon.id + ' not found');
+          Logger.AssertTrue(addon.find(state), "addon " + addon.id + " not found");
           break;
         case ACTION_VERIFY_NOT:
-          Logger.AssertFalse(addon.find(state), 'addon ' + addon.id + " is present, but it shouldn't be");
+          Logger.AssertFalse(addon.find(state), "addon " + addon.id + " is present, but it shouldn't be");
           break;
         case ACTION_SET_ENABLED:
-          Logger.AssertTrue(addon.setEnabled(state), 'addon ' + addon.id + ' not found');
+          Logger.AssertTrue(addon.setEnabled(state), "addon " + addon.id + " not found");
           break;
         default:
           throw new Error("Unknown action for add-on: " + action);
@@ -495,7 +494,7 @@ var TPS = {
                    " on addons");
   },
 
-  HandleBookmarks: function (bookmarks, action) {
+  HandleBookmarks(bookmarks, action) {
     this.shouldValidateBookmarks = true;
     try {
       let items = [];
@@ -504,10 +503,10 @@ var TPS = {
         for (let bookmark of bookmarks[folder]) {
           Logger.clearPotentialError();
           let placesItem;
-          bookmark['location'] = folder;
+          bookmark["location"] = folder;
 
           if (last_item_pos != -1)
-            bookmark['last_item_pos'] = last_item_pos;
+            bookmark["last_item_pos"] = last_item_pos;
           let item_id = -1;
 
           if (action != ACTION_MODIFY && action != ACTION_DELETE)
@@ -525,15 +524,13 @@ var TPS = {
 
           if (action == ACTION_ADD) {
             item_id = placesItem.Create();
-          }
-          else {
+          } else {
             item_id = placesItem.Find();
             if (action == ACTION_VERIFY_NOT) {
               Logger.AssertTrue(item_id == -1,
                 "places item exists but it shouldn't: " +
                 JSON.stringify(bookmark));
-            }
-            else
+            } else
               Logger.AssertTrue(item_id != -1, "places item not found", true);
           }
 
@@ -546,7 +543,7 @@ var TPS = {
         for (let item of items) {
           Logger.logInfo("executing action " + action.toUpperCase() +
                          " on bookmark " + JSON.stringify(item));
-          switch(action) {
+          switch (action) {
             case ACTION_DELETE:
               item.Remove();
               break;
@@ -560,24 +557,19 @@ var TPS = {
 
       Logger.logPass("executing action " + action.toUpperCase() +
         " on bookmarks");
-    }
-    catch (e) {
+    } catch (e) {
       DumpBookmarks();
-      throw(e);
+      throw (e);
     }
   },
 
   MozmillEndTestListener: function TPS__MozmillEndTestListener(obj) {
     Logger.logInfo("mozmill endTest: " + JSON.stringify(obj));
     if (obj.failed > 0) {
-      this.DumpError('mozmill test failed, name: ' + obj.name + ', reason: ' + JSON.stringify(obj.fails));
-      return;
-    }
-    else if ('skipped' in obj && obj.skipped) {
-      this.DumpError('mozmill test failed, name: ' + obj.name + ', reason: ' + obj.skipped_reason);
-      return;
-    }
-    else {
+      this.DumpError("mozmill test failed, name: " + obj.name + ", reason: " + JSON.stringify(obj.fails));
+    } else if ("skipped" in obj && obj.skipped) {
+      this.DumpError("mozmill test failed, name: " + obj.name + ", reason: " + obj.skipped_reason);
+    } else {
       Utils.namedTimer(function() {
         this.FinishAsyncOperation();
       }, 2000, this, "postmozmilltest");
@@ -603,6 +595,7 @@ var TPS = {
         waiter();
         Logger.logInfo("signout complete");
       }
+      Authentication.deleteEmail(this.config.fx_account.username);
     } catch (e) {
       Logger.logError("Failed to sign out: " + Log.exceptionStr(e));
     }
@@ -614,7 +607,7 @@ var TPS = {
   ValidateBookmarks() {
 
     let getServerBookmarkState = () => {
-      let bookmarkEngine = Weave.Service.engineManager.get('bookmarks');
+      let bookmarkEngine = Weave.Service.engineManager.get("bookmarks");
       let collection = bookmarkEngine.itemSource();
       let collectionKey = bookmarkEngine.service.collectionKeys.keyForCollection(bookmarkEngine.name);
       collection.full = true;
@@ -637,7 +630,7 @@ var TPS = {
       serverRecordDumpStr = JSON.stringify(serverRecords);
 
       let validator = new BookmarkValidator();
-      let {problemData} = validator.compareServerWithClient(serverRecords, clientTree);
+      let {problemData} = Async.promiseSpinningly(validator.compareServerWithClient(serverRecords, clientTree));
 
       for (let {name, count} of problemData.getSummary()) {
         // Exclude mobile showing up on the server hackily so that we don't
@@ -724,7 +717,7 @@ var TPS = {
     return this.ValidateCollection("addons", AddonValidator);
   },
 
-  RunNextTestAction: function() {
+  RunNextTestAction() {
     try {
       if (this._currentAction >=
           this._phaselist[this._currentPhase].length) {
@@ -741,6 +734,10 @@ var TPS = {
         if (this.shouldValidateAddons) {
           this.ValidateAddons();
         }
+        // Force this early so that we run the validation and detect missing pings
+        // *before* we start shutting down, since if we do it after, the python
+        // code won't notice the failure.
+        SyncTelemetry.shutdown();
         // we're all done
         Logger.logInfo("test phase " + this._currentPhase + ": " +
                        (this._errors ? "FAIL" : "PASS"));
@@ -748,7 +745,7 @@ var TPS = {
         this.quit();
         return;
       }
-
+      this.seconds_since_epoch = prefs.getIntPref("tps.seconds_since_epoch");
       if (this.seconds_since_epoch)
         this._usSinceEpoch = this.seconds_since_epoch * 1000 * 1000;
       else {
@@ -766,8 +763,7 @@ var TPS = {
         return;
 
       this._currentAction++;
-    }
-    catch(e) {
+    } catch (e) {
       if (Async.isShutdownException(e)) {
         if (this._requestedQuit) {
           Logger.logInfo("Sync aborted due to requested shutdown");
@@ -780,6 +776,50 @@ var TPS = {
       return;
     }
     this.RunNextTestAction();
+  },
+
+  _getFileRelativeToSourceRoot(testFileURL, relativePath) {
+    let file = fileProtocolHandler.getFileFromURLSpec(testFileURL);
+    let root = file // <root>/services/sync/tests/tps/test_foo.js
+      .parent // <root>/services/sync/tests/tps
+      .parent // <root>/services/sync/tests
+      .parent // <root>/services/sync
+      .parent // <root>/services
+      .parent // <root>
+      ;
+    root.appendRelativePath(relativePath);
+    return root;
+  },
+
+  // Attempt to load the sync_ping_schema.json and initialize `this.pingValidator`
+  // based on the source of the tps file. Assumes that it's at "../unit/sync_ping_schema.json"
+  // relative to the directory the tps test file (testFile) is contained in.
+  _tryLoadPingSchema(testFile) {
+    try {
+      let schemaFile = this._getFileRelativeToSourceRoot(testFile,
+        "services/sync/tests/unit/sync_ping_schema.json");
+
+      let stream = Cc["@mozilla.org/network/file-input-stream;1"]
+                   .createInstance(Ci.nsIFileInputStream);
+
+      let jsonReader = Cc["@mozilla.org/dom/json;1"]
+                       .createInstance(Components.interfaces.nsIJSON);
+
+      stream.init(schemaFile, FileUtils.MODE_RDONLY, FileUtils.PERMS_FILE, 0);
+      let schema = jsonReader.decodeFromStream(stream, stream.available());
+      Logger.logInfo("Successfully loaded schema")
+
+      // Importing resource://testing-common/* isn't possible from within TPS,
+      // so we load Ajv manually.
+      let ajvFile = this._getFileRelativeToSourceRoot(testFile, "testing/modules/ajv-4.1.1.js");
+      let ajvURL = fileProtocolHandler.getURLSpecFromFile(ajvFile);
+      let ns = {};
+      Cu.import(ajvURL, ns);
+      let ajv = new ns.Ajv({ async: "co*" });
+      this.pingValidator = ajv.compile(schema);
+    } catch (e) {
+      this.DumpError(`Failed to load ping schema and AJV relative to "${testFile}".`, e);
+    }
   },
 
   /**
@@ -807,7 +847,7 @@ var TPS = {
    * @param  options
    *         Object defining addition run-time options.
    */
-  RunTestPhase: function (file, phase, logpath, options) {
+  RunTestPhase(file, phase, logpath, options) {
     try {
       let settings = options || {};
 
@@ -817,7 +857,6 @@ var TPS = {
       Logger.logInfo("Firefox version: " + Services.appinfo.version);
       Logger.logInfo("Firefox source revision: " + (AppConstants.SOURCE_REVISION_URL || "unknown"));
       Logger.logInfo("Firefox platform: " + AppConstants.platform);
-      Logger.logInfo('Firefox Accounts enabled: ' + this.fxaccounts_enabled);
 
       // do some sync housekeeping
       if (Weave.Service.isLoggedIn) {
@@ -837,9 +876,8 @@ var TPS = {
       // service:ready event, this is required to ensure all handlers have
       // executed.
       Utils.nextTick(this._executeTestPhase.bind(this, file, phase, settings));
-    } catch(e) {
+    } catch (e) {
       this.DumpError("RunTestPhase failed", e);
-      return;
     }
   },
 
@@ -850,6 +888,7 @@ var TPS = {
    */
   _executeTestPhase: function _executeTestPhase(file, phase, settings) {
     try {
+      this.config = JSON.parse(prefs.getCharPref("tps.config"));
       // parse the test file
       Services.scriptloader.loadSubScript(file, this);
       this._currentPhase = phase;
@@ -859,6 +898,9 @@ var TPS = {
                              .selectedProfile.name;
         this.phases[this._currentPhase] = profileToClean;
         this.Phase(this._currentPhase, [[this.Cleanup]]);
+      } else {
+        // Don't bother doing this for cleanup phases.
+        this._tryLoadPingSchema(file);
       }
       let this_phase = this._phaselist[this._currentPhase];
 
@@ -892,31 +934,56 @@ var TPS = {
       Logger.logInfo("setting client.name to " + this.phases[this._currentPhase]);
       Weave.Svc.Prefs.set("client.name", this.phases[this._currentPhase]);
 
-      // If a custom server was specified, set it now
-      if (this.config["serverURL"]) {
-        Weave.Service.serverURL = this.config.serverURL;
-        prefs.setCharPref('tps.serverURL', this.config.serverURL);
-      }
-
-      // Store account details as prefs so they're accessible to the Mozmill
-      // framework.
-      if (this.fxaccounts_enabled) {
-        prefs.setCharPref('tps.account.username', this.config.fx_account.username);
-        prefs.setCharPref('tps.account.password', this.config.fx_account.password);
-      }
-      else {
-        prefs.setCharPref('tps.account.username', this.config.sync_account.username);
-        prefs.setCharPref('tps.account.password', this.config.sync_account.password);
-        prefs.setCharPref('tps.account.passphrase', this.config.sync_account.passphrase);
-      }
+      this._interceptSyncTelemetry();
 
       // start processing the test actions
       this._currentAction = 0;
-    }
-    catch(e) {
+    } catch (e) {
       this.DumpError("_executeTestPhase failed", e);
-      return;
     }
+  },
+
+  /**
+   * Override sync telemetry functions so that we can detect errors generating
+   * the sync ping, and count how many pings we report.
+   */
+  _interceptSyncTelemetry() {
+    let originalObserve = SyncTelemetry.observe;
+    let self = this;
+    SyncTelemetry.observe = function() {
+      try {
+        originalObserve.apply(this, arguments);
+      } catch (e) {
+        self.DumpError("Error when generating sync telemetry", e);
+      }
+    };
+    SyncTelemetry.submit = record => {
+      Logger.logInfo("Intercepted sync telemetry submission: " + JSON.stringify(record));
+      this._syncsReportedViaTelemetry += record.syncs.length + (record.discarded || 0);
+      if (record.discarded) {
+        if (record.syncs.length != SyncTelemetry.maxPayloadCount) {
+          this.DumpError("Syncs discarded from ping before maximum payload count reached");
+        }
+      }
+      // If this is the shutdown ping, check and see that the telemetry saw all the syncs.
+      if (record.why === "shutdown") {
+        // If we happen to sync outside of tps manually causing it, its not an
+        // error in the telemetry, so we only complain if we didn't see all of them.
+        if (this._syncsReportedViaTelemetry < this._syncCount) {
+          this.DumpError(`Telemetry missed syncs: Saw ${this._syncsReportedViaTelemetry}, should have >= ${this._syncCount}.`);
+        }
+      }
+      if (!record.syncs.length) {
+        // Note: we're overwriting submit, so this is called even for pings that
+        // may have no data (which wouldn't be submitted to telemetry and would
+        // fail validation).
+        return;
+      }
+      if (!this.pingValidator(record)) {
+        // Note that we already logged the record.
+        this.DumpError("Sync ping validation failed with errors: " + JSON.stringify(this.pingValidator.errors));
+      }
+    };
   },
 
   /**
@@ -962,7 +1029,7 @@ var TPS = {
   RunMozmillTest: function TPS__RunMozmillTest(testfile) {
     var mozmillfile = Cc["@mozilla.org/file/local;1"]
                       .createInstance(Ci.nsILocalFile);
-    if (hh.oscpu.toLowerCase().indexOf('windows') > -1) {
+    if (hh.oscpu.toLowerCase().indexOf("windows") > -1) {
       let re = /\/(\w)\/(.*)/;
       this.config.testdir = this.config.testdir.replace(re, "$1://$2").replace(/\//g, "\\");
     }
@@ -971,9 +1038,9 @@ var TPS = {
     Logger.logInfo("Running mozmill test " + mozmillfile.path);
 
     var frame = {};
-    Cu.import('resource://mozmill/modules/frame.js', frame);
-    frame.events.addListener('setTest', this.MozmillSetTestListener.bind(this));
-    frame.events.addListener('endTest', this.MozmillEndTestListener.bind(this));
+    Cu.import("resource://mozmill/modules/frame.js", frame);
+    frame.events.addListener("setTest", this.MozmillSetTestListener.bind(this));
+    frame.events.addListener("endTest", this.MozmillEndTestListener.bind(this));
     this.StartAsyncOperation();
     frame.runTestFile(mozmillfile.path, null);
   },
@@ -1065,18 +1132,13 @@ var TPS = {
     }
 
     Logger.logInfo("Setting client credentials and login.");
-    let account = this.fxaccounts_enabled ? this.config.fx_account
-                                          : this.config.sync_account;
-    Authentication.signIn(account);
+    Authentication.signIn(this.config.fx_account);
     this.waitForSetupComplete();
     Logger.AssertEqual(Weave.Status.service, Weave.STATUS_OK, "Weave status OK");
     this.waitForTracking();
-    // If fxaccounts is enabled we get an initial sync at login time - let
-    // that complete.
-    if (this.fxaccounts_enabled) {
-      this._triggeredSync = true;
-      this.waitForSyncFinished();
-    }
+    // We get an initial sync at login time - let that complete.
+    this._triggeredSync = true;
+    this.waitForSyncFinished();
   },
 
   /**
@@ -1095,12 +1157,12 @@ var TPS = {
     if (wipeAction) {
       this._syncWipeAction = wipeAction;
       Weave.Svc.Prefs.set("firstSync", wipeAction);
-    }
-    else {
+    } else {
       Weave.Svc.Prefs.reset("firstSync");
     }
 
     this.Login(false);
+    ++this._syncCount;
 
     this._triggeredSync = true;
     this.StartAsyncOperation();

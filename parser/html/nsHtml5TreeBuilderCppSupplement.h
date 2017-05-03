@@ -123,181 +123,178 @@ nsHtml5TreeBuilder::createElement(int32_t aNamespace, nsIAtom* aName,
     switch (aNamespace) {
       case kNameSpaceID_XHTML:
         if (nsHtml5Atoms::img == aName) {
-          nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_SRC);
-          nsString* srcset =
+          nsHtml5String url =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_SRC);
+          nsHtml5String srcset =
             aAttributes->getValue(nsHtml5AttributeName::ATTR_SRCSET);
-          nsString* crossOrigin =
+          nsHtml5String crossOrigin =
             aAttributes->getValue(nsHtml5AttributeName::ATTR_CROSSORIGIN);
-          nsString* referrerPolicy =
+          nsHtml5String referrerPolicy =
             aAttributes->getValue(nsHtml5AttributeName::ATTR_REFERRERPOLICY);
-          nsString* sizes =
+          nsHtml5String sizes =
             aAttributes->getValue(nsHtml5AttributeName::ATTR_SIZES);
-          mSpeculativeLoadQueue.AppendElement()->
-            InitImage(url ? *url : NullString(),
-                      crossOrigin ? *crossOrigin : NullString(),
-                      referrerPolicy ? *referrerPolicy : NullString(),
-                      srcset ? *srcset : NullString(),
-                      sizes ? *sizes : NullString());
+          mSpeculativeLoadQueue.AppendElement()->InitImage(
+            url, crossOrigin, referrerPolicy, srcset, sizes);
         } else if (nsHtml5Atoms::source == aName) {
-          nsString* srcset =
+          nsHtml5String srcset =
             aAttributes->getValue(nsHtml5AttributeName::ATTR_SRCSET);
           // Sources without srcset cannot be selected. The source could also be
           // for a media element, but in that context doesn't use srcset.  See
           // comments in nsHtml5SpeculativeLoad.h about <picture> preloading
           if (srcset) {
-            nsString* sizes =
+            nsHtml5String sizes =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_SIZES);
-            nsString* type =
+            nsHtml5String type =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_TYPE);
-            nsString* media =
+            nsHtml5String media =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_MEDIA);
-            mSpeculativeLoadQueue.AppendElement()->
-              InitPictureSource(*srcset,
-                                sizes ? *sizes : NullString(),
-                                type ? *type : NullString(),
-                                media ? *media : NullString());
+            mSpeculativeLoadQueue.AppendElement()->InitPictureSource(
+              srcset, sizes, type, media);
           }
         } else if (nsHtml5Atoms::script == aName) {
           nsHtml5TreeOperation* treeOp = mOpQueue.AppendElement();
           NS_ASSERTION(treeOp, "Tree op allocation failed.");
           treeOp->Init(eTreeOpSetScriptLineNumberAndFreeze, content, tokenizer->getLineNumber());
 
-          nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_SRC);
+          nsHtml5String url =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_SRC);
           if (url) {
-            nsString* charset = aAttributes->getValue(nsHtml5AttributeName::ATTR_CHARSET);
-            nsString* type = aAttributes->getValue(nsHtml5AttributeName::ATTR_TYPE);
-            nsString* crossOrigin =
+            nsHtml5String charset =
+              aAttributes->getValue(nsHtml5AttributeName::ATTR_CHARSET);
+            nsHtml5String type =
+              aAttributes->getValue(nsHtml5AttributeName::ATTR_TYPE);
+            nsHtml5String crossOrigin =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_CROSSORIGIN);
-            nsString* integrity =
+            nsHtml5String integrity =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_INTEGRITY);
-            mSpeculativeLoadQueue.AppendElement()->
-              InitScript(*url,
-                         (charset) ? *charset : EmptyString(),
-                         (type) ? *type : EmptyString(),
-                         (crossOrigin) ? *crossOrigin : NullString(),
-                         (integrity) ? *integrity : NullString(),
-                         mode == NS_HTML5TREE_BUILDER_IN_HEAD);
+            mSpeculativeLoadQueue.AppendElement()->InitScript(
+              url,
+              charset,
+              type,
+              crossOrigin,
+              integrity,
+              mode == NS_HTML5TREE_BUILDER_IN_HEAD);
             mCurrentHtmlScriptIsAsyncOrDefer =
               aAttributes->contains(nsHtml5AttributeName::ATTR_ASYNC) ||
               aAttributes->contains(nsHtml5AttributeName::ATTR_DEFER);
           }
         } else if (nsHtml5Atoms::link == aName) {
-          nsString* rel = aAttributes->getValue(nsHtml5AttributeName::ATTR_REL);
+          nsHtml5String rel =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_REL);
           // Not splitting on space here is bogus but the old parser didn't even
           // do a case-insensitive check.
           if (rel) {
-            if (rel->LowerCaseEqualsASCII("stylesheet")) {
-              nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
+            if (rel.LowerCaseEqualsASCII("stylesheet")) {
+              nsHtml5String url =
+                aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
               if (url) {
-                nsString* charset = aAttributes->getValue(nsHtml5AttributeName::ATTR_CHARSET);
-                nsString* crossOrigin =
+                nsHtml5String charset =
+                  aAttributes->getValue(nsHtml5AttributeName::ATTR_CHARSET);
+                nsHtml5String crossOrigin =
                   aAttributes->getValue(nsHtml5AttributeName::ATTR_CROSSORIGIN);
-                nsString* integrity =
+                nsHtml5String integrity =
                   aAttributes->getValue(nsHtml5AttributeName::ATTR_INTEGRITY);
-                mSpeculativeLoadQueue.AppendElement()->
-                  InitStyle(*url,
-                            (charset) ? *charset : EmptyString(),
-                            (crossOrigin) ? *crossOrigin : NullString(),
-                            (integrity) ? *integrity : NullString());
+                mSpeculativeLoadQueue.AppendElement()->InitStyle(
+                  url, charset, crossOrigin, integrity);
               }
-            } else if (rel->LowerCaseEqualsASCII("preconnect")) {
-              nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
+            } else if (rel.LowerCaseEqualsASCII("preconnect")) {
+              nsHtml5String url =
+                aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
               if (url) {
-                nsString* crossOrigin =
+                nsHtml5String crossOrigin =
                   aAttributes->getValue(nsHtml5AttributeName::ATTR_CROSSORIGIN);
-                mSpeculativeLoadQueue.AppendElement()->
-                  InitPreconnect(*url, (crossOrigin) ? *crossOrigin : NullString());
+                mSpeculativeLoadQueue.AppendElement()->InitPreconnect(
+                  url, crossOrigin);
               }
             }
           }
         } else if (nsHtml5Atoms::video == aName) {
-          nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_POSTER);
+          nsHtml5String url =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_POSTER);
           if (url) {
-            mSpeculativeLoadQueue.AppendElement()->InitImage(*url, NullString(),
-                                                             NullString(),
-                                                             NullString(),
-                                                             NullString());
+            mSpeculativeLoadQueue.AppendElement()->InitImage(
+              url, nullptr, nullptr, nullptr, nullptr);
           }
         } else if (nsHtml5Atoms::style == aName) {
           nsHtml5TreeOperation* treeOp = mOpQueue.AppendElement();
           NS_ASSERTION(treeOp, "Tree op allocation failed.");
           treeOp->Init(eTreeOpSetStyleLineNumber, content, tokenizer->getLineNumber());
         } else if (nsHtml5Atoms::html == aName) {
-          nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_MANIFEST);
-          if (url) {
-            mSpeculativeLoadQueue.AppendElement()->InitManifest(*url);
-          } else {
-            mSpeculativeLoadQueue.AppendElement()->InitManifest(EmptyString());
-          }
+          nsHtml5String url =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_MANIFEST);
+          mSpeculativeLoadQueue.AppendElement()->InitManifest(url);
         } else if (nsHtml5Atoms::base == aName) {
-          nsString* url =
-              aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
+          nsHtml5String url =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
           if (url) {
-            mSpeculativeLoadQueue.AppendElement()->InitBase(*url);
+            mSpeculativeLoadQueue.AppendElement()->InitBase(url);
           }
         } else if (nsHtml5Atoms::meta == aName) {
           if (nsHtml5Portability::lowerCaseLiteralEqualsIgnoreAsciiCaseString(
                       "content-security-policy",
                       aAttributes->getValue(nsHtml5AttributeName::ATTR_HTTP_EQUIV))) {
-            nsString* csp = aAttributes->getValue(nsHtml5AttributeName::ATTR_CONTENT);
+            nsHtml5String csp =
+              aAttributes->getValue(nsHtml5AttributeName::ATTR_CONTENT);
             if (csp) {
-              mSpeculativeLoadQueue.AppendElement()->InitMetaCSP(*csp);
+              mSpeculativeLoadQueue.AppendElement()->InitMetaCSP(csp);
             }
           }
           else if (nsHtml5Portability::lowerCaseLiteralEqualsIgnoreAsciiCaseString(
                       "referrer",
                       aAttributes->getValue(nsHtml5AttributeName::ATTR_NAME))) {
-            nsString* referrerPolicy = aAttributes->getValue(nsHtml5AttributeName::ATTR_CONTENT);
+            nsHtml5String referrerPolicy =
+              aAttributes->getValue(nsHtml5AttributeName::ATTR_CONTENT);
             if (referrerPolicy) {
-              mSpeculativeLoadQueue.AppendElement()->InitMetaReferrerPolicy(*referrerPolicy);
+              mSpeculativeLoadQueue.AppendElement()->InitMetaReferrerPolicy(
+                referrerPolicy);
             }
           }
         }
         break;
       case kNameSpaceID_SVG:
         if (nsHtml5Atoms::image == aName) {
-          nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_XLINK_HREF);
+          nsHtml5String url =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_XLINK_HREF);
           if (url) {
-            mSpeculativeLoadQueue.AppendElement()->InitImage(*url, NullString(),
-                                                             NullString(),
-                                                             NullString(),
-                                                             NullString());
+            mSpeculativeLoadQueue.AppendElement()->InitImage(
+              url, nullptr, nullptr, nullptr, nullptr);
           }
         } else if (nsHtml5Atoms::script == aName) {
           nsHtml5TreeOperation* treeOp = mOpQueue.AppendElement();
           NS_ASSERTION(treeOp, "Tree op allocation failed.");
           treeOp->Init(eTreeOpSetScriptLineNumberAndFreeze, content, tokenizer->getLineNumber());
 
-          nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_XLINK_HREF);
+          nsHtml5String url =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_XLINK_HREF);
           if (url) {
-            nsString* type = aAttributes->getValue(nsHtml5AttributeName::ATTR_TYPE);
-            nsString* crossOrigin =
+            nsHtml5String type =
+              aAttributes->getValue(nsHtml5AttributeName::ATTR_TYPE);
+            nsHtml5String crossOrigin =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_CROSSORIGIN);
-            nsString* integrity =
+            nsHtml5String integrity =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_INTEGRITY);
-            mSpeculativeLoadQueue.AppendElement()->
-              InitScript(*url,
-                         EmptyString(),
-                         (type) ? *type : EmptyString(),
-                         (crossOrigin) ? *crossOrigin : NullString(),
-                         (integrity) ? *integrity : NullString(),
-                         mode == NS_HTML5TREE_BUILDER_IN_HEAD);
+            mSpeculativeLoadQueue.AppendElement()->InitScript(
+              url,
+              nullptr,
+              type,
+              crossOrigin,
+              integrity,
+              mode == NS_HTML5TREE_BUILDER_IN_HEAD);
           }
         } else if (nsHtml5Atoms::style == aName) {
           nsHtml5TreeOperation* treeOp = mOpQueue.AppendElement();
           NS_ASSERTION(treeOp, "Tree op allocation failed.");
           treeOp->Init(eTreeOpSetStyleLineNumber, content, tokenizer->getLineNumber());
 
-          nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_XLINK_HREF);
+          nsHtml5String url =
+            aAttributes->getValue(nsHtml5AttributeName::ATTR_XLINK_HREF);
           if (url) {
-            nsString* crossOrigin =
+            nsHtml5String crossOrigin =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_CROSSORIGIN);
-            nsString* integrity =
+            nsHtml5String integrity =
               aAttributes->getValue(nsHtml5AttributeName::ATTR_INTEGRITY);
-            mSpeculativeLoadQueue.AppendElement()->
-              InitStyle(*url, EmptyString(),
-                        (crossOrigin) ? *crossOrigin : NullString(),
-                        (integrity) ? *integrity : NullString());
+            mSpeculativeLoadQueue.AppendElement()->InitStyle(
+              url, nullptr, crossOrigin, integrity);
           }
         }
         break;
@@ -320,18 +317,23 @@ nsHtml5TreeBuilder::createElement(int32_t aNamespace, nsIAtom* aName,
       }
     } else if (aNamespace == kNameSpaceID_XHTML) {
       if (nsHtml5Atoms::html == aName) {
-        nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_MANIFEST);
+        nsHtml5String url =
+          aAttributes->getValue(nsHtml5AttributeName::ATTR_MANIFEST);
         nsHtml5TreeOperation* treeOp = mOpQueue.AppendElement();
         NS_ASSERTION(treeOp, "Tree op allocation failed.");
         if (url) {
-          treeOp->Init(eTreeOpProcessOfflineManifest, *url);
+          nsString
+            urlString; // Not Auto, because using it to hold nsStringBuffer*
+          url.ToString(urlString);
+          treeOp->Init(eTreeOpProcessOfflineManifest, urlString);
         } else {
           treeOp->Init(eTreeOpProcessOfflineManifest, EmptyString());
         }
       } else if (nsHtml5Atoms::base == aName && mViewSource) {
-        nsString* url = aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
+        nsHtml5String url =
+          aAttributes->getValue(nsHtml5AttributeName::ATTR_HREF);
         if (url) {
-          mViewSource->AddBase(*url);
+          mViewSource->AddBase(url);
         } 
       }
     }
@@ -743,17 +745,19 @@ nsHtml5TreeBuilder::end()
 }
 
 void
-nsHtml5TreeBuilder::appendDoctypeToDocument(nsIAtom* aName, nsString* aPublicId, nsString* aSystemId)
+nsHtml5TreeBuilder::appendDoctypeToDocument(nsIAtom* aName,
+                                            nsHtml5String aPublicId,
+                                            nsHtml5String aSystemId)
 {
   NS_PRECONDITION(aName, "Null name");
-
+  nsString publicId; // Not Auto, because using it to hold nsStringBuffer*
+  nsString systemId; // Not Auto, because using it to hold nsStringBuffer*
+  aPublicId.ToString(publicId);
+  aSystemId.ToString(systemId);
   if (mBuilder) {
     nsCOMPtr<nsIAtom> name = nsHtml5TreeOperation::Reget(aName);
-    nsresult rv =
-      nsHtml5TreeOperation::AppendDoctypeToDocument(name,
-                                                    *aPublicId,
-                                                    *aSystemId,
-                                                    mBuilder);
+    nsresult rv = nsHtml5TreeOperation::AppendDoctypeToDocument(
+      name, publicId, systemId, mBuilder);
     if (NS_FAILED(rv)) {
       MarkAsBrokenAndRequestSuspension(rv);
     }
@@ -762,7 +766,7 @@ nsHtml5TreeBuilder::appendDoctypeToDocument(nsIAtom* aName, nsString* aPublicId,
 
   nsHtml5TreeOperation* treeOp = mOpQueue.AppendElement();
   NS_ASSERTION(treeOp, "Tree op allocation failed.");
-  treeOp->Init(aName, *aPublicId, *aSystemId);
+  treeOp->Init(aName, publicId, systemId);
   // nsXMLContentSink can flush here, but what's the point?
   // It can also interrupt here, but we can't.
 }
@@ -961,30 +965,42 @@ nsHtml5TreeBuilder::accumulateCharacters(const char16_t* aBuf, int32_t aStart, i
   charBufferLen += aLength;
 }
 
+// INT32_MAX is (2^31)-1. Therefore, the highest power-of-two that fits
+// is 2^30. Note that this is counting char16_t units. The underlying
+// bytes will be twice that, but they fit even in 32-bit size_t even
+// if a contiguous chunk of memory of that size is pretty unlikely to
+// be available on a 32-bit system.
+#define MAX_POWER_OF_TWO_IN_INT32 0x40000000
+
 bool
-nsHtml5TreeBuilder::EnsureBufferSpace(size_t aLength)
+nsHtml5TreeBuilder::EnsureBufferSpace(int32_t aLength)
 {
   // TODO: Unify nsHtml5Tokenizer::strBuf and nsHtml5TreeBuilder::charBuffer
   // so that this method becomes unnecessary.
-  size_t worstCase = size_t(charBufferLen) + aLength;
-  if (worstCase > INT32_MAX) {
-    // Since we index into the buffer using int32_t due to the Java heritage
-    // of the code, let's treat this as OOM.
+  CheckedInt<int32_t> worstCase(charBufferLen);
+  worstCase += aLength;
+  if (!worstCase.isValid()) {
+    return false;
+  }
+  if (worstCase.value() > MAX_POWER_OF_TWO_IN_INT32) {
     return false;
   }
   if (!charBuffer) {
-    // Add one to round to the next power of two to avoid immediate
-    // reallocation once there are a few characters in the buffer.
-    charBuffer = jArray<char16_t,int32_t>::newFallibleJArray(mozilla::RoundUpPow2(worstCase + 1));
+    if (worstCase.value() < MAX_POWER_OF_TWO_IN_INT32) {
+      // Add one to round to the next power of two to avoid immediate
+      // reallocation once there are a few characters in the buffer.
+      worstCase += 1;
+    }
+    charBuffer = jArray<char16_t,int32_t>::newFallibleJArray(mozilla::RoundUpPow2(worstCase.value()));
     if (!charBuffer) {
       return false;
     }
-  } else if (worstCase > size_t(charBuffer.length)) {
-    jArray<char16_t,int32_t> newBuf = jArray<char16_t,int32_t>::newFallibleJArray(mozilla::RoundUpPow2(worstCase));
+  } else if (worstCase.value() > charBuffer.length) {
+    jArray<char16_t,int32_t> newBuf = jArray<char16_t,int32_t>::newFallibleJArray(mozilla::RoundUpPow2(worstCase.value()));
     if (!newBuf) {
       return false;
     }
-    memcpy(newBuf, charBuffer, sizeof(char16_t) * charBufferLen);
+    memcpy(newBuf, charBuffer, sizeof(char16_t) * size_t(charBufferLen));
     charBuffer = newBuf;
   }
   return true;

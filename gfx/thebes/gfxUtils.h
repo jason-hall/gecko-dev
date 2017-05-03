@@ -7,6 +7,7 @@
 #define GFX_UTILS_H
 
 #include "gfxTypes.h"
+#include "ImageTypes.h"
 #include "imgIContainer.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/RefPtr.h"
@@ -16,6 +17,7 @@
 #include "nsRegionFwd.h"
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/CheckedInt.h"
+#include "mozilla/webrender/WebRenderTypes.h"
 
 class gfxASurface;
 class gfxDrawable;
@@ -25,11 +27,17 @@ class nsIPresShell;
 
 namespace mozilla {
 namespace layers {
+class WebRenderBridgeChild;
+class GlyphArray;
 struct PlanarYCbCrData;
+class WebRenderCommand;
 } // namespace layers
 namespace image {
 class ImageRegion;
 } // namespace image
+namespace wr {
+class DisplayListBuilder;
+} // namespace wr
 } // namespace mozilla
 
 class gfxUtils {
@@ -134,6 +142,9 @@ public:
      */
     static void ClearThebesSurface(gfxASurface* aSurface);
 
+    static const float* YuvToRgbMatrix4x3RowMajor(mozilla::YUVColorSpace aYUVColorSpace);
+    static const float* YuvToRgbMatrix3x3ColumnMajor(mozilla::YUVColorSpace aYUVColorSpace);
+
     /**
      * Creates a copy of aSurface, but having the SurfaceFormat aFormat.
      *
@@ -178,9 +189,6 @@ public:
     static already_AddRefed<DataSourceSurface>
     CopySurfaceToDataSourceSurfaceWithFormat(SourceSurface* aSurface,
                                              SurfaceFormat aFormat);
-
-    static const uint8_t sUnpremultiplyTable[256*256];
-    static const uint8_t sPremultiplyTable[256*256];
 
     /**
      * Return a color that can be used to identify a frame with a given frame number.
@@ -267,11 +275,6 @@ public:
                                                int32_t feature,
                                                nsACString& failureId,
                                                int32_t* status);
-
-    // Can pass `nullptr` for gfxInfo.
-    // If FAILED(ThreadSafeGetFeatureStatus), out_blacklistId will be empty.
-    static bool IsFeatureBlacklisted(nsCOMPtr<nsIGfxInfo> gfxInfo, int32_t feature,
-                                     nsACString* const out_blacklistId);
 
     /**
      * Copy to the clipboard as a PNG encoded Data URL.

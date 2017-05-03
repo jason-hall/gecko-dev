@@ -24,8 +24,6 @@
 #include "gfxRect.h"
 
 #include "nsIAndroidBridge.h"
-#include "nsIMobileMessageCallback.h"
-#include "nsIMobileMessageCursorCallback.h"
 #include "nsIDOMDOMCursor.h"
 
 #include "mozilla/Likely.h"
@@ -44,27 +42,17 @@
 
 class nsPIDOMWindowOuter;
 
-namespace base {
-class Thread;
-} // end namespace base
-
 typedef void* EGLSurface;
+class nsIRunnable;
 
 namespace mozilla {
 
 class AutoLocalJNIFrame;
-class Runnable;
 
 namespace hal {
 class BatteryInformation;
 class NetworkInformation;
 } // namespace hal
-
-namespace dom {
-namespace mobilemessage {
-class SmsFilterData;
-} // namespace mobilemessage
-} // namespace dom
 
 // The order and number of the members in this structure must correspond
 // to the attrsAppearance array in GeckoAppShell.getSystemColors()
@@ -81,24 +69,6 @@ typedef struct AndroidSystemColors {
     nscolor panelColorForeground;
     nscolor panelColorBackground;
 } AndroidSystemColors;
-
-class ThreadCursorContinueCallback : public nsICursorContinueCallback
-{
-public:
-    NS_DECL_ISUPPORTS
-    NS_DECL_NSICURSORCONTINUECALLBACK
-
-    ThreadCursorContinueCallback(int aRequestId)
-        : mRequestId(aRequestId)
-    {
-    }
-private:
-    virtual ~ThreadCursorContinueCallback()
-    {
-    }
-
-    int mRequestId;
-};
 
 class MessageCursorContinueCallback : public nsICursorContinueCallback
 {
@@ -183,39 +153,7 @@ public:
     // DeleteGlobalRef() when the context is no longer needed.
     jobject GetGlobalContextRef(void);
 
-    void HandleGeckoMessage(JSContext* cx, JS::HandleObject message);
-
     void GetCurrentBatteryInformation(hal::BatteryInformation* aBatteryInfo);
-
-    nsresult GetSegmentInfoForText(const nsAString& aText,
-                                   nsIMobileMessageCallback* aRequest);
-    void SendMessage(const nsAString& aNumber, const nsAString& aText,
-                     nsIMobileMessageCallback* aRequest);
-    void GetMessage(int32_t aMessageId, nsIMobileMessageCallback* aRequest);
-    void DeleteMessage(int32_t aMessageId, nsIMobileMessageCallback* aRequest);
-    void MarkMessageRead(int32_t aMessageId,
-                         bool aValue,
-                         bool aSendReadReport,
-                         nsIMobileMessageCallback* aRequest);
-    already_AddRefed<nsICursorContinueCallback>
-    CreateMessageCursor(bool aHasStartDate,
-                        uint64_t aStartDate,
-                        bool aHasEndDate,
-                        uint64_t aEndDate,
-                        const char16_t** aNumbers,
-                        uint32_t aNumbersCount,
-                        const nsAString& aDelivery,
-                        bool aHasRead,
-                        bool aRead,
-                        bool aHasThreadId,
-                        uint64_t aThreadId,
-                        bool aReverse,
-                        nsIMobileMessageCursorCallback* aRequest);
-    already_AddRefed<nsICursorContinueCallback>
-    CreateThreadCursor(nsIMobileMessageCursorCallback* aRequest);
-    already_AddRefed<nsIMobileMessageCallback> DequeueSmsRequest(uint32_t aRequestId);
-    nsCOMPtr<nsIMobileMessageCursorCallback> GetSmsCursorRequest(uint32_t aRequestId);
-    already_AddRefed<nsIMobileMessageCursorCallback> DequeueSmsCursorRequest(uint32_t aRequestId);
 
     void GetCurrentNetworkInformation(hal::NetworkInformation* aNetworkInfo);
 
@@ -258,25 +196,15 @@ public:
     static uint32_t InputStreamAvailable(jni::Object::Param obj);
     static nsresult InputStreamRead(jni::Object::Param obj, char *aBuf, uint32_t aCount, uint32_t *aRead);
 
-    static nsresult GetExternalPublicDirectory(const nsAString& aType, nsAString& aPath);
-
 protected:
     static nsDataHashtable<nsStringHashKey, nsString> sStoragePaths;
 
     static AndroidBridge* sBridge;
-    nsTArray<nsCOMPtr<nsIMobileMessageCallback>> mSmsRequests;
-    nsTArray<nsCOMPtr<nsIMobileMessageCursorCallback>> mSmsCursorRequests;
-
-    // the android.telephony.SmsMessage class
-    jclass mAndroidSmsMessageClass;
 
     AndroidBridge();
     ~AndroidBridge();
 
     int mAPIVersion;
-
-    bool QueueSmsRequest(nsIMobileMessageCallback* aRequest, uint32_t* aRequestIdOut);
-    bool QueueSmsCursorRequest(nsIMobileMessageCursorCallback* aRequest, uint32_t* aRequestIdOut);
 
     // intput stream
     jclass jReadableByteChannel;
@@ -303,7 +231,7 @@ private:
     mozilla::Mutex mUiTaskQueueLock;
 
 public:
-    void PostTaskToUiThread(already_AddRefed<Runnable> aTask, int aDelayMs);
+    void PostTaskToUiThread(already_AddRefed<nsIRunnable> aTask, int aDelayMs);
     int64_t RunDelayedUiThreadTasks();
 };
 
@@ -467,6 +395,8 @@ public:
   NS_DECL_NSIANDROIDBRIDGE
   NS_DECL_NSIOBSERVER
 
+  NS_FORWARD_SAFE_NSIANDROIDEVENTDISPATCHER(mEventDispatcher)
+
   nsAndroidBridge();
 
 private:
@@ -475,9 +405,10 @@ private:
   void AddObservers();
   void RemoveObservers();
 
-  void UpdateAudioPlayingWindows(uint64_t aWindowId, bool aPlaying);
+  void UpdateAudioPlayingWindows(bool aPlaying);
 
-  nsTArray<uint64_t> mAudioPlayingWindows;
+  int32_t mAudibleWindowsNum;
+  nsCOMPtr<nsIAndroidEventDispatcher> mEventDispatcher;
 
 protected:
 };

@@ -35,7 +35,7 @@
 #include "nsIAtom.h"
 #include "nsHtml5AtomTable.h"
 #include "nsITimer.h"
-#include "nsString.h"
+#include "nsHtml5String.h"
 #include "nsNameSpaceManager.h"
 #include "nsIContent.h"
 #include "nsTraceRefcnt.h"
@@ -103,7 +103,10 @@ class nsHtml5TreeBuilder : public nsAHtml5TreeBuilderState
     bool isSrcdocDocument;
   public:
     void startTokenization(nsHtml5Tokenizer* self);
-    void doctype(nsIAtom* name, nsString* publicIdentifier, nsString* systemIdentifier, bool forceQuirks);
+    void doctype(nsIAtom* name,
+                 nsHtml5String publicIdentifier,
+                 nsHtml5String systemIdentifier,
+                 bool forceQuirks);
     void comment(char16_t* buf, int32_t start, int32_t length);
     void characters(const char16_t* buf, int32_t start, int32_t length);
     void zeroOriginatingReplacementCharacter();
@@ -119,7 +122,9 @@ class nsHtml5TreeBuilder : public nsAHtml5TreeBuilderState
     bool isTemplateModeStackEmpty();
     bool isSpecialParentInForeign(nsHtml5StackNode* stackNode);
   public:
-    static nsString* extractCharsetFromContent(nsString* attributeValue, nsHtml5TreeBuilder* tb);
+    static nsHtml5String extractCharsetFromContent(nsHtml5String attributeValue,
+                                                   nsHtml5TreeBuilder* tb);
+
   private:
     void checkMetaCharset(nsHtml5HtmlAttributes* attributes);
   public:
@@ -136,9 +141,16 @@ class nsHtml5TreeBuilder : public nsAHtml5TreeBuilderState
     void generateImpliedEndTagsExceptFor(nsIAtom* name);
     void generateImpliedEndTags();
     bool isSecondOnStackBody();
-    void documentModeInternal(nsHtml5DocumentMode m, nsString* publicIdentifier, nsString* systemIdentifier, bool html4SpecificAdditionalErrorChecks);
-    bool isAlmostStandards(nsString* publicIdentifier, nsString* systemIdentifier);
-    bool isQuirky(nsIAtom* name, nsString* publicIdentifier, nsString* systemIdentifier, bool forceQuirks);
+    void documentModeInternal(nsHtml5DocumentMode m,
+                              nsHtml5String publicIdentifier,
+                              nsHtml5String systemIdentifier,
+                              bool html4SpecificAdditionalErrorChecks);
+    bool isAlmostStandards(nsHtml5String publicIdentifier,
+                           nsHtml5String systemIdentifier);
+    bool isQuirky(nsIAtom* name,
+                  nsHtml5String publicIdentifier,
+                  nsHtml5String systemIdentifier,
+                  bool forceQuirks);
     void closeTheCell(int32_t eltPos);
     int32_t findLastInTableScopeTdTh();
     void clearStackBackTo(int32_t eltPos);
@@ -224,7 +236,9 @@ class nsHtml5TreeBuilder : public nsAHtml5TreeBuilderState
     void markMalformedIfScript(nsIContentHandle* elt);
     void start(bool fragmentMode);
     void end();
-    void appendDoctypeToDocument(nsIAtom* name, nsString* publicIdentifier, nsString* systemIdentifier);
+    void appendDoctypeToDocument(nsIAtom* name,
+                                 nsHtml5String publicIdentifier,
+                                 nsHtml5String systemIdentifier);
     void elementPushed(int32_t ns, nsIAtom* name, nsIContentHandle* node);
     void elementPopped(int32_t ns, nsIAtom* name, nsIContentHandle* node);
   public:
@@ -324,7 +338,7 @@ class nsHtml5TreeBuilder : public nsAHtml5TreeBuilderState
 #define NS_HTML5TREE_BUILDER_EMBED 48
 #define NS_HTML5TREE_BUILDER_AREA_OR_WBR 49
 #define NS_HTML5TREE_BUILDER_DIV_OR_BLOCKQUOTE_OR_CENTER_OR_MENU 50
-#define NS_HTML5TREE_BUILDER_ADDRESS_OR_ARTICLE_OR_ASIDE_OR_DETAILS_OR_DIR_OR_FIGCAPTION_OR_FIGURE_OR_FOOTER_OR_HEADER_OR_HGROUP_OR_MAIN_OR_NAV_OR_SECTION_OR_SUMMARY 51
+#define NS_HTML5TREE_BUILDER_ADDRESS_OR_ARTICLE_OR_ASIDE_OR_DETAILS_OR_DIALOG_OR_DIR_OR_FIGCAPTION_OR_FIGURE_OR_FOOTER_OR_HEADER_OR_HGROUP_OR_MAIN_OR_NAV_OR_SECTION_OR_SUMMARY 51
 #define NS_HTML5TREE_BUILDER_RUBY_OR_SPAN_OR_SUB_OR_SUP_OR_VAR 52
 #define NS_HTML5TREE_BUILDER_RB_OR_RTC 53
 #define NS_HTML5TREE_BUILDER_PARAM_OR_SOURCE_OR_TRACK 55

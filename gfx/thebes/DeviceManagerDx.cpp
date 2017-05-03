@@ -206,8 +206,6 @@ DeviceManagerDx::GetDXGIAdapter()
   if (!mDeviceStatus) {
     // If we haven't created a device yet, and have no existing device status,
     // then this must be the compositor device. Pick the first adapter we can.
-    MOZ_ASSERT(ProcessOwnsCompositor());
-
     if (FAILED(factory1->EnumAdapters1(0, getter_AddRefs(mAdapter)))) {
       return nullptr;
     }
@@ -314,6 +312,14 @@ DeviceManagerDx::CreateCompositorDevice(FeatureState& d3d11)
     return;
   }
 
+  if (XRE_IsGPUProcess() && !D3D11Checks::DoesRemotePresentWork(adapter)) {
+    d3d11.SetFailed(
+      FeatureStatus::Unavailable,
+      "DXGI does not support out-of-process presentation",
+      NS_LITERAL_CSTRING("FEATURE_FAILURE_D3D11_REMOTE_PRESENT"));
+    return;
+  }
+
   RefPtr<ID3D11Device> device;
   if (!CreateCompositorDeviceHelper(d3d11, adapter, true, device)) {
     // Try again without video support and record that it failed.
@@ -361,6 +367,8 @@ DeviceManagerDx::CreateCompositorDevice(FeatureState& d3d11)
   mCompositorDevice->SetExceptionMode(0);
 }
 
+//#define BREAK_ON_D3D_ERROR
+
 bool
 DeviceManagerDx::CreateDevice(IDXGIAdapter* aAdapter,
                                  D3D_DRIVER_TYPE aDriverType,
@@ -368,6 +376,10 @@ DeviceManagerDx::CreateDevice(IDXGIAdapter* aAdapter,
                                  HRESULT& aResOut,
                                  RefPtr<ID3D11Device>& aOutDevice)
 {
+#ifdef BREAK_ON_D3D_ERROR
+  aFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+
   MOZ_SEH_TRY {
     aResOut = sD3D11CreateDeviceFn(
       aAdapter, aDriverType, nullptr,
@@ -377,6 +389,26 @@ DeviceManagerDx::CreateDevice(IDXGIAdapter* aAdapter,
   } MOZ_SEH_EXCEPT (EXCEPTION_EXECUTE_HANDLER) {
     return false;
   }
+
+#ifdef BREAK_ON_D3D_ERROR
+  do {
+    if (!aOutDevice)
+      break;
+
+    RefPtr<ID3D11Debug> debug;
+    if(!SUCCEEDED( aOutDevice->QueryInterface(__uuidof(ID3D11Debug), getter_AddRefs(debug)) ))
+      break;
+
+    RefPtr<ID3D11InfoQueue> infoQueue;
+    if(!SUCCEEDED( debug->QueryInterface(__uuidof(ID3D11InfoQueue), getter_AddRefs(infoQueue)) ))
+      break;
+
+    infoQueue->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_CORRUPTION, true);
+    infoQueue->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_ERROR, true);
+    infoQueue->SetBreakOnSeverity(D3D11_MESSAGE_SEVERITY_WARNING, true);
+  } while (false);
+#endif
+
   return true;
 }
 
@@ -494,19 +526,41 @@ DeviceManagerDx::CreateContentDevice()
 RefPtr<ID3D11Device>
 DeviceManagerDx::CreateDecoderDevice()
 {
-  if (mCompositorDevice && mCompositorDeviceSupportsVideo && !mDecoderDevice) {
-    mDecoderDevice = mCompositorDevice;
-
-    RefPtr<ID3D10Multithread> multi;
-    mDecoderDevice->QueryInterface(__uuidof(ID3D10Multithread), getter_AddRefs(multi));
-    if (multi) {
-      multi->SetMultithreadProtected(TRUE);
+  bool isAMD = false;
+  {
+    MutexAutoLock lock(mDeviceLock);
+    if (!mDeviceStatus) {
+      return nullptr;
     }
+    isAMD = mDeviceStatus->adapter().VendorId == 0x1002;
   }
 
-  if (mDecoderDevice) {
-    RefPtr<ID3D11Device> dev = mDecoderDevice;
-    return dev.forget();
+  bool reuseDevice = false;
+  if (gfxPrefs::Direct3D11ReuseDecoderDevice() < 0) {
+    // Use the default logic, which is to allow reuse of devices on AMD, but create
+    // separate devices everywhere else.
+    if (isAMD) {
+      reuseDevice = true;
+    }
+  } else if (gfxPrefs::Direct3D11ReuseDecoderDevice() > 0) {
+    reuseDevice = true;
+  }
+
+  if (reuseDevice) {
+    if (mCompositorDevice && mCompositorDeviceSupportsVideo && !mDecoderDevice) {
+      mDecoderDevice = mCompositorDevice;
+
+      RefPtr<ID3D10Multithread> multi;
+      mDecoderDevice->QueryInterface(__uuidof(ID3D10Multithread), getter_AddRefs(multi));
+      if (multi) {
+        multi->SetMultithreadProtected(TRUE);
+      }
+    }
+
+    if (mDecoderDevice) {
+      RefPtr<ID3D11Device> dev = mDecoderDevice;
+      return dev.forget();
+    }
   }
 
    if (!sD3D11CreateDeviceFn) {
@@ -536,7 +590,9 @@ DeviceManagerDx::CreateDecoderDevice()
 
   multi->SetMultithreadProtected(TRUE);
 
-  mDecoderDevice = device;
+  if (reuseDevice) {
+    mDecoderDevice = device;
+  }
   return device;
 }
 
@@ -545,10 +601,40 @@ DeviceManagerDx::ResetDevices()
 {
   MutexAutoLock lock(mDeviceLock);
 
+  mAdapter = nullptr;
   mCompositorDevice = nullptr;
   mContentDevice = nullptr;
   mDeviceStatus = Nothing();
+  mDeviceResetReason = Nothing();
   Factory::SetDirect3D11Device(nullptr);
+}
+
+bool
+DeviceManagerDx::MaybeResetAndReacquireDevices()
+{
+  DeviceResetReason resetReason;
+  if (!HasDeviceReset(&resetReason)) {
+    return false;
+  }
+
+  if (resetReason != DeviceResetReason::FORCED_RESET) {
+    Telemetry::Accumulate(Telemetry::DEVICE_RESET_REASON, uint32_t(resetReason));
+  }
+
+  bool createCompositorDevice = !!mCompositorDevice;
+  bool createContentDevice = !!mContentDevice;
+
+  ResetDevices();
+
+  if (createCompositorDevice && !CreateCompositorDevices()) {
+    // Just stop, don't try anything more
+    return true;
+  }
+  if (createContentDevice) {
+    CreateContentDevices();
+  }
+
+  return true;
 }
 
 bool
@@ -599,8 +685,32 @@ static DeviceResetReason HResultToResetReason(HRESULT hr)
   return DeviceResetReason::UNKNOWN;
 }
 
+bool
+DeviceManagerDx::HasDeviceReset(DeviceResetReason* aOutReason)
+{
+  MutexAutoLock lock(mDeviceLock);
+
+  if (mDeviceResetReason) {
+    if (aOutReason) {
+      *aOutReason = mDeviceResetReason.value();
+    }
+    return true;
+  }
+
+  DeviceResetReason reason;
+  if (GetAnyDeviceRemovedReason(&reason)) {
+    mDeviceResetReason = Some(reason);
+    if (aOutReason) {
+      *aOutReason = reason;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 static inline bool
-DidDeviceReset(RefPtr<ID3D11Device> aDevice, DeviceResetReason* aOutReason)
+DidDeviceReset(const RefPtr<ID3D11Device>& aDevice, DeviceResetReason* aOutReason)
 {
   if (!aDevice) {
     return false;
@@ -617,14 +727,43 @@ DidDeviceReset(RefPtr<ID3D11Device> aDevice, DeviceResetReason* aOutReason)
 bool
 DeviceManagerDx::GetAnyDeviceRemovedReason(DeviceResetReason* aOutReason)
 {
-  // Note: this can be called off the main thread, so we need to use
-  // our threadsafe getters.
-  if (DidDeviceReset(GetCompositorDevice(), aOutReason) ||
-      DidDeviceReset(GetContentDevice(), aOutReason))
+  // Caller must own the lock, since we access devices directly, and can be
+  // called from any thread.
+  mDeviceLock.AssertCurrentThreadOwns();
+
+  if (DidDeviceReset(mCompositorDevice, aOutReason) ||
+      DidDeviceReset(mContentDevice, aOutReason))
   {
     return true;
   }
+
+  if (XRE_IsParentProcess() &&
+      NS_IsMainThread() &&
+      gfxPrefs::DeviceResetForTesting())
+  {
+    gfxPrefs::SetDeviceResetForTesting(0);
+    *aOutReason = DeviceResetReason::FORCED_RESET;
+    return true;
+  }
+
   return false;
+}
+
+void
+DeviceManagerDx::ForceDeviceReset(ForcedDeviceResetReason aReason)
+{
+  Telemetry::Accumulate(Telemetry::FORCED_DEVICE_RESET_REASON, uint32_t(aReason));
+  {
+    MutexAutoLock lock(mDeviceLock);
+    mDeviceResetReason = Some(DeviceResetReason::FORCED_RESET);
+  }
+}
+
+void
+DeviceManagerDx::NotifyD3D9DeviceReset()
+{
+  MutexAutoLock lock(mDeviceLock);
+  mDeviceResetReason = Some(DeviceResetReason::D3D9_RESET);
 }
 
 void
@@ -668,6 +807,33 @@ DeviceManagerDx::TextureSharingWorks()
     return false;
   }
   return mDeviceStatus->textureSharingWorks();
+}
+
+bool
+DeviceManagerDx::CanInitializeKeyedMutexTextures()
+{
+  MutexAutoLock lock(mDeviceLock);
+  if (!mDeviceStatus) {
+    return false;
+  }
+  // Disable this on all Intel devices because of crashes.
+  // See bug 1292923.
+  return (mDeviceStatus->adapter().VendorId != 0x8086 || gfxPrefs::Direct3D11AllowIntelMutex());
+}
+
+bool
+DeviceManagerDx::CheckRemotePresentSupport()
+{
+  MOZ_ASSERT(XRE_IsParentProcess());
+
+  RefPtr<IDXGIAdapter1> adapter = GetDXGIAdapter();
+  if (!adapter) {
+    return false;
+  }
+  if (!D3D11Checks::DoesRemotePresentWork(adapter)) {
+    return false;
+  }
+  return true;
 }
 
 bool

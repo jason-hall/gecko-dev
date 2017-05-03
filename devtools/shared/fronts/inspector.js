@@ -5,6 +5,7 @@
 
 require("devtools/shared/fronts/styles");
 require("devtools/shared/fronts/highlighters");
+require("devtools/shared/fronts/layout");
 const { SimpleStringFront } = require("devtools/shared/fronts/string");
 const {
   Front,
@@ -751,6 +752,11 @@ const WalkerFront = FrontClassWithSpec(walkerSpec, {
         let targetFront;
 
         if (change.type === "newRoot") {
+          // We may receive a new root without receiving any documentUnload
+          // beforehand. Like when opening tools in middle of a document load.
+          if (this.rootNode) {
+            this._createRootNodePromise();
+          }
           this.rootNode = types.getType("domnode").read(change.target, this);
           this._rootNodeDeferred.resolve(this.rootNode);
           targetID = this.rootNode.actorID;
@@ -761,8 +767,9 @@ const WalkerFront = FrontClassWithSpec(walkerSpec, {
         }
 
         if (!targetFront) {
-          console.trace("Got a mutation for an unexpected actor: " + targetID +
+          console.warn("Got a mutation for an unexpected actor: " + targetID +
             ", please file a bug on bugzilla.mozilla.org!");
+          console.trace();
           continue;
         }
 
@@ -820,8 +827,9 @@ const WalkerFront = FrontClassWithSpec(walkerSpec, {
           // first.
           for (let child of targetFront.treeChildren()) {
             if (child.nodeType === nodeConstants.DOCUMENT_NODE) {
-              console.trace("Got an unexpected frameLoad in the inspector, " +
+              console.warn("Got an unexpected frameLoad in the inspector, " +
                 "please file a bug on bugzilla.mozilla.org!");
+              console.trace();
             }
           }
         } else if (change.type === "documentUnload") {
@@ -985,11 +993,7 @@ var InspectorFront = FrontClassWithSpec(inspectorSpec, {
     if (toolbox) {
       // If the eyedropper was already started using the gcli command, hide it so we don't
       // end up with 2 instances of the eyedropper on the page.
-      let {target} = toolbox;
-      let requisition = yield CommandUtils.createRequisition(target, {
-        environment: CommandUtils.createEnvironment({target})
-      });
-      yield requisition.updateExec("eyedropper --hide");
+      CommandUtils.executeOnTarget(toolbox.target, "eyedropper --hide");
     }
 
     yield this._pickColorFromPage(options);

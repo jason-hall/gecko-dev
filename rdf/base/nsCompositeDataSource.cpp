@@ -43,7 +43,6 @@
 #include "nsEnumeratorUtils.h"
 
 #include "mozilla/Logging.h"
-#include "prprf.h"
 #include <stdio.h>
 mozilla::LazyLogModule nsRDFLog("RDF");
 
@@ -1099,9 +1098,9 @@ CompositeDataSourceImpl::GetAllCmds(nsIRDFResource* source,
 }
 
 NS_IMETHODIMP
-CompositeDataSourceImpl::IsCommandEnabled(nsISupportsArray/*<nsIRDFResource>*/* aSources,
+CompositeDataSourceImpl::IsCommandEnabled(nsISupports/* nsIRDFResource container */* aSources,
                                           nsIRDFResource*   aCommand,
-                                          nsISupportsArray/*<nsIRDFResource>*/* aArguments,
+                                          nsISupports/* nsIRDFResource container */* aArguments,
                                           bool* aResult)
 {
     nsresult rv;
@@ -1123,9 +1122,9 @@ CompositeDataSourceImpl::IsCommandEnabled(nsISupportsArray/*<nsIRDFResource>*/* 
 }
 
 NS_IMETHODIMP
-CompositeDataSourceImpl::DoCommand(nsISupportsArray/*<nsIRDFResource>*/* aSources,
+CompositeDataSourceImpl::DoCommand(nsISupports/* nsIRDFResource container */* aSources,
                                    nsIRDFResource*   aCommand,
-                                   nsISupportsArray/*<nsIRDFResource>*/* aArguments)
+                                   nsISupports/* nsIRDFResource container */* aArguments)
 {
     for (int32_t i = mDataSources.Count() - 1; i >= 0; --i) {
         nsresult rv = mDataSources[i]->DoCommand(aSources, aCommand, aArguments);

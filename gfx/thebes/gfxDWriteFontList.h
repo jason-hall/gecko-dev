@@ -17,6 +17,8 @@
 #include "gfxPlatform.h"
 #include <algorithm>
 
+#include "mozilla/gfx/UnscaledFontDWrite.h"
+
 
 /**
  * gfxDWriteFontFamily is a class that describes one of the fonts on the
@@ -58,7 +60,6 @@ public:
     void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
                                 FontListSizes* aSizes) const final;
 
-    already_AddRefed<IDWriteFont> GetDefaultFont();
 protected:
     /** This font family's directwrite fontfamily object */
     RefPtr<IDWriteFontFamily> mDWFamily;
@@ -167,10 +168,6 @@ public:
     virtual void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
                                         FontListSizes* aSizes) const;
 
-    IDWriteFont* GetFont() {
-      return mFont;
-    }
-
 protected:
     friend class gfxDWriteFont;
     friend class gfxDWriteFontList;
@@ -206,13 +203,16 @@ protected:
 
     int8_t mIsCJK;
     bool mForceGDIClassic;
+
+    mozilla::WeakPtr<mozilla::gfx::UnscaledFont> mUnscaledFont;
+    mozilla::WeakPtr<mozilla::gfx::UnscaledFont> mUnscaledFontBold;
 };
 
 // custom text renderer used to determine the fallback font for a given char
 class DWriteFontFallbackRenderer final : public IDWriteTextRenderer
 {
 public:
-    DWriteFontFallbackRenderer(IDWriteFactory *aFactory)
+    explicit DWriteFontFallbackRenderer(IDWriteFactory *aFactory)
         : mRefCount(0)
     {
         HRESULT hr = S_OK;

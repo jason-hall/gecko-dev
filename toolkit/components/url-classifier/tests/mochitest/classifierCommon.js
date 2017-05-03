@@ -6,8 +6,9 @@ const { classes: Cc, interfaces: Ci, results: Cr } = Components;
 var dbService = Cc["@mozilla.org/url-classifier/dbservice;1"]
                 .getService(Ci.nsIUrlClassifierDBService);
 
+var timer;
 function setTimeout(callback, delay) {
-  let timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+  timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
   timer.initWithCallback({ notify: callback },
                            delay,
                            Ci.nsITimer.TYPE_ONE_SHOT);
@@ -77,7 +78,7 @@ function waitForInit() {
               .getService(Ci.nsIIOService);
 
   let principal = secMan.createCodebasePrincipal(
-    iosvc.newURI(url, null, null), {});
+    iosvc.newURI(url), {});
 
   let listener = {
     QueryInterface: function(iid)

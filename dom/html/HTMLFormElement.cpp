@@ -163,6 +163,14 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLFormElement)
                                nsIRadioGroupContainer)
 NS_INTERFACE_TABLE_TAIL_INHERITING(nsGenericHTMLElement)
 
+// EventTarget
+void
+HTMLFormElement::AsyncEventRunning(AsyncEventDispatcher* aEvent)
+{
+  if (mFormPasswordEventDispatcher == aEvent) {
+    mFormPasswordEventDispatcher = nullptr;
+  }
+}
 
 // nsIDOMHTMLFormElement
 
@@ -483,7 +491,7 @@ HTMLFormElement::UnbindFromTree(bool aDeep, bool aNullParent)
 }
 
 nsresult
-HTMLFormElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
+HTMLFormElement::GetEventTargetParent(EventChainPreVisitor& aVisitor)
 {
   aVisitor.mWantsWillHandleEvent = true;
   if (aVisitor.mEvent->mOriginalTarget == static_cast<nsIContent*>(this)) {
@@ -507,7 +515,7 @@ HTMLFormElement::PreHandleEvent(EventChainPreVisitor& aVisitor)
       mGeneratingReset = true;
     }
   }
-  return nsGenericHTMLElement::PreHandleEvent(aVisitor);
+  return nsGenericHTMLElement::GetEventTargetParent(aVisitor);
 }
 
 nsresult
@@ -579,7 +587,7 @@ HTMLFormElement::DoSubmitOrReset(WidgetEvent* aEvent,
   // Make sure the presentation is up-to-date
   nsIDocument* doc = GetComposedDoc();
   if (doc) {
-    doc->FlushPendingNotifications(Flush_ContentAndNotify);
+    doc->FlushPendingNotifications(FlushType::ContentAndNotify);
   }
 
   // JBK Don't get form frames anymore - bug 34297
@@ -821,7 +829,7 @@ HTMLFormElement::SubmitSubmission(HTMLFormSubmission* aFormSubmission)
     rv = linkHandler->OnLinkClickSync(this, actionURI,
                                       target.get(),
                                       NullString(),
-                                      postDataStream, nullptr,
+                                      postDataStream, nullptr, false,
                                       getter_AddRefs(docShell),
                                       getter_AddRefs(mSubmittingRequest));
     NS_ENSURE_SUBMIT_SUCCESS(rv);
@@ -1160,8 +1168,8 @@ HTMLFormElement::PostPasswordEvent()
   }
 
   mFormPasswordEventDispatcher =
-    new FormPasswordEventDispatcher(this,
-                                    NS_LITERAL_STRING("DOMFormHasPassword"));
+    new AsyncEventDispatcher(this, NS_LITERAL_STRING("DOMFormHasPassword"),
+                             true, true);
   mFormPasswordEventDispatcher->PostDOMEvent();
 }
 
@@ -1243,7 +1251,7 @@ HTMLFormElement::AddElement(nsGenericHTMLFormElement* aChild,
   AssertDocumentOrder(controlList, this);
 #endif
 
-  int32_t type = aChild->GetType();
+  int32_t type = aChild->ControlType();
 
   //
   // If it is a password control, and the password manager has not yet been
@@ -1338,11 +1346,13 @@ nsresult
 HTMLFormElement::RemoveElement(nsGenericHTMLFormElement* aChild,
                                bool aUpdateValidity)
 {
+  RemoveElementFromPastNamesMap(aChild);
+
   //
   // Remove it from the radio group if it's a radio button
   //
   nsresult rv = NS_OK;
-  if (aChild->GetType() == NS_FORM_INPUT_RADIO) {
+  if (aChild->ControlType() == NS_FORM_INPUT_RADIO) {
     RefPtr<HTMLInputElement> radio =
       static_cast<HTMLInputElement*>(aChild);
     radio->WillRemoveFromRadioGroup();
@@ -1488,23 +1498,8 @@ HTMLFormElement::RemoveElementFromTableInternal(
 
 nsresult
 HTMLFormElement::RemoveElementFromTable(nsGenericHTMLFormElement* aElement,
-                                        const nsAString& aName,
-                                        RemoveElementReason aRemoveReason)
+                                        const nsAString& aName)
 {
-  // If the element is being removed from the form, we have to remove it from
-  // the past names map.
-  if (aRemoveReason == ElementRemoved) {
-    uint32_t oldCount = mPastNameLookupTable.Count();
-    for (auto iter = mPastNameLookupTable.Iter(); !iter.Done(); iter.Next()) {
-      if (static_cast<void*>(aElement) == iter.Data()) {
-        iter.Remove();
-      }
-    }
-    if (oldCount != mPastNameLookupTable.Count()) {
-      ++mExpandoAndGeneration.generation;
-    }
-  }
-
   return mControls->RemoveElementFromTable(aElement, aName);
 }
 
@@ -1823,7 +1818,7 @@ HTMLFormElement::ImplicitSubmissionIsDisabled() const
   uint32_t length = mControls->mElements.Length();
   for (uint32_t i = 0; i < length && numDisablingControlsFound < 2; ++i) {
     if (mControls->mElements[i]->IsSingleLineTextControl(false) ||
-        mControls->mElements[i]->GetType() == NS_FORM_INPUT_NUMBER) {
+        mControls->mElements[i]->ControlType() == NS_FORM_INPUT_NUMBER) {
       numDisablingControlsFound++;
     }
   }
@@ -2029,7 +2024,7 @@ HTMLFormElement::SubmissionCanProceed(Element* aSubmitter)
     nsCOMPtr<nsIFormControl> fc = do_QueryInterface(aSubmitter);
     MOZ_ASSERT(fc);
 
-    uint32_t type = fc->GetType();
+    uint32_t type = fc->ControlType();
     MOZ_ASSERT(type == NS_FORM_INPUT_SUBMIT ||
                type == NS_FORM_INPUT_IMAGE ||
                type == NS_FORM_BUTTON_SUBMIT,
@@ -2230,7 +2225,7 @@ HTMLFormElement::GetNextRadioButton(const nsAString& aName,
       index = 0;
     }
     radio = HTMLInputElement::FromContentOrNull(radioGroup->Item(index));
-    isRadio = radio && radio->GetType() == NS_FORM_INPUT_RADIO;
+    isRadio = radio && radio->ControlType() == NS_FORM_INPUT_RADIO;
     if (!isRadio) {
       continue;
     }
@@ -2258,7 +2253,7 @@ HTMLFormElement::WalkRadioGroup(const nsAString& aName,
     uint32_t len = GetElementCount();
     for (uint32_t i = 0; i < len; i++) {
       control = GetElementAt(i);
-      if (control->GetType() == NS_FORM_INPUT_RADIO) {
+      if (control->ControlType() == NS_FORM_INPUT_RADIO) {
         nsCOMPtr<nsIContent> controlContent = do_QueryInterface(control);
         if (controlContent &&
             controlContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::name,
@@ -2280,7 +2275,7 @@ HTMLFormElement::WalkRadioGroup(const nsAString& aName,
   // If it's just a lone radio button, then select it.
   nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(item);
   if (formControl) {
-    if (formControl->GetType() == NS_FORM_INPUT_RADIO) {
+    if (formControl->ControlType() == NS_FORM_INPUT_RADIO) {
       aVisitor->Visit(formControl);
     }
     return NS_OK;
@@ -2296,7 +2291,7 @@ HTMLFormElement::WalkRadioGroup(const nsAString& aName,
     nsCOMPtr<nsIDOMNode> node;
     nodeList->Item(i, getter_AddRefs(node));
     nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(node);
-    if (formControl && formControl->GetType() == NS_FORM_INPUT_RADIO &&
+    if (formControl && formControl->ControlType() == NS_FORM_INPUT_RADIO &&
         !aVisitor->Visit(formControl)) {
       break;
     }
@@ -2529,6 +2524,8 @@ HTMLFormElement::AddImageElementToTable(HTMLImageElement* aChild,
 nsresult
 HTMLFormElement::RemoveImageElement(HTMLImageElement* aChild)
 {
+  RemoveElementFromPastNamesMap(aChild);
+
   size_t index = mImageElements.IndexOf(aChild);
   NS_ENSURE_STATE(index != mImageElements.NoIndex);
 
@@ -2538,19 +2535,8 @@ HTMLFormElement::RemoveImageElement(HTMLImageElement* aChild)
 
 nsresult
 HTMLFormElement::RemoveImageElementFromTable(HTMLImageElement* aElement,
-                                             const nsAString& aName,
-                                             RemoveElementReason aRemoveReason)
+                                             const nsAString& aName)
 {
-  // If the element is being removed from the form, we have to remove it from
-  // the past names map.
-  if (aRemoveReason == ElementRemoved) {
-    for (auto iter = mPastNameLookupTable.Iter(); !iter.Done(); iter.Next()) {
-      if (static_cast<void*>(aElement) == iter.Data()) {
-        iter.Remove();
-      }
-    }
-  }
-
   return RemoveElementFromTableInternal(mImageNameLookupTable, aElement, aName);
 }
 
@@ -2563,7 +2549,28 @@ HTMLFormElement::AddToPastNamesMap(const nsAString& aName,
   // previous entry with the same name, if any.
   nsCOMPtr<nsIContent> node = do_QueryInterface(aChild);
   if (node) {
-    mPastNameLookupTable.Put(aName, aChild);
+    mPastNameLookupTable.Put(aName, node);
+    node->SetFlags(MAY_BE_IN_PAST_NAMES_MAP);
+  }
+}
+
+void
+HTMLFormElement::RemoveElementFromPastNamesMap(Element* aElement)
+{
+  if (!aElement->HasFlag(MAY_BE_IN_PAST_NAMES_MAP)) {
+    return;
+  }
+
+  aElement->UnsetFlags(MAY_BE_IN_PAST_NAMES_MAP);
+
+  uint32_t oldCount = mPastNameLookupTable.Count();
+  for (auto iter = mPastNameLookupTable.Iter(); !iter.Done(); iter.Next()) {
+    if (aElement == iter.Data()) {
+      iter.Remove();
+    }
+  }
+  if (oldCount != mPastNameLookupTable.Count()) {
+    ++mExpandoAndGeneration.generation;
   }
 }
 

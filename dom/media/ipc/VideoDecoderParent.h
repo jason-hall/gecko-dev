@@ -6,17 +6,20 @@
 #ifndef include_dom_ipc_VideoDecoderParent_h
 #define include_dom_ipc_VideoDecoderParent_h
 
-#include "mozilla/RefPtr.h"
-#include "mozilla/dom/PVideoDecoderParent.h"
-#include "VideoDecoderManagerParent.h"
-#include "MediaData.h"
 #include "ImageContainer.h"
+#include "MediaData.h"
+#include "PlatformDecoderModule.h"
+#include "VideoDecoderManagerParent.h"
+#include "mozilla/MozPromise.h"
+#include "mozilla/dom/PVideoDecoderParent.h"
+#include "mozilla/layers/TextureForwarder.h"
 
 namespace mozilla {
 namespace dom {
 
-class VideoDecoderParent final : public PVideoDecoderParent,
-                                 public MediaDataDecoderCallback
+class KnowsCompositorVideo;
+
+class VideoDecoderParent final : public PVideoDecoderParent
 {
 public:
   // We refcount this class since the task queue can have runnables
@@ -24,36 +27,37 @@ public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(VideoDecoderParent)
 
   VideoDecoderParent(VideoDecoderManagerParent* aParent,
+                     const VideoInfo& aVideoInfo,
+                     const layers::TextureFactoryIdentifier& aIdentifier,
                      TaskQueue* aManagerTaskQueue,
-                     TaskQueue* aDecodeTaskQueue);
+                     TaskQueue* aDecodeTaskQueue,
+                     bool* aSuccess);
 
   void Destroy();
 
   // PVideoDecoderParent
-  bool RecvInit(const VideoInfo& aVideoInfo, const layers::LayersBackend& aBackend) override;
-  bool RecvInput(const MediaRawDataIPDL& aData) override;
-  bool RecvFlush() override;
-  bool RecvDrain() override;
-  bool RecvShutdown() override;
-  bool RecvSetSeekThreshold(const int64_t& aTime) override;
+  mozilla::ipc::IPCResult RecvInit() override;
+  mozilla::ipc::IPCResult RecvInput(const MediaRawDataIPDL& aData) override;
+  mozilla::ipc::IPCResult RecvFlush() override;
+  mozilla::ipc::IPCResult RecvDrain() override;
+  mozilla::ipc::IPCResult RecvShutdown() override;
+  mozilla::ipc::IPCResult RecvSetSeekThreshold(const int64_t& aTime) override;
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
-  // MediaDataDecoderCallback
-  void Output(MediaData* aData) override;
-  void Error(const MediaResult& aError) override;
-  void InputExhausted() override;
-  void DrainComplete() override;
-  bool OnReaderTaskQueue() override;
-
 private:
+  bool OnManagerThread();
+  void Error(const MediaResult& aError);
+
   ~VideoDecoderParent();
+  void ProcessDecodedData(const MediaDataDecoder::DecodedData& aData);
 
   RefPtr<VideoDecoderManagerParent> mParent;
   RefPtr<VideoDecoderParent> mIPDLSelfRef;
   RefPtr<TaskQueue> mManagerTaskQueue;
   RefPtr<TaskQueue> mDecodeTaskQueue;
   RefPtr<MediaDataDecoder> mDecoder;
+  RefPtr<KnowsCompositorVideo> mKnowsCompositor;
 
   // Can only be accessed from the manager thread
   bool mDestroyed;

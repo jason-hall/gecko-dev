@@ -8,7 +8,6 @@
 #define PDMFactory_h_
 
 #include "PlatformDecoderModule.h"
-#include "mozilla/Function.h"
 #include "mozilla/StaticMutex.h"
 
 class CDMProxy;
@@ -19,7 +18,8 @@ class DecoderDoctorDiagnostics;
 class PDMFactoryImpl;
 template<class T> class StaticAutoPtr;
 
-class PDMFactory final {
+class PDMFactory final
+{
 public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(PDMFactory)
 
@@ -35,6 +35,8 @@ public:
 
   bool SupportsMimeType(const nsACString& aMimeType,
                         DecoderDoctorDiagnostics* aDiagnostics) const;
+  bool Supports(const TrackInfo& aTrackInfo,
+                DecoderDoctorDiagnostics* aDiagnostics) const;
 
   // Creates a PlatformDecoderModule that uses a CDMProxy to decrypt or
   // decrypt-and-decode EME encrypted content. If the CDM only decrypts and
@@ -51,12 +53,12 @@ public:
 private:
   virtual ~PDMFactory();
   void CreatePDMs();
-  void CreateBlankPDM();
+  void CreateNullPDM();
   // Startup the provided PDM and add it to our list if successful.
-  bool StartupPDM(PlatformDecoderModule* aPDM);
+  bool StartupPDM(PlatformDecoderModule* aPDM, bool aInsertAtBeginning = false);
   // Returns the first PDM in our list supporting the mimetype.
   already_AddRefed<PlatformDecoderModule>
-  GetDecoder(const nsACString& aMimeType,
+  GetDecoder(const TrackInfo& aTrackInfo,
              DecoderDoctorDiagnostics* aDiagnostics) const;
 
   already_AddRefed<MediaDataDecoder>
@@ -65,7 +67,7 @@ private:
 
   nsTArray<RefPtr<PlatformDecoderModule>> mCurrentPDMs;
   RefPtr<PlatformDecoderModule> mEMEPDM;
-  RefPtr<PlatformDecoderModule> mBlankPDM;
+  RefPtr<PlatformDecoderModule> mNullPDM;
 
   bool mWMFFailedToLoad = false;
   bool mFFmpegFailedToLoad = false;

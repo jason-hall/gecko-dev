@@ -14,8 +14,11 @@
 #include "ia2AccessibleComponent.h"
 #include "ia2AccessibleHyperlink.h"
 #include "ia2AccessibleValue.h"
+#include "mozilla/a11y/AccessibleHandler.h"
+#include "mozilla/a11y/MsaaIdGenerator.h"
 #include "mozilla/a11y/ProxyAccessible.h"
-#include "mozilla/a11y/IDSet.h"
+#include "mozilla/Attributes.h"
+#include "mozilla/mscom/Utils.h"
 
 #ifdef __GNUC__
 // Inheriting from both XPCOM and MSCOM interfaces causes a lot of warnings
@@ -173,7 +176,8 @@ public: // construction, destruction
   /**
    * Find an accessible by the given child ID in cached documents.
    */
-  Accessible* GetXPAccessibleFor(const VARIANT& aVarChild);
+  MOZ_MUST_USE already_AddRefed<IAccessible>
+  GetIAccessibleFor(const VARIANT& aVarChild, bool* aIsDefunct);
 
   virtual void GetNativeInterface(void **aOutAccessible) override;
 
@@ -181,13 +185,26 @@ public: // construction, destruction
 
   uint32_t GetExistingID() const { return mID; }
   static const uint32_t kNoID = 0;
-  // This is only valid to call in content
   void SetID(uint32_t aID);
+
+  static uint32_t GetContentProcessIdFor(dom::ContentParentId aIPCContentId);
+  static void ReleaseContentProcessIdFor(dom::ContentParentId aIPCContentId);
+
+  static void SetHandlerControl(DWORD aPid, RefPtr<IHandlerControl> aCtrl);
 
 protected:
   virtual ~AccessibleWrap();
 
   uint32_t mID;
+
+  HRESULT
+  ResolveChild(const VARIANT& aVarChild, IAccessible** aOutInterface);
+
+  /**
+   * Find a remote accessible by the given child ID.
+   */
+  MOZ_MUST_USE already_AddRefed<IAccessible>
+  GetRemoteIAccessibleFor(const VARIANT& aVarChild);
 
   /**
    * Return the wrapper for the document's proxy.
@@ -201,9 +218,7 @@ protected:
 
   static ITypeInfo* gTypeInfo;
 
-#ifdef _WIN64
-  static IDSet sIDGen;
-#endif
+  static MsaaIdGenerator sIDGen;
 
   enum navRelations {
     NAVRELATION_CONTROLLED_BY = 0x1000,
@@ -225,8 +240,45 @@ protected:
     NAVRELATION_NODE_PARENT_OF = 0x1010,
     NAVRELATION_CONTAINING_DOCUMENT = 0x1011,
     NAVRELATION_CONTAINING_TAB_PANE = 0x1012,
-    NAVRELATION_CONTAINING_APPLICATION = 0x1014
+    NAVRELATION_CONTAINING_APPLICATION = 0x1014,
+    NAVRELATION_DETAILS = 0x1015,
+    NAVRELATION_DETAILS_FOR = 0x1016,
+    NAVRELATION_ERROR = 0x1017,
+    NAVRELATION_ERROR_FOR = 0x1018
   };
+
+  struct HandlerControllerData final
+  {
+    HandlerControllerData(DWORD aPid, RefPtr<IHandlerControl>&& aCtrl)
+      : mPid(aPid)
+      , mCtrl(Move(aCtrl))
+    {
+      mIsProxy = mozilla::mscom::IsProxy(mCtrl);
+    }
+
+    HandlerControllerData(HandlerControllerData&& aOther)
+      : mPid(aOther.mPid)
+      , mIsProxy(aOther.mIsProxy)
+      , mCtrl(Move(aOther.mCtrl))
+    {
+    }
+
+    bool operator==(const HandlerControllerData& aOther) const
+    {
+      return mPid == aOther.mPid;
+    }
+
+    bool operator==(const DWORD& aPid) const
+    {
+      return mPid == aPid;
+    }
+
+    DWORD mPid;
+    bool mIsProxy;
+    RefPtr<IHandlerControl> mCtrl;
+  };
+
+  static StaticAutoPtr<nsTArray<HandlerControllerData>> sHandlerControllers;
 };
 
 static inline AccessibleWrap*

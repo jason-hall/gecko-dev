@@ -6,6 +6,8 @@
 
 UNIFIED_SOURCES += [
     'gfxSurfaceRefCountTest.cpp',
+    'MockWidget.cpp',
+    'PolygonTestUtils.cpp',
     'TestArena.cpp',
     'TestArrayView.cpp',
     'TestBSPTree.cpp',
@@ -17,18 +19,15 @@ UNIFIED_SOURCES += [
     'TestJobScheduler.cpp',
     'TestLayers.cpp',
     'TestMoz2D.cpp',
+    'TestPolygon.cpp',
     'TestQcms.cpp',
     'TestRect.cpp',
     'TestRegion.cpp',
     'TestSkipChars.cpp',
-    # Hangs on linux in ApplyGdkScreenFontOptions
-    #'gfxFontSelectionTest.cpp',
+    'TestSwizzle.cpp',
+    'TestTextureCompatibility.cpp',
     'TestTextures.cpp',
     'TestTreeTraversal.cpp',
-    # Test works but it doesn't assert anything
-    #'gfxTextRunPerfTest.cpp',
-    # Bug 1179287 - PGO bustage on Linux
-    #'TestTiledLayerBuffer.cpp',
     'TestVsync.cpp',
 ]
 
@@ -45,6 +44,7 @@ include('/ipc/chromium/chromium-config.mozbuild')
 LOCAL_INCLUDES += [
     '/gfx/2d',
     '/gfx/2d/unittest',
+    '/gfx/config',
     '/gfx/layers',
     '/gfx/qcms',
 ]

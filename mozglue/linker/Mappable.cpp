@@ -9,9 +9,11 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+#include <string>
 
 #include "Mappable.h"
 
+#include "mozilla/SizePrintfMacros.h"
 #include "mozilla/UniquePtr.h"
 
 #ifdef ANDROID
@@ -21,6 +23,7 @@
 #include <errno.h>
 #include "ElfLoader.h"
 #include "SeekableZStream.h"
+#include "XZStream.h"
 #include "Logging.h"
 
 using mozilla::MakeUnique;
@@ -30,6 +33,7 @@ class CacheValidator
 {
 public:
   CacheValidator(const char* aCachedLibPath, Zip* aZip, Zip::Stream* aStream)
+    : mCachedLibPath(aCachedLibPath)
   {
     static const char kChecksumSuffix[] = ".crc";
 
@@ -59,7 +63,10 @@ public:
       WARN("Couldn't map %s to validate checksum", mCachedChecksumPath.get());
       return false;
     }
-    return !memcmp(checksumBuf, &mChecksum, sizeof(mChecksum));
+    if (memcmp(checksumBuf, &mChecksum, sizeof(mChecksum))) {
+      return false;
+    }
+    return !access(mCachedLibPath.c_str(), R_OK);
   }
 
   // Caches the APK-provided checksum used in future cache validations.
@@ -92,6 +99,7 @@ public:
   }
 
 private:
+  const std::string mCachedLibPath;
   UniquePtr<char[]> mCachedChecksumPath;
   uint32_t mChecksum;
 };
@@ -142,6 +150,10 @@ MappableExtractFile::Create(const char *name, Zip *zip, Zip::Stream *stream)
         "not extracting");
     return nullptr;
   }
+
+  // Ensure that the cache dir is private.
+  chmod(cachePath, 0770);
+
   UniquePtr<char[]> path =
     MakeUnique<char[]>(strlen(cachePath) + strlen(name) + 2);
   sprintf(path.get(), "%s/%s", cachePath, name);
@@ -191,6 +203,32 @@ MappableExtractFile::Create(const char *name, Zip *zip, Zip::Stream *stream)
     if (zStream.total_out != stream->GetUncompressedSize()) {
       ERROR("File not fully uncompressed! %ld / %d", zStream.total_out,
           static_cast<unsigned int>(stream->GetUncompressedSize()));
+      return nullptr;
+    }
+  } else if (XZStream::IsXZ(stream->GetBuffer(), stream->GetSize())) {
+    XZStream xzStream(stream->GetBuffer(), stream->GetSize());
+
+    if (!xzStream.Init()) {
+      ERROR("Couldn't initialize XZ decoder");
+      return nullptr;
+    }
+    DEBUG_LOG("XZStream created, compressed=%u, uncompressed=%u",
+              xzStream.Size(), xzStream.UncompressedSize());
+
+    if (ftruncate(fd, xzStream.UncompressedSize()) == -1) {
+      ERROR("Couldn't ftruncate %s to decompress library", file.get());
+      return nullptr;
+    }
+    MappedPtr buffer(MemoryRange::mmap(nullptr, xzStream.UncompressedSize(),
+                                       PROT_WRITE, MAP_SHARED, fd, 0));
+    if (buffer == MAP_FAILED) {
+      ERROR("Couldn't map %s to decompress library", file.get());
+      return nullptr;
+    }
+    const size_t written = xzStream.Decode(buffer, buffer.GetLength());
+    DEBUG_LOG("XZStream decoded %u", written);
+    if (written != buffer.GetLength()) {
+      ERROR("Error decoding XZ file %s", file.get());
       return nullptr;
     }
   } else if (stream->GetType() == Zip::Stream::STORE) {
@@ -606,11 +644,11 @@ MappableSeekableZStream::ensure(const void *addr)
            - reinterpret_cast<uintptr_t>(start);
 
   if (mprotect(const_cast<void *>(start), length, map->prot) == 0) {
-    DEBUG_LOG("mprotect @%p, 0x%" PRIxSize ", 0x%x", start, length, map->prot);
+    DEBUG_LOG("mprotect @%p, 0x%" PRIxSIZE ", 0x%x", start, length, map->prot);
     return true;
   }
 
-  ERROR("mprotect @%p, 0x%" PRIxSize ", 0x%x failed with errno %d",
+  ERROR("mprotect @%p, 0x%" PRIxSIZE ", 0x%x failed with errno %d",
       start, length, map->prot, errno);
   return false;
 }
@@ -619,7 +657,7 @@ void
 MappableSeekableZStream::stats(const char *when, const char *name) const
 {
   size_t nEntries = zStream.GetChunksNum();
-  DEBUG_LOG("%s: %s; %" PRIdSize "/%" PRIdSize " chunks decompressed",
+  DEBUG_LOG("%s: %s; %" PRIuSIZE "/%" PRIuSIZE " chunks decompressed",
             name, when, static_cast<size_t>(chunkAvailNum), nEntries);
 
   size_t len = 64;

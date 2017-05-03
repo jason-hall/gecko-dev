@@ -20,8 +20,8 @@ struct JSContext;
 class JSObject;
 
 namespace mozilla {
+class DeclarationBlock;
 namespace css {
-class Declaration;
 class Loader;
 class Rule;
 } // namespace css
@@ -119,8 +119,8 @@ protected:
     // AttributeWillChange.
     eOperation_RemoveProperty
   };
-  virtual mozilla::css::Declaration* GetCSSDeclaration(Operation aOperation) = 0;
-  virtual nsresult SetCSSDeclaration(mozilla::css::Declaration* aDecl) = 0;
+  virtual mozilla::DeclarationBlock* GetCSSDeclaration(Operation aOperation) = 0;
+  virtual nsresult SetCSSDeclaration(mozilla::DeclarationBlock* aDecl) = 0;
   // Document that we must call BeginUpdate/EndUpdate on around the
   // calls to SetCSSDeclaration and the style rule mutation that leads
   // to it.
@@ -156,22 +156,30 @@ protected:
   static void GetCSSParsingEnvironmentForRule(mozilla::css::Rule* aRule,
                                               CSSParsingEnvironment& aCSSParseEnv);
 
+  // An implementation for GetURLData for callers wrapping a css::Rule.
+  static mozilla::URLExtraData* GetURLDataForRule(const mozilla::css::Rule* aRule);
+
+  // Returns URL data for parsing url values in CSS.
+  // Returns nullptr on failure.
+  virtual mozilla::URLExtraData* GetURLData() const = 0;
+
   nsresult ParsePropertyValue(const nsCSSPropertyID aPropID,
                               const nsAString& aPropValue,
                               bool aIsImportant);
 
-  // Prop-id based version of RemoveProperty.  Note that this does not
-  // return the old value; it just does a straight removal.
-  nsresult RemoveProperty(const nsCSSPropertyID aPropID);
-
-  void GetCustomPropertyValue(const nsAString& aPropertyName, nsAString& aValue);
-  nsresult RemoveCustomProperty(const nsAString& aPropertyName);
   nsresult ParseCustomPropertyValue(const nsAString& aPropertyName,
                                     const nsAString& aPropValue,
                                     bool aIsImportant);
 
+  nsresult RemovePropertyInternal(nsCSSPropertyID aPropID);
+  nsresult RemovePropertyInternal(const nsAString& aProperty);
+
 protected:
   virtual ~nsDOMCSSDeclaration();
+
+private:
+  template<typename GeckoFunc, typename ServoFunc>
+  inline nsresult ModifyDeclaration(GeckoFunc aGeckoFunc, ServoFunc aServoFunc);
 };
 
 #endif // nsDOMCSSDeclaration_h___

@@ -249,6 +249,12 @@ public:
     aContext->SetState(aContext->PostScrollState());
   }
 
+  virtual void OnScrollPositionChanged(
+    AccessibleCaretEventHub* aContext) override
+  {
+    aContext->mManager->OnScrollPositionChanged();
+  }
+
   virtual void OnBlur(AccessibleCaretEventHub* aContext,
                       bool aIsLeavingDocument) override
   {
@@ -382,7 +388,7 @@ MOZ_IMPL_STATE_CLASS_GETTER(ScrollState)
 MOZ_IMPL_STATE_CLASS_GETTER(PostScrollState)
 MOZ_IMPL_STATE_CLASS_GETTER(LongTapState)
 
-bool AccessibleCaretEventHub::sUseLongTapInjector = true;
+bool AccessibleCaretEventHub::sUseLongTapInjector = false;
 
 AccessibleCaretEventHub::AccessibleCaretEventHub(nsIPresShell* aPresShell)
   : mPresShell(aPresShell)

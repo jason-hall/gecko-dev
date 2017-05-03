@@ -228,7 +228,7 @@ SSL_IMPORT PRFileDesc *DTLS_ImportFD(PRFileDesc *model, PRFileDesc *fd);
  * on the server to read that data. Calls to
  * SSL_GetPreliminaryChannelInfo() and SSL_GetNextProto()
  * can be made used during this period to learn about the channel
- * parameters [TODO(ekr@rtfm.com): This hasn't landed yet].
+ * parameters.
  *
  * The transition between the 0-RTT and 1-RTT modes is marked by the
  * handshake callback.
@@ -342,49 +342,57 @@ SSL_IMPORT SECStatus SSL_CipherPolicySet(PRInt32 cipher, PRInt32 policy);
 SSL_IMPORT SECStatus SSL_CipherPolicyGet(PRInt32 cipher, PRInt32 *policy);
 
 /*
-** Control for TLS signature algorithms for TLS 1.2 only.
+** Control for TLS signature schemes for TLS 1.2 and 1.3.
 **
-** This governs what signature algorithms are sent by a client in the
-** signature_algorithms extension.  A client will not accept a signature from a
-** server unless it uses an enabled algorithm.
+** This governs what signature schemes (or algorithms) are sent by a client in
+** the signature_algorithms extension.  A client will not accept a signature
+** from a server unless it uses an enabled algorithm.
 **
 ** This also governs what the server sends in the supported_signature_algorithms
 ** field of a CertificateRequest.
 **
 ** This changes what the server uses to sign ServerKeyExchange and
 ** CertificateVerify messages.  An endpoint uses the first entry from this list
-** that is compatible with both its certificate and its peer's advertised
+** that is compatible with both its certificate and its peer's supported
 ** values.
 **
-** Omitting SHA-256 from this list might be foolish.  Support is mandatory in
-** TLS 1.2 and there might be interoperability issues.
+** This configuration affects TLS 1.2, but the combination of EC group and hash
+** algorithm is interpreted loosely to be compatible with other implementations.
+** For TLS 1.2, NSS will ignore the curve group when generating or verifying
+** ECDSA signatures.  For example, a P-384 ECDSA certificate is used with
+** SHA-256 if ssl_sig_ecdsa_secp256r1_sha256 is enabled.
 **
-** NSS doesn't support the full combinatorial matrix of hash and signature
-** algorithms with all keys.  NSS preferentially uses the schemes that are
-** defined in TLS 1.3.
-**
-** To select TLS 1.3 signature schemes, split the SSLSignatureScheme into an most
-** significant octet (the hash) and a less significant octet (the signature) and
-** then use this structure.
+** Omitting SHA-256 schemes from this list might be foolish.  Support is
+** mandatory in TLS 1.2 and 1.3 and there might be interoperability issues.
 */
+SSL_IMPORT SECStatus SSL_SignatureSchemePrefSet(
+    PRFileDesc *fd, const SSLSignatureScheme *schemes, unsigned int count);
+
+/* Deprecated, use SSL_SignatureSchemePrefSet() instead. */
 SSL_IMPORT SECStatus SSL_SignaturePrefSet(
     PRFileDesc *fd, const SSLSignatureAndHashAlg *algorithms,
     unsigned int count);
 
 /*
-** Get the currently configured signature algorithms.
+** Get the currently configured signature schemes.
 **
-** The algorithms are written to |algorithms| but not if there are more than
-** |maxCount| values configured.  The number of algorithms that are in use are
+** The schemes are written to |schemes| but not if there are more than
+** |maxCount| values configured.  The number of schemes that are in use are
 ** written to |count|.  This fails if |maxCount| is insufficiently large.
 */
+SSL_IMPORT SECStatus SSL_SignatureSchemePrefGet(
+    PRFileDesc *fd, SSLSignatureScheme *algorithms, unsigned int *count,
+    unsigned int maxCount);
+
+/* Deprecated, use SSL_SignatureSchemePrefGet() instead. */
 SSL_IMPORT SECStatus SSL_SignaturePrefGet(
     PRFileDesc *fd, SSLSignatureAndHashAlg *algorithms, unsigned int *count,
     unsigned int maxCount);
 
 /*
 ** Returns the maximum number of signature algorithms that are supported and
-** can be set or retrieved using SSL_SignaturePrefSet or SSL_SignaturePrefGet.
+** can be set or retrieved using SSL_SignatureSchemePrefSet or
+** SSL_SignatureSchemePrefGet.
 */
 SSL_IMPORT unsigned int SSL_SignatureMaxCount();
 
@@ -812,6 +820,25 @@ SSL_IMPORT PRFileDesc *SSL_ReconfigFD(PRFileDesc *model, PRFileDesc *fd);
 SSL_IMPORT SECStatus SSL_SetPKCS11PinArg(PRFileDesc *fd, void *a);
 
 /*
+** These are callbacks for dealing with SSL alerts.
+ */
+
+typedef PRUint8 SSLAlertLevel;
+typedef PRUint8 SSLAlertDescription;
+
+typedef struct {
+    SSLAlertLevel level;
+    SSLAlertDescription description;
+} SSLAlert;
+
+typedef void(PR_CALLBACK *SSLAlertCallback)(const PRFileDesc *fd, void *arg,
+                                            const SSLAlert *alert);
+
+SSL_IMPORT SECStatus SSL_AlertReceivedCallback(PRFileDesc *fd, SSLAlertCallback cb,
+                                               void *arg);
+SSL_IMPORT SECStatus SSL_AlertSentCallback(PRFileDesc *fd, SSLAlertCallback cb,
+                                           void *arg);
+/*
 ** This is a callback for dealing with server certs that are not authenticated
 ** by the client.  The client app can decide that it actually likes the
 ** cert by some external means and restart the connection.
@@ -905,6 +932,19 @@ SSL_IMPORT SECStatus
 SSL_ConfigSecureServerWithCertChain(PRFileDesc *fd, CERTCertificate *cert,
                                     const CERTCertificateList *certChainOpt,
                                     SECKEYPrivateKey *key, SSLKEAType kea);
+
+/*
+** SSL_SetSessionTicketKeyPair configures an asymmetric key pair for use in
+** wrapping session ticket keys, used by the server.  This function currently
+** only accepts an RSA public/private key pair.
+**
+** Prior to the existence of this function, NSS used an RSA private key
+** associated with a configured certificate to perform session ticket
+** encryption.  If this function isn't used, the keys provided with a configured
+** RSA certificate are used for wrapping session ticket keys.
+*/
+SSL_IMPORT SECStatus
+SSL_SetSessionTicketKeyPair(SECKEYPublicKey *pubKey, SECKEYPrivateKey *privKey);
 
 /*
 ** Configure a secure server's session-id cache. Define the maximum number
@@ -1208,6 +1248,16 @@ SSL_IMPORT SECStatus SSL_ExportKeyingMaterial(PRFileDesc *fd,
                                               unsigned int contextLen,
                                               unsigned char *out,
                                               unsigned int outLen);
+
+/* Early exporters are used if 0-RTT is enabled.  This is TLS 1.3 only.  Note
+ * that in TLS 1.3, an empty context is equivalent to an absent context. */
+SSL_IMPORT SECStatus SSL_ExportEarlyKeyingMaterial(PRFileDesc *fd,
+                                                   const char *label,
+                                                   unsigned int labelLen,
+                                                   const unsigned char *context,
+                                                   unsigned int contextLen,
+                                                   unsigned char *out,
+                                                   unsigned int outLen);
 
 /*
 ** Return a new reference to the certificate that was most recently sent

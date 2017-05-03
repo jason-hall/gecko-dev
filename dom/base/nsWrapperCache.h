@@ -145,7 +145,7 @@ public:
     }
   }
 
-  bool PreservingWrapper()
+  bool PreservingWrapper() const
   {
     return HasWrapperFlag(WRAPPER_BIT_PRESERVED);
   }
@@ -162,17 +162,24 @@ public:
   virtual JSObject* WrapObject(JSContext* cx, JS::Handle<JSObject*> aGivenProto) = 0;
 
   /**
-   * Returns true if the object has a non-gray wrapper.
+   * Returns true if the object has a wrapper that is known live from the point
+   * of view of cycle collection.
    */
-  bool IsBlack();
+  bool HasKnownLiveWrapper() const;
 
   /**
-   * Returns true if the object has a black wrapper,
-   * and all the GC things it is keeping alive are black too.
+   * Returns true if the object has a known-live wrapper (from the CC point of
+   * view) and all the GC things it is keeping alive are already known-live from
+   * CC's point of view.
    */
-  bool IsBlackAndDoesNotNeedTracing(nsISupports* aThis);
+  bool HasKnownLiveWrapperAndDoesNotNeedTracing(nsISupports* aThis);
 
   bool HasNothingToTrace(nsISupports* aThis);
+
+  /**
+   * Mark our wrapper, if any, as live as far as the CC is concerned.
+   */
+  void MarkWrapperLive();
 
   // Only meant to be called by code that preserves a wrapper.
   void SetPreservingWrapper(bool aPreserve)
@@ -265,12 +272,16 @@ protected:
   void PoisonWrapper()
   {
     if (mWrapper) {
-      // See setToCrashOnTouch() in RootingAPI.h
+      // Set the pointer to a value that will cause a crash if it is
+      // dereferenced.
       mWrapper = reinterpret_cast<JSObject*>(1);
     }
   }
 
 private:
+  // Friend declarations for things that need to be able to call
+  // SetIsNotDOMBinding().  The goal is to get rid of all of these, and
+  // SetIsNotDOMBinding() too.
   friend class mozilla::dom::TabChildGlobal;
   friend class mozilla::dom::ProcessGlobal;
   friend class SandboxPrivate;
@@ -330,8 +341,7 @@ private:
    * causes between the native object and the JS object, so it is important that
    * any native object that supports preserving of its wrapper
    * traces/traverses/unlinks the cached JS object (see
-   * NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER,
-   * NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS and
+   * NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER and
    * NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER).
    */
   enum { WRAPPER_BIT_PRESERVED = 1 << 0 };
@@ -382,7 +392,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsWrapperCache, NS_WRAPPERCACHE_IID)
     NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER   \
   NS_IMPL_CYCLE_COLLECTION_UNLINK_END                   \
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)       \
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS    \
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END                 \
   NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(_class)
 
@@ -394,7 +403,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsWrapperCache, NS_WRAPPERCACHE_IID)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_END                      \
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)          \
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(__VA_ARGS__)         \
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS       \
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END                    \
   NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(_class)
 

@@ -5,6 +5,8 @@
 const LOGGER_NAME = "Toolkit.Telemetry";
 const LOGGER_PREFIX = "DataNotificationInfoBar::";
 
+XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
+                                  "resource://gre/modules/Preferences.jsm");
 /**
  * Represents an info bar that shows a data submission notification.
  */
@@ -27,23 +29,23 @@ var gDataNotificationInfoBar = {
     return this._log = Log.repository.getLoggerWithMessagePrefix(LOGGER_NAME, LOGGER_PREFIX);
   },
 
-  init: function() {
+  init() {
     window.addEventListener("unload", () => {
       for (let o of this._OBSERVERS) {
         Services.obs.removeObserver(this, o);
       }
-    }, false);
+    });
 
     for (let o of this._OBSERVERS) {
       Services.obs.addObserver(this, o, true);
     }
   },
 
-  _getDataReportingNotification: function (name=this._DATA_REPORTING_NOTIFICATION) {
+  _getDataReportingNotification(name = this._DATA_REPORTING_NOTIFICATION) {
     return this._notificationBox.getNotificationWithValue(name);
   },
 
-  _displayDataPolicyInfoBar: function (request) {
+  _displayDataPolicyInfoBar(request) {
     if (this._getDataReportingNotification()) {
       return;
     }
@@ -64,12 +66,18 @@ var gDataNotificationInfoBar = {
       popup: null,
       callback: () => {
         this._actionTaken = true;
-        window.openAdvancedPreferences("dataChoicesTab");
+        // The advanced subpanes are only supported in the old organization, which will
+        // be removed by bug 1349689.
+        if (Preferences.get("browser.preferences.useOldOrganization", false)) {
+          window.openAdvancedPreferences("dataChoicesTab");
+        } else {
+          window.openPreferences("paneAdvanced");
+        }
       },
     }];
 
     this._log.info("Creating data reporting policy notification.");
-    let notification = this._notificationBox.appendNotification(
+    this._notificationBox.appendNotification(
       message,
       this._DATA_REPORTING_NOTIFICATION,
       null,
@@ -88,7 +96,7 @@ var gDataNotificationInfoBar = {
     request.onUserNotifyComplete();
   },
 
-  _clearPolicyNotification: function () {
+  _clearPolicyNotification() {
     let notification = this._getDataReportingNotification();
     if (notification) {
       this._log.debug("Closing notification.");
@@ -96,7 +104,7 @@ var gDataNotificationInfoBar = {
     }
   },
 
-  observe: function(subject, topic, data) {
+  observe(subject, topic, data) {
     switch (topic) {
       case "datareporting:notify-data-policy:request":
         let request = subject.wrappedJSObject.object;
@@ -104,7 +112,6 @@ var gDataNotificationInfoBar = {
           this._displayDataPolicyInfoBar(request);
         } catch (ex) {
           request.onUserNotifyFailed(ex);
-          return;
         }
         break;
 
@@ -125,4 +132,3 @@ var gDataNotificationInfoBar = {
     Ci.nsISupportsWeakReference,
   ]),
 };
-

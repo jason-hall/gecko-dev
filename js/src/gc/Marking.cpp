@@ -178,6 +178,17 @@ template <> bool ThingIsPermanentAtomOrWellKnownSymbol<JS::Symbol>(JS::Symbol* s
     return sym->isWellKnownSymbol();
 }
 
+template <typename T>
+static inline bool
+IsOwnedByOtherRuntime(JSRuntime* rt, T thing)
+{
+    bool other = thing->runtimeFromAnyThread() != rt;
+    MOZ_ASSERT_IF(other,
+                  ThingIsPermanentAtomOrWellKnownSymbol(thing) ||
+                  thing->zoneFromAnyThread()->isSelfHostingZone());
+    return other;
+}
+
 template<typename T>
 void
 js::CheckTracedThing(JSTracer* trc, T* thing)
@@ -202,7 +213,7 @@ js::CheckTracedThing(JSTracer* trc, T* thing)
      * Permanent atoms are not associated with this runtime, but will be
      * ignored during marking.
      */
-    if (ThingIsPermanentAtomOrWellKnownSymbol(thing))
+    if (IsOwnedByOtherRuntime(thing))
         return;
 
     Zone* zone = thing->zoneFromAnyThread();
@@ -237,50 +248,6 @@ namespace js {
 JS_FOR_EACH_TRACEKIND(IMPL_CHECK_TRACED_THING);
 #undef IMPL_CHECK_TRACED_THING
 } // namespace js
-
-static bool
-ShouldMarkCrossCompartment(JSTracer* trc, JSObject* src, Cell* cell)
-{
-    return false;
-}
-
-static bool
-ShouldMarkCrossCompartment(JSTracer* trc, JSObject* src, const Value& val)
-{
-    return val.isMarkable() && ShouldMarkCrossCompartment(trc, src, (Cell*)val.toGCThing());
-}
-
-static void
-AssertZoneIsMarking(Cell* thing)
-{
-    MOZ_ASSERT(TenuredCell::fromPointer(thing)->zone()->isGCMarking());
-}
-
-static void
-AssertZoneIsMarking(JSString* str)
-{
-#ifdef DEBUG
-    Zone* zone = TenuredCell::fromPointer(str)->zone();
-    MOZ_ASSERT(zone->isGCMarking() || zone->isAtomsZone());
-#endif
-}
-
-static void
-AssertZoneIsMarking(JS::Symbol* sym)
-{
-#ifdef DEBUG
-    Zone* zone = TenuredCell::fromPointer(sym)->zone();
-    MOZ_ASSERT(zone->isGCMarking() || zone->isAtomsZone());
-#endif
-}
-
-static void
-AssertRootMarkingPhase(JSTracer* trc)
-{
-    MOZ_ASSERT_IF(trc->isMarkingTracer(),
-                  trc->runtime()->gc.state() == State::NotActive ||
-                  trc->runtime()->gc.state() == State::MarkRoots);
-}
 
 
 /*** Tracing Interface ***************************************************************************/
@@ -331,6 +298,8 @@ template <typename T> void DispatchToTracer(JSTracer* trc, T* thingp, const char
 template <typename T> T DoCallback(JS::CallbackTracer* trc, T* thingp, const char* name);
 template <typename T> void DoMarking(GCMarker* gcmarker, T* thing);
 template <typename T> void DoMarking(GCMarker* gcmarker, const T& thing);
+template <typename T> void NoteWeakEdge(GCMarker* gcmarker, T** thingp);
+template <typename T> void NoteWeakEdge(GCMarker* gcmarker, T* thingp);
 
 template <typename T>
 void
@@ -391,6 +360,9 @@ template <typename T>
 void
 NoteWeakEdge(GCMarker* gcmarker, T** thingp)
 {
+    // Do per-type marking precondition checks.
+    if (MustSkipMarking(gcmarker, *thingp))
+        return;
 
     CheckTracedThing(gcmarker, *thingp);
 
@@ -412,11 +384,14 @@ template <typename T>
 void
 js::TraceWeakEdge(JSTracer* trc, WeakRef<T>* thingp, const char* name)
 {
-    // Non-marking tracers treat the edge strongly.
-    if (!trc->isMarkingTracer())
-        return DispatchToTracer(trc, ConvertToBase(thingp->unsafeUnbarrieredForTracing()), name);
+    if (!trc->isMarkingTracer()) {
+        // Non-marking tracers can select whether or not they see weak edges.
+        if (trc->traceWeakEdges())
+            DispatchToTracer(trc, ConvertToBase(thingp->unsafeUnbarrieredForTracing()), name);
+        return;
+    }
 
-    NoteWeakEdge(static_cast<GCMarker*>(trc),
+    NoteWeakEdge(GCMarker::fromTracer(trc),
                  ConvertToBase(thingp->unsafeUnbarrieredForTracing()));
 }
 
@@ -540,6 +515,7 @@ js::TraceProcessGlobalRoot(JSTracer* trc, T* thing, const char* name)
     // things so they do not need to go through the mark stack and may simply
     // be marked directly.  Moreover, well-known symbols can refer only to
     // permanent atoms, so likewise require no subsquent marking.
+	// OMRTODO: Delete original marking tracer
     CheckTracedThing(trc, *ConvertToBase(&thing));
 	if (trc->isOmrMarkingTracer())
 		return static_cast<omrjs::OMRGCMarker*>(trc)->traverse(ConvertToBase(&thing));
@@ -687,49 +663,37 @@ GCMarker::markImplicitEdges(T* thing)
 
 template <typename T>
 static inline bool
-MustSkipMarking(T thing)
+MustSkipMarking(GCMarker* gcmarker, T thing)
 {
+    // Don't trace things that are owned by another runtime.
+    /*if (IsOwnedByOtherRuntime(gcmarker->runtime(), thing))
+        return true;
+
     // Don't mark things outside a zone if we are in a per-zone GC.
-    return !thing->zone()->isGCMarking();
+    return !thing->zone()->isGCMarking();*/
+	return false;
 }
 
 template <>
 bool
-MustSkipMarking<JSObject*>(JSObject* obj)
+MustSkipMarking<JSObject*>(GCMarker* gcmarker, JSObject* obj)
 {
+    // Don't trace things that are owned by another runtime.
+    /*if (IsOwnedByOtherRuntime(gcmarker->runtime(), obj))
+        return true;
+
     // We may mark a Nursery thing outside the context of the
     // MinorCollectionTracer because of a pre-barrier. The pre-barrier is not
     // needed in this case because we perform a minor collection before each
     // incremental slice.
-    /*if (IsInsideNursery(obj))*/
+    if (IsInsideNursery(obj))
         return true;
 
     // Don't mark things outside a zone if we are in a per-zone GC. It is
     // faster to check our own arena, which we can do since we know that
     // the object is tenured.
-    return !TenuredCell::fromPointer(obj)->zone()->isGCMarking();
-}
-
-template <>
-bool
-MustSkipMarking<JSString*>(JSString* str)
-{
-    // Don't mark permanent atoms, as they may be associated with another
-    // runtime. Note that traverse() also checks this, but we need to not
-    // run the isGCMarking test from off-main-thread, so have to check it here
-    // too.
-    return str->isPermanentAtom() ||
-           !str->zone()->isGCMarking();
-}
-
-template <>
-bool
-MustSkipMarking<JS::Symbol*>(JS::Symbol* sym)
-{
-    // As for JSString, don't touch a globally owned well-known symbol from
-    // off-main-thread.
-    return sym->isWellKnownSymbol() ||
-           !sym->zone()->isGCMarking();
+    return !TenuredCell::fromPointer(obj)->zone()->isGCMarking();*/
+	return false;
 }
 
 template <typename T>
@@ -737,7 +701,7 @@ void
 DoMarking(GCMarker* gcmarker, T* thing)
 {
     // Do per-type marking precondition checks.
-    if (MustSkipMarking(thing))
+    if (MustSkipMarking(gcmarker, thing))
         return;
 
     CheckTracedThing(gcmarker, thing);
@@ -793,6 +757,7 @@ js::GCMarker::markAndTraceChildren(T* thing)
 namespace js {
 template <> void GCMarker::traverse(BaseShape* thing) { markAndTraceChildren(thing); }
 template <> void GCMarker::traverse(JS::Symbol* thing) { markAndTraceChildren(thing); }
+template <> void GCMarker::traverse(RegExpShared* thing) { markAndTraceChildren(thing); } // OMROTOD: Add omr equivalent to this new function?
 } // namespace js
 
 // Strings, LazyScripts, Shapes, and Scopes are extremely common, but have
@@ -888,7 +853,7 @@ template <typename T>
 bool
 js::GCMarker::mark(T* thing)
 {
-    /*AssertZoneIsMarking(thing);
+    /*AssertZoneIsMarking(thing); OMRTODO: cleanup commented out asserts..
     MOZ_ASSERT(!IsInsideNursery(gc::TenuredCell::fromPointer(thing)));*/
     return gc::ParticipatesInCC<T>::value
            ? gc::TenuredCell::fromPointer(thing)->markIfUnmarked(markColor())
@@ -1039,7 +1004,6 @@ js::GCMarker::eagerlyMarkChildren(JSLinearString* linearStr)
     }
 }
 
-
 void
 JSRope::traceChildren(JSTracer* trc) {
     js::TraceManuallyBarrieredEdge(trc, &d.s.u2.left, "left child");
@@ -1188,6 +1152,12 @@ ModuleScope::Data::trace(JSTracer* trc)
     TraceBindingNames(trc, names, length);
 }
 void
+WasmFunctionScope::Data::trace(JSTracer* trc)
+{
+    TraceNullableEdge(trc, &instance, "wasm function");
+    TraceBindingNames(trc, names, length);
+}
+void
 Scope::traceChildren(JSTracer* trc)
 {
     TraceNullableEdge(trc, &enclosing_, "scope enclosing");
@@ -1285,6 +1255,14 @@ js::GCMarker::eagerlyMarkChildren(Scope* scope)
 
       case ScopeKind::With:
         break;
+
+      case ScopeKind::WasmFunction: {
+        WasmFunctionScope::Data* data = reinterpret_cast<WasmFunctionScope::Data*>(scope->data_);
+        traverseEdge(scope, static_cast<JSObject*>(data->instance));
+        names = data->names;
+        length = data->length;
+        break;
+      }
     }
     if (scope->kind_ == ScopeKind::Function) {
         for (uint32_t i = 0; i < length; i++) {
@@ -1545,51 +1523,41 @@ GCMarker::processMarkStackTop(SliceBudget& budget)
     HeapSlot* end;
     JSObject* obj;
 
-    // Decode
-    uintptr_t addr = stack.pop();
-    uintptr_t tag = addr & StackTagMask;
-    addr &= ~StackTagMask;
-
-    // Dispatch
-    switch (tag) {
-      case ValueArrayTag: {
-        JS_STATIC_ASSERT(ValueArrayTag == 0);
-        MOZ_ASSERT(!(addr & CellMask));
-        obj = reinterpret_cast<JSObject*>(addr);
-        uintptr_t addr2 = stack.pop();
-        uintptr_t addr3 = stack.pop();
-        MOZ_ASSERT(addr2 <= addr3);
-        MOZ_ASSERT((addr3 - addr2) % sizeof(Value) == 0);
-        vp = reinterpret_cast<HeapSlot*>(addr2);
-        end = reinterpret_cast<HeapSlot*>(addr3);
+    switch (stack.peekTag()) {
+      case MarkStack::ValueArrayTag: {
+        auto array = stack.popValueArray();
+        obj = array.ptr.asValueArrayObject();
+        vp = array.start;
+        end = array.end;
         goto scan_value_array;
       }
 
-      case ObjectTag: {
-        obj = reinterpret_cast<JSObject*>(addr);
-        /*AssertZoneIsMarking(obj);*/
+      case MarkStack::ObjectTag: {
+        obj = stack.popPtr().as<JSObject>();
+        AssertZoneIsMarking(obj);
         goto scan_obj;
       }
 
-      case GroupTag: {
-        return lazilyMarkChildren(reinterpret_cast<ObjectGroup*>(addr));
+      case MarkStack::GroupTag: {
+        auto group = stack.popPtr().as<ObjectGroup>();
+        return lazilyMarkChildren(group);
       }
 
-      case JitCodeTag: {
-        return reinterpret_cast<jit::JitCode*>(addr)->traceChildren(this);
+      case MarkStack::JitCodeTag: {
+        auto code = stack.popPtr().as<jit::JitCode>();
+        return code->traceChildren(this);
       }
 
-      case ScriptTag: {
-        return reinterpret_cast<JSScript*>(addr)->traceChildren(this);
+      case MarkStack::ScriptTag: {
+        auto script = stack.popPtr().as<JSScript>();
+        return script->traceChildren(this);
       }
 
-      case SavedValueArrayTag: {
-        MOZ_ASSERT(!(addr & CellMask));
-        JSObject* obj = reinterpret_cast<JSObject*>(addr);
-        HeapSlot* vp;
-        HeapSlot* end;
-        if (restoreValueArray(obj, (void**)&vp, (void**)&end))
-            pushValueArray(&obj->as<NativeObject>(), vp, end);
+      case MarkStack::SavedValueArrayTag: {
+        auto savedArray = stack.popSavedValueArray();
+        JSObject* obj = savedArray.ptr.asSavedValueArrayObject();
+        if (restoreValueArray(savedArray, &vp, &end))
+            pushValueArray(obj, vp, end);
         else
             repush(obj);
         return;
@@ -1630,7 +1598,7 @@ GCMarker::processMarkStackTop(SliceBudget& budget)
 
   scan_obj:
     {
-        /*AssertZoneIsMarking(obj);*/
+        AssertZoneIsMarking(obj);
 
         budget.step();
         if (budget.isOverBudget()) {
@@ -1691,24 +1659,6 @@ GCMarker::processMarkStackTop(SliceBudget& budget)
     }
 }
 
-struct SlotArrayLayout
-{
-    union {
-        HeapSlot* end;
-        uintptr_t kind;
-    };
-    union {
-        HeapSlot* start;
-        uintptr_t index;
-    };
-    NativeObject* obj;
-
-    static void staticAsserts() {
-        /* This should have the same layout as three mark stack items. */
-        JS_STATIC_ASSERT(sizeof(SlotArrayLayout) == 3 * sizeof(uintptr_t));
-    }
-};
-
 /*
  * During incremental GC, we return from drainMarkStack without having processed
  * the entire stack. At that point, JS code can run and reallocate slot arrays
@@ -1720,38 +1670,43 @@ struct SlotArrayLayout
 void
 GCMarker::saveValueRanges()
 {
-    for (uintptr_t* p = stack.tos_; p > stack.stack_; ) {
-        uintptr_t tag = *--p & StackTagMask;
-        if (tag == ValueArrayTag) {
-            *p &= ~StackTagMask;
-            p -= 2;
-            SlotArrayLayout* arr = reinterpret_cast<SlotArrayLayout*>(p);
-            NativeObject* obj = arr->obj;
+    MarkStackIter iter(stack);
+    while (!iter.done()) {
+        auto tag = iter.peekTag();
+        if (tag == MarkStack::ValueArrayTag) {
+            auto array = iter.peekValueArray();
+
+            NativeObject* obj = &array.ptr.asValueArrayObject()->as<NativeObject>();
             MOZ_ASSERT(obj->isNative());
 
+            uintptr_t index;
+            HeapSlot::Kind kind;
             HeapSlot* vp = obj->getDenseElementsAllowCopyOnWrite();
-            if (arr->end == vp + obj->getDenseInitializedLength()) {
-                MOZ_ASSERT(arr->start >= vp);
-                arr->index = arr->start - vp;
-                arr->kind = HeapSlot::Element;
+            if (array.end == vp + obj->getDenseInitializedLength()) {
+                MOZ_ASSERT(array.start >= vp);
+                index = array.start - vp;
+                kind = HeapSlot::Element;
             } else {
                 HeapSlot* vp = obj->fixedSlots();
                 unsigned nfixed = obj->numFixedSlots();
-                if (arr->start == arr->end) {
-                    arr->index = obj->slotSpan();
-                } else if (arr->start >= vp && arr->start < vp + nfixed) {
-                    MOZ_ASSERT(arr->end == vp + Min(nfixed, obj->slotSpan()));
-                    arr->index = arr->start - vp;
+                if (array.start == array.end) {
+                    index = obj->slotSpan();
+                } else if (array.start >= vp && array.start < vp + nfixed) {
+                    MOZ_ASSERT(array.end == vp + Min(nfixed, obj->slotSpan()));
+                    index = array.start - vp;
                 } else {
-                    MOZ_ASSERT(arr->start >= obj->slots_ &&
-                               arr->end == obj->slots_ + obj->slotSpan() - nfixed);
-                    arr->index = (arr->start - obj->slots_) + nfixed;
+                    MOZ_ASSERT(array.start >= obj->slots_ &&
+                               array.end == obj->slots_ + obj->slotSpan() - nfixed);
+                    index = (array.start - obj->slots_) + nfixed;
                 }
-                arr->kind = HeapSlot::Slot;
+                kind = HeapSlot::Slot;
             }
-            p[2] |= SavedValueArrayTag;
-        } else if (tag == SavedValueArrayTag) {
-            p -= 2;
+            iter.saveValueArray(obj, index, kind);
+            iter.nextArray();
+        } else if (tag == MarkStack::SavedValueArrayTag) {
+            iter.nextArray();
+        } else {
+            iter.nextPtr();
         }
     }
 }
@@ -1759,14 +1714,13 @@ GCMarker::saveValueRanges()
 bool
 GCMarker::restoreValueArray(JSObject* objArg, void** vpp, void** endp)
 {
-    uintptr_t start = stack.pop();
-    HeapSlot::Kind kind = (HeapSlot::Kind) stack.pop();
-
+    JSObject* objArg = array.ptr.asSavedValueArrayObject();
     if (!objArg->isNative())
         return false;
     NativeObject* obj = &objArg->as<NativeObject>();
 
-    if (kind == HeapSlot::Element) {
+    uintptr_t start = array.index;
+    if (array.kind == HeapSlot::Element) {
         if (!obj->is<ArrayObject>())
             return false;
 
@@ -1780,7 +1734,7 @@ GCMarker::restoreValueArray(JSObject* objArg, void** vpp, void** endp)
             *vpp = *endp = vp;
         }
     } else {
-        MOZ_ASSERT(kind == HeapSlot::Slot);
+        MOZ_ASSERT(array.kind == HeapSlot::Slot);
         HeapSlot* vp = obj->fixedSlots();
         unsigned nfixed = obj->numFixedSlots();
         unsigned nslots = obj->slotSpan();
@@ -1805,18 +1759,150 @@ GCMarker::restoreValueArray(JSObject* objArg, void** vpp, void** endp)
 
 /*** Mark Stack ***********************************************************************************/
 
+static_assert(sizeof(MarkStack::TaggedPtr) == sizeof(uintptr_t),
+              "A TaggedPtr should be the same size as a pointer");
+static_assert(sizeof(MarkStack::ValueArray) == sizeof(MarkStack::SavedValueArray),
+              "ValueArray and SavedValueArray should be the same size");
+static_assert((sizeof(MarkStack::ValueArray) % sizeof(uintptr_t)) == 0,
+              "ValueArray and SavedValueArray should be multiples of the pointer size");
+
+static const size_t ValueArrayWords = sizeof(MarkStack::ValueArray) / sizeof(uintptr_t);
+
+template <typename T>
+struct MapTypeToMarkStackTag {};
+template <>
+struct MapTypeToMarkStackTag<JSObject*> { static const auto value = MarkStack::ObjectTag; };
+template <>
+struct MapTypeToMarkStackTag<ObjectGroup*> { static const auto value = MarkStack::GroupTag; };
+template <>
+struct MapTypeToMarkStackTag<jit::JitCode*> { static const auto value = MarkStack::JitCodeTag; };
+template <>
+struct MapTypeToMarkStackTag<JSScript*> { static const auto value = MarkStack::ScriptTag; };
+
+static inline bool
+TagIsArrayTag(MarkStack::Tag tag)
+{
+    return tag == MarkStack::ValueArrayTag || tag == MarkStack::SavedValueArrayTag;
+}
+
+static inline void
+CheckValueArray(const MarkStack::ValueArray& array)
+{
+    MOZ_ASSERT(array.ptr.tag() == MarkStack::ValueArrayTag);
+    MOZ_ASSERT(uintptr_t(array.start) <= uintptr_t(array.end));
+    MOZ_ASSERT((uintptr_t(array.end) - uintptr_t(array.start)) % sizeof(Value) == 0);
+}
+
+static inline void
+CheckSavedValueArray(const MarkStack::SavedValueArray& array)
+{
+    MOZ_ASSERT(array.ptr.tag() == MarkStack::SavedValueArrayTag);
+    MOZ_ASSERT(array.kind == HeapSlot::Slot || array.kind == HeapSlot::Element);
+}
+
+inline
+MarkStack::TaggedPtr::TaggedPtr(Tag tag, Cell* ptr)
+  : bits(tag | uintptr_t(ptr))
+{
+    MOZ_ASSERT(tag <= LastTag);
+    MOZ_ASSERT((uintptr_t(ptr) & CellMask) == 0);
+}
+
+inline MarkStack::Tag
+MarkStack::TaggedPtr::tag() const
+{
+    auto tag = Tag(bits & TagMask);
+    MOZ_ASSERT(tag <= LastTag);
+    return tag;
+}
+
+inline Cell*
+MarkStack::TaggedPtr::ptr() const
+{
+    return reinterpret_cast<Cell*>(bits & ~TagMask);
+}
+
+template <typename T>
+inline T*
+MarkStack::TaggedPtr::as() const
+{
+    MOZ_ASSERT(tag() == MapTypeToMarkStackTag<T*>::value);
+    MOZ_ASSERT(ptr()->asTenured().getTraceKind() == MapTypeToTraceKind<T>::kind);
+    return static_cast<T*>(ptr());
+}
+
+inline JSObject*
+MarkStack::TaggedPtr::asValueArrayObject() const
+{
+    MOZ_ASSERT(tag() == ValueArrayTag);
+    MOZ_ASSERT(ptr()->asTenured().getTraceKind() == JS::TraceKind::Object);
+    return static_cast<JSObject*>(ptr());
+}
+
+inline JSObject*
+MarkStack::TaggedPtr::asSavedValueArrayObject() const
+{
+    MOZ_ASSERT(tag() == SavedValueArrayTag);
+    MOZ_ASSERT(ptr()->asTenured().getTraceKind() == JS::TraceKind::Object);
+    return static_cast<JSObject*>(ptr());
+}
+
+inline JSRope*
+MarkStack::TaggedPtr::asTempRope() const
+{
+    MOZ_ASSERT(tag() == TempRopeTag);
+    MOZ_ASSERT(ptr()->asTenured().getTraceKind() == JS::TraceKind::String);
+    return static_cast<JSRope*>(ptr());
+}
+
+inline
+MarkStack::ValueArray::ValueArray(JSObject* obj, HeapSlot* startArg, HeapSlot* endArg)
+  : end(endArg), start(startArg), ptr(ValueArrayTag, obj)
+{}
+
+inline
+MarkStack::SavedValueArray::SavedValueArray(JSObject* obj, size_t indexArg, HeapSlot::Kind kindArg)
+  : kind(kindArg), index(indexArg), ptr(SavedValueArrayTag, obj)
+{}
+
+MarkStack::MarkStack(size_t maxCapacity)
+  : stack_(nullptr)
+  , tos_(nullptr)
+  , end_(nullptr)
+  , baseCapacity_(0)
+  , maxCapacity_(maxCapacity)
+#ifdef DEBUG
+  , iteratorCount_(0)
+#endif
+{}
+
+MarkStack::~MarkStack()
+{
+    MOZ_ASSERT(iteratorCount_ == 0);
+    js_free(stack_);
+}
+
 bool
 MarkStack::init(JSGCMode gcMode)
 {
     setBaseCapacity(gcMode);
 
     MOZ_ASSERT(!stack_);
-    uintptr_t* newStack = js_pod_malloc<uintptr_t>(baseCapacity_);
+    auto newStack = js_pod_malloc<TaggedPtr>(baseCapacity_);
     if (!newStack)
         return false;
 
     setStack(newStack, 0, baseCapacity_);
     return true;
+}
+
+inline void
+MarkStack::setStack(TaggedPtr* stack, size_t tosIndex, size_t capacity)
+{
+    MOZ_ASSERT(iteratorCount_ == 0);
+    stack_ = stack;
+    tos_ = stack + tosIndex;
+    end_ = stack + capacity;
 }
 
 void
@@ -1850,6 +1936,112 @@ MarkStack::setMaxCapacity(size_t maxCapacity)
     reset();
 }
 
+inline bool
+MarkStack::pushTaggedPtr(Tag tag, Cell* ptr)
+{
+    if (!ensureSpace(1))
+        return false;
+
+    MOZ_ASSERT(tos_ < end_);
+    *tos_++ = TaggedPtr(tag, ptr);
+    return true;
+}
+
+template <typename T>
+inline bool
+MarkStack::push(T* ptr)
+{
+    return pushTaggedPtr(MapTypeToMarkStackTag<T*>::value, ptr);
+}
+
+inline bool
+MarkStack::pushTempRope(JSRope* rope)
+{
+    return pushTaggedPtr(TempRopeTag, rope);
+}
+
+inline bool
+MarkStack::push(JSObject* obj, HeapSlot* start, HeapSlot* end)
+{
+    return push(ValueArray(obj, start, end));
+}
+
+inline bool
+MarkStack::push(const ValueArray& array)
+{
+    CheckValueArray(array);
+
+    if (!ensureSpace(ValueArrayWords))
+        return false;
+
+    *reinterpret_cast<ValueArray*>(tos_.ref()) = array;
+    tos_ += ValueArrayWords;
+    MOZ_ASSERT(tos_ <= end_);
+    MOZ_ASSERT(peekTag() == ValueArrayTag);
+    return true;
+}
+
+inline bool
+MarkStack::push(const SavedValueArray& array)
+{
+    CheckSavedValueArray(array);
+
+    if (!ensureSpace(ValueArrayWords))
+        return false;
+
+    *reinterpret_cast<SavedValueArray*>(tos_.ref()) = array;
+    tos_ += ValueArrayWords;
+    MOZ_ASSERT(tos_ <= end_);
+    MOZ_ASSERT(peekTag() == SavedValueArrayTag);
+    return true;
+}
+
+inline const MarkStack::TaggedPtr&
+MarkStack::peekPtr() const
+{
+    MOZ_ASSERT(!isEmpty());
+    return tos_[-1];
+}
+
+inline MarkStack::Tag
+MarkStack::peekTag() const
+{
+    return peekPtr().tag();
+}
+
+inline MarkStack::TaggedPtr
+MarkStack::popPtr()
+{
+    MOZ_ASSERT(!isEmpty());
+    MOZ_ASSERT(!TagIsArrayTag(peekTag()));
+    tos_--;
+    return *tos_;
+}
+
+inline MarkStack::ValueArray
+MarkStack::popValueArray()
+{
+    MOZ_ASSERT(peekTag() == ValueArrayTag);
+    MOZ_ASSERT(position() >= ValueArrayWords);
+
+    tos_ -= ValueArrayWords;
+    const auto& array = *reinterpret_cast<ValueArray*>(tos_.ref());
+    CheckValueArray(array);
+    return array;
+}
+
+inline MarkStack::SavedValueArray
+MarkStack::popSavedValueArray()
+{
+    MOZ_ASSERT(peekTag() == SavedValueArrayTag);
+    MOZ_ASSERT(position() >= ValueArrayWords);
+
+    tos_ -= ValueArrayWords;
+    const auto& array = *reinterpret_cast<SavedValueArray*>(tos_.ref());
+    CheckSavedValueArray(array);
+    return array;
+}
+
 void
 MarkStack::reset()
 {
@@ -1860,7 +2052,7 @@ MarkStack::reset()
     }
 
     MOZ_ASSERT(baseCapacity_ != 0);
-    uintptr_t* newStack = (uintptr_t*)js_realloc(stack_, sizeof(uintptr_t) * baseCapacity_);
+    auto newStack = js_pod_realloc<TaggedPtr>(stack_, capacity(), baseCapacity_);
     if (!newStack) {
         // If the realloc fails, just keep using the existing stack; it's
         // not ideal but better than failing.
@@ -1870,17 +2062,26 @@ MarkStack::reset()
     setStack(newStack, 0, baseCapacity_);
 }
 
-bool
-MarkStack::enlarge(unsigned count)
+inline bool
+MarkStack::ensureSpace(size_t count)
 {
-    size_t newCapacity = Min(maxCapacity_, capacity() * 2);
+    if ((tos_ + count) <= end_)
+        return true;
+
+    return enlarge(count);
+}
+
+bool
+MarkStack::enlarge(size_t count)
+{
+    size_t newCapacity = Min(maxCapacity_.ref(), capacity() * 2);
     if (newCapacity < capacity() + count)
         return false;
 
     size_t tosIndex = position();
 
     MOZ_ASSERT(newCapacity != 0);
-    uintptr_t* newStack = (uintptr_t*)js_realloc(stack_, sizeof(uintptr_t) * newCapacity);
+    auto newStack = js_pod_realloc<TaggedPtr>(stack_, capacity(), newCapacity);
     if (!newStack)
         return false;
 
@@ -1900,6 +2101,97 @@ size_t
 MarkStack::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
 {
     return mallocSizeOf(stack_);
+}
+
+MarkStackIter::MarkStackIter(const MarkStack& stack)
+  : stack_(stack),
+    pos_(stack.tos_)
+{
+#ifdef DEBUG
+    stack.iteratorCount_++;
+#endif
+}
+
+MarkStackIter::~MarkStackIter()
+{
+#ifdef DEBUG
+    MOZ_ASSERT(stack_.iteratorCount_);
+    stack_.iteratorCount_--;
+#endif
+}
+
+inline size_t
+MarkStackIter::position() const
+{
+    return pos_ - stack_.stack_;
+}
+
+inline bool
+MarkStackIter::done() const
+{
+    return position() == 0;
+}
+
+inline MarkStack::TaggedPtr
+MarkStackIter::peekPtr() const
+{
+    MOZ_ASSERT(!done());
+    return pos_[-1];
+}
+
+inline MarkStack::Tag
+MarkStackIter::peekTag() const
+{
+    return peekPtr().tag();
+}
+
+inline MarkStack::ValueArray
+MarkStackIter::peekValueArray() const
+{
+    MOZ_ASSERT(peekTag() == MarkStack::ValueArrayTag);
+    MOZ_ASSERT(position() >= ValueArrayWords);
+
+    const auto& array = *reinterpret_cast<MarkStack::ValueArray*>(pos_ - ValueArrayWords);
+    CheckValueArray(array);
+    return array;
+}
+
+inline void
+MarkStackIter::nextPtr()
+{
+    MOZ_ASSERT(!done());
+    MOZ_ASSERT(!TagIsArrayTag(peekTag()));
+    pos_--;
+}
+
+inline void
+MarkStackIter::next()
+{
+    if (TagIsArrayTag(peekTag()))
+        nextArray();
+    else
+        nextPtr();
+}
+
+inline void
+MarkStackIter::nextArray()
+{
+    MOZ_ASSERT(TagIsArrayTag(peekTag()));
+    MOZ_ASSERT(position() >= ValueArrayWords);
+    pos_ -= ValueArrayWords;
+}
+
+void
+MarkStackIter::saveValueArray(NativeObject* obj, uintptr_t index, HeapSlot::Kind kind)
+{
+    MOZ_ASSERT(peekTag() == MarkStack::ValueArrayTag);
+    MOZ_ASSERT(peekPtr().asValueArrayObject() == obj);
+    MOZ_ASSERT(position() >= ValueArrayWords);
+
+    auto& array = *reinterpret_cast<MarkStack::SavedValueArray*>(pos_ - ValueArrayWords);
+    array = MarkStack::SavedValueArray(obj, index, kind);
+    CheckSavedValueArray(array);
+    MOZ_ASSERT(peekTag() == MarkStack::SavedValueArrayTag);
 }
 
 
@@ -1986,11 +2278,33 @@ GCMarker::reset()
         markLaterArenas--;
 #endif
     }*/
-#ifdef DEBUG
-    markLaterArenas = 0;
-#endif
     MOZ_ASSERT(isDrained());
     MOZ_ASSERT(!markLaterArenas);
+}
+
+
+template <typename T>
+void
+GCMarker::pushTaggedPtr(T* ptr)
+{
+    checkZone(ptr);
+    if (!stack.push(ptr))
+        delayMarkingChildren(ptr);
+}
+
+void
+GCMarker::pushValueArray(JSObject* obj, HeapSlot* start, HeapSlot* end)
+{
+    checkZone(obj);
+    if (!stack.push(obj, start, end))
+        delayMarkingChildren(obj);
+}
+
+void
+GCMarker::repush(JSObject* obj)
+{
+    MOZ_ASSERT(gc::TenuredCell::fromPointer(obj)->isMarked(markColor()));
+    pushTaggedPtr(obj);
 }
 
 void
@@ -2092,6 +2406,27 @@ GCMarker::markDelayedChildren(SliceBudget& budget)
     return true;
 }
 
+template<typename T>
+static void
+PushArenaTyped(GCMarker* gcmarker/*, Arena* arena*/)
+{
+    /*for (ArenaCellIterUnderGC i(arena); !i.done(); i.next())
+        gcmarker->traverse(i.get<T>());*/
+}
+
+/*struct PushArenaFunctor {
+    template <typename T> void operator()(GCMarker* gcmarker, Arena* arena) {
+        PushArenaTyped<T>(gcmarker, arena);
+    }
+};
+
+void
+gc::PushArena(GCMarker* gcmarker, Arena* arena)
+{
+    DispatchTraceKindTyped(PushArenaFunctor(),
+                           MapAllocToTraceKind(arena->getAllocKind()), gcmarker, arena);
+}*/
+
 #ifdef DEBUG
 void
 GCMarker::checkZone(void* p)
@@ -2110,6 +2445,34 @@ GCMarker::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const
         size += zone->gcGrayRoots.sizeOfExcludingThis(mallocSizeOf);
     return size;
 }
+
+#ifdef DEBUG
+Zone*
+GCMarker::stackContainsCrossZonePointerTo(const Cell* target) const
+{
+    MOZ_ASSERT(!JS::CurrentThreadIsHeapCollecting());
+
+    Zone* targetZone = target->asTenured().zone();
+
+    for (MarkStackIter iter(stack); !iter.done(); iter.next()) {
+        if (iter.peekTag() != MarkStack::ObjectTag)
+            continue;
+
+        auto source = iter.peekPtr().as<JSObject>();
+        Zone* sourceZone = source->zone();
+        if (sourceZone == targetZone)
+            continue;
+
+        if ((source->is<ProxyObject>() && source->as<ProxyObject>().target() == target) ||
+            Debugger::isDebuggerCrossCompartmentEdge(source, target))
+        {
+            return sourceZone;
+        }
+    }
+
+    return nullptr;
+}
+#endif // DEBUG
 
 
 /*** Tenuring Tracer *****************************************************************************/
@@ -2300,41 +2663,6 @@ FOR_EACH_PUBLIC_TAGGED_GC_POINTER_TYPE(INSTANTIATE_ALL_VALID_HEAP_TRACE_FUNCTION
 
 /*** Cycle Collector Barrier Implementation *******************************************************/
 
-#ifdef DEBUG
-struct AssertNonGrayTracer : public JS::CallbackTracer {
-    explicit AssertNonGrayTracer(JSRuntime* rt) : JS::CallbackTracer(rt) {}
-    void onChild(const JS::GCCellPtr& thing) override {
-        MOZ_ASSERT_IF(thing.asCell()->isTenured(),
-                      !thing.asCell()->asTenured().isMarked(js::gc::GRAY));
-    }
-};
-#endif
-
-struct UnmarkGrayTracer : public JS::CallbackTracer
-{
-    /*
-     * We set weakMapAction to DoNotTraceWeakMaps because the cycle collector
-     * will fix up any color mismatches involving weakmaps when it runs.
-     */
-    explicit UnmarkGrayTracer(JSRuntime *rt, bool tracingShape = false)
-      : JS::CallbackTracer(rt, DoNotTraceWeakMaps)
-      , tracingShape(tracingShape)
-      , previousShape(nullptr)
-      , unmarkedAny(false)
-    {}
-
-    void onChild(const JS::GCCellPtr& thing) override;
-
-    /* True iff we are tracing the immediate children of a shape. */
-    bool tracingShape;
-
-    /* If tracingShape, shape child or nullptr. Otherwise, nullptr. */
-    Shape* previousShape;
-
-    /* Whether we unmarked anything. */
-    bool unmarkedAny;
-};
-
 /*
  * The GC and CC are run independently. Consequently, the following sequence of
  * events can occur:
@@ -2367,15 +2695,47 @@ struct UnmarkGrayTracer : public JS::CallbackTracer
  *   of the containers, we must add unmark-graying read barriers to these
  *   containers.
  */
+ 
+#ifdef DEBUG
+struct AssertNonGrayTracer : public JS::CallbackTracer {
+    explicit AssertNonGrayTracer(JSRuntime* rt) : JS::CallbackTracer(rt) {}
+    void onChild(const JS::GCCellPtr& thing) override {
+        MOZ_ASSERT_IF(thing.asCell()->isTenured(),
+                      !thing.asCell()->asTenured().isMarked(js::gc::GRAY));
+    }
+};
+#endif
+
+struct UnmarkGrayTracer : public JS::CallbackTracer
+{
+  public:
+    // We set weakMapAction to DoNotTraceWeakMaps because the cycle collector
+    // will fix up any color mismatches involving weakmaps when it runs.
+    explicit UnmarkGrayTracer(JSRuntime *rt)
+      : JS::CallbackTracer(rt, DoNotTraceWeakMaps)
+      , unmarkedAny(false)
+      , oom(false)
+      , stack(rt->gc.unmarkGrayStack)
+    {}
+
+    void unmark(JS::GCCellPtr cell);
+
+    // Whether we unmarked anything.
+    bool unmarkedAny;
+
+    // Whether we ran out of memory.
+    bool oom;
+
+  private:
+    // Stack of cells to traverse.
+    Vector<JS::GCCellPtr, 0, SystemAllocPolicy>& stack;
+
+    void onChild(const JS::GCCellPtr& thing) override;
+};
+
 void
 UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing)
 {
-    int stackDummy;
-    JSContext* cx = runtime()->contextFromMainThread();
-    if (!JS_CHECK_STACK_SIZE(cx->nativeStackLimit[StackForSystemCode], &stackDummy)) {
-        return;
-    }
-
     Cell* cell = thing.asCell();
 
     // Cells in the nursery cannot be gray, and therefore must necessarily point
@@ -2389,41 +2749,33 @@ UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing)
     }
 
     TenuredCell& tenured = cell->asTenured();
-    if (!tenured.isMarked(js::gc::GRAY))
+    if (!tenured.isMarked(GRAY))
         return;
-    tenured.unmark(js::gc::GRAY);
 
+    tenured.unmark(GRAY);
     unmarkedAny = true;
 
-    // Trace children of |tenured|. If |tenured| and its parent are both
-    // shapes, |tenured| will get saved to mPreviousShape without being traced.
-    // The parent will later trace |tenured|. This is done to avoid increasing
-    // the stack depth during shape tracing. It is safe to do because a shape
-    // can only have one child that is a shape.
-    UnmarkGrayTracer childTracer(runtime(), thing.kind() == JS::TraceKind::Shape);
+    if (!stack.append(thing))
+        oom = true;
+}
 
-    if (thing.kind() != JS::TraceKind::Shape) {
-        TraceChildren(&childTracer, &tenured, thing.kind());
-        MOZ_ASSERT(!childTracer.previousShape);
-        unmarkedAny |= childTracer.unmarkedAny;
+void
+UnmarkGrayTracer::unmark(JS::GCCellPtr cell)
+{
+    MOZ_ASSERT(stack.empty());
+
+    onChild(cell);
+
+    while (!stack.empty() && !oom)
+        TraceChildren(this, stack.popCopy());
+
+    if (oom) {
+         // If we run out of memory, we take a drastic measure: require that we
+         // GC again before the next CC.
+        stack.clear();
+        runtime()->gc.setGrayBitsInvalid();
         return;
     }
-
-    MOZ_ASSERT(thing.kind() == JS::TraceKind::Shape);
-    Shape* shape = static_cast<Shape*>(&tenured);
-    if (tracingShape) {
-        MOZ_ASSERT(!previousShape);
-        previousShape = shape;
-        return;
-    }
-
-    do {
-        MOZ_ASSERT(!shape->isMarked(js::gc::GRAY));
-        shape->traceChildren(&childTracer);
-        shape = childTracer.previousShape;
-        childTracer.previousShape = nullptr;
-    } while (shape);
-    unmarkedAny |= childTracer.unmarkedAny;
 }
 
 template <typename T>
@@ -2432,25 +2784,15 @@ TypedUnmarkGrayCellRecursively(T* t)
 {
     MOZ_ASSERT(t);
 
-    JSRuntime* rt = t->runtimeFromMainThread();
-    MOZ_ASSERT(!rt->isHeapCollecting());
-    MOZ_ASSERT(!rt->isCycleCollecting());
+    JSRuntime* rt = t->runtimeFromActiveCooperatingThread();
+    MOZ_ASSERT(!JS::CurrentThreadIsHeapCollecting());
+    MOZ_ASSERT(!JS::CurrentThreadIsHeapCycleCollecting());
 
-    bool unmarkedArg = false;
-    if (t->isTenured()) {
-        if (!t->asTenured().isMarked(GRAY))
-            return false;
-
-        t->asTenured().unmark(GRAY);
-        unmarkedArg = true;
-    }
-
-    UnmarkGrayTracer trc(rt);
-    gcstats::AutoPhase outerPhase(rt->gc.stats, gcstats::PHASE_BARRIER);
-    gcstats::AutoPhase innerPhase(rt->gc.stats, gcstats::PHASE_UNMARK_GRAY);
-    t->traceChildren(&trc);
-
-    return unmarkedArg || trc.unmarkedAny;
+    UnmarkGrayTracer unmarker(rt);
+    gcstats::AutoPhase outerPhase(rt->gc.stats(), gcstats::PHASE_BARRIER);
+    gcstats::AutoPhase innerPhase(rt->gc.stats(), gcstats::PHASE_UNMARK_GRAY);
+    unmarker.unmark(JS::GCCellPtr(t, MapTypeToTraceKind<T>::kind));
+    return unmarker.unmarkedAny;
 }
 
 struct UnmarkGrayCellRecursivelyFunctor {

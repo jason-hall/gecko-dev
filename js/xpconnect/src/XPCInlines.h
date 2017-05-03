@@ -99,11 +99,11 @@ XPCCallContext::GetTearOff() const
     return mTearOff;
 }
 
-inline XPCNativeScriptableInfo*
-XPCCallContext::GetScriptableInfo() const
+inline nsIXPCScriptable*
+XPCCallContext::GetScriptable() const
 {
     CHECK_STATE(HAVE_OBJECT);
-    return mScriptableInfo;
+    return mScriptable;
 }
 
 inline bool
@@ -451,17 +451,13 @@ XPCNativeSet::MatchesSetUpToInterface(const XPCNativeSet* other,
 inline
 JSObject* XPCWrappedNativeTearOff::GetJSObjectPreserveColor() const
 {
-    return mJSObject.getPtr();
+    return mJSObject.unbarrieredGetPtr();
 }
 
 inline
 JSObject* XPCWrappedNativeTearOff::GetJSObject()
 {
-    JSObject* obj = GetJSObjectPreserveColor();
-    if (obj) {
-      JS::ExposeObjectToActiveJS(obj);
-    }
-    return obj;
+    return mJSObject;
 }
 
 inline

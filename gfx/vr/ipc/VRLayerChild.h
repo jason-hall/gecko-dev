@@ -29,12 +29,12 @@ class SurfaceFactory;
 namespace gfx {
 
 class VRLayerChild : public PVRLayerChild {
-  NS_INLINE_DECL_REFCOUNTING(VRLayerChild)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(VRLayerChild)
 
 public:
   VRLayerChild(uint32_t aVRDisplayID, VRManagerChild* aVRManagerChild);
   void Initialize(dom::HTMLCanvasElement* aCanvasElement);
-  void SubmitFrame(int32_t aInputFrameID);
+  void SubmitFrame();
 
 protected:
   virtual ~VRLayerChild();

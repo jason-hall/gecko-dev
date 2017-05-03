@@ -80,7 +80,12 @@ class SandboxBroker final
     // added after creation (the dir itself must exist).
     void AddDir(int aPerms, const char* aPath);
     // All files in a directory with a given prefix; useful for devices.
-    void AddPrefix(int aPerms, const char* aDir, const char* aPrefix);
+    void AddFilePrefix(int aPerms, const char* aDir, const char* aPrefix);
+    // Everything starting with the given path, even those files/dirs
+    // added after creation. The file or directory may or may not exist.
+    void AddPrefix(int aPerms, const char* aPath);
+    // Adds a file or dir (end with /) if it exists, and a prefix otherwhise.
+    void AddDynamic(int aPerms, const char* aPath);
     // Default: add file if it exists when creating policy or if we're
     // conferring permission to create it (log files, etc.).
     void AddPath(int aPerms, const char* aPath) {
@@ -98,6 +103,7 @@ class SandboxBroker final
     // * No trailing slash
     // * No /../ path traversal
     bool ValidatePath(const char* path) const;
+    void AddPrefixInternal(int aPerms, const nsACString& aPath);
   };
 
   // Constructing a broker involves creating a socketpair and a
@@ -117,7 +123,10 @@ class SandboxBroker final
   SandboxBroker(UniquePtr<const Policy> aPolicy, int aChildPid,
                 int& aClientFd);
   void ThreadMain(void) override;
-  void AuditDenial(int aOp, int aFlags, const char* aPath);
+  void AuditPermissive(int aOp, int aFlags, int aPerms, const char* aPath);
+  void AuditDenial(int aOp, int aFlags, int aPerms, const char* aPath);
+  // Remap relative paths to absolute paths.
+  size_t ConvertToRealPath(char* aPath, size_t aBufSize, size_t aPathLen);
 
   // Holding a UniquePtr should disallow copying, but to make that explicit:
   SandboxBroker(const SandboxBroker&) = delete;

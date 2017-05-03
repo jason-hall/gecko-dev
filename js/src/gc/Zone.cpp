@@ -21,92 +21,122 @@
 using namespace js;
 using namespace js::gc;
 
-JS::Zone::Zone(JSRuntime* rt)
-  : JS::shadow::Zone(rt, nullptr),
-    suppressAllocationMetadataBuilder(false),
-#ifndef OMR
-    arenas(rt),
-#endif
-    types(this),
-	gcWeakMapList(),
-    compartments(),
-    gcGrayRoots(),
-    typeDescrObjects(this, SystemAllocPolicy()),
-    gcMallocBytes(0),
-    gcMallocGCTriggered(false),
-    usage(&rt->gc.usage),
-    gcDelayBytes(0),
-    propertyTree(this),
-    baseShapes(this, BaseShapeSet()),
-    initialShapes(this, InitialShapeSet()),
-    data(nullptr),
-    isSystem(false),
-    usedByExclusiveThread(false),
-    active(false),
-    jitZone_(nullptr) {}
+Zone * const Zone::NotOnList = reinterpret_cast<Zone*>(1);
 
-Zone::DebuggerVector*
-Zone::getOrCreateDebuggers(JSContext* cx)
+JS::Zone::Zone(JSRuntime* rt, ZoneGroup* group)
+  : JS::shadow::Zone(rt, &rt->gc.marker),
+    group_(group),
+    debuggers(group, nullptr),
+    uniqueIds_(group),
+    suppressAllocationMetadataBuilder(group, false),
+    types(this),
+    gcWeakMapList_(group),
+    compartments_(),
+    gcGrayRoots_(group),
+    gcWeakRefs_(group),
+    weakCaches_(group),
+    gcWeakKeys_(group, SystemAllocPolicy(), rt->randomHashCodeScrambler()),
+    gcSweepGroupEdges_(group),
+    hasDeadProxies_(group),
+    typeDescrObjects_(group, this, SystemAllocPolicy()),
+    markedAtoms_(group),
+    atomCache_(group),
+    externalStringCache_(group),
+    usage(&rt->gc.usage),
+    threshold(),
+    gcDelayBytes(0),
+    propertyTree_(group, this),
+    baseShapes_(group, this, BaseShapeSet()),
+    initialShapes_(group, this, InitialShapeSet()),
+    data(group, nullptr),
+    isSystem(group, false),
+#ifdef DEBUG
+    gcLastSweepGroupIndex(group, 0),
+#endif
+    jitZone_(group, nullptr),
+    gcState_(NoGC),
+    gcScheduled_(false),
+    gcPreserveCode_(group, false),
+    jitUsingBarriers_(group, false),
+    keepShapeTables_(group, false),
+    listNext_(group, NotOnList)
 {
-    return nullptr;
+    /* Ensure that there are no vtables to mess us up here. */
+    MOZ_ASSERT(reinterpret_cast<JS::shadow::Zone*>(this) ==
+               static_cast<JS::shadow::Zone*>(this));
+
+    AutoLockGC lock(rt);
+    threshold.updateAfterGC(8192, GC_NORMAL, rt->gc.tunables, rt->gc.schedulingState, lock);
+    setGCMaxMallocBytes(rt->gc.maxMallocBytesAllocated() * 0.9);
+    jitCodeCounter.setMax(jit::MaxCodeBytesPerProcess * 0.8);
 }
 
 Zone::~Zone()
 {
-    js_delete(jitZone_);
+    JSRuntime* rt = runtimeFromAnyThread();
+    if (this == rt->gc.systemZone)
+        rt->gc.systemZone = nullptr;
+
+    js_delete(debuggers.ref());
+    js_delete(jitZone_.ref());
+
+#ifdef DEBUG
+    // Avoid assertion destroying the weak map list if the embedding leaked GC things.
+    if (!rt->gc.shutdownCollectedEverything())
+        gcWeakMapList().clear();
+#endif
 }
 
-MOZ_MUST_USE bool
-Zone::init(bool isSystem) { 
-	return uniqueIds_.init() &&
-	    gcWeakKeys.init() &&
-		gcZoneGroupEdges.init() &&
-		typeDescrObjects.init();
-}
-
-JS_PUBLIC_API(void)
-JS::shadow::RegisterWeakCache(JS::Zone* zone, WeakCache<void*>* cachep)
+bool Zone::init(bool isSystemArg)
 {
-    zone->registerWeakCache(cachep);
-}
-
-js::jit::JitZone*
-Zone::createJitZone(JSContext* cx)
-{
-    MOZ_ASSERT(!jitZone_);
-
-    if (!cx->runtime()->getJitRuntime(cx))
-        return nullptr;
-
-    jitZone_ = cx->new_<js::jit::JitZone>();
-    return jitZone_;
+    isSystem = isSystemArg;
+    return uniqueIds().init() &&
+           gcSweepGroupEdges().init() &&
+           gcWeakKeys().init() &&
+           typeDescrObjects().init() &&
+           markedAtoms().init() &&
+           atomCache().init();
 }
 
 void
-Zone::clearTables()
+Zone::setNeedsIncrementalBarrier(bool needs, ShouldUpdateJit updateJit)
 {
-    if (baseShapes.initialized())
-        baseShapes.clear();
-    if (initialShapes.initialized())
-        initialShapes.clear();
+#ifndef OMR
+    if (updateJit == UpdateJit && needs != jitUsingBarriers_) {
+        jit::ToggleBarriers(this, needs);
+        jitUsingBarriers_ = needs;
+    }
+
+    MOZ_ASSERT_IF(needs && isAtomsZone(),
+                  !runtimeFromActiveCooperatingThread()->hasHelperThreadZones());
+    MOZ_ASSERT_IF(needs, canCollect());
+    needsIncrementalBarrier_ = needs;
+#endif // ! OMR
 }
 
 void
 Zone::beginSweepTypes(FreeOp* fop, bool releaseTypes)
 {
-    // Periodically release observed types for all scripts. This is safe to
-    // do when there are no frames for the zone on the stack.
-    if (active)
-        releaseTypes = false;
-
     AutoClearTypeInferenceStateOnOOM oom(this);
     types.beginSweep(fop, releaseTypes, oom);
+}
+
+Zone::DebuggerVector*
+Zone::getOrCreateDebuggers(JSContext* cx)
+{
+    if (debuggers)
+        return debuggers;
+
+    debuggers = js_new<DebuggerVector>();
+    if (!debuggers)
+        ReportOutOfMemory(cx);
+    return debuggers;
 }
 
 void
 Zone::sweepBreakpoints(FreeOp* fop)
 {
-    if (fop->runtime()->debuggerList.isEmpty())
+    if (!group() || group()->debuggerList().isEmpty())
         return;
 
     /*
@@ -133,8 +163,8 @@ Zone::sweepBreakpoints(FreeOp* fop)
                 GCPtrNativeObject& dbgobj = bp->debugger->toJSObjectRef();
 
                 // If we are sweeping, then we expect the script and the
-                // debugger object to be swept in the same zone group, except if
-                // the breakpoint was added after we computed the zone
+                // debugger object to be swept in the same sweep group, except
+                // if the breakpoint was added after we computed the sweep
                 // groups. In this case both script and debugger object must be
                 // live.
                 MOZ_ASSERT_IF(isGCSweeping() && dbgobj->zone()->isCollecting(),
@@ -158,7 +188,7 @@ Zone::sweepWeakMaps()
 }
 
 void
-Zone::discardJitCode(FreeOp* fop)
+Zone::discardJitCode(FreeOp* fop, bool discardBaselineCode)
 {
     if (!jitZone())
         return;
@@ -167,14 +197,16 @@ Zone::discardJitCode(FreeOp* fop)
         PurgeJITCaches(this);
     } else {
 
+        if (discardBaselineCode) {
 #ifdef DEBUG
-        /* Assert no baseline scripts are marked as active. */
-        for (auto script = cellIter<JSScript>(); !script.done(); script.next())
-            MOZ_ASSERT_IF(script->hasBaselineScript(), !script->baselineScript()->active());
+            /* Assert no baseline scripts are marked as active. */
+            for (auto script = cellIter<JSScript>(); !script.done(); script.next())
+                MOZ_ASSERT_IF(script->hasBaselineScript(), !script->baselineScript()->active());
 #endif
 
-        /* Mark baseline scripts on the stack as active. */
-        jit::MarkActiveBaselineScripts(this);
+            /* Mark baseline scripts on the stack as active. */
+            jit::MarkActiveBaselineScripts(this);
+        }
 
         /* Only mark OSI points if code is being discarded. */
         jit::InvalidateAll(fop, this);
@@ -186,7 +218,8 @@ Zone::discardJitCode(FreeOp* fop)
              * Discard baseline script if it's not marked as active. Note that
              * this also resets the active flag.
              */
-            jit::FinishDiscardBaselineScript(fop, script);
+            if (discardBaselineCode)
+                jit::FinishDiscardBaselineScript(fop, script);
 
             /*
              * Warm-up counter for scripts are reset on GC. After discarding code we
@@ -194,6 +227,13 @@ Zone::discardJitCode(FreeOp* fop)
              * opcodes are setting array holes or accessing getter properties.
              */
             script->resetWarmUpCounter();
+
+            /*
+             * Make it impossible to use the control flow graphs cached on the
+             * BaselineScript. They get deleted.
+             */
+            if (script->hasBaselineScript())
+                script->baselineScript()->setControlFlowGraph(nullptr);
         }
 
         /*
@@ -204,6 +244,218 @@ Zone::discardJitCode(FreeOp* fop)
          *
          * Defer freeing any allocated blocks until after the next minor GC.
          */
-        jitZone()->optimizedStubSpace()->freeAllAfterMinorGC(fop->runtime());
+        if (discardBaselineCode) {
+            jitZone()->optimizedStubSpace()->freeAllAfterMinorGC(this);
+            jitZone()->purgeIonCacheIRStubInfo();
+        }
+
+        /*
+         * Free all control flow graphs that are cached on BaselineScripts.
+         * Assuming this happens on the active thread and all control flow
+         * graph reads happen on the active thread, this is safe.
+         */
+        jitZone()->cfgSpace()->lifoAlloc().freeAll();
     }
+}
+
+#ifdef JSGC_HASH_TABLE_CHECKS
+void
+JS::Zone::checkUniqueIdTableAfterMovingGC()
+{
+    for (UniqueIdMap::Enum e(uniqueIds()); !e.empty(); e.popFront())
+        js::gc::CheckGCThingAfterMovingGC(e.front().key());
+}
+#endif
+
+js::jit::JitZone*
+Zone::createJitZone(JSContext* cx)
+{
+    MOZ_ASSERT(!jitZone_);
+
+    if (!cx->runtime()->getJitRuntime(cx))
+        return nullptr;
+
+    jitZone_ = cx->new_<js::jit::JitZone>();
+    return jitZone_;
+}
+
+bool
+Zone::hasMarkedCompartments()
+{
+    for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next()) {
+        if (comp->marked)
+            return true;
+    }
+    return false;
+}
+
+void
+Zone::notifyObservingDebuggers()
+{
+    for (CompartmentsInZoneIter comps(this); !comps.done(); comps.next()) {
+        JSRuntime* rt = runtimeFromAnyThread();
+        RootedGlobalObject global(TlsContext.get(), comps->unsafeUnbarrieredMaybeGlobal());
+        if (!global)
+            continue;
+
+        GlobalObject::DebuggerVector* dbgs = global->getDebuggers();
+        if (!dbgs)
+            continue;
+
+        for (GlobalObject::DebuggerVector::Range r = dbgs->all(); !r.empty(); r.popFront()) {
+            if (!r.front()->debuggeeIsBeingCollected(rt->gc.majorGCCount())) {
+#ifdef DEBUG
+                fprintf(stderr,
+                        "OOM while notifying observing Debuggers of a GC: The onGarbageCollection\n"
+                        "hook will not be fired for this GC for some Debuggers!\n");
+#endif
+                return;
+            }
+        }
+    }
+}
+
+bool
+Zone::isOnList() const
+{
+    return listNext_ != NotOnList;
+}
+
+Zone*
+Zone::nextZone() const
+{
+    MOZ_ASSERT(isOnList());
+    return listNext_;
+}
+
+void
+Zone::clearTables()
+{
+    if (baseShapes().initialized())
+        baseShapes().clear();
+    if (initialShapes().initialized())
+        initialShapes().clear();
+}
+
+#ifndef OMR
+void
+Zone::fixupAfterMovingGC()
+{
+    fixupInitialShapeTable();
+}
+#endif // !OMR
+
+bool
+Zone::addTypeDescrObject(JSContext* cx, HandleObject obj)
+{
+    // Type descriptor objects are always tenured so we don't need post barriers
+    // on the set.
+    MOZ_ASSERT(!IsInsideNursery(obj));
+
+    if (!typeDescrObjects().put(obj)) {
+        ReportOutOfMemory(cx);
+        return false;
+    }
+
+    return true;
+}
+
+ZoneList::ZoneList()
+  : head(nullptr), tail(nullptr)
+{}
+
+ZoneList::ZoneList(Zone* zone)
+  : head(zone), tail(zone)
+{
+    MOZ_RELEASE_ASSERT(!zone->isOnList());
+    zone->listNext_ = nullptr;
+}
+
+ZoneList::~ZoneList()
+{
+    MOZ_ASSERT(isEmpty());
+}
+
+void
+ZoneList::check() const
+{
+#ifdef DEBUG
+    MOZ_ASSERT((head == nullptr) == (tail == nullptr));
+    if (!head)
+        return;
+
+    Zone* zone = head;
+    for (;;) {
+        MOZ_ASSERT(zone && zone->isOnList());
+        if  (zone == tail)
+            break;
+        zone = zone->listNext_;
+    }
+    MOZ_ASSERT(!zone->listNext_);
+#endif
+}
+
+bool
+ZoneList::isEmpty() const
+{
+    return head == nullptr;
+}
+
+Zone*
+ZoneList::front() const
+{
+    MOZ_ASSERT(!isEmpty());
+    MOZ_ASSERT(head->isOnList());
+    return head;
+}
+
+void
+ZoneList::append(Zone* zone)
+{
+    ZoneList singleZone(zone);
+    transferFrom(singleZone);
+}
+
+void
+ZoneList::transferFrom(ZoneList& other)
+{
+    check();
+    other.check();
+    MOZ_ASSERT(tail != other.tail);
+
+    if (tail)
+        tail->listNext_ = other.head;
+    else
+        head = other.head;
+    tail = other.tail;
+
+    other.head = nullptr;
+    other.tail = nullptr;
+}
+
+void
+ZoneList::removeFront()
+{
+    MOZ_ASSERT(!isEmpty());
+    check();
+
+    Zone* front = head;
+    head = head->listNext_;
+    if (!head)
+        tail = nullptr;
+
+    front->listNext_ = Zone::NotOnList;
+}
+
+void
+ZoneList::clear()
+{
+    while (!isEmpty())
+        removeFront();
+}
+
+JS_PUBLIC_API(void)
+JS::shadow::RegisterWeakCache(JS::Zone* zone, WeakCache<void*>* cachep)
+{
+    zone->registerWeakCache(cachep);
 }

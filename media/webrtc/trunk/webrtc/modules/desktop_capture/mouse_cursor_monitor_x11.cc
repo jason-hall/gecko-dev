@@ -19,7 +19,7 @@
 #include "webrtc/modules/desktop_capture/desktop_frame.h"
 #include "webrtc/modules/desktop_capture/mouse_cursor.h"
 #include "webrtc/modules/desktop_capture/x11/x_error_trap.h"
-#include "webrtc/system_wrappers/interface/logging.h"
+#include "webrtc/system_wrappers/include/logging.h"
 
 namespace {
 
@@ -64,7 +64,8 @@ class MouseCursorMonitorX11 : public MouseCursorMonitor,
   MouseCursorMonitorX11(const DesktopCaptureOptions& options, Window window, Window inner_window);
   virtual ~MouseCursorMonitorX11();
 
-  void Init(Callback* callback, Mode mode) override;
+  void Start(Callback* callback, Mode mode) override;
+  void Stop() override;
   void Capture() override;
 
  private:
@@ -76,7 +77,7 @@ class MouseCursorMonitorX11 : public MouseCursorMonitor,
   // Captures current cursor shape and stores it in |cursor_shape_|.
   void CaptureCursor();
 
-  scoped_refptr<SharedXDisplay> x_display_;
+  rtc::scoped_refptr<SharedXDisplay> x_display_;
   Callback* callback_;
   Mode mode_;
   Window window_;
@@ -89,7 +90,6 @@ class MouseCursorMonitorX11 : public MouseCursorMonitor,
   rtc::scoped_ptr<MouseCursor> cursor_shape_;
 };
 
-// For screens, we pass the same windowid for window and inner_window
 MouseCursorMonitorX11::MouseCursorMonitorX11(
     const DesktopCaptureOptions& options,
     Window window, Window inner_window)
@@ -103,14 +103,11 @@ MouseCursorMonitorX11::MouseCursorMonitorX11(
       xfixes_error_base_(-1) {}
 
 MouseCursorMonitorX11::~MouseCursorMonitorX11() {
-  if (have_xfixes_) {
-    x_display_->RemoveEventHandler(xfixes_event_base_ + XFixesCursorNotify,
-                                   this);
-  }
+  Stop();
 }
 
-void MouseCursorMonitorX11::Init(Callback* callback, Mode mode) {
-  // Init can be called only once per instance of MouseCursorMonitor.
+void MouseCursorMonitorX11::Start(Callback* callback, Mode mode) {
+  // Start can be called only if not started
   assert(!callback_);
   assert(callback);
 
@@ -129,6 +126,14 @@ void MouseCursorMonitorX11::Init(Callback* callback, Mode mode) {
     CaptureCursor();
   } else {
     LOG(LS_INFO) << "X server does not support XFixes.";
+  }
+}
+
+void MouseCursorMonitorX11::Stop() {
+  callback_ = NULL;
+  if (have_xfixes_) {
+    x_display_->RemoveEventHandler(xfixes_event_base_ + XFixesCursorNotify,
+                                   this);
   }
 }
 

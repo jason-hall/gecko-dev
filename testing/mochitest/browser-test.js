@@ -19,24 +19,13 @@ const SIMPLETEST_OVERRIDES =
 
 // non-android is bootstrapped by marionette
 if (Services.appinfo.OS == 'Android') {
-  window.addEventListener("load", function testOnLoad() {
-    window.removeEventListener("load", testOnLoad);
-    window.addEventListener("MozAfterPaint", function testOnMozAfterPaint() {
-      window.removeEventListener("MozAfterPaint", testOnMozAfterPaint);
+  window.addEventListener("load", function() {
+    window.addEventListener("MozAfterPaint", function() {
       setTimeout(testInit, 0);
-    });
-  });
+    }, {once: true});
+  }, {once: true});
 } else {
   setTimeout(testInit, 0);
-}
-
-function b2gStart() {
-  let homescreen = document.getElementById('systemapp');
-  var webNav = homescreen.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                   .getInterface(Ci.nsIWebNavigation);
-  var url = "chrome://mochikit/content/harness.xul?manifestFile=tests.json";
-
-  webNav.loadURI(url, null, null, null, null);
 }
 
 var TabDestroyObserver = {
@@ -113,6 +102,14 @@ function testInit() {
   }
   if (gConfig.e10s) {
     e10s_init();
+
+    let processCount = prefs.getIntPref("dom.ipc.processCount", 1);
+    if (processCount > 1) {
+      // Currently starting a content process is slow, to aviod timeouts, let's
+      // keep alive content processes.
+      prefs.setIntPref("dom.ipc.keepProcessesAlive.web", processCount);
+    }
+
     let globalMM = Cc["@mozilla.org/globalmessagemanager;1"]
                      .getService(Ci.nsIMessageListenerManager);
     globalMM.loadFrameScript("chrome://mochikit/content/shutdown-leaks-collector.js", true);
@@ -129,8 +126,6 @@ function Tester(aTests, structuredLogger, aCallback) {
   this.structuredLogger = structuredLogger;
   this.tests = aTests;
   this.callback = aCallback;
-  this.openedWindows = {};
-  this.openedURLs = {};
 
   this._scriptLoader = Services.scriptloader;
   this.EventUtils = {};
@@ -163,13 +158,6 @@ function Tester(aTests, structuredLogger, aCallback) {
   this.Task.Debugging.maintainStack = true;
   this.Promise = Components.utils.import("resource://gre/modules/Promise.jsm", null).Promise;
   this.Assert = Components.utils.import("resource://testing-common/Assert.jsm", null).Assert;
-
-  Services.ppmm.loadProcessScript("chrome://mochikit/content/document-observer-script.js", true);
-  Services.ppmm.addMessageListener("browser-test:documentCreated", (msg) => {
-    if (this.currentTest) {
-      this.onDocumentCreated(msg.data);
-    }
-  });
 
   this.SimpleTestOriginal = {};
   SIMPLETEST_OVERRIDES.forEach(m => {
@@ -222,7 +210,6 @@ Tester.prototype = {
   checker: null,
   currentTestIndex: -1,
   lastStartTime: null,
-  openedWindows: null,
   lastAssertionCount: 0,
   failuresFromInitialWindowState: 0,
 
@@ -306,7 +293,7 @@ Tester.prototype = {
 
     // Replace the last tab with a fresh one
     if (window.gBrowser) {
-      gBrowser.addTab("about:blank", { skipAnimation: true });
+      let newTab = gBrowser.addTab("about:blank", { skipAnimation: true });
       gBrowser.removeTab(gBrowser.selectedTab, { skipPermitUnload: true });
       gBrowser.stop();
     }
@@ -374,7 +361,6 @@ Tester.prototype = {
     } else {
       TabDestroyObserver.destroy();
       Services.console.unregisterListener(this);
-      Services.ppmm.broadcastAsyncMessage("browser-test:removeObservers", {});
       this.Promise.Debugging.clearUncaughtErrorObservers();
       this._treatUncaughtRejectionsAsFailures = false;
 
@@ -403,7 +389,6 @@ Tester.prototype = {
       this.callback(this.tests);
       this.callback = null;
       this.tests = null;
-      this.openedWindows = null;
     }
   },
 
@@ -417,16 +402,6 @@ Tester.prototype = {
     if (!aTopic) {
       this.onConsoleMessage(aSubject);
     }
-  },
-
-  onDocumentCreated: function Tester_onDocumentCreated({ location, outerID, innerID }) {
-    if (!(outerID in this.openedWindows)) {
-      this.openedWindows[outerID] = this.currentTest;
-    }
-    this.openedWindows[innerID] = this.currentTest;
-
-    let url = location || "about:blank";
-    this.openedURLs[outerID] = this.openedURLs[innerID] = url;
   },
 
   onConsoleMessage: function Tester_onConsoleMessage(aConsoleMessage) {
@@ -510,6 +485,23 @@ Tester.prototype = {
       document.popupNode = null;
 
       yield new Promise(resolve => SpecialPowers.flushPrefEnv(resolve));
+
+      if (gConfig.cleanupCrashes) {
+        let gdir = Services.dirsvc.get("UAppData", Ci.nsIFile);
+        gdir.append("Crash Reports");
+        gdir.append("pending");
+        if (gdir.exists()) {
+          let entries = gdir.directoryEntries;
+          while (entries.hasMoreElements()) {
+            let entry = entries.getNext().QueryInterface(Ci.nsIFile);
+            if (entry.isFile()) {
+              entry.remove(false);
+              let msg = "this test left a pending crash report; deleted " + entry.path;
+              this.structuredLogger.info(msg);
+            }
+          }
+        }
+      }
 
       // Notify a long running test problem if it didn't end up in a timeout.
       if (this.currentTest.unexpectedTimeouts && !this.currentTest.timedOut) {
@@ -632,29 +624,19 @@ Tester.prototype = {
         // use a shrinking GC so that the JS engine will discard JIT code and
         // JIT caches more aggressively.
 
-        let checkForLeakedGlobalWindows = aCallback => {
+        let shutdownCleanup = aCallback => {
           Cu.schedulePreciseShrinkingGC(() => {
-            let analyzer = new CCAnalyzer();
-            analyzer.run(() => {
-              let results = [];
-              for (let obj of analyzer.find("nsGlobalWindow ")) {
-                let m = obj.name.match(/^nsGlobalWindow #(\d+)/);
-                if (m && m[1] in this.openedWindows)
-                  results.push({ name: obj.name, url: m[1] });
-              }
-              aCallback(results);
-            });
+            // Run the GC and CC a few times to make sure that as much
+            // as possible is freed.
+            let numCycles = 3;
+            for (let i = 0; i < numCycles; i++) {
+              Cu.forceGC();
+              Cu.forceCC();
+            }
+            aCallback();
           });
         };
 
-        let reportLeaks = aResults => {
-          for (let result of aResults) {
-            let test = this.openedWindows[result.url];
-            let msg = "leaked until shutdown [" + result.name +
-                      " " + (this.openedURLs[result.url] || "NULL") + "]";
-            test.addResult(new testResult(false, msg, "", false));
-          }
-        };
 
         let {AsyncShutdown} =
           Cu.import("resource://gre/modules/AsyncShutdown.jsm", {});
@@ -674,17 +656,9 @@ Tester.prototype = {
 
           Services.ppmm.broadcastAsyncMessage("browser-test:collect-request");
 
-          checkForLeakedGlobalWindows(aResults => {
-            if (aResults.length == 0) {
-              this.finish();
-              return;
-            }
-            // After the first check, if there are reported leaked windows, sleep
-            // for a while, to allow off-main-thread work to complete and free up
-            // main-thread objects.  Then check again.
+          shutdownCleanup(() => {
             setTimeout(() => {
-              checkForLeakedGlobalWindows(aResults => {
-                reportLeaks(aResults);
+              shutdownCleanup(() => {
                 this.finish();
               });
             }, 1000);

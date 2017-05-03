@@ -21,8 +21,8 @@
 #include "webrtc/modules/desktop_capture/win/cursor.h"
 #include "webrtc/modules/desktop_capture/win/desktop.h"
 #include "webrtc/modules/desktop_capture/win/screen_capture_utils.h"
-#include "webrtc/system_wrappers/interface/logging.h"
-#include "webrtc/system_wrappers/interface/tick_util.h"
+#include "webrtc/system_wrappers/include/logging.h"
+#include "webrtc/system_wrappers/include/tick_util.h"
 
 namespace webrtc {
 
@@ -59,16 +59,7 @@ ScreenCapturerWinGdi::ScreenCapturerWinGdi(const DesktopCaptureOptions& options)
 }
 
 ScreenCapturerWinGdi::~ScreenCapturerWinGdi() {
-  if (desktop_dc_)
-    ReleaseDC(NULL, desktop_dc_);
-  if (memory_dc_)
-    DeleteDC(memory_dc_);
-
-  if (disable_composition_) {
-    // Restore Aero.
-    if (composition_func_)
-      (*composition_func_)(DWM_EC_ENABLECOMPOSITION);
-  }
+  Stop();
 
   if (dwmapi_library_)
     FreeLibrary(dwmapi_library_);
@@ -165,6 +156,24 @@ void ScreenCapturerWinGdi::Start(Callback* callback) {
   }
 }
 
+void ScreenCapturerWinGdi::Stop() {
+  if (desktop_dc_) {
+    ReleaseDC(NULL, desktop_dc_);
+    desktop_dc_ = NULL;
+  }
+  if (memory_dc_) {
+    DeleteDC(memory_dc_);
+    memory_dc_ = NULL;
+  }
+
+  if (disable_composition_) {
+    // Restore Aero.
+    if (composition_func_)
+      (*composition_func_)(DWM_EC_ENABLECOMPOSITION);
+  }
+  callback_ = NULL;
+}
+
 void ScreenCapturerWinGdi::PrepareCaptureResources() {
   assert(IsGUIThread(false));
   // Switch to the desktop receiving user input if different from the current
@@ -254,9 +263,10 @@ bool ScreenCapturerWinGdi::CaptureImage() {
         DesktopFrame::kBytesPerPixel;
     SharedMemory* shared_memory = callback_->CreateSharedMemory(buffer_size);
 
-    rtc::scoped_ptr<DesktopFrame> buffer;
-    buffer.reset(
+    rtc::scoped_ptr<DesktopFrame> buffer(
         DesktopFrameWin::Create(size, shared_memory, desktop_dc_));
+    if (!buffer.get())
+      return false;
     queue_.ReplaceCurrentFrame(buffer.release());
   }
 

@@ -14,9 +14,6 @@
 #include "jsobj.h"
 #include "jsscript.h"
 
-#include "asmjs/WasmInstance.h"
-#include "asmjs/WasmJS.h"
-#include "asmjs/WasmModule.h"
 #include "gc/Heap.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
@@ -26,6 +23,9 @@
 #include "vm/String.h"
 #include "vm/Symbol.h"
 #include "vm/WrapperObject.h"
+#include "wasm/WasmInstance.h"
+#include "wasm/WasmJS.h"
+#include "wasm/WasmModule.h"
 
 using mozilla::DebugOnly;
 using mozilla::MallocSizeOf;
@@ -325,7 +325,8 @@ StatsZoneCallback(JSRuntime* rt, void* data, Zone* zone)
                                  &zStats.typePool,
                                  &zStats.baselineStubsOptimized,
                                  &zStats.uniqueIdMap,
-                                 &zStats.shapeTables);
+                                 &zStats.shapeTables,
+                                 &rtStats->runtime.atomsMarkBitmaps);
 }
 
 static void
@@ -337,7 +338,7 @@ StatsCompartmentCallback(JSContext* cx, void* data, JSCompartment* compartment)
     // CollectRuntimeStats reserves enough space.
     MOZ_ALWAYS_TRUE(rtStats->compartmentStatsVector.growBy(1));
     CompartmentStats& cStats = rtStats->compartmentStatsVector.back();
-    if (!cStats.initClasses(cx))
+    if (!cStats.initClasses(cx->runtime()))
         MOZ_CRASH("oom");
     rtStats->initExtraCompartmentStats(compartment, &cStats);
 
@@ -358,6 +359,7 @@ StatsCompartmentCallback(JSContext* cx, void* data, JSCompartment* compartment)
                                         &cStats.savedStacksSet,
                                         &cStats.varNamesSet,
                                         &cStats.nonSyntacticLexicalScopesTable,
+                                        &cStats.templateLiteralMap,
                                         &cStats.jitCompartment,
                                         &cStats.privateData);
 }
@@ -600,6 +602,13 @@ StatsCellCallback(JSRuntime* rt, void* data, void* thing, JS::TraceKind traceKin
         break;
       }
 
+      case JS::TraceKind::RegExpShared: {
+        auto regexp = static_cast<RegExpShared*>(thing);
+        zStats->regExpSharedsGCHeap += thingSize;
+        zStats->regExpSharedsMallocHeap += regexp->sizeOfExcludingThis(rtStats->mallocSizeOf_);
+        break;
+      }
+
       default:
         MOZ_CRASH("invalid traceKind in StatsCellCallback");
     }
@@ -743,11 +752,14 @@ static bool
 CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats, ObjectPrivateVisitor* opv,
                           bool anonymize, IterateCellCallback statsCellCallback)
 {
-    JSRuntime* rt = cx;
+    JSRuntime* rt = cx->runtime();
     if (!rtStats->compartmentStatsVector.reserve(rt->numCompartments))
         return false;
 
-    if (!rtStats->zoneStatsVector.reserve(rt->gc.zones.length()))
+    size_t totalZones = 1; // For the atoms zone.
+    for (ZoneGroupsIter group(rt); !group.done(); group.next())
+        totalZones += group->zones().length();
+    if (!rtStats->zoneStatsVector.reserve(totalZones))
         return false;
 
     rtStats->gcHeapChunkTotal =
@@ -763,11 +775,11 @@ CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats, ObjectPrivateVis
     StatsClosure closure(rtStats, opv, anonymize);
     if (!closure.init())
         return false;
-    IterateZonesCompartmentsArenasCells(cx, &closure,
-                                        StatsZoneCallback,
-                                        StatsCompartmentCallback,
-                                        StatsArenaCallback,
-                                        statsCellCallback);
+    IterateHeapUnbarriered(cx, &closure,
+                                                   StatsZoneCallback,
+                                                   StatsCompartmentCallback,
+                                                   StatsArenaCallback,
+                                                   statsCellCallback);
 
     // Take the "explicit/js/runtime/" measurements.
     rt->addSizeOfIncludingThis(rtStats->mallocSizeOf_, &rtStats->runtime);
@@ -850,7 +862,7 @@ JS_PUBLIC_API(size_t)
 JS::SystemCompartmentCount(JSContext* cx)
 {
     size_t n = 0;
-    for (CompartmentsIter comp(cx, WithAtoms); !comp.done(); comp.next()) {
+    for (CompartmentsIter comp(cx->runtime(), WithAtoms); !comp.done(); comp.next()) {
         if (comp->isSystem())
             ++n;
     }
@@ -861,7 +873,7 @@ JS_PUBLIC_API(size_t)
 JS::UserCompartmentCount(JSContext* cx)
 {
     size_t n = 0;
-    for (CompartmentsIter comp(cx, WithAtoms); !comp.done(); comp.next()) {
+    for (CompartmentsIter comp(cx->runtime(), WithAtoms); !comp.done(); comp.next()) {
         if (!comp->isSystem())
             ++n;
     }
@@ -871,7 +883,7 @@ JS::UserCompartmentCount(JSContext* cx)
 JS_PUBLIC_API(size_t)
 JS::PeakSizeOfTemporary(const JSContext* cx)
 {
-    return cx->JSRuntime::tempLifoAlloc.peakSizeOfExcludingThis();
+    return cx->tempLifoAlloc().peakSizeOfExcludingThis();
 }
 
 namespace JS {
@@ -902,7 +914,7 @@ AddSizeOfTab(JSContext* cx, HandleObject obj, MallocSizeOf mallocSizeOf, ObjectP
 
     JS::Zone* zone = GetObjectZone(obj);
 
-    if (!rtStats.compartmentStatsVector.reserve(zone->compartments.length()))
+    if (!rtStats.compartmentStatsVector.reserve(zone->compartments().length()))
         return false;
 
     if (!rtStats.zoneStatsVector.reserve(1))
@@ -913,12 +925,11 @@ AddSizeOfTab(JSContext* cx, HandleObject obj, MallocSizeOf mallocSizeOf, ObjectP
     StatsClosure closure(&rtStats, opv, /* anonymize = */ false);
     if (!closure.init())
         return false;
-
-    IterateZoneCompartmentsArenasCells(cx, zone, &closure,
-                                       StatsZoneCallback,
-                                       StatsCompartmentCallback,
-                                       StatsArenaCallback,
-                                       StatsCellCallback<CoarseGrained>);
+    IterateHeapUnbarrieredForZone(cx, zone, &closure,
+                                                  StatsZoneCallback,
+                                                  StatsCompartmentCallback,
+                                                  StatsArenaCallback,
+                                                  StatsCellCallback<CoarseGrained>);
 
     MOZ_ASSERT(rtStats.zoneStatsVector.length() == 1);
     rtStats.zTotals.addSizes(rtStats.zoneStatsVector[0]);

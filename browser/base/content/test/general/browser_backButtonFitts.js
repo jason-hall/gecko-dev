@@ -12,10 +12,9 @@ add_task(function* () {
 
     // While in the child process, add a listener for the popstate event here. This
     // event will fire when the mouse click happens.
-    content.addEventListener("popstate", function onPopState() {
-      content.removeEventListener("popstate", onPopState, false);
+    content.addEventListener("popstate", function() {
       sendAsyncMessage("Test:PopStateOccurred", { location: content.document.location.href });
-    }, false);
+    }, {once: true});
   });
 
   window.maximize();
@@ -27,8 +26,8 @@ add_task(function* () {
   var xPixel = 0; // Use the first pixel of the screen since it is maximized.
 
   let resultLocation = yield new Promise(resolve => {
-    messageManager.addMessageListener("Test:PopStateOccurred", function statePopped(message) {
-      messageManager.removeMessageListener("Test:PopStateOccurred", statePopped);
+    window.messageManager.addMessageListener("Test:PopStateOccurred", function statePopped(message) {
+      window.messageManager.removeMessageListener("Test:PopStateOccurred", statePopped);
       resolve(message.data.location);
     });
 

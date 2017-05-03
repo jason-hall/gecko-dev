@@ -312,15 +312,15 @@ DirectShowReader::DecodeAudioData()
 }
 
 bool
-DirectShowReader::DecodeVideoFrame(bool &aKeyframeSkip,
-                                   int64_t aTimeThreshold)
+DirectShowReader::DecodeVideoFrame(bool& aKeyframeSkip,
+                                   const media::TimeUnit& aTimeThreshold)
 {
   MOZ_ASSERT(OnTaskQueue());
   return false;
 }
 
 RefPtr<MediaDecoderReader::SeekPromise>
-DirectShowReader::Seek(SeekTarget aTarget, int64_t aEndTime)
+DirectShowReader::Seek(const SeekTarget& aTarget)
 {
   nsresult res = SeekInternal(aTarget.GetTime().ToMicroseconds());
   if (NS_FAILED(res)) {

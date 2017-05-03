@@ -25,6 +25,13 @@
 #include "Entries.h"
 #include "LookupCache.h"
 
+// GCC < 6.1 workaround, see bug 1329593
+#if defined(XP_WIN) && defined(__MINGW32__)
+#define GCC_MANGLING_WORKAROUND __stdcall
+#else
+#define GCC_MANGLING_WORKAROUND
+#endif
+
 // The hash length for a domain key.
 #define DOMAIN_LENGTH 4
 
@@ -80,6 +87,8 @@ public:
 
   static nsIThread* BackgroundThread();
 
+  static bool ShutdownHasStarted();
+
 private:
   // No subclassing
   ~nsUrlClassifierDBService();
@@ -117,10 +126,6 @@ private:
   // TRUE if the nsURIClassifier implementation should check for phishing
   // uris on document loads.
   bool mCheckPhishing;
-
-  // TRUE if the nsURIClassifier implementation should check for tracking
-  // uris on document loads.
-  bool mCheckTracking;
 
   // TRUE if the nsURIClassifier implementation should check for blocked
   // uris on document loads.
@@ -169,13 +174,24 @@ public:
                          LookupResultArray* results);
 
   // Open the DB connection
-  nsresult OpenDb();
+  nsresult GCC_MANGLING_WORKAROUND OpenDb();
 
   // Provide a way to forcibly close the db connection.
-  nsresult CloseDb();
+  nsresult GCC_MANGLING_WORKAROUND CloseDb();
 
   nsresult CacheCompletions(CacheResultArray * aEntries);
   nsresult CacheMisses(PrefixArray * aEntries);
+
+  // Used to probe the state of the worker thread. When the update begins,
+  // mUpdateObserver will be set. When the update finished, mUpdateObserver
+  // will be nulled out in NotifyUpdateObserver.
+  bool IsBusyUpdating() const { return !!mUpdateObserver; }
+
+  // Delegate Classifier to disable async update. If there is an
+  // ongoing update on the update thread, we will be blocked until
+  // the background update is done and callback is fired.
+  // Should be called on the worker thread.
+  void FlushAndDisableAsyncUpdate();
 
 private:
   // No subclassing
@@ -184,8 +200,7 @@ private:
   // Disallow copy constructor
   nsUrlClassifierDBServiceWorker(nsUrlClassifierDBServiceWorker&);
 
-  // Applies the current transaction and resets the update/working times.
-  nsresult ApplyUpdate();
+  nsresult NotifyUpdateObserver(nsresult aUpdateStatus);
 
   // Reset the in-progress update stream
   void ResetStream();
@@ -203,6 +218,11 @@ private:
                     uint32_t aCount,
                     LookupResultArray& results);
 
+  nsresult CacheResultToTableUpdate(CacheResult* aCacheResult,
+                                    TableUpdate* aUpdate);
+
+  bool IsSameAsLastResults(CacheResultArray& aResult);
+
   // Can only be used on the background thread
   nsCOMPtr<nsICryptoHash> mCryptoHash;
 
@@ -217,14 +237,14 @@ private:
   // storing a series of updates.
   nsTArray<mozilla::safebrowsing::TableUpdate*> mTableUpdates;
 
-  int32_t mUpdateWait;
+  uint32_t mUpdateWaitSec;
 
   // Entries that cannot be completed. We expect them to die at
   // the next update
   PrefixArray mMissCache;
 
   // Stores the last results that triggered a table update.
-  CacheResultArray mLastResults;
+  nsAutoPtr<CacheResultArray> mLastResults;
 
   nsresult mUpdateStatus;
   nsTArray<nsCString> mUpdateTables;
@@ -249,6 +269,11 @@ private:
 
   // list of pending lookups
   nsTArray<PendingLookup> mPendingLookups;
+
+#ifdef MOZ_SAFEBROWSING_DUMP_FAILED_UPDATES
+  // The raw update response for debugging.
+  nsCString mRawTableUpdates;
+#endif
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsUrlClassifierDBService, NS_URLCLASSIFIERDBSERVICE_CID)

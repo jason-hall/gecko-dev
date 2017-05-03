@@ -39,6 +39,8 @@ GPUProcessHost::Launch()
   MOZ_ASSERT(!mGPUChild);
 
   mLaunchPhase = LaunchPhase::Waiting;
+  mLaunchTime = TimeStamp::Now();
+
   if (!GeckoChildProcessHost::AsyncLaunch()) {
     mLaunchPhase = LaunchPhase::Complete;
     return false;
@@ -53,7 +55,7 @@ GPUProcessHost::WaitForLaunch()
     return !!mGPUChild;
   }
 
-  int32_t timeoutMs = gfxPrefs::GPUProcessDevTimeoutMs();
+  int32_t timeoutMs = gfxPrefs::GPUProcessTimeoutMs();
 
   // Our caller expects the connection to be finished after we return, so we
   // immediately set up the IPDL actor and fire callbacks. The IO thread will
@@ -206,8 +208,6 @@ GPUProcessHost::KillHard(const char* aReason)
   }
 
   SetAlreadyDead();
-  XRE_GetIOMessageLoop()->PostTask(
-    NewRunnableFunction(&ProcessWatcher::EnsureProcessTerminated, handle, /*force=*/true));
 }
 
 uint64_t
@@ -221,6 +221,12 @@ DelayedDeleteSubprocess(GeckoChildProcessHost* aSubprocess)
 {
   XRE_GetIOMessageLoop()->
     PostTask(mozilla::MakeAndAddRef<DeleteTask<GeckoChildProcessHost>>(aSubprocess));
+}
+
+void
+GPUProcessHost::KillProcess()
+{
+  KillHard("DiagnosticKill");
 }
 
 void

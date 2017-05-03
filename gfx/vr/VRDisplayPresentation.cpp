@@ -5,6 +5,7 @@
 
 #include "VRDisplayPresentation.h"
 
+#include "mozilla/dom/DocGroup.h"
 #include "mozilla/Unused.h"
 #include "VRDisplayClient.h"
 #include "VRLayerChild.h"
@@ -70,7 +71,16 @@ VRDisplayPresentation::CreateLayers()
       continue;
     }
 
-    RefPtr<VRLayerChild> vrLayer = static_cast<VRLayerChild*>(manager->CreateVRLayer(mDisplayClient->GetDisplayInfo().GetDisplayID(), leftBounds, rightBounds));
+    nsCOMPtr<nsIEventTarget> target;
+    nsIDocument* doc;
+    doc = canvasElement->OwnerDoc();
+    if (doc) {
+      target = doc->EventTargetFor(TaskCategory::Other);
+    }
+
+    RefPtr<VRLayerChild> vrLayer =
+      static_cast<VRLayerChild*>(manager->CreateVRLayer(mDisplayClient->GetDisplayInfo().GetDisplayID(),
+                                                        leftBounds, rightBounds, target));
     if (!vrLayer) {
       NS_WARNING("CreateVRLayer returned null!");
       continue;
@@ -103,10 +113,10 @@ VRDisplayPresentation::~VRDisplayPresentation()
   mDisplayClient->PresentationDestroyed();
 }
 
-void VRDisplayPresentation::SubmitFrame(int32_t aInputFrameID)
+void VRDisplayPresentation::SubmitFrame()
 {
   for (VRLayerChild *layer : mLayers) {
-    layer->SubmitFrame(aInputFrameID);
+    layer->SubmitFrame();
     break; // Currently only one layer supported, submit only the first
   }
 }

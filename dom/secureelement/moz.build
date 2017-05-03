@@ -5,6 +5,10 @@
 #
 # Copyright © 2014 Deutsche Telekom, Inc.
 
+# All of this seems to be FirefoxOS::NFC
+with Files("**"):
+    BUG_COMPONENT = ("Core", "DOM: Device Interfaces")
+
 if CONFIG['MOZ_SECUREELEMENT']:
     EXTRA_COMPONENTS += [
         'DOMSecureElement.js',
@@ -34,11 +38,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk' and CONFIG['MOZ_SECUREELEMENT']:
     XPCSHELL_TESTS_MANIFESTS += [
         'tests/unit/xpcshell.ini'
     ]
-    if CONFIG['MOZ_B2G_RIL']:
-        EXTRA_COMPONENTS += [
-            'gonk/UiccConnector.js',
-            'gonk/UiccConnector.manifest',
-        ]
 
 include('/ipc/chromium/chromium-config.mozbuild')
 

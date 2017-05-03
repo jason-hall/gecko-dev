@@ -19,7 +19,7 @@ using namespace js;
 using namespace js::jit;
 
 void
-MacroAssemblerX64::loadConstantDouble(wasm::RawF64 d, FloatRegister dest)
+MacroAssemblerX64::loadConstantDouble(double d, FloatRegister dest)
 {
     if (maybeInlineDouble(d, dest))
         return;
@@ -36,7 +36,7 @@ MacroAssemblerX64::loadConstantDouble(wasm::RawF64 d, FloatRegister dest)
 }
 
 void
-MacroAssemblerX64::loadConstantFloat32(wasm::RawF32 f, FloatRegister dest)
+MacroAssemblerX64::loadConstantFloat32(float f, FloatRegister dest)
 {
     if (maybeInlineFloat(f, dest))
         return;
@@ -58,18 +58,6 @@ MacroAssemblerX64::loadConstantSimd128Int(const SimdConstant& v, FloatRegister d
         return;
     JmpSrc j = masm.vmovdqa_ripr(dest.encoding());
     propagateOOM(val->uses.append(CodeOffset(j.offset())));
-}
-
-void
-MacroAssemblerX64::loadConstantFloat32(float f, FloatRegister dest)
-{
-    loadConstantFloat32(wasm::RawF32(f), dest);
-}
-
-void
-MacroAssemblerX64::loadConstantDouble(double d, FloatRegister dest)
-{
-    loadConstantDouble(wasm::RawF64(d), dest);
 }
 
 void
@@ -105,19 +93,18 @@ MacroAssemblerX64::convertInt64ToFloat32(Register64 input, FloatRegister output)
 bool
 MacroAssemblerX64::convertUInt64ToDoubleNeedsTemp()
 {
-    return false;
+    return true;
 }
 
 void
 MacroAssemblerX64::convertUInt64ToDouble(Register64 input, FloatRegister output, Register temp)
 {
-    MOZ_ASSERT(temp == Register::Invalid());
-
     // Zero the output register to break dependencies, see convertInt32ToDouble.
     zeroDouble(output);
 
     // If the input's sign bit is not set we use vcvtsq2sd directly.
-    // Else, we divide by 2, convert to double, and multiply the result by 2.
+    // Else, we divide by 2 and keep the LSB, convert to double, and multiply
+    // the result by 2.
     Label done;
     Label isSigned;
 
@@ -130,7 +117,11 @@ MacroAssemblerX64::convertUInt64ToDouble(Register64 input, FloatRegister output,
 
     ScratchRegisterScope scratch(asMasm());
     mov(input.reg, scratch);
+    mov(input.reg, temp);
     shrq(Imm32(1), scratch);
+    andq(Imm32(1), temp);
+    orq(temp, scratch);
+
     vcvtsq2sd(scratch, output, output);
     vaddsd(output, output, output);
 
@@ -140,13 +131,10 @@ MacroAssemblerX64::convertUInt64ToDouble(Register64 input, FloatRegister output,
 void
 MacroAssemblerX64::convertUInt64ToFloat32(Register64 input, FloatRegister output, Register temp)
 {
-    MOZ_ASSERT(temp == Register::Invalid());
-
     // Zero the output register to break dependencies, see convertInt32ToDouble.
     zeroFloat32(output);
 
-    // If the input's sign bit is not set we use vcvtsq2ss directly.
-    // Else, we divide by 2, convert to float, and multiply the result by 2.
+    // See comment in convertUInt64ToDouble.
     Label done;
     Label isSigned;
 
@@ -159,7 +147,11 @@ MacroAssemblerX64::convertUInt64ToFloat32(Register64 input, FloatRegister output
 
     ScratchRegisterScope scratch(asMasm());
     mov(input.reg, scratch);
+    mov(input.reg, temp);
     shrq(Imm32(1), scratch);
+    andq(Imm32(1), temp);
+    orq(temp, scratch);
+
     vcvtsq2ss(scratch, output, output);
     vaddss(output, output, output);
 
@@ -265,14 +257,14 @@ MacroAssemblerX64::finish()
         masm.haltingAlign(sizeof(double));
     for (const Double& d : doubles_) {
         bindOffsets(d.uses);
-        masm.int64Constant(d.value);
+        masm.doubleConstant(d.value);
     }
 
     if (!floats_.empty())
         masm.haltingAlign(sizeof(float));
     for (const Float& f : floats_) {
         bindOffsets(f.uses);
-        masm.int32Constant(f.value);
+        masm.floatConstant(f.value);
     }
 
     // SIMD memory values must be suitably aligned.
@@ -323,7 +315,7 @@ MacroAssemblerX64::handleFailureWithHandlerTail(void* handler)
     Label return_;
     Label bailout;
 
-    loadPtr(Address(rsp, offsetof(ResumeFromException, kind)), rax);
+    load32(Address(rsp, offsetof(ResumeFromException, kind)), rax);
     asMasm().branch32(Assembler::Equal, rax, Imm32(ResumeFromException::RESUME_ENTRY_FRAME), &entryFrame);
     asMasm().branch32(Assembler::Equal, rax, Imm32(ResumeFromException::RESUME_CATCH), &catch_);
     asMasm().branch32(Assembler::Equal, rax, Imm32(ResumeFromException::RESUME_FINALLY), &finally);
@@ -374,7 +366,7 @@ MacroAssemblerX64::handleFailureWithHandlerTail(void* handler)
     // frame before returning.
     {
         Label skipProfilingInstrumentation;
-        AbsoluteAddress addressOfEnabled(GetJitContext()->runtime->spsProfiler().addressOfEnabled());
+        AbsoluteAddress addressOfEnabled(GetJitContext()->runtime->geckoProfiler().addressOfEnabled());
         asMasm().branch32(Assembler::Equal, addressOfEnabled, Imm32(0), &skipProfilingInstrumentation);
         profilerExitFrame();
         bind(&skipProfilingInstrumentation);
@@ -393,8 +385,8 @@ MacroAssemblerX64::handleFailureWithHandlerTail(void* handler)
 void
 MacroAssemblerX64::profilerEnterFrame(Register framePtr, Register scratch)
 {
-    AbsoluteAddress activation(GetJitContext()->runtime->addressOfProfilingActivation());
-    loadPtr(activation, scratch);
+    asMasm().loadJSContext(scratch);
+    loadPtr(Address(scratch, offsetof(JSContext, profilingActivation_)), scratch);
     storePtr(framePtr, Address(scratch, JitActivation::offsetOfLastProfilingFrame()));
     storePtr(ImmPtr(nullptr), Address(scratch, JitActivation::offsetOfLastProfilingCallSite()));
 }
@@ -417,31 +409,45 @@ MacroAssemblerX64::asMasm() const
     return *static_cast<const MacroAssembler*>(this);
 }
 
-//{{{ check_macroassembler_style
-// ===============================================================
-// Stack manipulation functions.
-
 void
-MacroAssembler::reserveStack(uint32_t amount)
+MacroAssembler::subFromStackPtr(Imm32 imm32)
 {
-    if (amount) {
+    if (imm32.value) {
         // On windows, we cannot skip very far down the stack without touching the
         // memory pages in-between.  This is a corner-case code for situations where the
         // Ion frame data for a piece of code is very large.  To handle this special case,
-        // for frames over 1k in size we allocate memory on the stack incrementally, touching
+        // for frames over 4k in size we allocate memory on the stack incrementally, touching
         // it as we go.
-        uint32_t amountLeft = amount;
-        while (amountLeft > 4096) {
+        //
+        // When the amount is quite large, which it can be, we emit an actual loop, in order
+        // to keep the function prologue compact.  Compactness is a requirement for eg
+        // Wasm's CodeRange data structure, which can encode only 8-bit offsets.
+        uint32_t amountLeft = imm32.value;
+        uint32_t fullPages = amountLeft / 4096;
+        if (fullPages <= 8) {
+            while (amountLeft > 4096) {
+                subq(Imm32(4096), StackPointer);
+                store32(Imm32(0), Address(StackPointer, 0));
+                amountLeft -= 4096;
+            }
+            subq(Imm32(amountLeft), StackPointer);
+        } else {
+            ScratchRegisterScope scratch(*this);
+            Label top;
+            move32(Imm32(fullPages), scratch);
+            bind(&top);
             subq(Imm32(4096), StackPointer);
             store32(Imm32(0), Address(StackPointer, 0));
-            amountLeft -= 4096;
+            subl(Imm32(1), scratch);
+            j(Assembler::NonZero, &top);
+            amountLeft -= fullPages * 4096;
+            if (amountLeft)
+                subq(Imm32(amountLeft), StackPointer);
         }
-        subq(Imm32(amountLeft), StackPointer);
     }
-    framePushed_ += amount;
 }
 
-
+//{{{ check_macroassembler_style
 // ===============================================================
 // ABI function calls.
 
@@ -457,7 +463,7 @@ MacroAssembler::setupUnalignedABICall(Register scratch)
 }
 
 void
-MacroAssembler::callWithABIPre(uint32_t* stackAdjust, bool callFromAsmJS)
+MacroAssembler::callWithABIPre(uint32_t* stackAdjust, bool callFromWasm)
 {
     MOZ_ASSERT(inCall_);
     uint32_t stackForCall = abiArgs_.stackBytesConsumedSoFar();
@@ -468,9 +474,8 @@ MacroAssembler::callWithABIPre(uint32_t* stackAdjust, bool callFromAsmJS)
         stackForCall += ComputeByteAlignment(stackForCall + sizeof(intptr_t),
                                              ABIStackAlignment);
     } else {
-        static_assert(sizeof(AsmJSFrame) % ABIStackAlignment == 0,
-                      "AsmJSFrame should be part of the stack alignment.");
-        stackForCall += ComputeByteAlignment(stackForCall + framePushed(),
+        uint32_t alignmentAtPrologue = callFromWasm ? sizeof(wasm::Frame) : 0;
+        stackForCall += ComputeByteAlignment(stackForCall + framePushed() + alignmentAtPrologue,
                                              ABIStackAlignment);
     }
 
@@ -661,9 +666,12 @@ MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value, MIRType value
 // wasm support
 
 void
-MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAddr, AnyRegister out)
+MacroAssembler::wasmLoad(const wasm::MemoryAccessDesc& access, Operand srcAddr, AnyRegister out)
 {
-    switch (type) {
+    memoryBarrier(access.barrierBefore());
+
+    size_t loadOffset = size();
+    switch (access.type()) {
       case Scalar::Int8:
         movsbl(srcAddr, out.gpr());
         break;
@@ -687,7 +695,7 @@ MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAd
         loadDouble(srcAddr, out.fpu());
         break;
       case Scalar::Float32x4:
-        switch (numSimdElems) {
+        switch (access.numSimdElems()) {
           // In memory-to-register mode, movss zeroes out the high lanes.
           case 1: loadFloat32(srcAddr, out.fpu()); break;
           // See comment above, which also applies to movsd.
@@ -697,7 +705,7 @@ MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAd
         }
         break;
       case Scalar::Int32x4:
-        switch (numSimdElems) {
+        switch (access.numSimdElems()) {
           // In memory-to-register mode, movd zeroes out the high lanes.
           case 1: vmovd(srcAddr, out.fpu()); break;
           // See comment above, which also applies to movq.
@@ -707,11 +715,11 @@ MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAd
         }
         break;
       case Scalar::Int8x16:
-        MOZ_ASSERT(numSimdElems == 16, "unexpected partial load");
+        MOZ_ASSERT(access.numSimdElems() == 16, "unexpected partial load");
         loadUnalignedSimd128Int(srcAddr, out.fpu());
         break;
       case Scalar::Int16x8:
-        MOZ_ASSERT(numSimdElems == 8, "unexpected partial load");
+        MOZ_ASSERT(access.numSimdElems() == 8, "unexpected partial load");
         loadUnalignedSimd128Int(srcAddr, out.fpu());
         break;
       case Scalar::Int64:
@@ -720,12 +728,19 @@ MacroAssembler::wasmLoad(Scalar::Type type, unsigned numSimdElems, Operand srcAd
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
+    append(access, loadOffset, framePushed());
+
+    memoryBarrier(access.barrierAfter());
 }
 
 void
-MacroAssembler::wasmLoadI64(Scalar::Type type, Operand srcAddr, Register64 out)
+MacroAssembler::wasmLoadI64(const wasm::MemoryAccessDesc& access, Operand srcAddr, Register64 out)
 {
-    switch (type) {
+    MOZ_ASSERT(!access.isAtomic());
+    MOZ_ASSERT(!access.isSimd());
+
+    size_t loadOffset = size();
+    switch (access.type()) {
       case Scalar::Int8:
         movsbq(srcAddr, out.reg);
         break;
@@ -759,13 +774,16 @@ MacroAssembler::wasmLoadI64(Scalar::Type type, Operand srcAddr, Register64 out)
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
+    append(access, loadOffset, framePushed());
 }
 
 void
-MacroAssembler::wasmStore(Scalar::Type type, unsigned numSimdElems, AnyRegister value,
-                          Operand dstAddr)
+MacroAssembler::wasmStore(const wasm::MemoryAccessDesc& access, AnyRegister value, Operand dstAddr)
 {
-    switch (type) {
+    memoryBarrier(access.barrierBefore());
+
+    size_t storeOffset = size();
+    switch (access.type()) {
       case Scalar::Int8:
       case Scalar::Uint8:
         movb(value.gpr(), dstAddr);
@@ -788,7 +806,7 @@ MacroAssembler::wasmStore(Scalar::Type type, unsigned numSimdElems, AnyRegister 
         storeUncanonicalizedDouble(value.fpu(), dstAddr);
         break;
       case Scalar::Float32x4:
-        switch (numSimdElems) {
+        switch (access.numSimdElems()) {
           // In memory-to-register mode, movss zeroes out the high lanes.
           case 1: storeUncanonicalizedFloat32(value.fpu(), dstAddr); break;
           // See comment above, which also applies to movsd.
@@ -798,7 +816,7 @@ MacroAssembler::wasmStore(Scalar::Type type, unsigned numSimdElems, AnyRegister 
         }
         break;
       case Scalar::Int32x4:
-        switch (numSimdElems) {
+        switch (access.numSimdElems()) {
           // In memory-to-register mode, movd zeroes out the high lanes.
           case 1: vmovd(value.fpu(), dstAddr); break;
           // See comment above, which also applies to movq.
@@ -808,17 +826,20 @@ MacroAssembler::wasmStore(Scalar::Type type, unsigned numSimdElems, AnyRegister 
         }
         break;
       case Scalar::Int8x16:
-        MOZ_ASSERT(numSimdElems == 16, "unexpected partial store");
+        MOZ_ASSERT(access.numSimdElems() == 16, "unexpected partial store");
         storeUnalignedSimd128Int(value.fpu(), dstAddr);
         break;
       case Scalar::Int16x8:
-        MOZ_ASSERT(numSimdElems == 8, "unexpected partial store");
+        MOZ_ASSERT(access.numSimdElems() == 8, "unexpected partial store");
         storeUnalignedSimd128Int(value.fpu(), dstAddr);
         break;
       case Scalar::Uint8Clamped:
       case Scalar::MaxTypedArrayViewType:
         MOZ_CRASH("unexpected array type");
     }
+    append(access, storeOffset, framePushed());
+
+    memoryBarrier(access.barrierAfter());
 }
 
 void

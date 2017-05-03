@@ -5,6 +5,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/PermissionMessageUtils.h"
 #include "mozilla/dom/PPresentation.h"
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/ipc/InputStreamUtils.h"
@@ -27,7 +28,9 @@ PresentationChild* sPresentationChild;
 
 } // anonymous
 
-NS_IMPL_ISUPPORTS(PresentationIPCService, nsIPresentationService)
+NS_IMPL_ISUPPORTS(PresentationIPCService,
+                  nsIPresentationService,
+                  nsIPresentationAvailabilityListener)
 
 PresentationIPCService::PresentationIPCService()
 {
@@ -45,7 +48,6 @@ PresentationIPCService::~PresentationIPCService()
 {
   Shutdown();
 
-  mAvailabilityListeners.Clear();
   mSessionListeners.Clear();
   mSessionInfoAtController.Clear();
   mSessionInfoAtReceiver.Clear();
@@ -60,6 +62,7 @@ PresentationIPCService::StartSession(
                const nsAString& aDeviceId,
                uint64_t aWindowId,
                nsIDOMEventTarget* aEventTarget,
+               nsIPrincipal* aPrincipal,
                nsIPresentationServiceCallback* aCallback,
                nsIPresentationTransportBuilderConstructor* aBuilderConstructor)
 {
@@ -78,7 +81,8 @@ PresentationIPCService::StartSession(
                                                     nsString(aOrigin),
                                                     nsString(aDeviceId),
                                                     aWindowId,
-                                                    tabId));
+                                                    tabId,
+                                                    IPC::Principal(aPrincipal)));
 }
 
 NS_IMETHODIMP
@@ -231,29 +235,43 @@ PresentationIPCService::SendRequest(nsIPresentationServiceCallback* aCallback,
 }
 
 NS_IMETHODIMP
-PresentationIPCService::RegisterAvailabilityListener(nsIPresentationAvailabilityListener* aListener)
+PresentationIPCService::RegisterAvailabilityListener(
+                                const nsTArray<nsString>& aAvailabilityUrls,
+                                nsIPresentationAvailabilityListener* aListener)
 {
   MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!aAvailabilityUrls.IsEmpty());
   MOZ_ASSERT(aListener);
 
-  mAvailabilityListeners.AppendElement(aListener);
-  if (sPresentationChild) {
+  nsTArray<nsString> addedUrls;
+  mAvailabilityManager.AddAvailabilityListener(aAvailabilityUrls,
+                                               aListener,
+                                               addedUrls);
+
+  if (sPresentationChild && !addedUrls.IsEmpty()) {
     Unused <<
-      NS_WARN_IF(!sPresentationChild->SendRegisterAvailabilityHandler());
+      NS_WARN_IF(
+        !sPresentationChild->SendRegisterAvailabilityHandler(addedUrls));
   }
   return NS_OK;
 }
 
 NS_IMETHODIMP
-PresentationIPCService::UnregisterAvailabilityListener(nsIPresentationAvailabilityListener* aListener)
+PresentationIPCService::UnregisterAvailabilityListener(
+                                const nsTArray<nsString>& aAvailabilityUrls,
+                                nsIPresentationAvailabilityListener* aListener)
 {
   MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aListener);
 
-  mAvailabilityListeners.RemoveElement(aListener);
-  if (mAvailabilityListeners.IsEmpty() && sPresentationChild) {
+  nsTArray<nsString> removedUrls;
+  mAvailabilityManager.RemoveAvailabilityListener(aAvailabilityUrls,
+                                                  aListener,
+                                                  removedUrls);
+
+  if (sPresentationChild && !removedUrls.IsEmpty()) {
     Unused <<
-      NS_WARN_IF(!sPresentationChild->SendUnregisterAvailabilityHandler());
+      NS_WARN_IF(
+        !sPresentationChild->SendUnregisterAvailabilityHandler(removedUrls));
   }
   return NS_OK;
 }
@@ -416,16 +434,13 @@ PresentationIPCService::NotifySessionConnect(uint64_t aWindowId,
   return listener->NotifySessionConnect(aWindowId, aSessionId);
 }
 
-nsresult
-PresentationIPCService::NotifyAvailableChange(bool aAvailable)
+NS_IMETHODIMP
+PresentationIPCService::NotifyAvailableChange(
+                                   const nsTArray<nsString>& aAvailabilityUrls,
+                                   bool aAvailable)
 {
-  nsTObserverArray<nsCOMPtr<nsIPresentationAvailabilityListener>>::ForwardIterator iter(mAvailabilityListeners);
-  while (iter.HasMore()) {
-    nsIPresentationAvailabilityListener* listener = iter.GetNext();
-    Unused << NS_WARN_IF(NS_FAILED(listener->NotifyAvailableChange(aAvailable)));
-  }
-
-  return NS_OK;
+  return mAvailabilityManager.DoNotifyAvailableChange(aAvailabilityUrls,
+                                                      aAvailable);
 }
 
 NS_IMETHODIMP
@@ -471,7 +486,7 @@ PresentationIPCService::UntrackSessionInfo(const nsAString& aSessionId,
                                                     aRole,
                                                     &windowId))) {
       NS_DispatchToMainThread(NS_NewRunnableFunction([windowId]() -> void {
-        PRES_DEBUG("Attempt to close window[%d]\n", windowId);
+        PRES_DEBUG("Attempt to close window[%" PRIu64 "]\n", windowId);
 
         if (auto* window = nsGlobalWindow::GetInnerWindowWithId(windowId)) {
           window->Close();

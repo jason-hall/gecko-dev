@@ -14,7 +14,6 @@
 #include "mozilla/Hal.h"
 #include "nsXULAppAPI.h"
 #include <prthread.h>
-#include "nsXPCOMStrings.h"
 #include "AndroidBridge.h"
 #include "AndroidJNIWrapper.h"
 #include "AndroidBridgeUtilities.h"
@@ -25,7 +24,6 @@
 #include "mozilla/Preferences.h"
 #include "nsThreadUtils.h"
 #include "nsIThreadManager.h"
-#include "mozilla/dom/mobilemessage/PSms.h"
 #include "gfxPlatform.h"
 #include "gfxContext.h"
 #include "mozilla/gfx/2D.h"
@@ -38,11 +36,11 @@
 #include "nsIDOMClientRect.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "nsPrintfCString.h"
-#include "NativeJSContainer.h"
 #include "nsContentUtils.h"
 #include "nsIScriptError.h"
 #include "nsIHttpChannel.h"
 
+#include "EventDispatcher.h"
 #include "MediaCodec.h"
 #include "SurfaceTexture.h"
 #include "GLContextProvider.h"
@@ -171,12 +169,6 @@ AndroidBridge::AndroidBridge()
     // mMessageQueueMessages may be null (e.g. due to proguard optimization)
     mMessageQueueMessages = jEnv->GetFieldID(
             msgQueueClass.Get(), "mMessages", "Landroid/os/Message;");
-
-#ifdef MOZ_WEBSMS_BACKEND
-    AutoJNIClass smsMessage(jEnv, "android/telephony/SmsMessage");
-    mAndroidSmsMessageClass = smsMessage.getGlobalRef();
-    jCalculateLength = smsMessage.getStaticMethod("calculateLength", "(Ljava/lang/CharSequence;Z)[I");
-#endif
 
     AutoJNIClass string(jEnv, "java/lang/String");
     jStringClass = string.getGlobalRef();
@@ -671,286 +663,6 @@ AndroidBridge::GetCurrentBatteryInformation(hal::BatteryInformation* aBatteryInf
 }
 
 void
-AndroidBridge::HandleGeckoMessage(JSContext* cx, JS::HandleObject object)
-{
-    ALOG_BRIDGE("%s", __PRETTY_FUNCTION__);
-
-    auto message = widget::CreateNativeJSContainer(cx, object);
-    GeckoAppShell::HandleGeckoMessage(message);
-}
-
-nsresult
-AndroidBridge::GetSegmentInfoForText(const nsAString& aText,
-                                     nsIMobileMessageCallback* aRequest)
-{
-#ifndef MOZ_WEBSMS_BACKEND
-    return NS_ERROR_FAILURE;
-#else
-    ALOG_BRIDGE("AndroidBridge::GetSegmentInfoForText");
-
-    int32_t segments, charsPerSegment, charsAvailableInLastSegment;
-
-    JNIEnv* const env = jni::GetGeckoThreadEnv();
-
-    AutoLocalJNIFrame jniFrame(env, 2);
-    jstring jText = NewJavaString(&jniFrame, aText);
-    jobject obj = env->CallStaticObjectMethod(mAndroidSmsMessageClass,
-                                              jCalculateLength, jText, JNI_FALSE);
-    if (jniFrame.CheckForException())
-        return NS_ERROR_FAILURE;
-
-    jintArray arr = static_cast<jintArray>(obj);
-    if (!arr || env->GetArrayLength(arr) != 4)
-        return NS_ERROR_FAILURE;
-
-    jint* info = env->GetIntArrayElements(arr, JNI_FALSE);
-
-    segments = info[0]; // msgCount
-    charsPerSegment = info[2]; // codeUnitsRemaining
-    // segmentChars = (codeUnitCount + codeUnitsRemaining) / msgCount
-    charsAvailableInLastSegment = (info[1] + info[2]) / info[0];
-
-    env->ReleaseIntArrayElements(arr, info, JNI_ABORT);
-
-    // TODO Bug 908598 - Should properly use |QueueSmsRequest(...)| to queue up
-    // the nsIMobileMessageCallback just like other functions.
-    return aRequest->NotifySegmentInfoForTextGot(segments,
-                                                 charsPerSegment,
-                                                 charsAvailableInLastSegment);
-#endif
-}
-
-void
-AndroidBridge::SendMessage(const nsAString& aNumber,
-                           const nsAString& aMessage,
-                           nsIMobileMessageCallback* aRequest)
-{
-    ALOG_BRIDGE("AndroidBridge::SendMessage");
-
-    uint32_t requestId;
-    if (!QueueSmsRequest(aRequest, &requestId))
-        return;
-
-    GeckoAppShell::SendMessage(aNumber, aMessage, requestId);
-}
-
-void
-AndroidBridge::GetMessage(int32_t aMessageId, nsIMobileMessageCallback* aRequest)
-{
-    ALOG_BRIDGE("AndroidBridge::GetMessage");
-
-    uint32_t requestId;
-    if (!QueueSmsRequest(aRequest, &requestId))
-        return;
-
-    GeckoAppShell::GetMessage(aMessageId, requestId);
-}
-
-void
-AndroidBridge::DeleteMessage(int32_t aMessageId, nsIMobileMessageCallback* aRequest)
-{
-    ALOG_BRIDGE("AndroidBridge::DeleteMessage");
-
-    uint32_t requestId;
-    if (!QueueSmsRequest(aRequest, &requestId))
-        return;
-
-    GeckoAppShell::DeleteMessage(aMessageId, requestId);
-}
-
-void
-AndroidBridge::MarkMessageRead(int32_t aMessageId,
-                               bool aValue,
-                               bool aSendReadReport,
-                               nsIMobileMessageCallback* aRequest)
-{
-    ALOG_BRIDGE("AndroidBridge::MarkMessageRead");
-
-    uint32_t requestId;
-    if (!QueueSmsRequest(aRequest, &requestId)) {
-        return;
-    }
-
-    GeckoAppShell::MarkMessageRead(aMessageId,
-                                   aValue,
-                                   aSendReadReport,
-                                   requestId);
-}
-
-NS_IMPL_ISUPPORTS0(MessageCursorContinueCallback)
-
-NS_IMETHODIMP
-MessageCursorContinueCallback::HandleContinue()
-{
-    GeckoAppShell::GetNextMessage(mRequestId);
-    return NS_OK;
-}
-
-already_AddRefed<nsICursorContinueCallback>
-AndroidBridge::CreateMessageCursor(bool aHasStartDate,
-                                   uint64_t aStartDate,
-                                   bool aHasEndDate,
-                                   uint64_t aEndDate,
-                                   const char16_t** aNumbers,
-                                   uint32_t aNumbersCount,
-                                   const nsAString& aDelivery,
-                                   bool aHasRead,
-                                   bool aRead,
-                                   bool aHasThreadId,
-                                   uint64_t aThreadId,
-                                   bool aReverse,
-                                   nsIMobileMessageCursorCallback* aRequest)
-{
-    ALOG_BRIDGE("AndroidBridge::CreateMessageCursor");
-
-    JNIEnv* const env = jni::GetGeckoThreadEnv();
-
-    uint32_t requestId;
-    if (!QueueSmsCursorRequest(aRequest, &requestId))
-        return nullptr;
-
-    AutoLocalJNIFrame jniFrame(env, 2);
-
-    jobjectArray numbers =
-        (jobjectArray)env->NewObjectArray(aNumbersCount,
-                                          jStringClass,
-                                          NewJavaString(&jniFrame, EmptyString()));
-
-    for (uint32_t i = 0; i < aNumbersCount; ++i) {
-        jstring elem = NewJavaString(&jniFrame, nsDependentString(aNumbers[i]));
-        env->SetObjectArrayElement(numbers, i, elem);
-        env->DeleteLocalRef(elem);
-    }
-
-    int64_t startDate = aHasStartDate ? aStartDate : -1;
-    int64_t endDate = aHasEndDate ? aEndDate : -1;
-    GeckoAppShell::CreateMessageCursor(startDate, endDate,
-                                       ObjectArray::Ref::From(numbers),
-                                       aNumbersCount,
-                                       aDelivery,
-                                       aHasRead, aRead,
-                                       aHasThreadId, aThreadId,
-                                       aReverse,
-                                       requestId);
-
-    nsCOMPtr<nsICursorContinueCallback> callback = 
-       new MessageCursorContinueCallback(requestId);
-    return callback.forget();
-}
-
-NS_IMPL_ISUPPORTS0(ThreadCursorContinueCallback)
-
-NS_IMETHODIMP
-ThreadCursorContinueCallback::HandleContinue()
-{
-    GeckoAppShell::GetNextThread(mRequestId);
-    return NS_OK;
-}
-
-already_AddRefed<nsICursorContinueCallback>
-AndroidBridge::CreateThreadCursor(nsIMobileMessageCursorCallback* aRequest)
-{
-    ALOG_BRIDGE("AndroidBridge::CreateThreadCursor");
-
-    uint32_t requestId;
-    if (!QueueSmsCursorRequest(aRequest, &requestId)) {
-        return nullptr;
-    }
-
-    GeckoAppShell::CreateThreadCursor(requestId);
-
-    nsCOMPtr<nsICursorContinueCallback> callback =
-        new ThreadCursorContinueCallback(requestId);
-    return callback.forget();
-}
-
-bool
-AndroidBridge::QueueSmsRequest(nsIMobileMessageCallback* aRequest, uint32_t* aRequestIdOut)
-{
-    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
-    MOZ_ASSERT(aRequest && aRequestIdOut);
-
-    const uint32_t length = mSmsRequests.Length();
-    for (uint32_t i = 0; i < length; i++) {
-        if (!(mSmsRequests)[i]) {
-            (mSmsRequests)[i] = aRequest;
-            *aRequestIdOut = i;
-            return true;
-        }
-    }
-
-    mSmsRequests.AppendElement(aRequest);
-
-    // After AppendElement(), previous `length` points to the new tail element.
-    *aRequestIdOut = length;
-    return true;
-}
-
-already_AddRefed<nsIMobileMessageCallback>
-AndroidBridge::DequeueSmsRequest(uint32_t aRequestId)
-{
-    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
-
-    MOZ_ASSERT(aRequestId < mSmsRequests.Length());
-    if (aRequestId >= mSmsRequests.Length()) {
-        return nullptr;
-    }
-
-    return mSmsRequests[aRequestId].forget();
-}
-
-bool
-AndroidBridge::QueueSmsCursorRequest(nsIMobileMessageCursorCallback* aRequest,
-                                     uint32_t* aRequestIdOut)
-{
-    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
-    MOZ_ASSERT(aRequest && aRequestIdOut);
-
-    const uint32_t length = mSmsCursorRequests.Length();
-    for (uint32_t i = 0; i < length; i++) {
-        if (!(mSmsCursorRequests)[i]) {
-            (mSmsCursorRequests)[i] = aRequest;
-            *aRequestIdOut = i;
-            return true;
-        }
-    }
-
-    mSmsCursorRequests.AppendElement(aRequest);
-
-    // After AppendElement(), previous `length` points to the new tail element.
-    *aRequestIdOut = length;
-    return true;
-}
-
-nsCOMPtr<nsIMobileMessageCursorCallback>
-AndroidBridge::GetSmsCursorRequest(uint32_t aRequestId)
-{
-    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
-
-    MOZ_ASSERT(aRequestId < mSmsCursorRequests.Length());
-    if (aRequestId >= mSmsCursorRequests.Length()) {
-        return nullptr;
-    }
-
-    // TODO: remove on final dequeue
-    return mSmsCursorRequests[aRequestId];
-}
-
-already_AddRefed<nsIMobileMessageCursorCallback>
-AndroidBridge::DequeueSmsCursorRequest(uint32_t aRequestId)
-{
-    MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
-
-    MOZ_ASSERT(aRequestId < mSmsCursorRequests.Length());
-    if (aRequestId >= mSmsCursorRequests.Length()) {
-        return nullptr;
-    }
-
-    // TODO: remove on final dequeue
-    return mSmsCursorRequests[aRequestId].forget();
-}
-
-void
 AndroidBridge::GetCurrentNetworkInformation(hal::NetworkInformation* aNetworkInfo)
 {
     ALOG_BRIDGE("AndroidBridge::GetCurrentNetworkInformation");
@@ -1011,49 +723,66 @@ AndroidBridge::GetGlobalContextRef() {
 }
 
 /* Implementation file */
-NS_IMPL_ISUPPORTS(nsAndroidBridge, nsIAndroidBridge)
+NS_IMPL_ISUPPORTS(nsAndroidBridge,
+                  nsIAndroidEventDispatcher,
+                  nsIAndroidBridge,
+                  nsIObserver)
 
-nsAndroidBridge::nsAndroidBridge()
+nsAndroidBridge::nsAndroidBridge() :
+    mAudibleWindowsNum(0)
 {
+  if (jni::IsAvailable()) {
+    RefPtr<widget::EventDispatcher> dispatcher = new widget::EventDispatcher();
+    dispatcher->Attach(java::EventDispatcher::GetInstance(),
+                       /* window */ nullptr);
+    mEventDispatcher = dispatcher;
+  }
+
   AddObservers();
 }
 
 nsAndroidBridge::~nsAndroidBridge()
 {
-  RemoveObservers();
 }
 
 NS_IMETHODIMP nsAndroidBridge::HandleGeckoMessage(JS::HandleValue val,
                                                   JSContext *cx)
 {
-    if (val.isObject()) {
-        JS::RootedObject object(cx, &val.toObject());
-        AndroidBridge::Bridge()->HandleGeckoMessage(cx, object);
-        return NS_OK;
-    }
-
-    // Now handle legacy JSON messages.
-    if (!val.isString()) {
-        return NS_ERROR_INVALID_ARG;
-    }
-    JS::RootedString jsonStr(cx, val.toString());
-
-    JS::RootedValue jsonVal(cx);
-    if (!JS_ParseJSON(cx, jsonStr, &jsonVal) || !jsonVal.isObject()) {
-        return NS_ERROR_INVALID_ARG;
-    }
-
     // Spit out a warning before sending the message.
     nsContentUtils::ReportToConsoleNonLocalized(
-        NS_LITERAL_STRING("Use of JSON is deprecated. "
-            "Please pass Javascript objects directly to handleGeckoMessage."),
+        NS_LITERAL_STRING("Use of handleGeckoMessage is deprecated. "
+                          "Please use EventDispatcher from Messaging.jsm."),
         nsIScriptError::warningFlag,
         NS_LITERAL_CSTRING("nsIAndroidBridge"),
         nullptr);
 
-    JS::RootedObject object(cx, &jsonVal.toObject());
-    AndroidBridge::Bridge()->HandleGeckoMessage(cx, object);
-    return NS_OK;
+    JS::RootedValue jsonVal(cx);
+
+    if (val.isObject()) {
+        jsonVal = val;
+
+    } else {
+        // Handle legacy JSON messages.
+        if (!val.isString()) {
+            return NS_ERROR_INVALID_ARG;
+        }
+        JS::RootedString jsonStr(cx, val.toString());
+
+        if (!JS_ParseJSON(cx, jsonStr, &jsonVal) || !jsonVal.isObject()) {
+            JS_ClearPendingException(cx);
+            return NS_ERROR_INVALID_ARG;
+        }
+    }
+
+    JS::RootedObject jsonObj(cx, &jsonVal.toObject());
+    JS::RootedValue typeVal(cx);
+
+    if (!JS_GetProperty(cx, jsonObj, "type", &typeVal)) {
+        JS_ClearPendingException(cx);
+        return NS_ERROR_INVALID_ARG;
+    }
+
+    return Dispatch(typeVal, jsonVal, /* callback */ nullptr, cx);
 }
 
 NS_IMETHODIMP nsAndroidBridge::ContentDocumentChanged(mozIDOMWindowProxy* aWindow)
@@ -1075,45 +804,28 @@ nsAndroidBridge::Observe(nsISupports* aSubject, const char* aTopic,
 {
   if (!strcmp(aTopic, "xpcom-shutdown")) {
     RemoveObservers();
-  } else if (!strcmp(aTopic, "media-playback")) {
-    ALOG_BRIDGE("nsAndroidBridge::Observe, get media-playback event.");
-
-    nsCOMPtr<nsISupportsPRUint64> wrapper = do_QueryInterface(aSubject);
-    if (!wrapper) {
-      return NS_OK;
-    }
-
-    uint64_t windowId = 0;
-    nsresult rv = wrapper->GetData(&windowId);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+  } else if (!strcmp(aTopic, "audio-playback")) {
+    ALOG_BRIDGE("nsAndroidBridge::Observe, get audio-playback event.");
 
     nsAutoString activeStr(aData);
     bool isPlaying = activeStr.EqualsLiteral("active");
-    UpdateAudioPlayingWindows(windowId, isPlaying);
+    UpdateAudioPlayingWindows(isPlaying);
   }
   return NS_OK;
 }
 
 void
-nsAndroidBridge::UpdateAudioPlayingWindows(uint64_t aWindowId,
-                                           bool aPlaying)
+nsAndroidBridge::UpdateAudioPlayingWindows(bool aPlaying)
 {
   // Request audio focus for the first audio playing window and abandon focus
   // for the last audio playing window.
-  if (aPlaying && !mAudioPlayingWindows.Contains(aWindowId)) {
-    mAudioPlayingWindows.AppendElement(aWindowId);
-    if (mAudioPlayingWindows.Length() == 1) {
-      ALOG_BRIDGE("nsAndroidBridge, request audio focus.");
-      AudioFocusAgent::NotifyStartedPlaying();
-    }
-  } else if (!aPlaying && mAudioPlayingWindows.Contains(aWindowId)) {
-    mAudioPlayingWindows.RemoveElement(aWindowId);
-    if (mAudioPlayingWindows.Length() == 0) {
-      ALOG_BRIDGE("nsAndroidBridge, abandon audio focus.");
-      AudioFocusAgent::NotifyStoppedPlaying();
-    }
+  MOZ_ASSERT(mAudibleWindowsNum >= 0);
+  if (aPlaying && mAudibleWindowsNum++ == 0) {
+    ALOG_BRIDGE("nsAndroidBridge, request audio focus.");
+    AudioFocusAgent::NotifyStartedPlaying();
+  } else if (!aPlaying && --mAudibleWindowsNum == 0) {
+    ALOG_BRIDGE("nsAndroidBridge, abandon audio focus.");
+    AudioFocusAgent::NotifyStoppedPlaying();
   }
 }
 
@@ -1124,7 +836,7 @@ nsAndroidBridge::AddObservers()
   if (obs) {
     obs->AddObserver(this, "xpcom-shutdown", false);
     if (jni::IsFennec()) { // No AudioFocusAgent in non-Fennec environment.
-        obs->AddObserver(this, "media-playback", false);
+        obs->AddObserver(this, "audio-playback", false);
     }
   }
 }
@@ -1136,7 +848,7 @@ nsAndroidBridge::RemoveObservers()
   if (obs) {
     obs->RemoveObserver(this, "xpcom-shutdown");
     if (jni::IsFennec()) { // No AudioFocusAgent in non-Fennec environment.
-        obs->RemoveObserver(this, "media-playback");
+        obs->RemoveObserver(this, "audio-playback");
     }
   }
 }
@@ -1267,12 +979,12 @@ class AndroidBridge::DelayedTask
     using TimeDuration = mozilla::TimeDuration;
 
 public:
-    DelayedTask(already_AddRefed<Runnable> aTask)
+    DelayedTask(already_AddRefed<nsIRunnable> aTask)
         : mTask(aTask)
         , mRunTime() // Null timestamp representing no delay.
     {}
 
-    DelayedTask(already_AddRefed<Runnable> aTask, int aDelayMs)
+    DelayedTask(already_AddRefed<nsIRunnable> aTask, int aDelayMs)
         : mTask(aTask)
         , mRunTime(TimeStamp::Now() + TimeDuration::FromMilliseconds(aDelayMs))
     {}
@@ -1295,19 +1007,19 @@ public:
         return 0;
     }
 
-    already_AddRefed<Runnable> TakeTask()
+    already_AddRefed<nsIRunnable> TakeTask()
     {
         return mTask.forget();
     }
 
 private:
-    RefPtr<Runnable> mTask;
+    nsCOMPtr<nsIRunnable> mTask;
     const TimeStamp mRunTime;
 };
 
 
 void
-AndroidBridge::PostTaskToUiThread(already_AddRefed<Runnable> aTask, int aDelayMs)
+AndroidBridge::PostTaskToUiThread(already_AddRefed<nsIRunnable> aTask, int aDelayMs)
 {
     // add the new task into the mUiTaskQueue, sorted with
     // the earliest task first in the queue
@@ -1354,7 +1066,7 @@ AndroidBridge::RunDelayedUiThreadTasks()
         }
 
         // Retrieve task before unlocking/running.
-        RefPtr<Runnable> nextTask(mUiTaskQueue[0].TakeTask());
+        nsCOMPtr<nsIRunnable> nextTask(mUiTaskQueue[0].TakeTask());
         mUiTaskQueue.RemoveElementAt(0);
 
         // Unlock to allow posting new tasks reentrantly.
@@ -1400,39 +1112,5 @@ nsresult AndroidBridge::InputStreamRead(Object::Param obj, char *aBuf, uint32_t 
         return NS_OK;
     }
     *aRead = read;
-    return NS_OK;
-}
-
-nsresult AndroidBridge::GetExternalPublicDirectory(const nsAString& aType, nsAString& aPath) {
-    if (XRE_IsContentProcess()) {
-        nsString key(aType);
-        nsAutoString path;
-        if (AndroidBridge::sStoragePaths.Get(key, &path)) {
-            aPath = path;
-            return NS_OK;
-        }
-
-        // Lazily get the value from the parent.
-        dom::ContentChild* child = dom::ContentChild::GetSingleton();
-        if (child) {
-          nsAutoString type(aType);
-          child->SendGetDeviceStorageLocation(type, &path);
-          if (!path.IsEmpty()) {
-            AndroidBridge::sStoragePaths.Put(key, path);
-            aPath = path;
-            return NS_OK;
-          }
-        }
-
-        ALOG_BRIDGE("AndroidBridge::GetExternalPublicDirectory no cache for %s",
-              NS_ConvertUTF16toUTF8(aType).get());
-        return NS_ERROR_NOT_AVAILABLE;
-    }
-
-    auto path = GeckoAppShell::GetExternalPublicDirectory(aType);
-    if (!path) {
-        return NS_ERROR_NOT_AVAILABLE;
-    }
-    aPath = path->ToString();
     return NS_OK;
 }

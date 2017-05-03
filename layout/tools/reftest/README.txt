@@ -51,13 +51,14 @@ must be one of the following:
 
    <failure-type>* include <relative_path>
 
-   <failure-type> is the same as listed below for a test item.  As for 
-   test items, multiple failure types listed on the same line are 
-   combined by using the last matching failure type listed.  However, 
-   the failure type on a manifest is combined with the failure type on 
-   the test (or on a nested manifest) with the rule that the last in the
-   following list wins:  fails, random, skip.  (In other words, skip 
-   always wins, and random beats fails.)
+   <failure-type> is the same as listed below for a test item.  As for
+   test items, multiple failure types listed on the same line are
+   combined by using the last matching failure type listed on the line.
+   However, the failure type on a manifest is combined with the failure
+   type on the test (or on a nested manifest) with the rule that the
+   last in the following list wins:  fails, random, skip.  (In other
+   words, when combining <failure-type> from the manifest include and
+   the test line, skip always wins, and random beats fails.)
 
 2. A test item
 
@@ -555,7 +556,7 @@ the end of the test take the snapshot with the given async zoom on top of any
 existing zoom. Content is not re-rendered at the new zoom level. This
 corresponds to the mobile style "pinch zoom" style of zoom. This is unsupported
 in many configurations, and any tests using this will probably want to have
-skip-if(!asyncPanZoom) on them.
+pref(apz.allow_zooming,true) on them.
 
 Printing Tests: class="reftest-print"
 =====================================

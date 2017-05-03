@@ -18,9 +18,7 @@
 #include "mozilla/dom/Element.h"
 
 namespace mozilla {
-namespace css {
-class Declaration;
-} // namespace css
+class DeclarationBlock;
 } // namespace mozilla
 
 // IID for nsStyledElement interface
@@ -46,8 +44,7 @@ public:
   NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr) override;
 
   // Element interface methods
-  virtual mozilla::css::Declaration* GetInlineStyleDeclaration() override;
-  virtual nsresult SetInlineStyleDeclaration(mozilla::css::Declaration* aDeclaration,
+  virtual nsresult SetInlineStyleDeclaration(mozilla::DeclarationBlock* aDeclaration,
                                              const nsAString* aSerialized,
                                              bool aNotify) override;
 
@@ -79,9 +76,12 @@ protected:
    * Create the style struct from the style attr.  Used when an element is
    * first put into a document.  Only has an effect if the old value is a
    * string.  If aForceInDataDoc is true, will reparse even if we're in a data
-   * document.
+   * document. If aForceIfAlreadyParsed is set, this will always reparse even
+   * if the value has already been parsed.
    */
-  nsresult  ReparseStyleAttribute(bool aForceInDataDoc);
+  nsresult ReparseStyleAttribute(bool aForceInDataDoc, bool aForceIfAlreadyParsed);
+
+  virtual void NodeInfoChanged(nsIDocument* aOldDoc) override;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsStyledElement, NS_STYLED_ELEMENT_IID)

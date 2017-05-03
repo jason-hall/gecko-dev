@@ -11,6 +11,7 @@ function *task_openDownloadsSubPanel() {
 }
 
 add_task(function* test_openDownloadsFolder() {
+  yield SpecialPowers.pushPrefEnv({"set": [["browser.download.showPanelDropmarker", true]]});
   yield task_openPanel();
 
   yield task_openDownloadsSubPanel();
@@ -40,7 +41,7 @@ add_task(function* test_clearList() {
     ],
     expectClearListShown: true,
     expectedItemNumber: 0,
-  },{
+  }, {
     downloads: [
       { state: nsIDM.DOWNLOAD_NOTSTARTED },
       { state: nsIDM.DOWNLOAD_FINISHED },
@@ -50,7 +51,7 @@ add_task(function* test_clearList() {
     ],
     expectClearListShown: true,
     expectedItemNumber: 1,
-  },{
+  }, {
     downloads: [
       { state: nsIDM.DOWNLOAD_PAUSED },
     ],

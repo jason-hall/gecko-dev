@@ -8,7 +8,6 @@
 #include "AutoHelpersWin.h"
 #include "Logging.h"
 #include "nsString.h"
-#include "SFNTData.h"
 
 #ifdef USE_SKIA
 #include "skia/include/ports/SkTypeface_win.h"
@@ -23,8 +22,10 @@
 namespace mozilla {
 namespace gfx {
 
-ScaledFontWin::ScaledFontWin(LOGFONT* aFont, Float aSize)
-  : ScaledFontBase(aSize)
+ScaledFontWin::ScaledFontWin(const LOGFONT* aFont,
+                             const RefPtr<UnscaledFont>& aUnscaledFont,
+                             Float aSize)
+  : ScaledFontBase(aUnscaledFont, aSize)
   , mLogFont(*aFont)
 {
 }
@@ -55,29 +56,14 @@ ScaledFontWin::GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton)
     return false;
   }
 
-  // If it's a font collection then attempt to get the index.
-  uint32_t index = 0;
-  if (table != 0) {
-    UniquePtr<SFNTData> sfntData = SFNTData::Create(fontData.get(),
-                                                    tableSize);
-    if (!sfntData) {
-      gfxWarning() << "Failed to create SFNTData for GetFontFileData.";
-      return false;
-    }
+  aDataCallback(fontData.get(), tableSize, 0, mSize, 0, nullptr, aBaton);
+  return true;
+}
 
-    // We cast here because for VS2015 char16_t != wchar_t, even though they are
-    // both 16 bit.
-    if (!sfntData->GetIndexForU16Name(
-          reinterpret_cast<char16_t*>(mLogFont.lfFaceName), &index, LF_FACESIZE - 1)) {
-      gfxWarning() << "Failed to get index for face name.";
-      gfxDevCrash(LogReason::GetFontFileDataFailed) <<
-        "Failed to get index for face name |" <<
-        NS_ConvertUTF16toUTF8(mLogFont.lfFaceName).get() << "|.";
-      return false;
-    }
-  }
-
-  aDataCallback(fontData.get(), tableSize, index, mSize, aBaton);
+bool
+ScaledFontWin::GetFontInstanceData(FontInstanceDataOutput aCb, void* aBaton)
+{
+  aCb(reinterpret_cast<uint8_t*>(&mLogFont), sizeof(mLogFont), aBaton);
   return true;
 }
 
@@ -86,6 +72,23 @@ ScaledFontWin::GetFontDescriptor(FontDescriptorOutput aCb, void* aBaton)
 {
   aCb(reinterpret_cast<uint8_t*>(&mLogFont), sizeof(mLogFont), mSize, aBaton);
   return true;
+}
+
+already_AddRefed<ScaledFont>
+ScaledFontWin::CreateFromFontDescriptor(const uint8_t* aData, uint32_t aDataLength, Float aSize)
+{
+  NativeFont nativeFont;
+  nativeFont.mType = NativeFontType::GDI_FONT_FACE;
+  nativeFont.mFont = (void*)aData;
+
+  RefPtr<ScaledFont> font =
+    Factory::CreateScaledFontForNativeFont(nativeFont, nullptr, aSize);
+
+#ifdef USE_CAIRO_SCALED_FONT
+  static_cast<ScaledFontBase*>(font.get())->PopulateCairoScaledFont();
+#endif
+
+  return font.forget();
 }
 
 AntialiasMode
