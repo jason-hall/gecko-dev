@@ -21,28 +21,7 @@
 
 namespace js {
 
-bool
-RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(JS::shadow::Zone* shadowZone)
-{
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(shadowZone->runtimeFromActiveCooperatingThread()));
-    return JS::CurrentThreadIsHeapMajorCollecting();
-}
-
 #ifdef DEBUG
-
-bool
-IsMarkedBlack(JSObject* obj)
-{
-    // Note: we assume conservatively that Nursery things will be live.
-    if (!obj->isTenured())
-        return true;
-
-    gc::TenuredCell& tenured = obj->asTenured();
-    if (tenured.isMarked(gc::BLACK) || tenured.arena()->allocatedDuringIncremental)
-        return true;
-
-    return false;
-}
 
 bool
 HeapSlot::preconditionForSet(NativeObject* owner, Kind kind, uint32_t slot) const
@@ -79,7 +58,7 @@ CurrentThreadIsIonCompilingSafeForMinorGC()
 bool
 CurrentThreadIsGCSweeping()
 {
-    return TlsContext.get()->gcSweeping;
+    return false;
 }
 
 #endif // DEBUG

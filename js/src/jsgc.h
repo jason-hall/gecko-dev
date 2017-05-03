@@ -91,7 +91,6 @@ JS_FOR_EACH_TRACEKIND(EXPAND_PARTICIPATES_IN_CC)
 static inline bool
 IsNurseryAllocable(AllocKind kind)
 {
-    MOZ_ASSERT(IsValidAllocKind(kind));
     static const bool map[] = {
         true,      /* AllocKind::FUNCTION */
         true,      /* AllocKind::FUNCTION_EXTENDED */
@@ -411,7 +410,7 @@ class GCHelperState
     explicit GCHelperState(JSRuntime* rt)
     { }
 
-    JSRuntime* runtime() { return rt; }
+    JSRuntime* runtime() { return nullptr; }
 
     void finish();
 
@@ -433,14 +432,14 @@ class GCParallelTask
     virtual void run() = 0;
 
   public:
-    GCParallelTask() : state(NotStarted), duration_(0) {}
-    GCParallelTask(GCParallelTask&& other) : state(NotStarted), duration_(0) {}
+    GCParallelTask() {}
+    GCParallelTask(GCParallelTask&& other) {}
 
     // Derived classes must override this to ensure that join() gets called
     // before members get destructed.
     virtual ~GCParallelTask();
 
-    JSRuntime* runtime() { return runtime_; }
+    JSRuntime* runtime() { return nullptr; }
 
     // Time spent in the most recent invocation of this task.
     mozilla::TimeDuration duration() const { return 0; }

@@ -37,9 +37,6 @@ namespace js {
 class AutoLockGC;
 class FreeOp;
 
-extern bool
-RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(JS::shadow::Zone* shadowZone);
-
 #ifdef DEBUG
 
 // Barriers can't be triggered during backend Ion compilation, which may run on
@@ -48,20 +45,10 @@ extern bool
 CurrentThreadIsIonCompiling();
 #endif
 
-// The return value indicates if anything was unmarked.
-extern bool
-UnmarkGrayCellRecursively(gc::Cell* cell, JS::TraceKind kind);
-
 extern void
 TraceManuallyBarrieredGenericPointerEdge(JSTracer* trc, gc::Cell** thingp, const char* name);
 
 namespace gc {
-
-#ifndef OMR
-class Arena;
-class ArenaCellSet;
-struct Chunk;
-#endif // ! OMR
 
 class TenuredCell;
 extern bool IsMarkedCell(const TenuredCell* const thingp);
@@ -194,16 +181,10 @@ struct Cell
     // Note: Unrestricted access to the runtime of a GC thing from an arbitrary
     // thread can easily lead to races. Use this method very carefully.
     inline JSRuntime* runtimeFromAnyThread() const;
-#ifdef OMR
     inline JS::Zone* zoneFromAnyThread() const;
-#endif // OMR
 
     // May be overridden by GC thing kinds that have a compartment pointer.
     inline JSCompartment* maybeCompartment() const { return nullptr; }
-
-#ifndef OMR // Writebarriers
-    inline StoreBuffer* storeBuffer() const;
-#endif // ! OMR Writebarriers
 
     inline JS::TraceKind getTraceKind() const;
 
@@ -220,9 +201,6 @@ struct Cell
 
   protected:
     inline uintptr_t address() const;
-#ifndef OMR
-    inline Chunk* chunk() const;
-#endif // ! OMR
 
   public:
     Flags flags_;
@@ -244,26 +222,7 @@ class TenuredCell : public Cell
     MOZ_ALWAYS_INLINE void unmark(uint32_t color) const;
     MOZ_ALWAYS_INLINE void copyMarkBitsFrom(const TenuredCell* src);
 
-    // Access to the arena.
-
-#ifndef OMR // Disable Arenas
-    inline Arena* arena() const;
-#endif // ! OMR
-
     inline JS::TraceKind getTraceKind() const;
-
-#ifndef OMR // Disable Arenas
-    inline JS::Zone* zone() const;
-    inline JS::Zone* zoneFromAnyThread() const;
-    inline bool isInsideZone(JS::Zone* zone) const;
-
-    MOZ_ALWAYS_INLINE JS::shadow::Zone* shadowZone() const {
-        return JS::shadow::Zone::asShadowZone(zone());
-    }
-    MOZ_ALWAYS_INLINE JS::shadow::Zone* shadowZoneFromAnyThread() const {
-        return JS::shadow::Zone::asShadowZone(zoneFromAnyThread());
-    }
-#endif // ! OMR Arenas
 
     static MOZ_ALWAYS_INLINE void readBarrier(TenuredCell* thing);
     static MOZ_ALWAYS_INLINE void writeBarrierPre(TenuredCell* thing);
@@ -310,283 +269,6 @@ public:
 };
 //#endif // ! OMR Arena replacemnt helpers
 
-#ifndef OMR // Arenas
-
-/*
- * Arenas are the allocation units of the tenured heap in the GC. An arena
- * is 4kiB in size and 4kiB-aligned. It starts with several header fields
- * followed by some bytes of padding. The remainder of the arena is filled
- * with GC things of a particular AllocKind. The padding ensures that the
- * GC thing array ends exactly at the end of the arena:
- *
- * <----------------------------------------------> = ArenaSize bytes
- * +---------------+---------+----+----+-----+----+
- * | header fields | padding | T0 | T1 | ... | Tn |
- * +---------------+---------+----+----+-----+----+
- * <-------------------------> = first thing offset
- */
-class Arena
-{
-    static JS_FRIEND_DATA(const uint32_t) ThingSizes[];
-    static JS_FRIEND_DATA(const uint32_t) FirstThingOffsets[];
-    static JS_FRIEND_DATA(const uint32_t) ThingsPerArena[];
-
-  public:
-    /*
-     * The zone that this Arena is contained within, when allocated. The offset
-     * of this field must match the ArenaZoneOffset stored in js/HeapAPI.h,
-     * as is statically asserted below.
-     */
-    JS::Zone* zone;
-
-    /*
-     * Arena::next has two purposes: when unallocated, it points to the next
-     * available Arena. When allocated, it points to the next Arena in the same
-     * zone and with the same alloc kind.
-     */
-    Arena* next;
-
-  private:
-    /*
-     * One of the AllocKind constants or AllocKind::LIMIT when the arena does
-     * not contain any GC things and is on the list of empty arenas in the GC
-     * chunk.
-     *
-     * We use 8 bits for the alloc kind so the compiler can use byte-level
-     * memory instructions to access it.
-     */
-    size_t allocKind : 8;
-
-  public:
-    /*
-     * When collecting we sometimes need to keep an auxillary list of arenas,
-     * for which we use the following fields. This happens for several reasons:
-     *
-     * When recursive marking uses too much stack, the marking is delayed and
-     * the corresponding arenas are put into a stack. To distinguish the bottom
-     * of the stack from the arenas not present in the stack we use the
-     * markOverflow flag to tag arenas on the stack.
-     *
-     * Delayed marking is also used for arenas that we allocate into during an
-     * incremental GC. In this case, we intend to mark all the objects in the
-     * arena, and it's faster to do this marking in bulk.
-     *
-     * When sweeping we keep track of which arenas have been allocated since
-     * the end of the mark phase. This allows us to tell whether a pointer to
-     * an unmarked object is yet to be finalized or has already been
-     * reallocated. We set the allocatedDuringIncremental flag for this and
-     * clear it at the end of the sweep phase.
-     *
-     * To minimize the size of the header fields we record the next linkage as
-     * address() >> ArenaShift and pack it with the allocKind and the flags.
-     */
-    size_t hasDelayedMarking : 1;
-    size_t allocatedDuringIncremental : 1;
-    size_t markOverflow : 1;
-    size_t auxNextLink : JS_BITS_PER_WORD - 8 - 1 - 1 - 1;
-
-  private:
-    union {
-        /*
-         * For arenas in zones other than the atoms zone, if non-null, points
-         * to an ArenaCellSet that represents the set of cells in this arena
-         * that are in the nursery's store buffer.
-         */
-        ArenaCellSet* bufferedCells_;
-
-        /*
-         * For arenas in the atoms zone, the starting index into zone atom
-         * marking bitmaps (see AtomMarking.h) of the things in this zone.
-         * Atoms never refer to nursery things, so no store buffer index is
-         * needed.
-         */
-        size_t atomBitmapStart_;
-    };
-  public:
-
-    /*
-     * The size of data should be |ArenaSize - offsetof(data)|, but the offset
-     * is not yet known to the compiler, so we do it by hand. |firstFreeSpan|
-     * takes up 8 bytes on 64-bit due to alignment requirements; the rest are
-     * obvious. This constant is stored in js/HeapAPI.h.
-     */
-    uint8_t data[ArenaSize - ArenaHeaderSize];
-
-    void init(JS::Zone* zoneArg, AllocKind kind);
-
-    // Sets |firstFreeSpan| to the Arena's entire valid range, and
-    // also sets the next span stored at |firstFreeSpan.last| as empty.
-    void setAsFullyUnused() {
-        AllocKind kind = getAllocKind();
-        firstFreeSpan.first = firstThingOffset(kind);
-        firstFreeSpan.last = lastThingOffset(kind);
-        FreeSpan* last = firstFreeSpan.nextSpanUnchecked(this);
-        last->initAsEmpty();
-    }
-
-    // Initialize an arena to its unallocated state. For arenas that were
-    // previously allocated for some zone, use release() instead.
-    void setAsNotAllocated() {
-        firstFreeSpan.initAsEmpty();
-        zone = nullptr;
-        allocKind = size_t(AllocKind::LIMIT);
-        hasDelayedMarking = 0;
-        allocatedDuringIncremental = 0;
-        markOverflow = 0;
-        auxNextLink = 0;
-        bufferedCells_ = nullptr;
-    }
-
-    // Return an allocated arena to its unallocated state.
-    inline void release();
-
-    uintptr_t address() const {
-        checkAddress();
-        return uintptr_t(this);
-    }
-
-    inline void checkAddress() const;
-
-    inline Chunk* chunk() const;
-
-    bool allocated() const {
-        return true;
-    }
-
-    AllocKind getAllocKind() const {
-        return AllocKind(allocKind);
-    }
-
-    static size_t thingSize(AllocKind kind) { return ThingSizes[size_t(kind)]; }
-    static size_t thingsPerArena(AllocKind kind) { return ThingsPerArena[size_t(kind)]; }
-    static size_t thingsSpan(AllocKind kind) { return thingsPerArena(kind) * thingSize(kind); }
-
-    bool isEmpty() const {
-        return true;
-    }
-
-    static bool isAligned(uintptr_t thing, size_t thingSize) {
-        return true;
-    }
-
-    inline ArenaCellSet*& bufferedCells();
-    inline size_t& atomBitmapStart();
-
-    template <typename T>
-    size_t finalize(FreeOp* fop, AllocKind thingKind, size_t thingSize);
-
-    static void staticAsserts();
-};
-
-/*
- * Calculating ArenasPerChunk:
- *
- * In order to figure out how many Arenas will fit in a chunk, we need to know
- * how much extra space is available after we allocate the header data. This
- * is a problem because the header size depends on the number of arenas in the
- * chunk. The two dependent fields are bitmap and decommittedArenas.
- *
- * For the mark bitmap, we know that each arena will use a fixed number of full
- * bytes: ArenaBitmapBytes. The full size of the header data is this number
- * multiplied by the eventual number of arenas we have in the header. We,
- * conceptually, distribute this header data among the individual arenas and do
- * not include it in the header. This way we do not have to worry about its
- * variable size: it gets attached to the variable number we are computing.
- *
- * For the decommitted arena bitmap, we only have 1 bit per arena, so this
- * technique will not work. Instead, we observe that we do not have enough
- * header info to fill 8 full arenas: it is currently 4 on 64bit, less on
- * 32bit. Thus, with current numbers, we need 64 bytes for decommittedArenas.
- * This will not become 63 bytes unless we double the data required in the
- * header. Therefore, we just compute the number of bytes required to track
- * every possible arena and do not worry about slop bits, since there are too
- * few to usefully allocate.
- *
- * To actually compute the number of arenas we can allocate in a chunk, we
- * divide the amount of available space less the header info (not including
- * the mark bitmap which is distributed into the arena size) by the size of
- * the arena (with the mark bitmap bytes it uses).
- */
-const size_t BytesPerArenaWithHeader = 0;
-const size_t ChunkDecommitBitmapBytes = 0;
-const size_t ChunkBytesAvailable = 0;
-const size_t ArenasPerChunk = 0;
-
-typedef BitArray<ArenasPerChunk> PerArenaBitmap;
-
-/*
- * Chunks contain arenas and associated data structures (mark bitmap, delayed
- * marking state).
- */
-struct Chunk
-{
-    PerArenaBitmap  decommittedArenas;
-
-    uintptr_t address() const {
-        uintptr_t addr = reinterpret_cast<uintptr_t>(this);
-        MOZ_ASSERT(!(addr & ChunkMask));
-        return addr;
-    }
-
-    bool unused() const {
-        return true;
-    }
-
-    static Chunk* allocate(JSRuntime* rt);
-    void init(JSRuntime* rt);
-
-  public:
-    /* Unlink and return the freeArenasHead. */
-    Arena* fetchNextFreeArena(JSRuntime* rt);
-};
-
-#endif // ! OMR Arenas
-
-/*
- * Tracks the used sizes for owned heap data and automatically maintains the
- * memory usage relationship between GCRuntime and Zones.
- */
-#if 0 // OMRTODO: Track Heap Usage
-class HeapUsage
-{
-    /*
-     * A heap usage that contains our parent's heap usage, or null if this is
-     * the top-level usage container.
-     */
-    HeapUsage* const parent_;
-
-    /*
-     * The approximate number of bytes in use on the GC heap, to the nearest
-     * ArenaSize. This does not include any malloc data. It also does not
-     * include not-actively-used addresses that are still reserved at the OS
-     * level for GC usage. It is atomic because it is updated by both the active
-     * and GC helper threads.
-     */
-    mozilla::Atomic<size_t, mozilla::ReleaseAcquire> gcBytes_;
-
-  public:
-    explicit HeapUsage(HeapUsage* parent)
-    {}
-
-    size_t gcBytes() const { return 0; }
-};
-#endif .//0
-
-#ifndef OMR // Arenas
-
-inline void
-Arena::checkAddress() const
-{
-}
-
-inline Chunk*
-Arena::chunk() const
-{
-	return nullptr;
-}
-
-#endif // ! OMR Arenas
-
 MOZ_ALWAYS_INLINE const TenuredCell&
 Cell::asTenured() const
 {
@@ -604,7 +286,7 @@ Cell::asTenured()
 inline JSRuntime*
 Cell::runtimeFromActiveCooperatingThread() const
 {
-    return reinterpret_cast<JS::shadow::Zone*>(zone())->runtimeFromMainThread();
+    return reinterpret_cast<JS::shadow::Zone*>(zone())->runtimeFromActiveCooperatingThread();
 }
 
 inline JSRuntime*
@@ -631,22 +313,6 @@ Cell::address() const
 {
 	return uintptr_t(this);
 }
-
-#ifndef OMR // Disable Chunks, write barriers
-
-Chunk*
-Cell::chunk() const
-{
-    return nullptr;
-}
-
-inline StoreBuffer*
-Cell::storeBuffer() const
-{
-    return nullptr;
-}
-
-#endif // ! OMR
 
 inline JS::TraceKind
 Cell::getTraceKind() const
@@ -734,76 +400,18 @@ TenuredCell::copyMarkBitsFrom(const TenuredCell* src)
 {
 }
 
-#ifndef OMR // Disable Arenas
-inline Arena*
-TenuredCell::arena() const
-{
-    return NULL;
-}
-#endif // ! OMR
-
 JS::TraceKind
 TenuredCell::getTraceKind() const
 {
     return Cell::getTraceKind();
 }
 
-#ifndef OMR // Disable getting zone without context
-
-JS::Zone*
-TenuredCell::zone() const
-{
-    JS::Zone* zone = arena()->zone;
-    MOZ_ASSERT(CurrentThreadCanAccessZone(zone));
-    return zone;
-}
-
-JS::Zone*
-TenuredCell::zoneFromAnyThread() const
-{
-    return arena()->zone;
-}
-
-bool
-TenuredCell::isInsideZone(JS::Zone* zone) const
-{
-    return true;
-}
-
-#endif // ! OMR
-
 // OMRTODO: Implement write barriers
 
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::readBarrier(TenuredCell* thing)
 {
-#if 0 // OMRTODO: Writebarriers
-    MOZ_ASSERT(!CurrentThreadIsIonCompiling());
-    MOZ_ASSERT(thing);
-
-    // It would be good if barriers were never triggered during collection, but
-    // at the moment this can happen e.g. when rekeying tables containing
-    // read-barriered GC things after a moving GC.
-    //
-    // TODO: Fix this and assert we're not collecting if we're on the active
-    // thread.
-
-    JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
-    if (shadowZone->needsIncrementalBarrier()) {
-        // Barriers are only enabled on the active thread and are disabled while collecting.
-        MOZ_ASSERT(!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone));
-        Cell* tmp = thing;
-        TraceManuallyBarrieredGenericPointerEdge(shadowZone->barrierTracer(), &tmp, "read barrier");
-        MOZ_ASSERT(tmp == thing);
-    }
-
-    if (thing->isMarked(GRAY)) {
-        // There shouldn't be anything marked grey unless we're on the active thread.
-        MOZ_ASSERT(CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()));
-        if (!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone))
-            UnmarkGrayCellRecursively(thing, thing->getTraceKind());
-    }
-#endif // 0
+    // OMRTODO: Writebarriers
 }
 
 void
@@ -812,35 +420,7 @@ AssertSafeToSkipBarrier(TenuredCell* thing);
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::writeBarrierPre(TenuredCell* thing)
 {
-#if 0 // OMRTODO: Writebarriers
-    MOZ_ASSERT(!CurrentThreadIsIonCompiling());
-    if (!thing)
-        return;
-
-#ifdef JS_GC_ZEAL
-    // When verifying pre barriers we need to switch on all barriers, even
-    // those on the Atoms Zone. Normally, we never enter a parse task when
-    // collecting in the atoms zone, so will filter out atoms below.
-    // Unfortuantely, If we try that when verifying pre-barriers, we'd never be
-    // able to handle off thread parse tasks at all as we switch on the verifier any
-    // time we're not doing GC. This would cause us to deadlock, as off thread parsing
-    // is meant to resume after GC work completes. Instead we filter out any
-    // off thread barriers that reach us and assert that they would normally not be
-    // possible.
-    if (!CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread())) {
-        AssertSafeToSkipBarrier(thing);
-        return;
-    }
-#endif
-
-    JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
-    if (shadowZone->needsIncrementalBarrier()) {
-        MOZ_ASSERT(!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone));
-        Cell* tmp = thing;
-        TraceManuallyBarrieredGenericPointerEdge(shadowZone->barrierTracer(), &tmp, "pre barrier");
-        MOZ_ASSERT(tmp == thing);
-    }
-#endif // 0
+    // OMRTODO: Writebarriers
 }
 
 static MOZ_ALWAYS_INLINE void
@@ -866,11 +446,6 @@ TenuredCell::isAligned() const
     return true;
 }
 #endif // DEBUG
-
-#ifndef OMR
-static const int32_t ChunkLocationOffsetFromLastByte =
-    int32_t(gc::ChunkLocationOffset) - int32_t(gc::ChunkMask);
-#endif // ! OMR
 
 } /* namespace gc */
 

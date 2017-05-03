@@ -466,8 +466,6 @@ GCRuntime::init(uint32_t maxbytes, uint32_t maxNurseryBytes)
     {
         AutoLockGC lock(rt);
 
-        jitReleaseNumber = majorGCNumber + JIT_SCRIPT_RELEASE_TYPES_PERIOD;
-
         if (!nursery().init(maxNurseryBytes, lock))
             return false;
     }
@@ -591,15 +589,6 @@ GCRuntime::removeWeakPointerCompartmentCallback(JSWeakPointerCompartmentCallback
 bool
 GCRuntime::addRoot(Value* vp, const char* name)
 {
-    /*
-     * Sometimes Firefox will hold weak references to objects and then convert
-     * them to strong references by calling AddRoot (e.g., via PreserveWrapper,
-     * or ModifyBusyCount in workers). We need a read barrier to cover these
-     * cases.
-     */
-    if (isIncrementalGCInProgress())
-        GCPtrValue::writeBarrierPre(*vp);
-
     return rootsHash.ref().put(vp, name);
 }
 
@@ -838,27 +827,6 @@ FOR_EACH_ALLOCKIND(MAKE_CASE)
     }
 }
 #endif // DEBUG
-
-bool
-GCRuntime::shouldPreserveJITCode(JSCompartment* comp, int64_t currentTime,
-                                 JS::gcreason::Reason reason, bool canAllocateMoreCode)
-{
-    if (cleanUpEverything)
-        return false;
-    if (!canAllocateMoreCode)
-        return false;
-
-    if (alwaysPreserveCode)
-        return true;
-    if (comp->preserveJitCode())
-        return true;
-    if (comp->lastAnimationTime + PRMJ_USEC_PER_SEC >= currentTime)
-        return true;
-    if (reason == JS::gcreason::DEBUG_GC)
-        return true;
-
-    return false;
-}
 
 #ifdef DEBUG
 class CompartmentCheckTracer : public JS::CallbackTracer
@@ -1133,19 +1101,22 @@ SweepCompressionTasksTask::run()
 
 using WeakCacheTaskVector = mozilla::Vector<SweepWeakCacheTask, 0, SystemAllocPolicy>;
 
+#if 0
+// OMRTODO: New function?
 /* static */ IncrementalProgress
 GCRuntime::sweepTypeInformation(GCRuntime* gc, FreeOp* fop, Zone* zone, SliceBudget& budget,
                                 AllocKind kind)
 {
     return Finished;
 }
+#endif
 
 // OMRTODO: New function
+#if 0
 /* static */ IncrementalProgress
 GCRuntime::finalizeAllocKind(GCRuntime* gc, FreeOp* fop, Zone* zone, SliceBudget& budget,
                              AllocKind kind)
 {
-#if 0
     // Set the number of things per arena for this AllocKind.
     size_t thingsPerArena = Arena::thingsPerArena(kind);
     auto& sweepList = gc->incrementalSweepList.ref();
@@ -1156,16 +1127,16 @@ GCRuntime::finalizeAllocKind(GCRuntime* gc, FreeOp* fop, Zone* zone, SliceBudget
 
     // Reset the slots of the sweep list that we used.
     sweepList.reset(thingsPerArena);
-#endif
     return Finished;
 }
+#endif
 
 // OMRTODO: New function
+#if 0
 /* static */ IncrementalProgress
 GCRuntime::sweepShapeTree(GCRuntime* gc, FreeOp* fop, Zone* zone, SliceBudget& budget,
                           AllocKind kind)
 {
-#if 0
     // Remove dead shapes from the shape tree, but don't finalize them yet.
 
     MOZ_ASSERT(kind == AllocKind::LIMIT);
@@ -1179,9 +1150,9 @@ GCRuntime::sweepShapeTree(GCRuntime* gc, FreeOp* fop, Zone* zone, SliceBudget& b
 
     if (!SweepArenaList<AccessorShape>(&al.gcAccessorShapeArenasToUpdate.ref(), budget))
         return NotFinished;
-#endif
     return Finished;
 }
+#endif
 
 // OMRTODO: New function
 static void
@@ -1230,10 +1201,10 @@ GCRuntime::initializeSweepActions()
 }
 
 // OMRTODO: New function
+#if 0
 IncrementalProgress
 GCRuntime::performSweepActions(SliceBudget& budget, AutoLockForExclusiveAccess& lock)
 {
-#if 0
     AutoSetThreadIsSweeping threadIsSweeping;
 
     gcstats::AutoPhase ap(stats(), gcstats::PHASE_SWEEP);
@@ -1265,40 +1236,8 @@ GCRuntime::performSweepActions(SliceBudget& budget, AutoLockForExclusiveAccess& 
         endMarkingSweepGroup();
         beginSweepingSweepGroup(lock);
     }
-#endif
 }
-
-// OMRTODO: New function
-bool
-GCRuntime::allCCVisibleZonesWereCollected() const
-{
-    // Calculate whether the gray marking state is now valid.
-    //
-    // The gray bits change from invalid to valid if we finished a full GC from
-    // the point of view of the cycle collector. We ignore the following:
-    //
-    //  - Helper thread zones, as these are not reachable from the main heap.
-    //  - The atoms zone, since strings and symbols are never marked gray.
-    //  - Empty zones.
-    //
-    // These exceptions ensure that when the CC requests a full GC the gray mark
-    // state ends up valid even it we don't collect all of the zones.
-#if 0
-    if (isFull)
-        return true;
-
-    for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {
-        if (!zone->isCollecting() &&
-            !zone->usedByHelperThread() &&
-            !zone->arenas.arenaListsAreEmpty())
-        {
-            return false;
-        }
-    }
 #endif
-    return true;
-}
-
 
 #ifdef DEBUG
 static bool
@@ -1453,11 +1392,6 @@ js::PrepareForDebugGC(JSRuntime* rt)
 
 void
 GCRuntime::onOutOfMallocMemory()
-{
-}
-
-void
-GCRuntime::onOutOfMallocMemory(const AutoLockGC& lock)
 {
 }
 

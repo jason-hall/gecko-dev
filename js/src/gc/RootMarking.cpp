@@ -252,21 +252,6 @@ PropertyDescriptor::trace(JSTracer* trc)
 }
 
 void
-js::gc::GCRuntime::traceRuntimeForMajorGC(JSTracer* trc, AutoLockForExclusiveAccess& lock)
-{
-    // FinishRoots will have asserted that every root that we do not expect
-    // is gone, so we can simply skip traceRuntime here.
-    if (rt->isBeingDestroyed())
-        return;
-
-    gcstats::AutoPhase ap(stats(), gcstats::PHASE_MARK_ROOTS);
-    // if (rt->atomsCompartment(lock)->zone()->isCollecting())
-        traceRuntimeAtoms(trc, lock);
-    JSCompartment::traceIncomingCrossCompartmentEdgesForZoneGC(trc);
-    traceRuntimeCommon(trc, MarkRuntime, lock);
-}
-
-void
 js::gc::GCRuntime::traceRuntimeForMinorGC(JSTracer* trc, AutoLockForExclusiveAccess& lock)
 {
     // Note that we *must* trace the runtime during the SHUTDOWN_GC's minor GC
@@ -408,7 +393,7 @@ class AssertNoRootsTracer : public JS::CallbackTracer
 #endif // DEBUG
 
 void
-js::gc::GCRuntime::finishRoots()
+js::gc::GCRuntime::finishRootsfinishRoots()
 {
     AutoNoteSingleThreadedRegion anstr;
 
@@ -441,110 +426,9 @@ js::gc::GCRuntime::finishRoots()
 #endif // DEBUG
 }
 
-// Append traced things to a buffer on the zone for use later in the GC.
-// See the comment in GCRuntime.h above grayBufferState for details.
-class BufferGrayRootsTracer : public JS::CallbackTracer
-{
-    // Set to false if we OOM while buffering gray roots.
-    bool bufferingGrayRootsFailed;
-
-    void onChild(const JS::GCCellPtr& thing) override;
-
-  public:
-    explicit BufferGrayRootsTracer(JSRuntime* rt)
-      : JS::CallbackTracer(rt), bufferingGrayRootsFailed(false)
-    {}
-
-    bool failed() const { return bufferingGrayRootsFailed; }
-
-#ifdef DEBUG
-    TracerKind getTracerKind() const override { return TracerKind::GrayBuffering; }
-#endif
-};
-
-#ifdef DEBUG
-// Return true if this trace is happening on behalf of gray buffering during
-// the marking phase of incremental GC.
-bool
-js::IsBufferGrayRootsTracer(JSTracer* trc)
-{
-    return trc->isCallbackTracer() &&
-           trc->asCallbackTracer()->getTracerKind() == JS::CallbackTracer::TracerKind::GrayBuffering;
-}
-#endif
-
-void
-js::gc::GCRuntime::bufferGrayRoots()
-{
-    // Precondition: the state has been reset to "unused" after the last GC
-    //               and the zone's buffers have been cleared.
-    MOZ_ASSERT(grayBufferState == GrayBufferState::Unused);
-    for (GCZonesIter zone(rt); !zone.done(); zone.next())
-        MOZ_ASSERT(zone->gcGrayRoots().empty());
-
-    gcstats::AutoPhase ap(stats(), gcstats::PHASE_BUFFER_GRAY_ROOTS);
-
-    BufferGrayRootsTracer grayBufferer(rt);
-    if (JSTraceDataOp op = grayRootTracer.op)
-        (*op)(&grayBufferer, grayRootTracer.data);
-
-    // Propagate the failure flag from the marker to the runtime.
-    if (grayBufferer.failed()) {
-      grayBufferState = GrayBufferState::Failed;
-      resetBufferedGrayRoots();
-    } else {
-      grayBufferState = GrayBufferState::Okay;
-    }
-}
-
 struct SetMaybeAliveFunctor {
     template <typename T> void operator()(T* t) { SetMaybeAliveFlag(t); }
 };
-
-void
-BufferGrayRootsTracer::onChild(const JS::GCCellPtr& thing)
-{
-    MOZ_ASSERT(JS::CurrentThreadIsHeapBusy());
-    MOZ_RELEASE_ASSERT(thing);
-    // Check if |thing| is corrupt by calling a method that touches the heap.
-    MOZ_RELEASE_ASSERT(thing.asCell()->getTraceKind() <= JS::TraceKind::Null);
-
-    if (bufferingGrayRootsFailed)
-        return;
-
-    gc::TenuredCell* tenured = gc::TenuredCell::fromPointer(thing.asCell());
-
-    Zone* zone = tenured->zone();
-    if (zone->isCollecting()) {
-        // See the comment on SetMaybeAliveFlag to see why we only do this for
-        // objects and scripts. We rely on gray root buffering for this to work,
-        // but we only need to worry about uncollected dead compartments during
-        // incremental GCs (when we do gray root buffering).
-        DispatchTyped(SetMaybeAliveFunctor(), thing);
-
-        if (!zone->gcGrayRoots().append(tenured))
-            bufferingGrayRootsFailed = true;
-    }
-}
-
-void
-GCRuntime::markBufferedGrayRoots(JS::Zone* zone)
-{
-    // MOZ_ASSERT(grayBufferState == GrayBufferState::Okay);
-    // MOZ_ASSERT(zone->isGCMarkingGray() || zone->isGCCompacting());
-
-    for (auto cell : zone->gcGrayRoots())
-        TraceManuallyBarrieredGenericPointerEdge(&marker, &cell, "buffered gray root");
-}
-
-void
-GCRuntime::resetBufferedGrayRoots() const
-{
-    MOZ_ASSERT(grayBufferState != GrayBufferState::Okay,
-               "Do not clear the gray buffers unless we are Failed or becoming Unused");
-    for (GCZonesIter zone(rt); !zone.done(); zone.next())
-        zone->gcGrayRoots().clearAndFree();
-}
 
 JS_PUBLIC_API(void)
 JS::AddPersistentRoot(JS::RootingContext* cx, RootKind kind, PersistentRooted<void*>* root)

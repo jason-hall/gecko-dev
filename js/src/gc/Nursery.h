@@ -46,7 +46,6 @@ class AutoMaybeStartBackgroundAllocation;
 struct Cell;
 class MinorCollectionTracer;
 class RelocationOverlay;
-struct TenureCountCache;
 } /* namespace gc */
 
 namespace jit {
@@ -134,9 +133,6 @@ class Nursery
 
     /* The maximum number of bytes allowed to reside in nursery buffers. */
     static const size_t MaxNurseryBufferSize = 1024;
-
-    /* Do a minor collection. */
-    void collect(JSRuntime* rt, JS::gcreason::Reason reason) {}
 
     /*
      * Check if the thing at |*ref| in the Nursery has been forwarded. If so,

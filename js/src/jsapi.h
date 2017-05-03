@@ -1424,15 +1424,6 @@ JS_LeaveCompartment(JSContext* cx, JSCompartment* oldCompartment);
 typedef void (*JSIterateCompartmentCallback)(JSContext* cx, void* data, JSCompartment* compartment);
 
 /**
- * This function calls |compartmentCallback| on every compartment. Beware that
- * there is no guarantee that the compartment will survive after the callback
- * returns. Also, barriers are disabled via the TraceSession.
- */
-extern JS_PUBLIC_API(void)
-JS_IterateCompartments(JSContext* cx, void* data,
-                       JSIterateCompartmentCallback compartmentCallback);
-
-/**
  * Mark a jsid after entering a new compartment. Different zones separately
  * mark the ids in a runtime, and this must be used any time an id is obtained
  * from one compartment and then used in another compartment, unless the two

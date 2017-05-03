@@ -25,13 +25,6 @@ js::IterateHeapUnbarriered(JSContext* cx, void* data,
                            JSIterateCompartmentCallback compartmentCallback,
                            IterateCellCallback cellCallback)
 {
-    AutoPrepareForTracing prop(cx, WithAtoms);
-
-    for (ZonesIter zone(cx->runtime(), WithAtoms); !zone.done(); zone.next()) {
-        (*zoneCallback)(cx->runtime(), data, zone);
-        IterateCompartmentsArenasCellsUnbarriered(cx, zone, data,
-                                                  compartmentCallback, cellCallback);
-    }
 }
 
 void
@@ -40,11 +33,6 @@ js::IterateHeapUnbarrieredForZone(JSContext* cx, Zone* zone, void* data,
                                   JSIterateCompartmentCallback compartmentCallback,
                                   IterateCellCallback cellCallback)
 {
-    AutoPrepareForTracing prop(cx, WithAtoms);
-
-    (*zoneCallback)(cx->runtime(), data, zone);
-    IterateCompartmentsArenasCellsUnbarriered(cx, zone, data,
-                                              compartmentCallback, arenaCallback, cellCallback);
 }
 
 void
@@ -67,42 +55,4 @@ js::IterateScripts(JSContext* cx, JSCompartment* compartment,
                 scriptCallback(cx->runtime(), data, script);
         }
     }
-}
-
-static void
-IterateGrayObjects(Zone* zone, GCThingCallback cellCallback, void* data)
-{
-    for (auto kind : ObjectAllocKinds()) {
-        for (GrayObjectIter obj(zone, kind); !obj.done(); obj.next()) {
-            if (obj->asTenured().isMarked(GRAY))
-                cellCallback(data, JS::GCCellPtr(obj.get()));
-        }
-    }
-}
-
-void
-js::IterateGrayObjects(Zone* zone, GCThingCallback cellCallback, void* data)
-{
-    MOZ_ASSERT(!JS::CurrentThreadIsHeapBusy());
-    AutoPrepareForTracing prep(TlsContext.get(), SkipAtoms);
-    ::IterateGrayObjects(zone, cellCallback, data);
-}
-
-void
-js::IterateGrayObjectsUnderCC(Zone* zone, GCThingCallback cellCallback, void* data)
-{
-    mozilla::DebugOnly<JSRuntime*> rt = zone->runtimeFromActiveCooperatingThread();
-    MOZ_ASSERT(JS::CurrentThreadIsHeapCycleCollecting());
-    MOZ_ASSERT(!rt->gc.isIncrementalGCInProgress());
-    ::IterateGrayObjects(zone, cellCallback, data);
-}
-
-JS_PUBLIC_API(void)
-JS_IterateCompartments(JSContext* cx, void* data,
-                       JSIterateCompartmentCallback compartmentCallback)
-{
-    AutoTraceSession session(cx->runtime());
-
-    for (CompartmentsIter c(cx->runtime(), WithAtoms); !c.done(); c.next())
-        (*compartmentCallback)(cx, data, c);
 }

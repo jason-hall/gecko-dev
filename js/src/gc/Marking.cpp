@@ -149,13 +149,6 @@ IsThingPoisoned(T* thing)
     }
     return false;
 }
-
-static bool
-IsMovingTracer(JSTracer *trc)
-{
-    return trc->isCallbackTracer() &&
-           trc->asCallbackTracer()->getTracerKind() == JS::CallbackTracer::TracerKind::Moving;
-}
 #endif
 
 template <typename T> bool ThingIsPermanentAtomOrWellKnownSymbol(T* thing) { return false; }
@@ -207,8 +200,6 @@ js::CheckTracedThing(JSTracer* trc, T* thing)
     /*if (IsInsideNursery(thing))
         return;*/
 
-    MOZ_ASSERT_IF(!IsMovingTracer(trc) && !trc->isTenuringTracer(), !IsForwarded(thing));
-
     /*
      * Permanent atoms are not associated with this runtime, but will be
      * ignored during marking.
@@ -218,9 +209,6 @@ js::CheckTracedThing(JSTracer* trc, T* thing)
 
     Zone* zone = thing->zoneFromAnyThread();
     JSRuntime* rt = trc->runtime();
-
-    MOZ_ASSERT_IF(!IsMovingTracer(trc), CurrentThreadCanAccessZone(zone));
-    MOZ_ASSERT_IF(!IsMovingTracer(trc), CurrentThreadCanAccessRuntime(rt));
 
     MOZ_ASSERT(zone->runtimeFromAnyThread() == trc->runtime());
 
@@ -2660,159 +2648,4 @@ FOR_EACH_PUBLIC_TAGGED_GC_POINTER_TYPE(INSTANTIATE_ALL_VALID_HEAP_TRACE_FUNCTION
 } /* namespace gc */
 } /* namespace js */
 
-
-/*** Cycle Collector Barrier Implementation *******************************************************/
 
-/*
- * The GC and CC are run independently. Consequently, the following sequence of
- * events can occur:
- * 1. GC runs and marks an object gray.
- * 2. The mutator runs (specifically, some C++ code with access to gray
- *    objects) and creates a pointer from a JS root or other black object to
- *    the gray object. If we re-ran a GC at this point, the object would now be
- *    black.
- * 3. Now we run the CC. It may think it can collect the gray object, even
- *    though it's reachable from the JS heap.
- *
- * To prevent this badness, we unmark the gray bit of an object when it is
- * accessed by callers outside XPConnect. This would cause the object to go
- * black in step 2 above. This must be done on everything reachable from the
- * object being returned. The following code takes care of the recursive
- * re-coloring.
- *
- * There is an additional complication for certain kinds of edges that are not
- * contained explicitly in the source object itself, such as from a weakmap key
- * to its value, and from an object being watched by a watchpoint to the
- * watchpoint's closure. These "implicit edges" are represented in some other
- * container object, such as the weakmap or the watchpoint itself. In these
- * cases, calling unmark gray on an object won't find all of its children.
- *
- * Handling these implicit edges has two parts:
- * - A special pass enumerating all of the containers that know about the
- *   implicit edges to fix any black-gray edges that have been created. This
- *   is implemented in nsXPConnect::FixWeakMappingGrayBits.
- * - To prevent any incorrectly gray objects from escaping to live JS outside
- *   of the containers, we must add unmark-graying read barriers to these
- *   containers.
- */
- 
-#ifdef DEBUG
-struct AssertNonGrayTracer : public JS::CallbackTracer {
-    explicit AssertNonGrayTracer(JSRuntime* rt) : JS::CallbackTracer(rt) {}
-    void onChild(const JS::GCCellPtr& thing) override {
-        MOZ_ASSERT_IF(thing.asCell()->isTenured(),
-                      !thing.asCell()->asTenured().isMarked(js::gc::GRAY));
-    }
-};
-#endif
-
-struct UnmarkGrayTracer : public JS::CallbackTracer
-{
-  public:
-    // We set weakMapAction to DoNotTraceWeakMaps because the cycle collector
-    // will fix up any color mismatches involving weakmaps when it runs.
-    explicit UnmarkGrayTracer(JSRuntime *rt)
-      : JS::CallbackTracer(rt, DoNotTraceWeakMaps)
-      , unmarkedAny(false)
-      , oom(false)
-      , stack(rt->gc.unmarkGrayStack)
-    {}
-
-    void unmark(JS::GCCellPtr cell);
-
-    // Whether we unmarked anything.
-    bool unmarkedAny;
-
-    // Whether we ran out of memory.
-    bool oom;
-
-  private:
-    // Stack of cells to traverse.
-    Vector<JS::GCCellPtr, 0, SystemAllocPolicy>& stack;
-
-    void onChild(const JS::GCCellPtr& thing) override;
-};
-
-void
-UnmarkGrayTracer::onChild(const JS::GCCellPtr& thing)
-{
-    Cell* cell = thing.asCell();
-
-    // Cells in the nursery cannot be gray, and therefore must necessarily point
-    // to only black edges.
-    if (!cell->isTenured()) {
-#ifdef DEBUG
-        AssertNonGrayTracer nongray(runtime());
-        TraceChildren(&nongray, cell, thing.kind());
-#endif
-        return;
-    }
-
-    TenuredCell& tenured = cell->asTenured();
-    if (!tenured.isMarked(GRAY))
-        return;
-
-    tenured.unmark(GRAY);
-    unmarkedAny = true;
-
-    if (!stack.append(thing))
-        oom = true;
-}
-
-void
-UnmarkGrayTracer::unmark(JS::GCCellPtr cell)
-{
-    MOZ_ASSERT(stack.empty());
-
-    onChild(cell);
-
-    while (!stack.empty() && !oom)
-        TraceChildren(this, stack.popCopy());
-
-    if (oom) {
-         // If we run out of memory, we take a drastic measure: require that we
-         // GC again before the next CC.
-        stack.clear();
-        runtime()->gc.setGrayBitsInvalid();
-        return;
-    }
-}
-
-template <typename T>
-static bool
-TypedUnmarkGrayCellRecursively(T* t)
-{
-    MOZ_ASSERT(t);
-
-    JSRuntime* rt = t->runtimeFromActiveCooperatingThread();
-    MOZ_ASSERT(!JS::CurrentThreadIsHeapCollecting());
-    MOZ_ASSERT(!JS::CurrentThreadIsHeapCycleCollecting());
-
-    UnmarkGrayTracer unmarker(rt);
-    gcstats::AutoPhase outerPhase(rt->gc.stats(), gcstats::PHASE_BARRIER);
-    gcstats::AutoPhase innerPhase(rt->gc.stats(), gcstats::PHASE_UNMARK_GRAY);
-    unmarker.unmark(JS::GCCellPtr(t, MapTypeToTraceKind<T>::kind));
-    return unmarker.unmarkedAny;
-}
-
-struct UnmarkGrayCellRecursivelyFunctor {
-    template <typename T> bool operator()(T* t) { return TypedUnmarkGrayCellRecursively(t); }
-};
-
-bool
-js::UnmarkGrayCellRecursively(Cell* cell, JS::TraceKind kind)
-{
-    return DispatchTraceKindTyped(UnmarkGrayCellRecursivelyFunctor(), cell, kind);
-}
-
-bool
-js::UnmarkGrayShapeRecursively(Shape* shape)
-{
-    return TypedUnmarkGrayCellRecursively(shape);
-}
-
-JS_FRIEND_API(bool)
-JS::UnmarkGrayGCThingRecursively(JS::GCCellPtr thing)
-{
-    return js::UnmarkGrayCellRecursively(thing.asCell(), thing.kind());
-}

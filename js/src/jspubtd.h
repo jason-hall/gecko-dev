@@ -118,12 +118,6 @@ typedef void
 (* JSTraceDataOp)(JSTracer* trc, void* data);
 
 namespace js {
-namespace gc {
-class AutoTraceSession;
-#ifndef OMR
-class StoreBuffer;
-#endif // ! OMR
-} // namespace gc
 
 class CooperatingContext;
 

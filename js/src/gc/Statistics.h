@@ -188,55 +188,19 @@ struct Statistics
 struct MOZ_RAII AutoPhase
 {
     AutoPhase(Statistics& stats, Phase phase)
-      : stats(stats), task(nullptr), phase(phase), enabled(true)
     {
-        stats.beginPhase(phase);
     }
 
     AutoPhase(Statistics& stats, bool condition, Phase phase)
-      : stats(stats), task(nullptr), phase(phase), enabled(condition)
     {
-        if (enabled)
-            stats.beginPhase(phase);
     }
 
     AutoPhase(Statistics& stats, const GCParallelTask& task, Phase phase)
-      : stats(stats), task(&task), phase(phase), enabled(true)
     {
-        if (enabled)
-            stats.beginPhase(phase);
     }
 
     ~AutoPhase() {
-        if (enabled) {
-            // Bug 1309651 - we only record active thread time (including time
-            // spent waiting to join with helper threads), but should start
-            // recording total work on helper threads sometime by calling
-            // endParallelPhase here if task is nonnull.
-            stats.endPhase(phase);
-        }
     }
-
-    Statistics& stats;
-    const GCParallelTask* task;
-    Phase phase;
-    bool enabled;
-};
-
-struct MOZ_RAII AutoSCC
-{
-    AutoSCC(Statistics& stats, unsigned scc)
-      : stats(stats), scc(scc)
-    {
-        start = stats.beginSCC();
-    }
-    ~AutoSCC() {
-        stats.endSCC(scc, start);
-    }
-
-    Statistics& stats;
-    unsigned scc;
-    mozilla::TimeStamp start;
 };
 
 } /* namespace gcstats */

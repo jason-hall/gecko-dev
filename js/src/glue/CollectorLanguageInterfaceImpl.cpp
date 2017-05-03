@@ -226,7 +226,6 @@ MM_CollectorLanguageInterfaceImpl::markingScheme_scanRoots(MM_EnvironmentBase *e
 		}
 
 		gcstats::AutoPhase ap(rt->gc.stats, gcstats::PHASE_MARK_ROOTS);
-		js::gc::AutoTraceSession session(rt);
 		rt->gc.traceRuntimeAtoms(_omrGCMarker, session.lock);
 		// JSCompartment::traceIncomingCrossCompartmentEdgesForZoneGC(trc);
 		rt->gc.traceRuntimeCommon(_omrGCMarker, js::gc::GCRuntime::TraceOrMarkRuntime::TraceRuntime, session.lock);
