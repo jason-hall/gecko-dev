@@ -202,7 +202,7 @@ class WeakMap : public HashMap<Key, Value, HashPolicy, RuntimeAllocPolicy>,
     void trace(JSTracer* trc) override {
         MOZ_ASSERT(isInList());
 
-        if (trc->isMarkingTracer() || trc->isOmrMarkingTracer())
+        if (trc->isMarkingTracer() || trc->isOmrMarkingTracer()) {
             MOZ_ASSERT(trc->weakMapAction() == ExpandWeakMaps);
             marked = true;
             (void) markIteratively(GCMarker::fromTracer(trc));
@@ -227,14 +227,8 @@ class WeakMap : public HashMap<Key, Value, HashPolicy, RuntimeAllocPolicy>,
   protected:
     static void addWeakEntry(GCMarker* marker, JS::GCCellPtr key, gc::WeakMarkable markable)
     {
-        GCMarker& marker = *static_cast<GCMarker*>(trc);
-
-#ifdef OMR // Zone
         // OMRTODO: Get a real zone from a context passed through.
         Zone* zone = gc::OmrGcHelper::zone; // use a single global zone
-#else // OMR Zone
-        Zone* zone = key.asCell()->asTenured().zone();
-#endif // ! OMR Zone
 
         auto p = zone->gcWeakKeys().get(key);
         if (p) {

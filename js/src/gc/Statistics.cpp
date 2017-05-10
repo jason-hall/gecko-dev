@@ -31,7 +31,6 @@ using namespace js::gc;
 using namespace js::gcstats;
 
 using mozilla::DebugOnly;
-using mozilla::MakeRange;
 using mozilla::PodArrayZero;
 using mozilla::PodZero;
 

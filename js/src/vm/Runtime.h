@@ -1061,7 +1061,6 @@ struct JSRuntime : public js::MallocProvider<JSRuntime>
     }
 
     // For inherited heap state accessors.
-    friend class js::gc::AutoTraceSession;
     friend class JS::AutoEnterCycleCollection;
 
   private:
@@ -1338,16 +1337,9 @@ ZoneGroup::nursery()
     return runtime->gc.nursery();
 }
 
-inline gc::StoreBuffer&
-ZoneGroup::storeBuffer()
-{
-    return runtime->gc.storeBuffer();
-}
-
 inline void
 ZoneGroup::callAfterMinorGC(void (*thunk)(void* data), void* data)
 {
-    nursery().queueSweepAction(thunk, data);
 }
 
 } /* namespace js */

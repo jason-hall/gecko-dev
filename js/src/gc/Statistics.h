@@ -130,6 +130,36 @@ enum Stat {
  */
 struct Statistics
 {
+    template <typename T, size_t Length>
+    using Array = mozilla::Array<T, Length>;
+
+    template <typename IndexType, IndexType SizeAsEnumValue, typename ValueType>
+    using EnumeratedArray = mozilla::EnumeratedArray<IndexType, SizeAsEnumValue, ValueType>;
+
+    using TimeDuration = mozilla::TimeDuration;
+    using TimeStamp = mozilla::TimeStamp;
+
+    /*
+     * Phases are allowed to have multiple parents, though any path from root
+     * to leaf is allowed at most one multi-parented phase. We keep a full set
+     * of timings for each of the multi-parented phases, to be able to record
+     * all the timings in the expanded tree induced by our dag.
+     *
+     * Note that this wastes quite a bit of space, since we have a whole
+     * separate array of timing data containing all the phases. We could be
+     * more clever and keep an array of pointers biased by the offset of the
+     * multi-parented phase, and thereby preserve the simple
+     * timings[slot][PHASE_*] indexing. But the complexity doesn't seem worth
+     * the few hundred bytes of savings. If we want to extend things to full
+     * DAGs, this decision should be reconsidered.
+     */
+    static const size_t MaxMultiparentPhases = 6;
+    static const size_t NumTimingArrays = MaxMultiparentPhases + 1;
+
+    /* Create a convenient type for referring to tables of phase times. */
+    using PhaseTimeTable =
+        Array<EnumeratedArray<Phase, PHASE_LIMIT, TimeDuration>, NumTimingArrays>;
+
     static MOZ_MUST_USE bool initialize() { return true; }
 
     explicit Statistics(JSRuntime* rt) {}
@@ -145,32 +175,32 @@ struct Statistics
     void count(Stat s) {
     }
 
-    int64_t clearMaxGCPauseAccumulator() { return 0; }
-    int64_t getMaxGCPauseSinceClear() { return 0; }
+    TimeDuration clearMaxGCPauseAccumulator() { return 0; }
+    TimeDuration getMaxGCPauseSinceClear() { return 0; }
 
     static const size_t MAX_NESTING = 20;
 
     struct SliceData {
-        SliceData(SliceBudget budget, JS::gcreason::Reason reason, int64_t start,
-                  double startTimestamp, size_t startFaults, gc::State initialState)
+        SliceData(SliceBudget budget, JS::gcreason::Reason reason,
+                  TimeStamp start, size_t startFaults, gc::State initialState)
           : budget(budget), reason(reason),
             initialState(initialState),
             finalState(gc::State::NotActive),
-            resetReason(nullptr),
-            start(start), startTimestamp(startTimestamp),
+            resetReason(gc::AbortReason::None),
+            start(start),
             startFaults(startFaults)
-        {
-        }
+        {}
 
         SliceBudget budget;
         JS::gcreason::Reason reason;
         gc::State initialState, finalState;
-        const char* resetReason;
-        int64_t start, end;
-        double startTimestamp, endTimestamp;
+        gc::AbortReason resetReason;
+        TimeStamp start, end;
         size_t startFaults, endFaults;
-	
-        int64_t duration() const { return end - start; }
+        PhaseTimeTable phaseTimes;
+
+        TimeDuration duration() const { return end - start; }
+        bool wasReset() const { return resetReason != gc::AbortReason::None; }
     };
 
     typedef Vector<SliceData, 8, SystemAllocPolicy> SliceDataVector;

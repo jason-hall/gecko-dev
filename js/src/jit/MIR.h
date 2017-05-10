@@ -12366,7 +12366,9 @@ class MNearbyInt
     TRIVIAL_NEW_WRAPPERS
 
     static bool HasAssemblerSupport(RoundingMode mode) {
-        return Assembler::HasRoundInstruction(mode);
+		// OMROTODO: ?
+        //return Assembler::HasRoundInstruction(mode);
+		return false;
     }
 
     RoundingMode roundingMode() const { return roundingMode_; }

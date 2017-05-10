@@ -191,6 +191,7 @@ class Nursery
      */
     JSRuntime* runtime_;
 
+  public:
     void* addressOfCurrentEnd() const {
         return nullptr;
     }

@@ -162,6 +162,55 @@ IsShapeAllocKind(AllocKind kind)
     return kind == AllocKind::SHAPE || kind == AllocKind::ACCESSOR_SHAPE;
 }
 
+// Returns a sequence for use in a range-based for loop,
+// to iterate over all alloc kinds.
+inline decltype(mozilla::MakeEnumeratedRange(AllocKind::FIRST, AllocKind::LIMIT))
+AllAllocKinds()
+{
+    return mozilla::MakeEnumeratedRange(AllocKind::FIRST, AllocKind::LIMIT);
+}
+
+// Returns a sequence for use in a range-based for loop,
+// to iterate over all object alloc kinds.
+inline decltype(mozilla::MakeEnumeratedRange(AllocKind::OBJECT_FIRST, AllocKind::OBJECT_LIMIT))
+ObjectAllocKinds()
+{
+    return mozilla::MakeEnumeratedRange(AllocKind::OBJECT_FIRST, AllocKind::OBJECT_LIMIT);
+}
+
+// Returns a sequence for use in a range-based for loop,
+// to iterate over alloc kinds from |first| to |limit|, exclusive.
+inline decltype(mozilla::MakeEnumeratedRange(AllocKind::FIRST, AllocKind::LIMIT))
+SomeAllocKinds(AllocKind first = AllocKind::FIRST, AllocKind limit = AllocKind::LIMIT)
+{
+    return mozilla::MakeEnumeratedRange(first, limit);
+}
+
+// AllAllocKindArray<ValueType> gives an enumerated array of ValueTypes,
+// with each index corresponding to a particular alloc kind.
+template<typename ValueType> using AllAllocKindArray =
+    mozilla::EnumeratedArray<AllocKind, AllocKind::LIMIT, ValueType>;
+
+// ObjectAllocKindArray<ValueType> gives an enumerated array of ValueTypes,
+// with each index corresponding to a particular object alloc kind.
+template<typename ValueType> using ObjectAllocKindArray =
+    mozilla::EnumeratedArray<AllocKind, AllocKind::OBJECT_LIMIT, ValueType>;
+
+static inline JS::TraceKind
+MapAllocToTraceKind(AllocKind kind)
+{
+    static const JS::TraceKind map[] = {
+#define EXPAND_ELEMENT(allocKind, traceKind, type, sizedType) \
+        JS::TraceKind::traceKind,
+FOR_EACH_ALLOCKIND(EXPAND_ELEMENT)
+#undef EXPAND_ELEMENT
+    };
+
+    static_assert(MOZ_ARRAY_LENGTH(map) == size_t(AllocKind::LIMIT),
+                  "AllocKind-to-TraceKind mapping must be in sync");
+    return map[size_t(kind)];
+}
+
 class TenuredCell;
 
 // A GC cell is the base class for all GC things.

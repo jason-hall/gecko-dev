@@ -36,6 +36,12 @@ class AutoMaybeStartBackgroundAllocation;
 class MarkingValidator;
 class AutoTraceSession;
 
+enum IncrementalProgress
+{
+    NotFinished = 0,
+    Finished
+};
+
 /*
  * GC Scheduling Overview
  * ======================
@@ -415,7 +421,7 @@ class GCRuntime
 
 #ifdef DEBUG
     bool shutdownCollectedEverything() const {
-        return arenasEmptyAtShutdown;
+        return true;
     }
 #endif
 
@@ -427,7 +433,7 @@ class GCRuntime
     void waitBackgroundSweepEnd() { }
 
 #ifdef DEBUG
-    bool onBackgroundThread() { return helperState.onBackgroundThread(); }
+    bool onBackgroundThread() { return false; }
 #endif // DEBUG
 
     void lockGC() {
@@ -448,6 +454,9 @@ class GCRuntime
 
     bool isIncrementalGCAllowed() const { return false; }
     void disallowIncrementalGC() { }
+    bool isIncrementalGCInProgress() const { return false; }
+	
+	bool isShrinkingGC() const { return false; }
 
     static bool initializeSweepActions();
 
@@ -514,6 +523,7 @@ class GCRuntime
 
   private:
     UnprotectedData<gcstats::Statistics> stats_;
+    mozilla::Atomic<size_t, mozilla::ReleaseAcquire> numActiveZoneIters;
   public:
     gcstats::Statistics& stats() { return stats_.ref(); }
 
@@ -538,7 +548,6 @@ class GCRuntime
      */
     ActiveThreadOrGCTaskData<State> incrementalState;
 
-#if 0 // OMRTODO: Whay's this do?
     /*
      * Incremental sweep state.
      */
@@ -548,7 +557,6 @@ class GCRuntime
     ActiveThreadData<JS::Zone*> sweepZone;
     ActiveThreadData<size_t> sweepActionIndex;
     ActiveThreadData<bool> abortSweepAfterCurrentGroup;
-#endif
 
     /*
      * Whether compacting GC can is enabled globally.
@@ -621,20 +629,46 @@ class GCRuntime
     }
     void freeAllLifoBlocksAfterMinorGC(LifoAlloc* lifo);
 
+    int enabled;
+
+    void disable() {
+		enabled --;
+	}
+
+    void enable() {
+		enabled ++;
+	}
+
     friend class MarkingValidator;
     friend class AutoTraceSession;
     friend class AutoEnterIteration;
 };
 
+/* Prevent compartments and zones from being collected during iteration. */
+class MOZ_RAII AutoEnterIteration {
+    GCRuntime* gc;
+
+  public:
+    explicit AutoEnterIteration(GCRuntime* gc_) : gc(gc_) {
+        ++gc->numActiveZoneIters;
+    }
+
+    ~AutoEnterIteration() {
+        MOZ_ASSERT(gc->numActiveZoneIters);
+        --gc->numActiveZoneIters;
+    }
+};
+
 #ifdef JS_GC_ZEAL
 
 inline bool
-GCRuntime::hasZealMode(ZealMode mode)
-{
+GCRuntime::hasZealMode(ZealMode mode) {
+	return false;
 }
 
 inline bool
 GCRuntime::upcomingZealousGC() {
+	return false;
 }
 
 inline bool

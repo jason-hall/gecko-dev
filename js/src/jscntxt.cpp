@@ -1139,7 +1139,6 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
     threadNative_(0),
     helperThread_(nullptr),
     options_(options),
-    arenas_(nullptr),
     enterCompartmentDepth_(0),
     jitActivation(nullptr),
     activation_(nullptr),
@@ -1402,7 +1401,7 @@ JSContext::trace(JSTracer* trc)
 {
     cycleDetectorVector().trace(trc);
 
-    if (trc->isMarkingTracer() || trc->isOMRTracer() && compartment_)
+    if (trc->isMarkingTracer() || trc->isOmrMarkingTracer() && compartment_)
         compartment_->mark();
 }
 

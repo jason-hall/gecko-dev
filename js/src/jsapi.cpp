@@ -43,7 +43,6 @@
 #include "jsweakmap.h"
 #include "jswrapper.h"
 
-#include "asmjs/AsmJS.h"
 #include "builtin/AtomicsObject.h"
 #include "builtin/Eval.h"
 #include "builtin/Intl.h"

@@ -534,7 +534,6 @@ class TypedArrayObjectTemplate : public TypedArrayObject
                     cx->zone()->group()->storeBuffer().putWholeCell(obj);
 #endif // ! OMR Writebarrier
                 }
-            }
         } else {
             void* data = obj->fixedData(FIXED_DATA_START);
             obj->initPrivate(data);

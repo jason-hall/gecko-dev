@@ -1266,37 +1266,6 @@ RegExpCompartment::init(JSContext* cx)
     return true;
 }
 
-<<<<<<< HEAD
-bool
-RegExpShared::needsSweep(JSRuntime* rt)
-{
-    // Sometimes RegExpShared instances are marked without the compartment
-    // being subsequently cleared. This can happen if a GC is restarted while
-    // in progress (i.e. performing a full GC in the middle of an incremental
-    // GC) or if a RegExpShared referenced via the stack is traced but is not
-    // in a zone being collected.
-    //
-    // Because of this we only treat the marked_ bit as a hint, and destroy the
-    // RegExpShared if it was accidentally marked earlier but wasn't marked by
-    // the current trace.
-    bool keep = marked() && IsMarked(&source);
-    for (size_t i = 0; i < ArrayLength(compilationArray); i++) {
-        RegExpShared::RegExpCompilation& compilation = compilationArray[i];
-        if (compilation.jitCode && gc::IsAboutToBeFinalized(&compilation.jitCode))
-            keep = false;
-    }
-
-    //MOZ_ASSERT(rt->isHeapMajorCollecting());
-    if (keep || rt->gc.isHeapCompacting()) {
-        clearMarked();
-        return false;
-    }
-
-    return true;
-}
-
-=======
->>>>>>> cf1f2c4753324f316a79f0b68865501fd711a6bc
 void
 RegExpCompartment::sweep(JSRuntime* rt)
 {
@@ -1524,6 +1493,6 @@ js::RegExpToSharedNonInline(JSContext* cx, HandleObject obj, MutableHandleRegExp
 JS::ubi::Node::Size
 JS::ubi::Concrete<RegExpShared>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
-    return js::gc::Arena::thingSize(gc::AllocKind::REGEXP_SHARED) +
+    return js::gc::OmrGcHelper::thingSize(gc::AllocKind::REGEXP_SHARED) +
         get().sizeOfExcludingThis(mallocSizeOf);
 }

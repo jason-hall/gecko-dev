@@ -885,8 +885,10 @@ jit::IonCompilationCanUseNurseryPointers()
     // Otherwise, we must be on the active thread during MIR construction. The
     // store buffer must have been notified that minor GCs must cancel pending
     // or in progress Ion compilations.
-    JSContext* cx = TlsContext.get();
-    return cx->zone()->group()->storeBuffer().cancelIonCompilations();
+    // OMRTODO
+    //JSContext* cx = TlsContext.get();
+    //return cx->zone()->group()->storeBuffer().cancelIonCompilations();
+	return false;
 }
 
 #endif // DEBUG

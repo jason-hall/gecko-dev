@@ -676,8 +676,8 @@ JSCompartment::getExistingTemplateLiteralObject(JSObject* rawStrings)
 void
 JSCompartment::traceOutgoingCrossCompartmentWrappers(JSTracer* trc)
 {
-    MOZ_ASSERT(JS::CurrentThreadIsHeapMajorCollecting());
-    MOZ_ASSERT(!zone()->isCollectingFromAnyThread() || trc->runtime()->gc.isHeapCompacting());
+    //MOZ_ASSERT(JS::CurrentThreadIsHeapMajorCollecting());
+    //MOZ_ASSERT(!zone()->isCollectingFromAnyThread() || trc->runtime()->gc.isHeapCompacting());
 
     for (WrapperMap::Enum e(crossCompartmentWrappers); !e.empty(); e.popFront()) {
         Value v = e.front().value().unbarrieredGet();
@@ -728,7 +728,7 @@ JSCompartment::traceRoots(JSTracer* trc, js::gc::GCRuntime::TraceOrMarkRuntime t
                   "on-stack object pending metadata");
     }
 
-    if (!JS::CurrentThreadIsHeapMinorCollecting()) {
+    //if (!JS::CurrentThreadIsHeapMinorCollecting()) {
         // The global is never nursery allocated, so we don't need to
         // trace it when doing a minor collection.
         //
@@ -736,11 +736,11 @@ JSCompartment::traceRoots(JSTracer* trc, js::gc::GCRuntime::TraceOrMarkRuntime t
         // JSContext::global() remains valid.
         if (enterCompartmentDepth && global_.unbarrieredGet())
             TraceRoot(trc, global_.unsafeUnbarrieredForTracing(), "on-stack compartment global");
-    }
+    //}
 
     // Nothing below here needs to be treated as a root if we aren't marking
     // this zone for a collection.
-    if (traceOrMark == js::gc::GCRuntime::MarkRuntime && !zone()->isCollectingFromAnyThread())
+    if (traceOrMark == js::gc::GCRuntime::MarkRuntime /*&& !zone()->isCollectingFromAnyThread()*/)
         return;
 
     // During a GC, these are treated as weak pointers.

@@ -19,6 +19,7 @@
 using namespace js;
 using namespace js::gc;
 
+#ifndef OMR // OMRTODO
 void
 js::IterateHeapUnbarriered(JSContext* cx, void* data,
                            IterateZoneCallback zoneCallback,
@@ -34,6 +35,7 @@ js::IterateHeapUnbarrieredForZone(JSContext* cx, Zone* zone, void* data,
                                   IterateCellCallback cellCallback)
 {
 }
+#endif
 
 void
 js::IterateScripts(JSContext* cx, JSCompartment* compartment,

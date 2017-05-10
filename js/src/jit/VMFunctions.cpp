@@ -538,8 +538,9 @@ NewCallObject(JSContext* cx, HandleShape shape, HandleObjectGroup group)
     // The JIT creates call objects in the nursery, so elides barriers for
     // the initializing writes. The interpreter, however, may have allocated
     // the call object tenured, so barrier as needed before re-entering.
-    if (!IsInsideNursery(obj))
-        cx->zone()->group()->storeBuffer().putWholeCell(obj);
+    // OMRTODO
+    //if (!IsInsideNursery(obj))
+    //    cx->zone()->group()->storeBuffer().putWholeCell(obj);
 
     return obj;
 }
@@ -554,9 +555,10 @@ NewSingletonCallObject(JSContext* cx, HandleShape shape)
     // The JIT creates call objects in the nursery, so elides barriers for
     // the initializing writes. The interpreter, however, may have allocated
     // the call object tenured, so barrier as needed before re-entering.
-    MOZ_ASSERT(!IsInsideNursery(obj),
-               "singletons are created in the tenured heap");
-    cx->zone()->group()->storeBuffer().putWholeCell(obj);
+    // OMRTODO
+    //MOZ_ASSERT(!IsInsideNursery(obj),
+    //           "singletons are created in the tenured heap");
+    //cx->zone()->group()->storeBuffer().putWholeCell(obj);
 
     return obj;
 }
@@ -661,8 +663,9 @@ void
 PostWriteBarrier(JSRuntime* rt, JSObject* obj)
 {
     JS::AutoCheckCannotGC nogc;
-    MOZ_ASSERT(!IsInsideNursery(obj));
-    rt->gc.storeBuffer().putWholeCell(obj);
+    // OMRTODO
+    //MOZ_ASSERT(!IsInsideNursery(obj));
+    //rt->gc.storeBuffer().putWholeCell(obj);
 }
 
 static const size_t MAX_WHOLE_CELL_BUFFER_SIZE = 4096;
@@ -681,7 +684,8 @@ PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index)
         if (MOZ_UNLIKELY(!obj->is<NativeObject>()) ||
             uint32_t(index) >= obj->as<NativeObject>().getDenseInitializedLength())
         {
-            rt->gc.storeBuffer().putWholeCell(obj);
+            // OMRTODO
+            //rt->gc.storeBuffer().putWholeCell(obj);
             return;
         }
     }
@@ -696,11 +700,11 @@ PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index)
 #endif
         )
     {
-        rt->gc.storeBuffer().putSlot(nobj, HeapSlot::Element, index, 1);
+        //rt->gc.storeBuffer().putSlot(nobj, HeapSlot::Element, index, 1);
         return;
     }
 
-    rt->gc.storeBuffer().putWholeCell(obj);
+    //rt->gc.storeBuffer().putWholeCell(obj);
 }
 
 template void

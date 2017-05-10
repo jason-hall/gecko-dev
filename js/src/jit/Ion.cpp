@@ -2246,8 +2246,9 @@ IonCompile(JSContext* cx, JSScript* script,
     if (!builder)
         return AbortReason::Alloc;
 
-    if (cx->zone()->group()->storeBuffer().cancelIonCompilations())
-        builder->setNotSafeForMinorGC();
+	// OMRTODO?
+    //if (cx->zone()->group()->storeBuffer().cancelIonCompilations())
+    //    builder->setNotSafeForMinorGC();
 
     MOZ_ASSERT(recompile == builder->script()->hasIonScript());
     MOZ_ASSERT(builder->script()->canIonCompile());

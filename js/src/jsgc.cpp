@@ -301,6 +301,12 @@ const AllocKind gc::slotsToThingKind[] = {
 #endif // ! OMR Sizes
 
 
+struct js::gc::FinalizePhase
+{
+    gcstats::Phase statsPhase;
+    AllocKinds kinds;
+};
+
 /*
  * Finalization order for objects swept incrementally on the active thread.
  */
@@ -351,27 +357,35 @@ js::gc::InitializeStaticData()
     return GCRuntime::initializeSweepActions();
 }
 
-#ifndef OMR // Arena
-template<>
-JSObject*
-ArenaCellIterImpl::get<JSObject>() const
+GCRuntime::GCRuntime(JSRuntime* rt) :
+    rt(rt),
+    systemZone(nullptr),
+    systemZoneGroup(nullptr),
+    atomsZone(nullptr),
+    stats_(rt),
+    marker(rt),
+    nextCellUniqueId_(LargestTaggedNullCellPointer + 1), // Ensure disjoint from null tagged pointers.
+    numActiveZoneIters(0),
+    number(0),
+    isFull(false),
+    incrementalState(gc::State::NotActive),
+    sweepGroups(nullptr),
+    currentSweepGroup(nullptr),
+    sweepPhaseIndex(0),
+    sweepZone(nullptr),
+    sweepActionIndex(0),
+    abortSweepAfterCurrentGroup(false),
+    compactingEnabled(true),
+    poked(false),
+#ifdef JS_GC_ZEAL
+    zealModeBits(0),
+    nextScheduled(0),
+#endif
+    lock(mutexid::GCLock),
+	nursery_(rt),
+	enabled(0)
 {
-    MOZ_ASSERT(!done());
-    return reinterpret_cast<JSObject*>(getCell());
 }
-
-/* static */ void
-Arena::staticAsserts()
-{
-}
-
-template<typename T>
-inline size_t
-Arena::finalize(FreeOp* fop, AllocKind thingKind, size_t thingSize)
-{
-    return 0;
-}
-#endif // ! OMR  Arena
 
 #ifdef JS_GC_ZEAL
 
@@ -478,12 +492,6 @@ GCRuntime::finish()
 
 bool
 GCRuntime::setParameter(JSGCParamKey key, uint32_t value, AutoLockGC& lock)
-{
-    return true;
-}
-
-bool
-GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value, const AutoLockGC& lock)
 {
     return true;
 }
@@ -693,12 +701,6 @@ ShouldProtectRelocatedArenas(JS::gcreason::Reason reason)
     return false;
 }
 
-template <typename T>
-static inline void
-UpdateCellPointers(MovingTracer* trc, T* cell)
-{
-}
-
 static const size_t MinCellUpdateBackgroundTasks = 2;
 static const size_t MaxCellUpdateBackgroundTasks = 8;
 
@@ -856,25 +858,6 @@ struct MaybeCompartmentFunctor {
 
 #ifdef JS_GC_ZEAL
 
-struct GCChunkHasher {
-    typedef gc::Chunk* Lookup;
-
-    /*
-     * Strip zeros for better distribution after multiplying by the golden
-     * ratio.
-     */
-    static HashNumber hash(gc::Chunk* chunk) {
-        MOZ_ASSERT(!(uintptr_t(chunk) & gc::ChunkMask));
-        return HashNumber(uintptr_t(chunk) >> gc::ChunkShift);
-    }
-
-    static bool match(gc::Chunk* k, gc::Chunk* l) {
-        MOZ_ASSERT(!(uintptr_t(k) & gc::ChunkMask));
-        MOZ_ASSERT(!(uintptr_t(l) & gc::ChunkMask));
-        return k == l;
-    }
-};
-
 class js::gc::MarkingValidator
 {
   public:
@@ -939,11 +922,6 @@ JSCompartment::findDeadProxyZoneEdges(bool* foundAny)
     return true;
 }
 
-void
-Zone::findOutgoingEdges(ZoneComponentFinder& finder)
-{
-}
-
 /*
  * Gray marking:
  *
@@ -969,12 +947,6 @@ Zone::findOutgoingEdges(ZoneComponentFinder& finder)
  * The list is traversed and then unlinked in
  * MarkIncomingCrossCompartmentPointers.
  */
-
-/* static */ unsigned
-ProxyObject::grayLinkReservedSlot(JSObject* obj)
-{
-    return 1;
-}
 
 #ifdef DEBUG
 static void
@@ -1343,10 +1315,10 @@ IsDeterministicGCReason(JS::gcreason::Reason reason)
 #endif
 
 // OMRTODO: New function
+#if 0
 bool
 GCRuntime::shouldRepeatForDeadZone(JS::gcreason::Reason reason)
 {
-#if 0
     MOZ_ASSERT_IF(reason == JS::gcreason::COMPARTMENT_REVIVED, !isIncremental);
 
     if (!isIncremental || isIncrementalGCInProgress())
@@ -1356,16 +1328,11 @@ GCRuntime::shouldRepeatForDeadZone(JS::gcreason::Reason reason)
         if (c->scheduledForDestruction)
             return true;
     }
-#endif
     return false;
 }
+#endif
 
 js::AutoEnqueuePendingParseTasksAfterGC::~AutoEnqueuePendingParseTasksAfterGC()
-{
-}
-
-void
-GCRuntime::abortGC()
 {
 }
 
@@ -1490,11 +1457,12 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
     }
 
     if (!zone) {
-        zone = *rt->gc.zones.begin();
-        zoneHolder.reset(zone);
 #ifdef OMR
         // OMRTODO: Use multiple zones from a context correctly.
         OmrGcHelper::zone = zone;
+#else
+        zone = *rt->gc.zones.begin();
+        zoneHolder.reset(zone);
 #endif
     }
 
@@ -1583,7 +1551,7 @@ js::ReleaseAllJITCode(FreeOp* fop)
 }
 
 AutoSuppressGC::AutoSuppressGC(JSContext* cx)
-    : gc(cx->gc)
+    : gc(cx->runtime()->gc)
 {
     gc.disable();
 }
@@ -1662,7 +1630,7 @@ AutoAssertNoNurseryAlloc::~AutoAssertNoNurseryAlloc()
 {
 }
 
-JS::AutoEnterCycleCollection::AutoEnterCycleCollection(JSRuntime* rt)
+JS::AutoEnterCycleCollection::AutoEnterCycleCollection(JSContext* cx)
 {
 }
 
@@ -1705,14 +1673,6 @@ JS::TraceKind
 JS::GCCellPtr::outOfLineKind() const
 {
     return MapAllocToTraceKind(asCell()->asTenured().getAllocKind());
-}
-
-bool
-JS::GCCellPtr::mayBeOwnedByOtherRuntimeSlow() const
-{
-    if (is<JSString>())
-        return as<JSString>().isPermanentAtom();
-    return as<Symbol>().isWellKnownSymbol();
 }
 
 JS_PUBLIC_API(void)
@@ -1829,7 +1789,7 @@ JS::IsIncrementalGCInProgress(JSContext* cx)
 JS_PUBLIC_API(bool)
 JS::IsIncrementalGCInProgress(JSRuntime* rt)
 {
-    return false
+    return false;
 }
 
 JS_PUBLIC_API(bool)
@@ -1890,14 +1850,14 @@ NewMemoryInfoObject(JSContext* cx)
         const char* name;
         JSNative getter;
     } getters[] = {
-        { "gcBytes", GCBytesGetter },
-        { "gcMaxBytes", GCMaxBytesGetter },
-        { "mallocBytesRemaining", MallocBytesGetter },
-        { "maxMalloc", MaxMallocGetter },
-        { "gcIsHighFrequencyMode", GCHighFreqGetter },
-        { "gcNumber", GCNumberGetter },
-        { "majorGCCount", MajorGCCountGetter },
-        { "minorGCCount", MinorGCCountGetter }
+        { "gcBytes", nullptr },
+        { "gcMaxBytes", nullptr },
+        { "mallocBytesRemaining", nullptr },
+        { "maxMalloc", nullptr },
+        { "gcIsHighFrequencyMode", nullptr },
+        { "gcNumber", nullptr },
+        { "majorGCCount", nullptr },
+        { "minorGCCount", nullptr }
     };
 
     for (auto pair : getters) {
@@ -1925,14 +1885,14 @@ NewMemoryInfoObject(JSContext* cx)
         const char* name;
         JSNative getter;
     } zoneGetters[] = {
-        { "gcBytes", ZoneGCBytesGetter },
-        { "gcTriggerBytes", ZoneGCTriggerBytesGetter },
-        { "gcAllocTrigger", ZoneGCAllocTriggerGetter },
-        { "mallocBytesRemaining", ZoneMallocBytesGetter },
-        { "maxMalloc", ZoneMaxMallocGetter },
-        { "delayBytes", ZoneGCDelayBytesGetter },
-        { "heapGrowthFactor", ZoneGCHeapGrowthFactorGetter },
-        { "gcNumber", ZoneGCNumberGetter }
+        { "gcBytes", nullptr },
+        { "gcTriggerBytes", nullptr },
+        { "gcAllocTrigger", nullptr },
+        { "mallocBytesRemaining", nullptr },
+        { "maxMalloc", nullptr },
+        { "delayBytes", nullptr },
+        { "heapGrowthFactor", nullptr },
+        { "gcNumber", nullptr }
     };
 
     for (auto pair : zoneGetters) {

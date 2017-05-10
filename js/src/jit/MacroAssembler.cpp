@@ -786,7 +786,8 @@ MacroAssembler::nurseryAllocate(Register result, Register temp, gc::AllocKind al
     // No explicit check for nursery.isEnabled() is needed, as the comparison
     // with the nursery's end will always fail in such cases.
     CompileZone* zone = GetJitContext()->compartment->zone();
-    int thingSize = int(gc::Arena::thingSize(allocKind));
+    // OMRTODO
+    int thingSize = 0;//int(gc::Arena::thingSize(allocKind));
     int totalSize = thingSize + nDynamicSlots * sizeof(HeapSlot);
     MOZ_ASSERT(totalSize % gc::CellSize == 0);
     loadPtr(AbsoluteAddress(zone->addressOfNurseryPosition()), result);
@@ -805,7 +806,8 @@ void
 MacroAssembler::freeListAllocate(Register result, Register temp, gc::AllocKind allocKind, Label* fail)
 {
     CompileZone* zone = GetJitContext()->compartment->zone();
-    int thingSize = int(gc::Arena::thingSize(allocKind));
+    // OMRTODO
+    int thingSize = 0;//int(gc::Arena::thingSize(allocKind));
 
     Label fallback;
     Label success;

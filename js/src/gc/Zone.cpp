@@ -21,12 +21,9 @@
 using namespace js;
 using namespace js::gc;
 
-Zone * const Zone::NotOnList = reinterpret_cast<Zone*>(1);
-
 JS::Zone::Zone(JSRuntime* rt, ZoneGroup* group)
   : JS::shadow::Zone(rt, &rt->gc.marker),
     group_(group),
-    debuggers(group, nullptr),
     uniqueIds_(group),
     suppressAllocationMetadataBuilder(group, false),
     types(this),
@@ -37,13 +34,10 @@ JS::Zone::Zone(JSRuntime* rt, ZoneGroup* group)
     weakCaches_(group),
     gcWeakKeys_(group, SystemAllocPolicy(), rt->randomHashCodeScrambler()),
     gcSweepGroupEdges_(group),
-    hasDeadProxies_(group),
     typeDescrObjects_(group, this, SystemAllocPolicy()),
     markedAtoms_(group),
     atomCache_(group),
     externalStringCache_(group),
-    usage(&rt->gc.usage),
-    threshold(),
     gcDelayBytes(0),
     propertyTree_(group, this),
     baseShapes_(group, this, BaseShapeSet()),
@@ -58,15 +52,13 @@ JS::Zone::Zone(JSRuntime* rt, ZoneGroup* group)
     gcScheduled_(false),
     gcPreserveCode_(group, false),
     jitUsingBarriers_(group, false),
-    keepShapeTables_(group, false),
-    listNext_(group, NotOnList)
+    keepShapeTables_(group, false)
 {
     /* Ensure that there are no vtables to mess us up here. */
     MOZ_ASSERT(reinterpret_cast<JS::shadow::Zone*>(this) ==
                static_cast<JS::shadow::Zone*>(this));
 
     AutoLockGC lock(rt);
-    jitCodeCounter.setMax(jit::MaxCodeBytesPerProcess * 0.8);
 }
 
 Zone::~Zone()
@@ -75,7 +67,6 @@ Zone::~Zone()
     if (this == rt->gc.systemZone)
         rt->gc.systemZone = nullptr;
 
-    js_delete(debuggers.ref());
     js_delete(jitZone_.ref());
 
 #ifdef DEBUG
@@ -97,22 +88,6 @@ bool Zone::init(bool isSystemArg)
 }
 
 void
-Zone::setNeedsIncrementalBarrier(bool needs, ShouldUpdateJit updateJit)
-{
-#ifndef OMR
-    if (updateJit == UpdateJit && needs != jitUsingBarriers_) {
-        jit::ToggleBarriers(this, needs);
-        jitUsingBarriers_ = needs;
-    }
-
-    MOZ_ASSERT_IF(needs && isAtomsZone(),
-                  !runtimeFromActiveCooperatingThread()->hasHelperThreadZones());
-    MOZ_ASSERT_IF(needs, canCollect());
-    needsIncrementalBarrier_ = needs;
-#endif // ! OMR
-}
-
-void
 Zone::beginSweepTypes(FreeOp* fop, bool releaseTypes)
 {
     AutoClearTypeInferenceStateOnOOM oom(this);
@@ -122,13 +97,7 @@ Zone::beginSweepTypes(FreeOp* fop, bool releaseTypes)
 Zone::DebuggerVector*
 Zone::getOrCreateDebuggers(JSContext* cx)
 {
-    if (debuggers)
-        return debuggers;
-
-    debuggers = js_new<DebuggerVector>();
-    if (!debuggers)
-        ReportOutOfMemory(cx);
-    return debuggers;
+    return nullptr;
 }
 
 void
@@ -256,15 +225,6 @@ Zone::discardJitCode(FreeOp* fop, bool discardBaselineCode)
     }
 }
 
-#ifdef JSGC_HASH_TABLE_CHECKS
-void
-JS::Zone::checkUniqueIdTableAfterMovingGC()
-{
-    for (UniqueIdMap::Enum e(uniqueIds()); !e.empty(); e.popFront())
-        js::gc::CheckGCThingAfterMovingGC(e.front().key());
-}
-#endif
-
 js::jit::JitZone*
 Zone::createJitZone(JSContext* cx)
 {
@@ -313,19 +273,6 @@ Zone::notifyObservingDebuggers()
     }
 }
 
-bool
-Zone::isOnList() const
-{
-    return listNext_ != NotOnList;
-}
-
-Zone*
-Zone::nextZone() const
-{
-    MOZ_ASSERT(isOnList());
-    return listNext_;
-}
-
 void
 Zone::clearTables()
 {
@@ -348,100 +295,6 @@ Zone::addTypeDescrObject(JSContext* cx, HandleObject obj)
     }
 
     return true;
-}
-
-ZoneList::ZoneList()
-  : head(nullptr), tail(nullptr)
-{}
-
-ZoneList::ZoneList(Zone* zone)
-  : head(zone), tail(zone)
-{
-    MOZ_RELEASE_ASSERT(!zone->isOnList());
-    zone->listNext_ = nullptr;
-}
-
-ZoneList::~ZoneList()
-{
-    MOZ_ASSERT(isEmpty());
-}
-
-void
-ZoneList::check() const
-{
-#ifdef DEBUG
-    MOZ_ASSERT((head == nullptr) == (tail == nullptr));
-    if (!head)
-        return;
-
-    Zone* zone = head;
-    for (;;) {
-        MOZ_ASSERT(zone && zone->isOnList());
-        if  (zone == tail)
-            break;
-        zone = zone->listNext_;
-    }
-    MOZ_ASSERT(!zone->listNext_);
-#endif
-}
-
-bool
-ZoneList::isEmpty() const
-{
-    return head == nullptr;
-}
-
-Zone*
-ZoneList::front() const
-{
-    MOZ_ASSERT(!isEmpty());
-    MOZ_ASSERT(head->isOnList());
-    return head;
-}
-
-void
-ZoneList::append(Zone* zone)
-{
-    ZoneList singleZone(zone);
-    transferFrom(singleZone);
-}
-
-void
-ZoneList::transferFrom(ZoneList& other)
-{
-    check();
-    other.check();
-    MOZ_ASSERT(tail != other.tail);
-
-    if (tail)
-        tail->listNext_ = other.head;
-    else
-        head = other.head;
-    tail = other.tail;
-
-    other.head = nullptr;
-    other.tail = nullptr;
-}
-
-void
-ZoneList::removeFront()
-{
-    MOZ_ASSERT(!isEmpty());
-    check();
-
-    Zone* front = head;
-    head = head->listNext_;
-    if (!head)
-        tail = nullptr;
-
-    front->listNext_ = Zone::NotOnList;
-}
-
-void
-ZoneList::clear()
-{
-    while (!isEmpty())
-        removeFront();
 }
 
 JS_PUBLIC_API(void)

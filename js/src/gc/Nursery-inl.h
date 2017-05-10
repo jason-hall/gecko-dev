@@ -19,17 +19,6 @@
 
 #include "omrgc.h"
 
-MOZ_ALWAYS_INLINE /* static */ bool
-js::Nursery::getForwardedPointer(JSObject** ref)
-{
-    MOZ_ASSERT(ref);
-    const gc::RelocationOverlay* overlay = reinterpret_cast<const gc::RelocationOverlay*>(*ref);
-    if (!overlay->isForwarded())
-        return false;
-    *ref = static_cast<JSObject*>(overlay->forwardingAddress());
-    return true;
-}
-
 namespace js {
 
 // The allocation methods below will not run the garbage collector. If the
@@ -70,6 +59,11 @@ ReallocateObjectBuffer(JSContext* cx, JSObject* obj, T* oldBuffer,
     if (!buffer)
         ReportOutOfMemory(cx);
     return buffer;
+}
+
+static inline void
+EvictAllNurseries(JSRuntime* rt, JS::gcreason::Reason reason = JS::gcreason::EVICT_NURSERY)
+{
 }
 
 } // namespace js

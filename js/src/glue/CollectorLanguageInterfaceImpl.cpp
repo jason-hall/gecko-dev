@@ -509,7 +509,7 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 	js::AutoLockForExclusiveAccess lock(rt);
 
 	/* Clear new object cache. Its entries may point to dead objects. */
-	rt->contextFromMainThread()->caches.newObjectCache.clearNurseryObjects(rt);
+	rt->activeContext()->caches.newObjectCache.clearNurseryObjects(rt);
 
 	for (WeakMapBase* m : zone->gcWeakMapList) {
 		m->sweep();

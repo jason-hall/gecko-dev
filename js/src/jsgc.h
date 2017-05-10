@@ -432,8 +432,10 @@ class GCParallelTask
     virtual void run() = 0;
 
   public:
-    GCParallelTask() {}
-    GCParallelTask(GCParallelTask&& other) {}
+    explicit GCParallelTask(JSRuntime* runtime) : cancel_(false) {}
+    GCParallelTask(GCParallelTask&& other)
+      : cancel_(false)
+    {}
 
     // Derived classes must override this to ensure that join() gets called
     // before members get destructed.
@@ -475,8 +477,6 @@ class GCParallelTask
 
 typedef void (*IterateChunkCallback)(JSRuntime* rt, void* data, gc::Chunk* chunk);
 typedef void (*IterateZoneCallback)(JSRuntime* rt, void* data, JS::Zone* zone);
-typedef void (*IterateArenaCallback)(JSRuntime* rt, void* data, gc::Arena* arena,
-                                     JS::TraceKind traceKind, size_t thingSize);
 typedef void (*IterateCellCallback)(JSRuntime* rt, void* data, void* thing,
                                     JS::TraceKind traceKind, size_t thingSize);
 
@@ -492,7 +492,6 @@ extern void
 IterateHeapUnbarriered(JSContext* cx, void* data,
                        IterateZoneCallback zoneCallback,
                        JSIterateCompartmentCallback compartmentCallback,
-                       IterateArenaCallback arenaCallback,
                        IterateCellCallback cellCallback);
 
 /*
@@ -503,7 +502,6 @@ extern void
 IterateHeapUnbarrieredForZone(JSContext* cx, Zone* zone, void* data,
                               IterateZoneCallback zoneCallback,
                               JSIterateCompartmentCallback compartmentCallback,
-                              IterateArenaCallback arenaCallback,
                               IterateCellCallback cellCallback);
 
 /*
@@ -605,7 +603,8 @@ inline void CheckValueAfterMovingGC(const JS::Value& value);
             D(CheckHashTablesOnMinorGC, 13)    \
             D(Compact, 14)                     \
             D(CheckHeapAfterGC, 15)            \
-            D(CheckNursery, 16)
+            D(CheckNursery, 16)                \
+            D(IncrementalSweepThenFinish, 17)
 
 enum class ZealMode {
 #define ZEAL_MODE(name, value) name = value,
@@ -761,6 +760,9 @@ class MOZ_RAII AutoEmptyNursery : public AutoAssertEmptyNursery
   public:
     explicit AutoEmptyNursery(JSContext* cx);
 };
+
+const char*
+StateName(State state);
 
 } /* namespace gc */
 

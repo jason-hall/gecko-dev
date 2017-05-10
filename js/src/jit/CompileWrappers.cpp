@@ -170,7 +170,8 @@ CompileZone::addressOfNeedsIncrementalBarrier()
 const void*
 CompileZone::addressOfFreeList(gc::AllocKind allocKind)
 {
-    return zone()->arenas.addressOfFreeList(allocKind);
+	// OMRTODO: Arena stuff
+    return nullptr; //zone()->arenas.addressOfFreeList(allocKind);
 }
 
 const void*
@@ -196,7 +197,8 @@ void
 CompileZone::setMinorGCShouldCancelIonCompilations()
 {
     MOZ_ASSERT(CurrentThreadCanAccessZone(zone()));
-    zone()->group()->storeBuffer().setShouldCancelIonCompilations();
+	// OMRTODO: Arena stuff
+    //zone()->group()->storeBuffer().setShouldCancelIonCompilations();
 }
 
 JSCompartment*

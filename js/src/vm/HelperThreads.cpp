@@ -1117,103 +1117,50 @@ GlobalHelperThreadState::canStartGCParallelTask(const AutoLockHelperThreadState&
 
 js::GCParallelTask::~GCParallelTask()
 {
-    // Only most-derived classes' destructors may do the join: base class
-    // destructors run after those for derived classes' members, so a join in a
-    // base class can't ensure that the task is done using the members. All we
-    // can do now is check that someone has previously stopped the task.
-#ifdef DEBUG
-    AutoLockHelperThreadState helperLock;
-    MOZ_ASSERT(state == NotStarted);
-#endif
 }
 
 bool
 js::GCParallelTask::startWithLockHeld(AutoLockHelperThreadState& lock)
 {
-    // Tasks cannot be started twice.
-    MOZ_ASSERT(state == NotStarted);
-
-    // If we do the shutdown GC before running anything, we may never
-    // have initialized the helper threads. Just use the serial path
-    // since we cannot safely intialize them at this point.
-    if (!HelperThreadState().threads)
-        return false;
-
-    if (!HelperThreadState().gcParallelWorklist(lock).append(this))
-        return false;
-    state = Dispatched;
-
-    HelperThreadState().notifyOne(GlobalHelperThreadState::PRODUCER, lock);
-
     return true;
 }
 
 bool
 js::GCParallelTask::start()
 {
-    AutoLockHelperThreadState helperLock;
-    return startWithLockHeld(helperLock);
+	return true;
 }
 
 void
 js::GCParallelTask::joinWithLockHeld(AutoLockHelperThreadState& locked)
 {
-    if (state == NotStarted)
-        return;
-
-    while (state != Finished)
-        HelperThreadState().wait(locked, GlobalHelperThreadState::CONSUMER);
-    state = NotStarted;
-    cancel_ = false;
 }
 
 void
 js::GCParallelTask::join()
 {
-    AutoLockHelperThreadState helperLock;
-    joinWithLockHeld(helperLock);
 }
 
 void
 js::GCParallelTask::runFromActiveCooperatingThread(JSRuntime* rt)
 {
-    MOZ_ASSERT(state == NotStarted);
-    MOZ_ASSERT(js::CurrentThreadCanAccessRuntime(rt));
-    mozilla::TimeStamp timeStart = mozilla::TimeStamp::Now();
-    run();
-    duration_ = mozilla::TimeStamp::Now() - timeStart;
 }
 
 void
 js::GCParallelTask::runFromHelperThread(AutoLockHelperThreadState& locked)
 {
-    AutoSetContextRuntime ascr(runtime());
-    gc::AutoSetThreadIsPerformingGC performingGC;
-
-    {
-        AutoUnlockHelperThreadState parallelSection(locked);
-        mozilla::TimeStamp timeStart = mozilla::TimeStamp::Now();
-        TlsContext.get()->heapState = JS::HeapState::MajorCollecting;
-        run();
-        TlsContext.get()->heapState = JS::HeapState::Idle;
-        duration_ = mozilla::TimeStamp::Now() - timeStart;
-    }
-
-    state = Finished;
-    HelperThreadState().notifyAll(GlobalHelperThreadState::CONSUMER, locked);
 }
 
 bool
 js::GCParallelTask::isRunningWithLockHeld(const AutoLockHelperThreadState& locked) const
 {
-    return state == Dispatched;
+    return false;
 }
 
 bool
 js::GCParallelTask::isRunning() const
 {
-    AutoLockHelperThreadState helperLock;
-    return isRunningWithLockHeld(helperLock);
+	return false;
 }
 
 void

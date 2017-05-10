@@ -775,11 +775,13 @@ CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats, ObjectPrivateVis
     StatsClosure closure(rtStats, opv, anonymize);
     if (!closure.init())
         return false;
+#ifndef OMR // OMRTODO
     IterateHeapUnbarriered(cx, &closure,
                                                    StatsZoneCallback,
                                                    StatsCompartmentCallback,
                                                    StatsArenaCallback,
                                                    statsCellCallback);
+#endif
 
     // Take the "explicit/js/runtime/" measurements.
     rt->addSizeOfIncludingThis(rtStats->mallocSizeOf_, &rtStats->runtime);
@@ -925,12 +927,13 @@ AddSizeOfTab(JSContext* cx, HandleObject obj, MallocSizeOf mallocSizeOf, ObjectP
     StatsClosure closure(&rtStats, opv, /* anonymize = */ false);
     if (!closure.init())
         return false;
+#ifndef OMR // OMRTODO
     IterateHeapUnbarrieredForZone(cx, zone, &closure,
                                                   StatsZoneCallback,
                                                   StatsCompartmentCallback,
                                                   StatsArenaCallback,
                                                   StatsCellCallback<CoarseGrained>);
-
+#endif
     MOZ_ASSERT(rtStats.zoneStatsVector.length() == 1);
     rtStats.zTotals.addSizes(rtStats.zoneStatsVector[0]);
 

@@ -393,7 +393,7 @@ class AssertNoRootsTracer : public JS::CallbackTracer
 #endif // DEBUG
 
 void
-js::gc::GCRuntime::finishRootsfinishRoots()
+js::gc::GCRuntime::finishRoots()
 {
     AutoNoteSingleThreadedRegion anstr;
 

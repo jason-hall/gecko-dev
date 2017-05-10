@@ -24,31 +24,30 @@ struct Class;
 // object-specific optimizations.
 template <typename T, AllowGC allowGC = CanGC>
 T*
-Allocate(ExclusiveContext* cx, gc::AllocKind kind);
-
+Allocate(JSContext* cx, gc::AllocKind kind);
 template <typename T, AllowGC allowGC = CanGC>
 T*
-Allocate(ExclusiveContext* cx);
+Allocate(JSContext* cx);
 
 template <typename T, AllowGC allowGC = CanGC>
 JSObject*
-Allocate(ExclusiveContext* cx, gc::AllocKind kind, size_t nDynamicSlots, gc::InitialHeap heap,
+Allocate(JSContext* cx, gc::AllocKind kind, size_t nDynamicSlots, gc::InitialHeap heap,
          const Class* clasp);
 
 
 template <>
 Shape*
-Allocate<Shape, CanGC>(ExclusiveContext* cx);
+Allocate<Shape, CanGC>(JSContext* cx);
 template <>
 Shape*
-Allocate<Shape, NoGC>(ExclusiveContext* cx);
+Allocate<Shape, NoGC>(JSContext* cx);
 
 template <>
 AccessorShape*
-Allocate<AccessorShape, CanGC>(ExclusiveContext* cx);
+Allocate<AccessorShape, CanGC>(JSContext* cx);
 template <>
 AccessorShape*
-Allocate<AccessorShape, NoGC>(ExclusiveContext* cx);
+Allocate<AccessorShape, NoGC>(JSContext* cx);
 
 } // namespace js
 

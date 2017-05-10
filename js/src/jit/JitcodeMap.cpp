@@ -844,8 +844,10 @@ JitcodeGlobalEntry::BaseEntry::traceJitcode(JSTracer* trc)
 bool
 JitcodeGlobalEntry::BaseEntry::isJitcodeMarkedFromAnyThread(JSRuntime* rt)
 {
-    return IsMarkedUnbarriered(rt, &jitcode_) ||
-           jitcode_->arena()->allocatedDuringIncremental;
+	// OMRTODO: Arena stuff
+    //return IsMarkedUnbarriered(rt, &jitcode_) ||
+    //       jitcode_->arena()->allocatedDuringIncremental;
+	return false;
 }
 
 bool
@@ -874,8 +876,10 @@ JitcodeGlobalEntry::BaselineEntry::sweepChildren()
 bool
 JitcodeGlobalEntry::BaselineEntry::isMarkedFromAnyThread(JSRuntime* rt)
 {
-    return IsMarkedUnbarriered(rt, &script_) ||
-           script_->arena()->allocatedDuringIncremental;
+    // OMRTODO: Arena stuff
+    //return IsMarkedUnbarriered(rt, &script_) ||
+    //       script_->arena()->allocatedDuringIncremental;
+	return false;
 }
 
 template <class ShouldTraceProvider>
@@ -943,11 +947,12 @@ bool
 JitcodeGlobalEntry::IonEntry::isMarkedFromAnyThread(JSRuntime* rt)
 {
     for (unsigned i = 0; i < numScripts(); i++) {
-        if (!IsMarkedUnbarriered(rt, &sizedScriptList()->pairs[i].script) &&
+        // OMRTODO: Arena stuff
+        /*if (!IsMarkedUnbarriered(rt, &sizedScriptList()->pairs[i].script) &&
             !sizedScriptList()->pairs[i].script->arena()->allocatedDuringIncremental)
         {
             return false;
-        }
+        }*/
     }
 
     if (!optsAllTypes_)
