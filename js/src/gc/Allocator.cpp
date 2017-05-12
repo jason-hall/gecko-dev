@@ -145,6 +145,28 @@ Allocate<js::LazyScript, NoGC>(JSContext* cx) {
 	return Allocate<js::LazyScript, NoGC>(cx, gc::AllocKind::LAZY_SCRIPT);
 }
 
+template <>
+js::NormalAtom*
+Allocate<js::NormalAtom, CanGC>(JSContext* cx) {
+	return Allocate<js::NormalAtom, CanGC>(cx, gc::AllocKind::ATOM);
+}
+template <>
+js::NormalAtom*
+Allocate<js::NormalAtom, NoGC>(JSContext* cx) {
+	return Allocate<js::NormalAtom, NoGC>(cx, gc::AllocKind::ATOM);
+}
+
+template <>
+js::FatInlineAtom*
+Allocate<js::FatInlineAtom, CanGC>(JSContext* cx) {
+	return Allocate<js::FatInlineAtom, CanGC>(cx, gc::AllocKind::ATOM);
+}
+template <>
+js::FatInlineAtom*
+Allocate<js::FatInlineAtom, NoGC>(JSContext* cx) {
+	return Allocate<js::FatInlineAtom, NoGC>(cx, gc::AllocKind::ATOM);
+}
+
 template <typename T, AllowGC allowGC /* = CanGC */>
 T*
 Allocate(JSContext* cx) {

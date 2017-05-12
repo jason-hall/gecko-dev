@@ -415,7 +415,6 @@ const char* gc::ZealModeHelpText =
     "   12: (ElementsBarrier) Always use the individual element post-write barrier, regardless of elements size\n"
     "   13: (CheckHashTablesOnMinorGC) Check internal hashtables on minor GC\n"
     "   14: (Compact) Perform a shrinking collection every N allocations\n"
-    "   15: (CheckHeapAfterGC) Walk the heap to check its integrity after every GC\n"
     "   16: (CheckNursery) Check nursery integrity on minor GC\n"
     "   17: (IncrementalSweepThenFinish) Incremental GC in two slices: 1) start sweeping 2) finish collection\n";
 
@@ -483,6 +482,7 @@ GCRuntime::init(uint32_t maxbytes, uint32_t maxNurseryBytes)
         if (!nursery().init(maxNurseryBytes, lock))
             return false;
     }
+	return true;
 }
 
 void
@@ -1393,12 +1393,6 @@ js::gc::FinishGC(JSContext* cx)
 {
 }
 
-AutoPrepareForTracing::AutoPrepareForTracing(JSContext* cx, ZoneSelector selector)
-{
-    js::gc::FinishGC(cx);
-    session_.emplace(cx->runtime());
-}
-
 JSCompartment*
 js::NewCompartment(JSContext* cx, JSPrincipals* principals,
                    const JS::CompartmentOptions& options)
@@ -1457,13 +1451,12 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
     }
 
     if (!zone) {
-#ifdef OMR
         // OMRTODO: Use multiple zones from a context correctly.
-        OmrGcHelper::zone = zone;
-#else
-        zone = *rt->gc.zones.begin();
-        zoneHolder.reset(zone);
-#endif
+		zone = OmrGcHelper::zone;
+		if (!zone) {
+            zone = cx->new_<Zone>(cx->runtime(), group);
+            OmrGcHelper::zone = zone;
+		}
     }
 
     ScopedJSDeletePtr<JSCompartment> compartment(cx->new_<JSCompartment>(zone, options));
@@ -1667,6 +1660,14 @@ JS::GCCellPtr::GCCellPtr(const Value& v)
         ptr = checkedCast(v.toGCThing(), v.toGCThing()->getTraceKind());
     else
         ptr = checkedCast(nullptr, JS::TraceKind::Null);
+}
+
+bool
+JS::GCCellPtr::mayBeOwnedByOtherRuntimeSlow() const
+{
+    if (is<JSString>())
+        return as<JSString>().isPermanentAtom();
+    return as<Symbol>().isWellKnownSymbol();
 }
 
 JS::TraceKind
@@ -1930,6 +1931,12 @@ AutoAssertEmptyNursery::checkCondition(JSContext* cx) {
 AutoEmptyNursery::AutoEmptyNursery(JSContext* cx)
 {
 }
+
+// OMR GC Helper
+#ifdef OMR
+Zone* OmrGcHelper::zone;
+GCRuntime* OmrGcHelper::runtime;
+#endif // OMR
 
 } /* namespace gc */
 } /* namespace js */

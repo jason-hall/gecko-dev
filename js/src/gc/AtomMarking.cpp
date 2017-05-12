@@ -99,10 +99,6 @@ AtomMarkingRuntime::atomIsMarked(Zone* zone, T* thing)
                   mozilla::IsSame<T, JS::Symbol>::value,
                   "Should only be called with JSAtom* or JS::Symbol* argument");
 
-    MOZ_ASSERT(thing);
-    MOZ_ASSERT(!IsInsideNursery(thing));
-    MOZ_ASSERT(thing->zoneFromAnyThread()->isAtomsZone());
-
     if (!zone->runtimeFromAnyThread()->permanentAtoms)
         return true;
 

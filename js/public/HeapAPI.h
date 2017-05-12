@@ -210,7 +210,11 @@ class JS_FRIEND_API(GCCellPtr)
         return reinterpret_cast<uintptr_t>(asCell());
     }
 
-    bool mayBeOwnedByOtherRuntime() const;
+    bool mayBeOwnedByOtherRuntime() const {
+        if (is<JSString>() || is<JS::Symbol>())
+            return mayBeOwnedByOtherRuntimeSlow();
+        return false;
+    }
 
   private:
     static uintptr_t checkedCast(void* p, JS::TraceKind traceKind) {
@@ -223,6 +227,8 @@ class JS_FRIEND_API(GCCellPtr)
                       (uintptr_t(traceKind) & OutOfLineTraceKindMask) == OutOfLineTraceKindMask);
         return uintptr_t(p) | (uintptr_t(traceKind) & OutOfLineTraceKindMask);
     }
+
+    bool mayBeOwnedByOtherRuntimeSlow() const;
 
     JS::TraceKind outOfLineKind() const;
 

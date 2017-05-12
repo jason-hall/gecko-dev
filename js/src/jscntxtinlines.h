@@ -68,7 +68,7 @@ class CompartmentChecker
     }
 
     void check(JSObject* obj) {
-        MOZ_ASSERT(JS::ObjectIsNotGray(obj));
+        //MOZ_ASSERT(JS::ObjectIsNotGray(obj));
         if (obj)
             check(obj->compartment());
     }

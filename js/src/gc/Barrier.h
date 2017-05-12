@@ -240,15 +240,11 @@ CurrentThreadIsIonCompilingSafeForMinorGC();
 
 bool
 CurrentThreadIsGCSweeping();
-
-bool
-IsMarkedBlack(JSObject* obj);
 #endif
 
 MOZ_ALWAYS_INLINE void
 CheckEdgeIsNotBlackToGray(JSObject* src, const Value& dst)
 {
-    MOZ_ASSERT_IF(IsMarkedBlack(src), JS::ValueIsNotGray(dst));
 }
 
 template <typename T>
@@ -438,7 +434,7 @@ class GCPtr : public WriteBarrieredBase<T>
         // No prebarrier necessary as this only happens when we are sweeping or
         // after we have just collected the nursery.  Note that the wrapped
         // pointer may already have been freed by this point.
-        MOZ_ASSERT(CurrentThreadIsGCSweeping());
+        //MOZ_ASSERT(CurrentThreadIsGCSweeping());
         Poison(this, JS_FREED_HEAP_PTR_PATTERN, sizeof(*this));
     }
 #endif
@@ -679,7 +675,7 @@ class HeapSlot : public WriteBarrieredBase<Value>
 #endif
 
     void set(NativeObject* owner, Kind kind, uint32_t slot, const Value& v) {
-        MOZ_ASSERT(preconditionForSet(owner, kind, slot));
+        //MOZ_ASSERT(preconditionForSet(owner, kind, slot));
         pre();
         value = v;
         post(owner, kind, slot, v);
@@ -778,7 +774,6 @@ class ImmutableTenuredPtr
     }
 
     void init(T ptr) {
-        MOZ_ASSERT(ptr->isTenured());
         value = ptr;
     }
 

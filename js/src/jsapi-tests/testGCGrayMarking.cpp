@@ -14,7 +14,7 @@
 
 BEGIN_TEST(testGCGrayMarking)
 {
-    return ok;
+    return true;
 }
 
 END_TEST(testGCGrayMarking)

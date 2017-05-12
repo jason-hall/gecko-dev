@@ -34,7 +34,6 @@ using BlackGrayEdgeVector = Vector<TenuredCell*, 0, SystemAllocPolicy>;
 
 class AutoMaybeStartBackgroundAllocation;
 class MarkingValidator;
-class AutoTraceSession;
 
 enum IncrementalProgress
 {
@@ -382,7 +381,7 @@ class GCRuntime
     void maybeGC(Zone* zone);
     // The return value indicates whether a major GC was performed.
     bool gcIfRequested();
-    void gc(JSGCInvocationKind gckind, JS::gcreason::Reason reason);
+    void gc(JSGCInvocationKind gckind, JS::gcreason::Reason reason) {}
     void startDebugGC(JSGCInvocationKind gckind, SliceBudget& budget);
     void debugGCSlice(SliceBudget& budget);
 
@@ -487,6 +486,7 @@ class GCRuntime
     uint64_t gcNumber() const { return number; }
     uint64_t minorGCCount() const { return number; }
     uint64_t majorGCCount() const { return number; }
+	void incGcNumber() { number ++; }
  
     bool isFullGc() const { return false; }
     bool areGrayBitsValid() const { return false; }
@@ -501,7 +501,7 @@ class GCRuntime
     template <AllowGC allowGC>
     MOZ_MUST_USE bool checkAllocatorState(JSContext* cx, AllocKind kind);
 
-  private:
+  public:
     void traceRuntimeAtoms(JSTracer* trc, AutoLockForExclusiveAccess& lock);
     void traceRuntimeCommon(JSTracer* trc, TraceOrMarkRuntime traceOrMark,
                             AutoLockForExclusiveAccess& lock);
@@ -640,7 +640,6 @@ class GCRuntime
 	}
 
     friend class MarkingValidator;
-    friend class AutoTraceSession;
     friend class AutoEnterIteration;
 };
 

@@ -218,6 +218,7 @@ JSRuntime::init(JSContext* cx, uint32_t maxbytes, uint32_t maxNurseryBytes)
     if (!gc.init(maxbytes, maxNurseryBytes))
         return false;
 
+    /*
     ScopedJSDeletePtr<Zone> atomsZone(new_<Zone>(this, nullptr));
     if (!atomsZone || !atomsZone->init(true))
         return false;
@@ -236,6 +237,7 @@ JSRuntime::init(JSContext* cx, uint32_t maxbytes, uint32_t maxNurseryBytes)
 
     atomsZone.forget();
     this->atomsCompartment_ = atomsCompartment.forget();
+	*/
 
     if (!symbolRegistry_.ref().init())
         return false;

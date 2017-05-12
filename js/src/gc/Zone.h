@@ -219,7 +219,7 @@ struct Zone : public JS::shadow::Zone,
 
     using DebuggerVector = js::Vector<js::Debugger*, 0, js::SystemAllocPolicy>;
 
-  private:
+  public:
     void sweepBreakpoints(js::FreeOp* fop);
     void sweepUniqueIds(js::FreeOp* fop);
     void sweepWeakMaps();
@@ -227,9 +227,11 @@ struct Zone : public JS::shadow::Zone,
 	
     js::jit::JitZone* createJitZone(JSContext* cx);
 
+  private:
     // Side map for storing a unique ids for cells, independent of address.
     js::ZoneGroupOrGCTaskData<js::gc::UniqueIdMap> uniqueIds_;
 
+  public:
     js::gc::UniqueIdMap& uniqueIds() { return uniqueIds_.ref(); }
 
   public:

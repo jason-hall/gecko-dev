@@ -2923,7 +2923,9 @@ GenerateLcovInfo(JSContext* cx, JSCompartment* comp, GenericPrinter& out)
 
     // Collect the list of scripts which are part of the current compartment.
     {
+#if 0 // OMROTODO
         js::gc::AutoPrepareForTracing apft(cx, SkipAtoms);
+#endif
     }
     Rooted<ScriptVector> topScripts(cx, ScriptVector(cx));
     for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {

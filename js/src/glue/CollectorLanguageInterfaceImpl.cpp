@@ -113,7 +113,6 @@ using mozilla::ArrayLength;
 using mozilla::DebugOnly;
 using mozilla::IsBaseOf;
 using mozilla::IsSame;
-using mozilla::MakeRange;
 using mozilla::PodCopy;
 
 OMRGCMarker::OMRGCMarker(JSRuntime* rt, MM_EnvironmentBase* env, MM_MarkingScheme* ms)
@@ -209,7 +208,8 @@ MM_CollectorLanguageInterfaceImpl::detachVMThread(OMR_VM *omrVM, OMR_VMThread *o
 void
 MM_CollectorLanguageInterfaceImpl::markingScheme_masterSetupForGC(MM_EnvironmentBase *env)
 {
-	GetJSContextFromMainThread()->gc.incGcNumber();
+	Zone *zone = OmrGcHelper::zone;
+	zone->runtimeFromActiveCooperatingThread()->gc.incGcNumber();
 }
 
 void
@@ -225,15 +225,16 @@ MM_CollectorLanguageInterfaceImpl::markingScheme_scanRoots(MM_EnvironmentBase *e
 			new (_omrGCMarker) omrjs::OMRGCMarker(rt, env, _markingScheme);
 		}
 
-		gcstats::AutoPhase ap(rt->gc.stats, gcstats::PHASE_MARK_ROOTS);
+		gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PHASE_MARK_ROOTS);
+		js::gc::AutoTraceSession session(rt);
 		rt->gc.traceRuntimeAtoms(_omrGCMarker, session.lock);
 		// JSCompartment::traceIncomingCrossCompartmentEdgesForZoneGC(trc);
 		rt->gc.traceRuntimeCommon(_omrGCMarker, js::gc::GCRuntime::TraceOrMarkRuntime::TraceRuntime, session.lock);
 
 		//for (GCZoneGroupIter zone(rt); !zone.done(); zone.next()) {
 		Zone *zone = OmrGcHelper::zone;
-		if (!zone->gcWeakMapList.isEmpty()) {
-			for (WeakMapBase* m : zone->gcWeakMapList) {
+		if (!zone->gcWeakMapList().isEmpty()) {
+			for (WeakMapBase* m : zone->gcWeakMapList()) {
 				m->trace(_omrGCMarker);
 			}
 		}
@@ -509,26 +510,26 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 	js::AutoLockForExclusiveAccess lock(rt);
 
 	/* Clear new object cache. Its entries may point to dead objects. */
-	rt->activeContext()->caches.newObjectCache.clearNurseryObjects(rt);
+	rt->activeContext()->caches().newObjectCache.clearNurseryObjects(rt);
 
-	for (WeakMapBase* m : zone->gcWeakMapList) {
+	for (WeakMapBase* m : zone->gcWeakMapList()) {
 		m->sweep();
 	}
-	for (JS::WeakCache<void*>* cache : zone->weakCaches_) {
+	for (JS::WeakCache<void*>* cache : zone->weakCaches()) {
 		cache->sweep();
 	}
 
-	for (auto edge : zone->gcWeakRefs) {
+	for (auto edge : zone->gcWeakRefs()) {
 		/* Edges may be present multiple times, so may already be nulled. */
 		if (*edge && IsAboutToBeFinalizedDuringSweep(**edge)) {
 			*edge = nullptr;
 		}
 	}
-    zone->gcWeakRefs.clear();
+    zone->gcWeakRefs().clear();
 
     /* No need to look up any more weakmap keys from this zone group. */
     AutoEnterOOMUnsafeRegion oomUnsafe;
-    if (!zone->gcWeakKeys.clear()) {
+    if (!zone->gcWeakKeys().clear()) {
             oomUnsafe.crash("clearing weak keys in beginSweepingZoneGroup()");
     }
 
@@ -567,7 +568,7 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 	// Sweep entries containing about-to-be-finalized JitCode and
 	// update relocated TypeSet::Types inside the JitcodeGlobalTable.
 	jit::JitRuntime::SweepJitcodeGlobalTable(rt);
-	zone->discardJitCode(&fop);
+	//zone->discardJitCode(&fop);
 
 	zone->beginSweepTypes(&fop, !zone->isPreservingCode());
 	zone->sweepBreakpoints(&fop);

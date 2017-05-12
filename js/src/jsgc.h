@@ -561,16 +561,16 @@ class RelocationOverlay
 //                  to allow slots to be accessed.
 
 template <typename T>
-inline bool IsForwarded(T* t);
-inline bool IsForwarded(const JS::Value& value);
+inline bool IsForwarded(T* t) { return false; }
+inline bool IsForwarded(const JS::Value& value) { return false; }
 
 template <typename T>
-inline T* Forwarded(T* t);
+inline T* Forwarded(T* t) { return t; }
 
-inline Value Forwarded(const JS::Value& value);
+inline Value Forwarded(const JS::Value& value) { return value; }
 
 template <typename T>
-inline T MaybeForwarded(T t);
+inline T MaybeForwarded(T t) { return t; }
 
 #ifdef JSGC_HASH_TABLE_CHECKS
 
@@ -602,7 +602,6 @@ inline void CheckValueAfterMovingGC(const JS::Value& value);
             D(ElementsBarrier, 12)             \
             D(CheckHashTablesOnMinorGC, 13)    \
             D(Compact, 14)                     \
-            D(CheckHeapAfterGC, 15)            \
             D(CheckNursery, 16)                \
             D(IncrementalSweepThenFinish, 17)
 
@@ -632,7 +631,7 @@ MaybeVerifyBarriers(JSContext* cx, bool always = false)
 {
 }
 
-void DumpArenaInfo();
+inline void DumpArenaInfo() {}
 
 #else
 
@@ -792,9 +791,6 @@ inline bool
 UninlinedIsInsideNursery(const gc::Cell* cell) {
 	return true;
 }
-
-void
-PurgeJITCaches(JS::Zone* zone);
 
 } /* namespace js */
 
