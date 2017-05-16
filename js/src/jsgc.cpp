@@ -1452,9 +1452,10 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
 
     if (!zone) {
         // OMRTODO: Use multiple zones from a context correctly.
-		zone = OmrGcHelper::zone;
-		if (!zone) {
+        zone = OmrGcHelper::zone;
+        if (!zone) {
             zone = cx->new_<Zone>(cx->runtime(), group);
+            zone->init(false);
             OmrGcHelper::zone = zone;
 		}
     }

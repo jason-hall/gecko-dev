@@ -106,7 +106,6 @@ class CompartmentChecker
     }
 
     void check(JSString* str) {
-        MOZ_ASSERT(JS::CellIsNotGray(str));
         if (str->isAtom()) {
             checkAtom(&str->asAtom());
         } else {
@@ -171,7 +170,6 @@ class CompartmentChecker
     }
 
     void check(JSScript* script) {
-        MOZ_ASSERT(JS::CellIsNotGray(script));
         if (script)
             check(script->compartment());
     }
@@ -469,7 +467,6 @@ template <typename T>
 inline void
 JSContext::enterCompartmentOf(const T& target)
 {
-    MOZ_ASSERT(JS::CellIsNotGray(target));
     enterCompartment(target->compartment(), nullptr);
 }
 

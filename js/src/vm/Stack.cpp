@@ -1724,8 +1724,8 @@ ActivationIterator::ActivationIterator(JSContext* cx, const CooperatingContext& 
     // we must be in a scope where changes of the active context are prohibited.
     // Otherwise our state would be corrupted if the target thread resumed
     // execution while we are iterating over its state.
-    MOZ_ASSERT(cx->runtime()->activeContextChangeProhibited() ||
-               !cx->runtime()->gc.canChangeActiveContext(cx));
+    //MOZ_ASSERT(cx->runtime()->activeContextChangeProhibited() ||
+    //           !cx->runtime()->gc.canChangeActiveContext(cx));
 
     // Tolerate a null target context, in case we are iterating over the
     // activations for a zone group that is not in use by any thread.
