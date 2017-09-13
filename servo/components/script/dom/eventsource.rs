@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use dom::bindings::cell::DOMRefCell;
-use dom::bindings::codegen::Bindings::EventHandlerBinding::EventHandlerNonNull;
 use dom::bindings::codegen::Bindings::EventSourceBinding::{EventSourceInit, EventSourceMethods, Wrap};
 use dom::bindings::error::{Error, Fallible};
 use dom::bindings::inheritance::Castable;
@@ -16,9 +15,7 @@ use dom::eventtarget::EventTarget;
 use dom::globalscope::GlobalScope;
 use dom::messageevent::MessageEvent;
 use dom_struct::dom_struct;
-use encoding::Encoding;
-use encoding::all::UTF_8;
-use euclid::length::Length;
+use euclid::Length;
 use hyper::header::{Accept, qitem};
 use ipc_channel::ipc;
 use ipc_channel::router::ROUTER;
@@ -39,15 +36,16 @@ use std::str::{Chars, FromStr};
 use std::sync::{Arc, Mutex};
 use task_source::TaskSource;
 use timers::OneshotTimerCallback;
+use utf8;
 
 header! { (LastEventId, "Last-Event-ID") => [String] }
 
 const DEFAULT_RECONNECTION_TIME: u64 = 5000;
 
-#[derive(JSTraceable, PartialEq, Copy, Clone, Debug, HeapSizeOf)]
+#[derive(Clone, Copy, Debug, HeapSizeOf, JSTraceable, PartialEq)]
 struct GenerationId(u32);
 
-#[derive(JSTraceable, PartialEq, Copy, Clone, Debug, HeapSizeOf)]
+#[derive(Clone, Copy, Debug, HeapSizeOf, JSTraceable, PartialEq)]
 /// https://html.spec.whatwg.org/multipage/#dom-eventsource-readystate
 enum ReadyState {
     Connecting = 0,
@@ -76,6 +74,8 @@ enum ParserState {
 }
 
 struct EventSourceContext {
+    incomplete_utf8: Option<utf8::Incomplete>,
+
     event_source: Trusted<EventSource>,
     gen_id: GenerationId,
     action_sender: ipc::IpcSender<FetchResponseMsg>,
@@ -293,12 +293,41 @@ impl FetchResponseListener for EventSourceContext {
     }
 
     fn process_response_chunk(&mut self, chunk: Vec<u8>) {
-        let mut stream = String::new();
-        UTF_8.raw_decoder().raw_feed(&chunk, &mut stream);
-        self.parse(stream.chars())
+        let mut input = &*chunk;
+        if let Some(mut incomplete) = self.incomplete_utf8.take() {
+            match incomplete.try_complete(input) {
+                None => return,
+                Some((result, remaining_input)) => {
+                    self.parse(result.unwrap_or("\u{FFFD}").chars());
+                    input = remaining_input;
+                }
+            }
+        }
+
+        while !input.is_empty() {
+            match utf8::decode(&input) {
+                Ok(s) => {
+                    self.parse(s.chars());
+                    return
+                }
+                Err(utf8::DecodeError::Invalid { valid_prefix, remaining_input, .. }) => {
+                    self.parse(valid_prefix.chars());
+                    self.parse("\u{FFFD}".chars());
+                    input = remaining_input;
+                }
+                Err(utf8::DecodeError::Incomplete { valid_prefix, incomplete_suffix }) => {
+                    self.parse(valid_prefix.chars());
+                    self.incomplete_utf8 = Some(incomplete_suffix);
+                    return
+                }
+            }
+        }
     }
 
     fn process_response_eof(&mut self, _response: Result<(), NetworkError>) {
+        if let Some(_) = self.incomplete_utf8.take() {
+            self.parse("\u{FFFD}".chars());
+        }
         self.reestablish_the_connection();
     }
 }
@@ -357,7 +386,7 @@ impl EventSource {
         // TODO: Step 9 set request's client settings
         let mut request = RequestInit {
             url: url_record,
-            origin: global.get_url(),
+            origin: global.origin().immutable().clone(),
             pipeline_id: Some(global.pipeline_id()),
             // https://html.spec.whatwg.org/multipage/#create-a-potential-cors-request
             use_url_credentials: true,
@@ -378,6 +407,8 @@ impl EventSource {
         // Step 14
         let (action_sender, action_receiver) = ipc::channel().unwrap();
         let context = EventSourceContext {
+            incomplete_utf8: None,
+
             event_source: Trusted::new(&ev),
             gen_id: ev.generation_id.get(),
             action_sender: action_sender.clone(),
@@ -443,8 +474,6 @@ pub struct AnnounceConnectionRunnable {
 }
 
 impl Runnable for AnnounceConnectionRunnable {
-    fn name(&self) -> &'static str { "EventSource AnnounceConnectionRunnable" }
-
     // https://html.spec.whatwg.org/multipage/#announce-the-connection
     fn handler(self: Box<AnnounceConnectionRunnable>) {
         let event_source = self.event_source.root();
@@ -460,8 +489,6 @@ pub struct FailConnectionRunnable {
 }
 
 impl Runnable for FailConnectionRunnable {
-    fn name(&self) -> &'static str { "EventSource FailConnectionRunnable" }
-
     // https://html.spec.whatwg.org/multipage/#fail-the-connection
     fn handler(self: Box<FailConnectionRunnable>) {
         let event_source = self.event_source.root();
@@ -478,8 +505,6 @@ pub struct ReestablishConnectionRunnable {
 }
 
 impl Runnable for ReestablishConnectionRunnable {
-    fn name(&self) -> &'static str { "EventSource ReestablishConnectionRunnable" }
-
     // https://html.spec.whatwg.org/multipage/#reestablish-the-connection
     fn handler(self: Box<ReestablishConnectionRunnable>) {
         let event_source = self.event_source.root();
@@ -503,7 +528,7 @@ impl Runnable for ReestablishConnectionRunnable {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 pub struct EventSourceTimeoutCallback {
     #[ignore_heap_size_of = "Because it is non-owning"]
     event_source: Trusted<EventSource>,
@@ -537,8 +562,6 @@ pub struct DispatchEventRunnable {
 }
 
 impl Runnable for DispatchEventRunnable {
-    fn name(&self) -> &'static str { "EventSource DispatchEventRunnable" }
-
     // https://html.spec.whatwg.org/multipage/#dispatchMessage
     fn handler(self: Box<DispatchEventRunnable>) {
         let event_source = self.event_source.root();

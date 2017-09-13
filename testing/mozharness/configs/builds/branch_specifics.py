@@ -35,6 +35,14 @@ config = {
         "update_channel": "nightly",
         "graph_server_branch_name": "Firefox",
         'stage_server': 'upload.ffxbld.productdelivery.prod.mozaws.net',
+        'platform_overrides': {
+            'android-api-16-old-id': {
+                "update_channel": "nightly-old-id",
+            },
+            'android-x86-old-id': {
+                "update_channel": "nightly-old-id",
+            },
+        }
     },
     'mozilla-release': {
         'enable_release_promotion': True,
@@ -137,6 +145,21 @@ config = {
                 'src_mozconfig': 'browser/config/mozconfigs/win64/beta',
                 'force_clobber': True,
             },
+            'linux-devedition': {
+                "update_channel": "aurora",
+            },
+            'linux64-devedition': {
+                "update_channel": "aurora",
+            },
+            'macosx64-devedition': {
+                "update_channel": "aurora",
+            },
+            'win32-devedition': {
+                "update_channel": "aurora",
+            },
+            'win64-devedition': {
+                "update_channel": "aurora",
+            },
             'linux-debug': {
                 'update_channel': 'default',
             },
@@ -226,6 +249,14 @@ config = {
     'date': {
         'update_channel': 'nightly-date',
         'stage_server': 'upload.ffxbld.productdelivery.prod.mozaws.net',
+        'platform_overrides': {
+            'android-api-16-old-id': {
+                "update_channel": "nightly-old-id",
+            },
+            'android-x86-old-id': {
+                "update_channel": "nightly-old-id",
+            },
+        }
     },
     'cypress': {
         # bug 1164935
@@ -306,6 +337,21 @@ config = {
             },
             'win64-debug': {
                 'update_channel': 'default',
+            },
+            'linux-devedition': {
+                "update_channel": "aurora-dev",
+            },
+            'linux64-devedition': {
+                "update_channel": "aurora-dev",
+            },
+            'macosx64-devedition': {
+                "update_channel": "aurora-dev",
+            },
+            'win32-devedition': {
+                "update_channel": "aurora-dev",
+            },
+            'win64-devedition': {
+                "update_channel": "aurora-dev",
             },
         },
         'stage_server': 'upload.ffxbld.productdelivery.prod.mozaws.net',

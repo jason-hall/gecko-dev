@@ -12,7 +12,6 @@
 #include "nsIContentSniffer.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsMimeTypes.h"
-#include "nsIHttpEventSink.h"
 #include "nsIHttpChannel.h"
 #include "nsIChannelEventSink.h"
 #include "nsIStreamConverterService.h"
@@ -23,6 +22,7 @@
 #include "nsContentSecurityManager.h"
 #include "LoadInfo.h"
 #include "nsServiceManagerUtils.h"
+#include "nsRedirectHistoryEntry.h"
 
 // This class is used to suspend a request across a function scope.
 class ScopedRequestSuspender {
@@ -51,7 +51,8 @@ private:
 // nsBaseChannel
 
 nsBaseChannel::nsBaseChannel()
-  : mPumpingData(false)
+  : NeckoTargetHolder(nullptr)
+  , mPumpingData(false)
   , mLoadFlags(LOAD_NORMAL)
   , mQueriedProgressSink(true)
   , mSynthProgressEvents(false)
@@ -68,7 +69,8 @@ nsBaseChannel::nsBaseChannel()
 
 nsBaseChannel::~nsBaseChannel()
 {
-  NS_ReleaseOnMainThread(mLoadInfo.forget());
+  NS_ReleaseOnMainThreadSystemGroup(
+    "nsBaseChannel::mLoadInfo", mLoadInfo.forget());
 }
 
 nsresult
@@ -97,7 +99,13 @@ nsBaseChannel::Redirect(nsIChannel *newChannel, uint32_t redirectFlags,
     bool isInternalRedirect =
       (redirectFlags & (nsIChannelEventSink::REDIRECT_INTERNAL |
                         nsIChannelEventSink::REDIRECT_STS_UPGRADE));
-    newLoadInfo->AppendRedirectedPrincipal(uriPrincipal, isInternalRedirect);
+
+    // nsBaseChannel hst no thing to do with HttpBaseChannel, we would not care
+    // about referrer and remote address in this case
+    nsCOMPtr<nsIRedirectHistoryEntry> entry =
+      new nsRedirectHistoryEntry(uriPrincipal, nullptr, EmptyCString());
+
+    newLoadInfo->AppendRedirectHistoryEntry(entry, isInternalRedirect);
     newChannel->SetLoadInfo(newLoadInfo);
   }
   else {
@@ -122,20 +130,19 @@ nsBaseChannel::Redirect(nsIChannel *newChannel, uint32_t redirectFlags,
     }
   }
 
-  // Notify consumer, giving chance to cancel redirect.  For backwards compat,
-  // we support nsIHttpEventSink if we are an HTTP channel and if this is not
-  // an internal redirect.
+  // Notify consumer, giving chance to cancel redirect.
 
   RefPtr<nsAsyncRedirectVerifyHelper> redirectCallbackHelper =
       new nsAsyncRedirectVerifyHelper();
 
   bool checkRedirectSynchronously = !openNewChannel;
+  nsCOMPtr<nsIEventTarget> target = GetNeckoTarget();
 
   mRedirectChannel = newChannel;
   mRedirectFlags = redirectFlags;
   mOpenRedirectChannel = openNewChannel;
   nsresult rv = redirectCallbackHelper->Init(this, newChannel, redirectFlags,
-                                             checkRedirectSynchronously);
+                                             target, checkRedirectSynchronously);
   if (NS_FAILED(rv))
     return rv;
 
@@ -148,23 +155,6 @@ nsBaseChannel::Redirect(nsIChannel *newChannel, uint32_t redirectFlags,
 nsresult
 nsBaseChannel::ContinueRedirect()
 {
-  // Backwards compat for non-internal redirects from a HTTP channel.
-  // XXX Is our http channel implementation going to derive from nsBaseChannel?
-  //     If not, this code can be removed.
-  if (!(mRedirectFlags & nsIChannelEventSink::REDIRECT_INTERNAL)) {
-    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface();
-    if (httpChannel) {
-      nsCOMPtr<nsIHttpEventSink> httpEventSink;
-      GetCallback(httpEventSink);
-      if (httpEventSink) {
-        nsresult rv = httpEventSink->OnRedirect(httpChannel, mRedirectChannel);
-        if (NS_FAILED(rv)) {
-          return rv;
-        }
-      }
-    }
-  }
-
   // Make sure to do this _after_ making all the OnChannelRedirect calls
   mRedirectChannel->SetOriginalURI(OriginalURI());
 
@@ -253,7 +243,8 @@ nsBaseChannel::BeginPumpingData()
   NS_ASSERTION(!stream || !channel, "Got both a channel and a stream?");
 
   if (channel) {
-      rv = NS_DispatchToCurrentThread(new RedirectRunnable(this, channel));
+      nsCOMPtr<nsIRunnable> runnable = new RedirectRunnable(this, channel);
+      rv = Dispatch(runnable.forget());
       if (NS_SUCCEEDED(rv))
           mWaitingOnAsyncRedirect = true;
       return rv;
@@ -264,9 +255,10 @@ nsBaseChannel::BeginPumpingData()
   // call to AsyncRead results in the stream's AsyncWait method being called)
   // and especially when we call into the loadgroup.  Our caller takes care to
   // release mPump if we return an error.
- 
+
+  nsCOMPtr<nsIEventTarget> target = GetNeckoTarget();
   rv = nsInputStreamPump::Create(getter_AddRefs(mPump), stream, -1, -1, 0, 0,
-                                 true);
+                                 true, target);
   if (NS_SUCCEEDED(rv)) {
     mPumpingData = true;
     mRequest = mPump;
@@ -493,6 +485,9 @@ NS_IMETHODIMP
 nsBaseChannel::SetLoadInfo(nsILoadInfo* aLoadInfo)
 {
   mLoadInfo = aLoadInfo;
+
+  // Need to update |mNeckoTarget| when load info has changed.
+  SetupNeckoTarget();
   return NS_OK;
 }
 
@@ -501,6 +496,12 @@ nsBaseChannel::GetLoadInfo(nsILoadInfo** aLoadInfo)
 {
   NS_IF_ADDREF(*aLoadInfo = mLoadInfo);
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsBaseChannel::GetIsDocument(bool *aIsDocument)
+{
+  return NS_GetIsDocumentChannel(this, aIsDocument);
 }
 
 NS_IMETHODIMP
@@ -523,7 +524,7 @@ nsBaseChannel::SetNotificationCallbacks(nsIInterfaceRequestor *aCallbacks)
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsBaseChannel::GetSecurityInfo(nsISupports **aSecurityInfo)
 {
   NS_IF_ADDREF(*aSecurityInfo = mSecurityInfo);
@@ -667,6 +668,8 @@ nsBaseChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *ctxt)
   NS_ENSURE_TRUE(!mWasOpened, NS_ERROR_ALREADY_OPENED);
   NS_ENSURE_ARG(listener);
 
+  SetupNeckoTarget();
+
   // Skip checking for chrome:// sub-resources.
   nsAutoCString scheme;
   mURI->GetScheme(scheme);
@@ -775,7 +778,7 @@ NS_IMETHODIMP
 nsBaseChannel::GetInterface(const nsIID &iid, void **result)
 {
   NS_QueryNotificationCallbacks(mCallbacks, mLoadGroup, iid, result);
-  return *result ? NS_OK : NS_ERROR_NO_INTERFACE; 
+  return *result ? NS_OK : NS_ERROR_NO_INTERFACE;
 }
 
 //-----------------------------------------------------------------------------
@@ -892,9 +895,10 @@ nsBaseChannel::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
         OnTransportStatusAsyncEvent(nsBaseChannel* aChannel,
                                     int64_t aProgress,
                                     int64_t aContentLength)
-          : mChannel(aChannel),
-            mProgress(aProgress),
-            mContentLength(aContentLength)
+          : mozilla::Runnable("OnTransportStatusAsyncEvent")
+          , mChannel(aChannel)
+          , mProgress(aProgress)
+          , mContentLength(aContentLength)
         { }
 
         NS_IMETHOD Run() override
@@ -906,7 +910,7 @@ nsBaseChannel::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
 
       nsCOMPtr<nsIRunnable> runnable =
         new OnTransportStatusAsyncEvent(this, prog, mContentLength);
-      NS_DispatchToMainThread(runnable);
+      Dispatch(runnable.forget());
     }
   }
 
@@ -964,4 +968,11 @@ nsBaseChannel::CheckListenerChain()
   }
 
   return listener->CheckListenerChain();
+}
+
+void
+nsBaseChannel::SetupNeckoTarget()
+{
+  mNeckoTarget =
+    nsContentUtils::GetEventTargetByLoadInfo(mLoadInfo, TaskCategory::Other);
 }

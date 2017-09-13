@@ -12,6 +12,8 @@
  *   - jemalloc_stats
  *   - jemalloc_purge_freed_pages
  *   - jemalloc_free_dirty_pages
+ *   - jemalloc_thread_local_arena
+ *   - jemalloc_ptr_info
  */
 
 #ifndef MOZ_MEMORY
@@ -21,9 +23,7 @@
 #include "mozmemory_wrap.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Types.h"
-#include "jemalloc_types.h"
-
-MOZ_BEGIN_EXTERN_C
+#include "mozjemalloc_types.h"
 
 /*
  * On OSX, malloc/malloc.h contains the declaration for malloc_good_size,
@@ -86,6 +86,12 @@ MOZ_JEMALLOC_API void jemalloc_purge_freed_pages();
  */
 MOZ_JEMALLOC_API void jemalloc_free_dirty_pages();
 
-MOZ_END_EXTERN_C
+MOZ_JEMALLOC_API void jemalloc_thread_local_arena(bool enabled);
+
+/*
+ * Provide information about any allocation enclosing the given address.
+ */
+MOZ_JEMALLOC_API void jemalloc_ptr_info(const void* ptr,
+                                        jemalloc_ptr_info_t* info);
 
 #endif /* mozmemory_h */

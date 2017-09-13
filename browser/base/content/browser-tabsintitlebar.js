@@ -12,7 +12,7 @@ var TabsInTitlebar = {
       return;
     }
     this._readPref();
-    Services.prefs.addObserver(this._prefName, this, false);
+    Services.prefs.addObserver(this._prefName, this);
 
     // We need to update the appearance of the titlebar when the menu changes
     // from the active to the inactive state. We can't, however, rely on
@@ -148,13 +148,21 @@ var TabsInTitlebar = {
       document.documentElement.setAttribute("tabsintitlebar", "true");
       updateTitlebarDisplay();
 
+      // Reset the custom titlebar height if the menubar is shown,
+      // because we will want to calculate its original height.
+      if (AppConstants.isPlatformAndVersionAtLeast("win", "10.0") &&
+          (menubar.getAttribute("inactive") != "true" ||
+          menubar.getAttribute("autohide") != "true")) {
+        $("titlebar-buttonbox").style.removeProperty("height");
+      }
+
       // Try to avoid reflows in this code by calculating dimensions first and
       // then later set the properties affecting layout together in a batch.
 
-      // Get the full height of the tabs toolbar:
+      // Get the height of the tabs toolbar:
       let tabsToolbar = $("TabsToolbar");
       let tabsStyles = window.getComputedStyle(tabsToolbar);
-      let fullTabsHeight = rect(tabsToolbar).height + verticalMargins(tabsStyles);
+      let fullTabsHeight = rect($("TabsToolbar")).height + verticalMargins(tabsStyles);
       // Buttons first:
       let captionButtonsBoxWidth = rect($("titlebar-buttonbox-container")).width;
 
@@ -175,6 +183,16 @@ var TabsInTitlebar = {
       let titlebarContentHeight = rect(titlebarContent).height;
 
       // Begin setting CSS properties which will cause a reflow
+
+      // On Windows 10, adjust the window controls to span the entire
+      // tab strip height if we're not showing a menu bar.
+      if (AppConstants.isPlatformAndVersionAtLeast("win", "10.0")) {
+        if (!menuHeight) {
+          // Add a pixel to slightly overlap the navbar border.
+          titlebarContentHeight = fullTabsHeight + 1;
+          $("titlebar-buttonbox").style.height = titlebarContentHeight + "px";
+        }
+      }
 
       // If the menubar is around (menuHeight is non-zero), try to adjust
       // its full height (i.e. including margins) to match the titlebar,
@@ -221,9 +239,9 @@ var TabsInTitlebar = {
       }
 
       // Then add a negative margin to the titlebar, so that the following elements
-      // will overlap it by the lesser of the titlebar height or the tabstrip+menu.
-      let minTitlebarOrTabsHeight = Math.min(titlebarContentHeight, tabAndMenuHeight);
-      titlebar.style.marginBottom = "-" + minTitlebarOrTabsHeight + "px";
+      // will overlap it by the greater of the titlebar height or the tabstrip+menu.
+      let maxTitlebarOrTabsHeight = Math.max(titlebarContentHeight, tabAndMenuHeight);
+      titlebar.style.marginBottom = "-" + maxTitlebarOrTabsHeight + "px";
 
       // Finally, size the placeholders:
       if (AppConstants.platform == "macosx") {
@@ -247,8 +265,9 @@ var TabsInTitlebar = {
       menubar.style.paddingBottom = "";
     }
 
-    ToolbarIconColor.inferFromText();
-    if (CustomizationHandler.isCustomizing()) {
+    ToolbarIconColor.inferFromText("tabsintitlebar", TabsInTitlebar.enabled);
+
+    if (document.documentElement.hasAttribute("customizing")) {
       gCustomizeMode.updateLWTStyling();
     }
   },

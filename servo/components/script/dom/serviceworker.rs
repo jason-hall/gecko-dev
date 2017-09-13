@@ -4,7 +4,6 @@
 
 use dom::abstractworker::SimpleWorkerErrorHandler;
 use dom::bindings::cell::DOMRefCell;
-use dom::bindings::codegen::Bindings::EventHandlerBinding::EventHandlerNonNull;
 use dom::bindings::codegen::Bindings::ServiceWorkerBinding::{ServiceWorkerMethods, ServiceWorkerState, Wrap};
 use dom::bindings::error::{ErrorResult, Error};
 use dom::bindings::inheritance::Castable;
@@ -89,11 +88,11 @@ impl ServiceWorkerMethods for ServiceWorker {
             return Err(Error::InvalidState);
         }
         // Step 7
-        let data = try!(StructuredCloneData::write(cx, message));
+        let data = StructuredCloneData::write(cx, message)?;
         let msg_vec = DOMMessage(data.move_to_arraybuffer());
         let _ =
             self.global()
-                .constellation_chan()
+                .script_to_constellation_chan()
                 .send(ScriptMsg::ForwardDOMMessage(msg_vec, self.scope_url.clone()));
         Ok(())
     }

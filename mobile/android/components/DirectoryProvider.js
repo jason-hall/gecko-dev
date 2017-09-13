@@ -113,14 +113,9 @@ DirectoryProvider.prototype = {
       return;
 
     let curLocale = "";
-    try {
-      curLocale = Services.prefs.getComplexValue("general.useragent.locale", Ci.nsIPrefLocalizedString).data;
-    } catch (e) {
-      // eslint-disable-next-line mozilla/use-default-preference-values
-      try {
-        curLocale = Services.prefs.getCharPref("general.useragent.locale");
-      } catch (ee) {
-      }
+    let reqLocales = Services.locale.getRequestedLocales();
+    if (reqLocales.length > 0) {
+      curLocale = reqLocales[0];
     }
 
     if (curLocale) {
@@ -139,7 +134,7 @@ DirectoryProvider.prototype = {
       defLocalePlugins.append(defLocale);
       if (defLocalePlugins.exists())
         array.push(defLocalePlugins);
-    } catch(e) {
+    } catch (e) {
     }
   },
 
@@ -152,8 +147,7 @@ DirectoryProvider.prototype = {
 
     if (prop == NS_APP_DISTRIBUTION_SEARCH_DIR_LIST) {
       this._appendDistroSearchDirs(result);
-    }
-    else {
+    } else {
       /**
        * We want to preserve the following order, since the search service
        * loads engines in first-loaded-wins order.

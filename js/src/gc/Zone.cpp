@@ -34,24 +34,22 @@ JS::Zone::Zone(JSRuntime* rt, ZoneGroup* group)
     weakCaches_(group),
     gcWeakKeys_(group, SystemAllocPolicy(), rt->randomHashCodeScrambler()),
     gcSweepGroupEdges_(group),
-    typeDescrObjects_(group, this, SystemAllocPolicy()),
+    typeDescrObjects_(group, this),
     markedAtoms_(group),
     atomCache_(group),
     externalStringCache_(group),
     gcDelayBytes(0),
     propertyTree_(group, this),
-    baseShapes_(group, this, BaseShapeSet()),
-    initialShapes_(group, this, InitialShapeSet()),
+    baseShapes_(group, this),
+    initialShapes_(group, this),
     data(group, nullptr),
     isSystem(group, false),
 #ifdef DEBUG
     gcLastSweepGroupIndex(group, 0),
 #endif
     jitZone_(group, nullptr),
-    gcState_(NoGC),
     gcScheduled_(false),
     gcPreserveCode_(group, false),
-    jitUsingBarriers_(group, false),
     keepShapeTables_(group, false)
 {
     /* Ensure that there are no vtables to mess us up here. */
@@ -76,7 +74,8 @@ Zone::~Zone()
 #endif
 }
 
-bool Zone::init(bool isSystemArg)
+bool
+Zone::init(bool isSystemArg)
 {
     isSystem = isSystemArg;
     return uniqueIds().init() &&
@@ -136,7 +135,7 @@ Zone::sweepBreakpoints(FreeOp* fop)
                 // live.
                 MOZ_ASSERT_IF(isGCSweeping() && dbgobj->zone()->isCollecting(),
                               dbgobj->zone()->isGCSweeping() ||
-                              (!scriptGone && dbgobj->asTenured().isMarked()));
+                              (!scriptGone && dbgobj->asTenured().isMarkedAny()));
 
                 bool dying = scriptGone || IsAboutToBeFinalized(&dbgobj);
                 MOZ_ASSERT_IF(!dying, !IsAboutToBeFinalized(&bp->getHandlerRef()));
@@ -231,7 +230,11 @@ Zone::createJitZone(JSContext* cx)
     if (!cx->runtime()->getJitRuntime(cx))
         return nullptr;
 
-    jitZone_ = cx->new_<js::jit::JitZone>();
+    UniquePtr<jit::JitZone> jitZone(cx->new_<js::jit::JitZone>());
+    if (!jitZone || !jitZone->init(cx))
+        return nullptr;
+
+    jitZone_ = jitZone.release();
     return jitZone_;
 }
 
@@ -296,7 +299,7 @@ Zone::addTypeDescrObject(JSContext* cx, HandleObject obj)
 }
 
 JS_PUBLIC_API(void)
-JS::shadow::RegisterWeakCache(JS::Zone* zone, WeakCache<void*>* cachep)
+JS::shadow::RegisterWeakCache(JS::Zone* zone, detail::WeakCacheBase* cachep)
 {
     zone->registerWeakCache(cachep);
 }

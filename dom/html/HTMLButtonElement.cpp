@@ -87,17 +87,12 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLButtonElement)
                                nsIConstraintValidation)
 NS_INTERFACE_TABLE_TAIL_INHERITING(nsGenericHTMLFormElementWithState)
 
-// nsIConstraintValidation
-NS_IMPL_NSICONSTRAINTVALIDATION_EXCEPT_SETCUSTOMVALIDITY(HTMLButtonElement)
-
-NS_IMETHODIMP
-HTMLButtonElement::SetCustomValidity(const nsAString& aError) 
+void
+HTMLButtonElement::SetCustomValidity(const nsAString& aError)
 {
   nsIConstraintValidation::SetCustomValidity(aError);
-  
-  UpdateState(true);
 
-  return NS_OK;
+  UpdateState(true);
 }
 
 void
@@ -111,9 +106,14 @@ HTMLButtonElement::UpdateBarredFromConstraintValidation()
 void
 HTMLButtonElement::FieldSetDisabledChanged(bool aNotify)
 {
-  UpdateBarredFromConstraintValidation();
 
+  // FieldSetDisabledChanged *has* to be called *before*
+  // UpdateBarredFromConstraintValidation, because the latter depends on our
+  // disabled state.
   nsGenericHTMLFormElementWithState::FieldSetDisabledChanged(aNotify);
+
+  UpdateBarredFromConstraintValidation();
+  UpdateState(aNotify);
 }
 
 // nsIDOMHTMLButtonElement
@@ -156,7 +156,7 @@ HTMLButtonElement::IsHTMLFocusable(bool aWithMouse, bool *aIsFocusable, int32_t 
     return true;
   }
 
-  *aIsFocusable = 
+  *aIsFocusable =
 #ifdef XP_MACOSX
     (!aWithMouse || nsFocusManager::sMouseFocusesFormControl) &&
 #endif
@@ -173,16 +173,8 @@ HTMLButtonElement::ParseAttribute(int32_t aNamespaceID,
 {
   if (aNamespaceID == kNameSpaceID_None) {
     if (aAttribute == nsGkAtoms::type) {
-      // XXX ARG!! This is major evilness. ParseAttribute
-      // shouldn't set members. Override SetAttr instead
-      bool success = aResult.ParseEnumValue(aValue, kButtonTypeTable, false);
-      if (success) {
-        mType = aResult.GetEnumValue();
-      } else {
-        mType = kButtonDefaultType->value;
-      }
-
-      return success;
+      return aResult.ParseEnumValue(aValue, kButtonTypeTable, false,
+                                    kButtonDefaultType);
     }
 
     if (aAttribute == nsGkAtoms::formmethod) {
@@ -436,22 +428,32 @@ HTMLButtonElement::BeforeSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
 
 nsresult
 HTMLButtonElement::AfterSetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                                const nsAttrValue* aValue, bool aNotify)
+                                const nsAttrValue* aValue,
+                                const nsAttrValue* aOldValue, bool aNotify)
 {
   if (aNameSpaceID == kNameSpaceID_None) {
     if (aName == nsGkAtoms::type) {
-      if (!aValue) {
+      if (aValue) {
+        mType = aValue->GetEnumValue();
+      } else {
         mType = kButtonDefaultType->value;
       }
     }
 
     if (aName == nsGkAtoms::type || aName == nsGkAtoms::disabled) {
+      if (aName == nsGkAtoms::disabled) {
+        // This *has* to be called *before* validity state check because
+        // UpdateBarredFromConstraintValidation depends on our disabled state.
+        UpdateDisabledState(aNotify);
+      }
+
       UpdateBarredFromConstraintValidation();
     }
   }
 
   return nsGenericHTMLFormElementWithState::AfterSetAttr(aNameSpaceID, aName,
-                                                         aValue, aNotify);
+                                                         aValue, aOldValue,
+                                                         aNotify);
 }
 
 NS_IMETHODIMP
@@ -460,7 +462,7 @@ HTMLButtonElement::SaveState()
   if (!mDisabledChanged) {
     return NS_OK;
   }
-  
+
   nsPresState* state = GetPrimaryPresState();
   if (state) {
     // We do not want to save the real disabled state but the disabled
@@ -485,7 +487,7 @@ EventStates
 HTMLButtonElement::IntrinsicState() const
 {
   EventStates state = nsGenericHTMLFormElementWithState::IntrinsicState();
-  
+
   if (IsCandidateForConstraintValidation()) {
     if (IsValid()) {
       state |= NS_EVENT_STATE_VALID;

@@ -133,6 +133,7 @@ inline std::ostream& operator<<(std::ostream& stream, TlsRecordHeader& hdr) {
       stream << "Alert";
       break;
     case kTlsHandshakeType:
+    case kTlsAltHandshakeType:
       stream << "Handshake";
       break;
     case kTlsApplicationDataType:
@@ -230,7 +231,19 @@ class TlsConversationRecorder : public TlsRecordFilter {
                                             DataBuffer* output);
 
  private:
-  DataBuffer& buffer_;
+  DataBuffer buffer_;
+};
+
+// Make a copy of the records
+class TlsHeaderRecorder : public TlsRecordFilter {
+ public:
+  virtual PacketFilter::Action FilterRecord(const TlsRecordHeader& header,
+                                            const DataBuffer& input,
+                                            DataBuffer* output);
+  const TlsRecordHeader* header(size_t index);
+
+ private:
+  std::vector<TlsRecordHeader> headers_;
 };
 
 // Runs multiple packet filters in series.
@@ -388,6 +401,27 @@ class TlsInspectorClientHelloVersionSetter : public TlsHandshakeFilter {
 
  private:
   uint16_t version_;
+};
+
+// Damages the last byte of a handshake message.
+class TlsLastByteDamager : public TlsHandshakeFilter {
+ public:
+  TlsLastByteDamager(uint8_t type) : type_(type) {}
+  PacketFilter::Action FilterHandshake(
+      const TlsHandshakeFilter::HandshakeHeader& header,
+      const DataBuffer& input, DataBuffer* output) override {
+    if (header.handshake_type() != type_) {
+      return KEEP;
+    }
+
+    *output = input;
+
+    output->data()[output->len() - 1]++;
+    return CHANGE;
+  }
+
+ private:
+  uint8_t type_;
 };
 
 }  // namespace nss_test

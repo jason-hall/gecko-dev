@@ -32,8 +32,8 @@ function test() {
 function startTest() {
   var bs = PlacesUtils.bookmarks;
   // Add observers.
-  bs.addObserver(bookmarksObserver, false);
-  PlacesUtils.annotations.addObserver(bookmarksObserver, false);
+  bs.addObserver(bookmarksObserver);
+  PlacesUtils.annotations.addObserver(bookmarksObserver);
   var addedBookmarks = [];
 
   // MENU
@@ -65,10 +65,10 @@ function startTest() {
 
   // TOOLBAR
   ok(true, "*** Acting on toolbar bookmarks");
-  bs.insertBookmark(bs.toolbarFolder,
-                    PlacesUtils._uri("http://tb1.mozilla.org/"),
-                    bs.DEFAULT_INDEX,
-                    "tb1");
+  id = bs.insertBookmark(bs.toolbarFolder,
+                         PlacesUtils._uri("http://tb1.mozilla.org/"),
+                         bs.DEFAULT_INDEX,
+                         "tb1");
   bs.setItemTitle(id, "tb1_edited");
   addedBookmarks.push(id);
   id = bs.insertBookmark(bs.toolbarFolder,
@@ -149,8 +149,8 @@ function finishTest() {
  */
 var bookmarksObserver = {
   QueryInterface: XPCOMUtils.generateQI([
-    Ci.nsINavBookmarkObserver
-  , Ci.nsIAnnotationObserver
+    Ci.nsINavBookmarkObserver,
+    Ci.nsIAnnotationObserver
   ]),
 
   // nsIAnnotationObserver

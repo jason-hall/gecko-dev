@@ -6,7 +6,6 @@
 
 #include "jit/Recover.h"
 
-#include "mozilla/SizePrintfMacros.h"
 
 #include "jsapi.h"
 #include "jscntxt.h"
@@ -21,8 +20,8 @@
 
 #include "gc/Heap.h"
 
-#include "jit/JitFrameIterator.h"
 #include "jit/JitSpewer.h"
+#include "jit/JSJitFrameIter.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 #include "jit/VMFunctions.h"
@@ -128,7 +127,7 @@ MResumePoint::writeRecoverData(CompactBufferWriter& writer) const
     uint32_t formalArgs = CountArgSlots(script, fun);
     uint32_t nallocs = formalArgs + script->nfixed() + exprStack;
 
-    JitSpew(JitSpew_IonSnapshots, "Starting frame; implicit %u, formals %u, fixed %" PRIuSIZE ", exprs %u",
+    JitSpew(JitSpew_IonSnapshots, "Starting frame; implicit %u, formals %u, fixed %zu, exprs %u",
             implicit, formalArgs - implicit, script->nfixed(), exprStack);
 
     uint32_t pcoff = script->pcToOffset(pc());
@@ -338,32 +337,32 @@ RUrsh::recover(JSContext* cx, SnapshotIterator& iter) const
 }
 
 bool
-MSignExtend::writeRecoverData(CompactBufferWriter& writer) const
+MSignExtendInt32::writeRecoverData(CompactBufferWriter& writer) const
 {
     MOZ_ASSERT(canRecoverOnBailout());
-    writer.writeUnsigned(uint32_t(RInstruction::Recover_SignExtend));
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_SignExtendInt32));
     MOZ_ASSERT(Mode(uint8_t(mode_)) == mode_);
     writer.writeByte(uint8_t(mode_));
     return true;
 }
 
-RSignExtend::RSignExtend(CompactBufferReader& reader)
+RSignExtendInt32::RSignExtendInt32(CompactBufferReader& reader)
 {
     mode_ = reader.readByte();
 }
 
 bool
-RSignExtend::recover(JSContext* cx, SnapshotIterator& iter) const
+RSignExtendInt32::recover(JSContext* cx, SnapshotIterator& iter) const
 {
     RootedValue operand(cx, iter.read());
 
     int32_t result;
-    switch (MSignExtend::Mode(mode_)) {
-      case MSignExtend::Byte:
+    switch (MSignExtendInt32::Mode(mode_)) {
+      case MSignExtendInt32::Byte:
         if (!js::SignExtendOperation<int8_t>(cx, operand, &result))
             return false;
         break;
-      case MSignExtend::Half:
+      case MSignExtendInt32::Half:
         if (!js::SignExtendOperation<int16_t>(cx, operand, &result))
             return false;
         break;
@@ -1044,7 +1043,10 @@ RStringSplit::recover(JSContext* cx, SnapshotIterator& iter) const
 {
     RootedString str(cx, iter.read().toString());
     RootedString sep(cx, iter.read().toString());
-    RootedObjectGroup group(cx, iter.read().toObject().group());
+    RootedObjectGroup group(cx, ObjectGroupCompartment::getStringSplitStringGroup(cx));
+    if (!group) {
+        return false;
+    }
     RootedValue result(cx);
 
     JSObject* res = str_split_string(cx, group, str, sep, INT32_MAX);
@@ -1367,25 +1369,35 @@ RNewArray::recover(JSContext* cx, SnapshotIterator& iter) const
 }
 
 bool
-MNewArrayIterator::writeRecoverData(CompactBufferWriter& writer) const
+MNewIterator::writeRecoverData(CompactBufferWriter& writer) const
 {
     MOZ_ASSERT(canRecoverOnBailout());
-    writer.writeUnsigned(uint32_t(RInstruction::Recover_NewArrayIterator));
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_NewIterator));
+    writer.writeByte(type_);
     return true;
 }
 
-RNewArrayIterator::RNewArrayIterator(CompactBufferReader& reader)
+RNewIterator::RNewIterator(CompactBufferReader& reader)
 {
+    type_ = reader.readByte();
 }
 
 bool
-RNewArrayIterator::recover(JSContext* cx, SnapshotIterator& iter) const
+RNewIterator::recover(JSContext* cx, SnapshotIterator& iter) const
 {
     RootedObject templateObject(cx, &iter.read().toObject());
     RootedValue result(cx);
 
+    JSObject* resultObject = nullptr;
+    switch (MNewIterator::Type(type_)) {
+      case MNewIterator::ArrayIterator:
+        resultObject = NewArrayIteratorObject(cx);
+        break;
+      case MNewIterator::StringIterator:
+        resultObject = NewStringIteratorObject(cx);
+        break;
+    }
 
-    JSObject* resultObject = NewArrayIteratorObject(cx);
     if (!resultObject)
         return false;
 
@@ -1468,6 +1480,35 @@ RLambda::recover(JSContext* cx, SnapshotIterator& iter) const
     RootedFunction fun(cx, &iter.read().toObject().as<JSFunction>());
 
     JSObject* resultObject = js::Lambda(cx, fun, scopeChain);
+    if (!resultObject)
+        return false;
+
+    RootedValue result(cx);
+    result.setObject(*resultObject);
+    iter.storeInstructionResult(result);
+    return true;
+}
+
+bool
+MLambdaArrow::writeRecoverData(CompactBufferWriter& writer) const
+{
+    MOZ_ASSERT(canRecoverOnBailout());
+    writer.writeUnsigned(uint32_t(RInstruction::Recover_LambdaArrow));
+    return true;
+}
+
+RLambdaArrow::RLambdaArrow(CompactBufferReader& reader)
+{
+}
+
+bool
+RLambdaArrow::recover(JSContext* cx, SnapshotIterator& iter) const
+{
+    RootedObject scopeChain(cx, &iter.read().toObject());
+    RootedValue newTarget(cx, iter.read());
+    RootedFunction fun(cx, &iter.read().toObject().as<JSFunction>());
+
+    JSObject* resultObject = js::LambdaArrow(cx, fun, scopeChain, newTarget);
     if (!resultObject)
         return false;
 

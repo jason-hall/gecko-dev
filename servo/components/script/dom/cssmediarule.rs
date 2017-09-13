@@ -2,9 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use cssparser::Parser;
+use cssparser::{Parser, ParserInput};
 use dom::bindings::codegen::Bindings::CSSMediaRuleBinding;
 use dom::bindings::codegen::Bindings::CSSMediaRuleBinding::CSSMediaRuleMethods;
+use dom::bindings::codegen::Bindings::WindowBinding::WindowBinding::WindowMethods;
 use dom::bindings::js::{MutNullableJS, Root};
 use dom::bindings::reflector::{DomObject, reflect_dom_object};
 use dom::bindings::str::DOMString;
@@ -14,11 +15,12 @@ use dom::cssstylesheet::CSSStyleSheet;
 use dom::medialist::MediaList;
 use dom::window::Window;
 use dom_struct::dom_struct;
-use std::sync::Arc;
+use servo_arc::Arc;
 use style::media_queries::parse_media_query_list;
+use style::parser::ParserContext;
 use style::shared_lock::{Locked, ToCssWithGuard};
-use style::stylesheets::MediaRule;
-use style_traits::ToCss;
+use style::stylesheets::{CssRuleType, MediaRule};
+use style_traits::{PARSING_MODE_DEFAULT, ToCss};
 
 #[dom_struct]
 pub struct CSSMediaRule {
@@ -67,8 +69,16 @@ impl CSSMediaRule {
 
     /// https://drafts.csswg.org/css-conditional-3/#the-cssmediarule-interface
     pub fn set_condition_text(&self, text: DOMString) {
-        let mut input = Parser::new(&text);
-        let new_medialist = parse_media_query_list(&mut input);
+        let mut input = ParserInput::new(&text);
+        let mut input = Parser::new(&mut input);
+        let global = self.global();
+        let win = global.as_window();
+        let url = win.get_url();
+        let quirks_mode = win.Document().quirks_mode();
+        let context = ParserContext::new_for_cssom(&url, Some(CssRuleType::Media),
+                                                   PARSING_MODE_DEFAULT,
+                                                   quirks_mode);
+        let new_medialist = parse_media_query_list(&context, &mut input);
         let mut guard = self.cssconditionrule.shared_lock().write();
 
         // Clone an Arc because we can’t borrow `guard` twice at the same time.

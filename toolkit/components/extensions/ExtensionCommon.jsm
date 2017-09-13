@@ -15,15 +15,24 @@ const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 this.EXPORTED_SYMBOLS = ["ExtensionCommon"];
 
+Cu.importGlobalProperties(["fetch"]);
+
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "MessageChannel",
-                                  "resource://gre/modules/MessageChannel.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
-                                  "resource://gre/modules/PrivateBrowsingUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Schemas",
-                                  "resource://gre/modules/Schemas.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  ConsoleAPI: "resource://gre/modules/Console.jsm",
+  MessageChannel: "resource://gre/modules/MessageChannel.jsm",
+  Preferences: "resource://gre/modules/Preferences.jsm",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  Schemas: "resource://gre/modules/Schemas.jsm",
+});
+
+XPCOMUtils.defineLazyServiceGetter(this, "styleSheetService",
+                                   "@mozilla.org/content/style-sheet-service;1",
+                                   "nsIStyleSheetService");
+
+const global = this;
 
 Cu.import("resource://gre/modules/ExtensionUtils.jsm");
 
@@ -32,16 +41,140 @@ var {
   DefaultWeakMap,
   EventEmitter,
   ExtensionError,
-  SpreadArgs,
+  defineLazyGetter,
+  filterStack,
   getConsole,
   getInnerWindowID,
   getUniqueId,
-  runSafeSync,
-  runSafeSyncWithoutClone,
   instanceOf,
 } = ExtensionUtils;
 
 XPCOMUtils.defineLazyGetter(this, "console", getConsole);
+
+var ExtensionCommon;
+
+/**
+ * A sentinel class to indicate that an array of values should be
+ * treated as an array when used as a promise resolution value, but as a
+ * spread expression (...args) when passed to a callback.
+ */
+class SpreadArgs extends Array {
+  constructor(args) {
+    super();
+    this.push(...args);
+  }
+}
+
+/**
+ * Like SpreadArgs, but also indicates that the array values already
+ * belong to the target compartment, and should not be cloned before
+ * being passed.
+ *
+ * The `unwrappedValues` property contains an Array object which belongs
+ * to the target compartment, and contains the same unwrapped values
+ * passed the NoCloneSpreadArgs constructor.
+ */
+class NoCloneSpreadArgs {
+  constructor(args) {
+    this.unwrappedValues = args;
+  }
+
+  [Symbol.iterator]() {
+    return this.unwrappedValues[Symbol.iterator]();
+  }
+}
+
+class ExtensionAPI extends ExtensionUtils.EventEmitter {
+  constructor(extension) {
+    super();
+
+    this.extension = extension;
+
+    extension.once("shutdown", () => {
+      if (this.onShutdown) {
+        this.onShutdown(extension.shutdownReason);
+      }
+      this.extension = null;
+    });
+  }
+
+  destroy() {
+  }
+
+  onManifestEntry(entry) {
+  }
+
+  getAPI(context) {
+    throw new Error("Not Implemented");
+  }
+}
+
+var ExtensionAPIs = {
+  apis: new Map(),
+
+  load(apiName) {
+    let api = this.apis.get(apiName);
+
+    if (api.loadPromise) {
+      return api.loadPromise;
+    }
+
+    let {script, schema} = api;
+
+    let addonId = `${apiName}@experiments.addons.mozilla.org`;
+    api.sandbox = Cu.Sandbox(global, {
+      wantXrays: false,
+      sandboxName: script,
+      addonId,
+      metadata: {addonID: addonId},
+    });
+
+    api.sandbox.ExtensionAPI = ExtensionAPI;
+
+    // Create a console getter which lazily provide a ConsoleAPI instance.
+    XPCOMUtils.defineLazyGetter(api.sandbox, "console", () => {
+      return new ConsoleAPI({prefix: addonId});
+    });
+
+    Services.scriptloader.loadSubScript(script, api.sandbox, "UTF-8");
+
+    api.loadPromise = Schemas.load(schema).then(() => {
+      let API = Cu.evalInSandbox("API", api.sandbox);
+      API.prototype.namespace = apiName;
+      return API;
+    });
+
+    return api.loadPromise;
+  },
+
+  unload(apiName) {
+    let api = this.apis.get(apiName);
+
+    let {schema} = api;
+
+    Schemas.unload(schema);
+    Cu.nukeSandbox(api.sandbox);
+
+    api.sandbox = null;
+    api.loadPromise = null;
+  },
+
+  register(namespace, schema, script) {
+    if (this.apis.has(namespace)) {
+      throw new Error(`API namespace already exists: ${namespace}`);
+    }
+
+    this.apis.set(namespace, {schema, script});
+  },
+
+  unregister(namespace) {
+    if (!this.apis.has(namespace)) {
+      throw new Error(`API namespace does not exist: ${namespace}`);
+    }
+
+    this.apis.delete(namespace);
+  },
+};
 
 class BaseContext {
   constructor(envType, extension) {
@@ -116,46 +249,55 @@ class BaseContext {
     throw new Error("Not implemented");
   }
 
-  runSafe(...args) {
+  runSafe(callback, ...args) {
+    return this.applySafe(callback, args);
+  }
+
+  runSafeWithoutClone(callback, ...args) {
+    return this.applySafeWithoutClone(callback, args);
+  }
+
+  applySafe(callback, args) {
     if (this.unloaded) {
       Cu.reportError("context.runSafe called after context unloaded");
     } else if (!this.active) {
       Cu.reportError("context.runSafe called while context is inactive");
     } else {
-      return runSafeSync(this, ...args);
+      try {
+        let {cloneScope} = this;
+        args = args.map(arg => Cu.cloneInto(arg, cloneScope));
+      } catch (e) {
+        Cu.reportError(e);
+        dump(`runSafe failure: cloning into ${this.cloneScope}: ${e}\n\n${filterStack(Error())}`);
+      }
+
+      return this.applySafeWithoutClone(callback, args);
     }
   }
 
-  runSafeWithoutClone(...args) {
+  applySafeWithoutClone(callback, args) {
     if (this.unloaded) {
       Cu.reportError("context.runSafeWithoutClone called after context unloaded");
     } else if (!this.active) {
       Cu.reportError("context.runSafeWithoutClone called while context is inactive");
     } else {
-      return runSafeSyncWithoutClone(...args);
+      try {
+        return Reflect.apply(callback, null, args);
+      } catch (e) {
+        dump(`Extension error: ${e} ${e.fileName} ${e.lineNumber}\n[[Exception stack\n${filterStack(e)}Current stack\n${filterStack(Error())}]]\n`);
+        Cu.reportError(e);
+      }
     }
   }
 
   checkLoadURL(url, options = {}) {
-    let ssm = Services.scriptSecurityManager;
-
-    let flags = ssm.STANDARD;
-    if (!options.allowScript) {
-      flags |= ssm.DISALLOW_SCRIPT;
-    }
-    if (!options.allowInheritsPrincipal) {
-      flags |= ssm.DISALLOW_INHERIT_PRINCIPAL;
-    }
-    if (options.dontReportErrors) {
-      flags |= ssm.DONT_REPORT_ERRORS;
+    // As an optimization, f the URL starts with the extension's base URL,
+    // don't do any further checks. It's always allowed to load it.
+    if (url.startsWith(this.extension.baseURL)) {
+      return true;
     }
 
-    try {
-      ssm.checkLoadURIStrWithPrincipal(this.principal, url, flags);
-    } catch (e) {
-      return false;
-    }
-    return true;
+    return ExtensionUtils.checkLoadURL(url, this.principal, options);
   }
 
   /**
@@ -294,9 +436,9 @@ class BaseContext {
    *     belonging to the target scope. Otherwise, undefined.
    */
   wrapPromise(promise, callback = null) {
-    let runSafe = this.runSafe.bind(this);
-    if (promise instanceof this.cloneScope.Promise) {
-      runSafe = this.runSafeWithoutClone.bind(this);
+    let applySafe = this.applySafe.bind(this);
+    if (Cu.getGlobalForObject(promise) === this.cloneScope) {
+      applySafe = this.applySafeWithoutClone.bind(this);
     }
 
     if (callback) {
@@ -306,10 +448,12 @@ class BaseContext {
             dump(`Promise resolved after context unloaded\n`);
           } else if (!this.active) {
             dump(`Promise resolved while context is inactive\n`);
+          } else if (args instanceof NoCloneSpreadArgs) {
+            this.applySafeWithoutClone(callback, args.unwrappedValues);
           } else if (args instanceof SpreadArgs) {
-            runSafe(callback, ...args);
+            applySafe(callback, args);
           } else {
-            runSafe(callback, args);
+            applySafe(callback, [args]);
           }
         },
         error => {
@@ -319,7 +463,7 @@ class BaseContext {
             } else if (!this.active) {
               dump(`Promise rejected while context is inactive\n`);
             } else {
-              this.runSafeWithoutClone(callback);
+              this.applySafeWithoutClone(callback, []);
             }
           });
         });
@@ -331,10 +475,13 @@ class BaseContext {
               dump(`Promise resolved after context unloaded\n`);
             } else if (!this.active) {
               dump(`Promise resolved while context is inactive\n`);
+            } else if (value instanceof NoCloneSpreadArgs) {
+              let values = value.unwrappedValues;
+              this.applySafeWithoutClone(resolve, values.length == 1 ? [values[0]] : [values]);
             } else if (value instanceof SpreadArgs) {
-              runSafe(resolve, value.length == 1 ? value[0] : value);
+              applySafe(resolve, value.length == 1 ? value : [value]);
             } else {
-              runSafe(resolve, value);
+              applySafe(resolve, [value]);
             }
           },
           value => {
@@ -343,7 +490,7 @@ class BaseContext {
             } else if (!this.active) {
               dump(`Promise rejected while context is inactive: ${value && value.message}\n`);
             } else {
-              this.runSafeWithoutClone(reject, this.normalizeError(value));
+              this.applySafeWithoutClone(reject, [this.normalizeError(value)]);
             }
           });
       });
@@ -406,10 +553,12 @@ class SchemaAPIInterface {
    * @param {Array} args The parameters for the function.
    * @param {function(*)} [callback] The callback to be called when the function
    *     completes.
+   * @param {boolean} [requireUserInput=false] If true, the function should
+   *                  fail if the browser is not currently handling user input.
    * @returns {Promise|undefined} Must be void if `callback` is set, and a
    *     promise otherwise. The promise is resolved when the function completes.
    */
-  callAsyncFunction(args, callback) {
+  callAsyncFunction(args, callback, requireUserInput = false) {
     throw new Error("Not implemented");
   }
 
@@ -515,9 +664,16 @@ class LocalAPIImplementation extends SchemaAPIInterface {
     this.pathObj[this.name](...args);
   }
 
-  callAsyncFunction(args, callback) {
+  callAsyncFunction(args, callback, requireUserInput) {
     let promise;
     try {
+      if (requireUserInput) {
+        let winUtils = this.context.contentWindow
+                           .getInterface(Ci.nsIDOMWindowUtils);
+        if (!winUtils.isHandlingUserInput) {
+          throw new ExtensionError(`${this.name} may only be called from a user input handler`);
+        }
+      }
       promise = this.pathObj[this.name](...args) || Promise.resolve();
     } catch (e) {
       promise = Promise.reject(e);
@@ -563,6 +719,26 @@ function deepCopy(dest, source) {
       Object.defineProperty(dest, prop, desc);
     }
   }
+}
+
+function getChild(map, key) {
+  let child = map.children.get(key);
+  if (!child) {
+    child = {
+      modules: new Set(),
+      children: new Map(),
+    };
+
+    map.children.set(key, child);
+  }
+  return child;
+}
+
+function getPath(map, path) {
+  for (let key of path) {
+    map = getChild(map, key);
+  }
+  return map;
 }
 
 /**
@@ -659,7 +835,7 @@ class CanOfAPIs {
       if (!obj) {
         return;
       }
-      modules = modules.get(key);
+      modules = getChild(modules, key);
 
       for (let name of modules.modules) {
         if (!this.apis.has(name)) {
@@ -695,7 +871,7 @@ class CanOfAPIs {
       if (!obj) {
         return;
       }
-      modules = modules.get(key);
+      modules = getChild(modules, key);
 
       for (let name of modules.modules) {
         if (!this.apis.has(name)) {
@@ -712,18 +888,6 @@ class CanOfAPIs {
 
     this.apiPaths.set(path, obj);
     return obj;
-  }
-}
-
-class DeepMap extends DefaultMap {
-  constructor() {
-    super(() => new DeepMap());
-
-    this.modules = new Set();
-  }
-
-  getPath(path) {
-    return path.reduce((map, key) => map.get(key), this);
   }
 }
 
@@ -753,6 +917,10 @@ class DeepMap extends DefaultMap {
  *       its appropriate event handler method to be called. Currently
  *       only accepts "startup".
  *
+ * @property {Array<string>} permissions
+ *       An optional list of permissions, any of which must be present
+ *       in order for the module to load.
+ *
  * @property {Array<Array<string>>} paths
  *       A list of paths from the root API object which, when accessed,
  *       will cause the API module to be instantiated and injected.
@@ -779,15 +947,52 @@ class SchemaAPIManager extends EventEmitter {
     this.global = this._createExtGlobal();
 
     this.modules = new Map();
-    this.modulePaths = new DeepMap();
+    this.modulePaths = {children: new Map(), modules: new Set()};
     this.manifestKeys = new Map();
     this.eventModules = new DefaultMap(() => new Set());
 
-    this.schemaURLs = new Set();
+    this._modulesJSONLoaded = false;
+
+    this.schemaURLs = new Map();
 
     this.apis = new DefaultWeakMap(() => new Map());
 
     this._scriptScopes = [];
+  }
+
+  async loadModuleJSON(urls) {
+    function fetchJSON(url) {
+      return fetch(url).then(resp => resp.json());
+    }
+
+    for (let json of await Promise.all(urls.map(fetchJSON))) {
+      this.registerModules(json);
+    }
+
+    this._modulesJSONLoaded = true;
+
+    return new StructuredCloneHolder({
+      modules: this.modules,
+      modulePaths: this.modulePaths,
+      manifestKeys: this.manifestKeys,
+      eventModules: this.eventModules,
+      schemaURLs: this.schemaURLs,
+    });
+  }
+
+  initModuleData(moduleData) {
+    if (!this._modulesJSONLoaded) {
+      let data = moduleData.deserialize({});
+
+      this.modules = data.modules;
+      this.modulePaths = data.modulePaths;
+      this.manifestKeys = data.manifestKeys;
+      this.eventModules = new DefaultMap(() => new Set(),
+                                         data.eventModules);
+      this.schemaURLs = data.schemaURLs;
+    }
+
+    this._modulesJSONLoaded = true;
   }
 
   /**
@@ -809,7 +1014,10 @@ class SchemaAPIManager extends EventEmitter {
       this.modules.set(name, details);
 
       if (details.schema) {
-        this.schemaURLs.add(details.schema);
+        let content = (details.scopes &&
+                       (details.scopes.includes("content_parent") ||
+                        details.scopes.includes("content_child")));
+        this.schemaURLs.set(details.schema, {content});
       }
 
       for (let event of details.events || []) {
@@ -825,7 +1033,7 @@ class SchemaAPIManager extends EventEmitter {
       }
 
       for (let path of details.paths || []) {
-        this.modulePaths.getPath(path).modules.add(name);
+        getPath(this.modulePaths, path).modules.add(name);
       }
     }
   }
@@ -964,7 +1172,7 @@ class SchemaAPIManager extends EventEmitter {
 
     module.loaded = true;
 
-    return this._initModule(module, this.global[name]);
+    return this.global[name];
   }
   /**
    * aSynchronously loads an API module, if not already loaded, and
@@ -991,7 +1199,7 @@ class SchemaAPIManager extends EventEmitter {
 
       module.loaded = true;
 
-      return this._initModule(module, this.global[name]);
+      return this.global[name];
     });
 
     return module.asyncLoaded;
@@ -1015,6 +1223,10 @@ class SchemaAPIManager extends EventEmitter {
   _checkGetAPI(name, extension, scope = null) {
     let module = this.modules.get(name);
 
+    if (module.permissions && !module.permissions.some(perm => extension.hasPermission(perm))) {
+      return false;
+    }
+
     if (!scope) {
       return true;
     }
@@ -1028,13 +1240,6 @@ class SchemaAPIManager extends EventEmitter {
     }
 
     return true;
-  }
-
-  _initModule(info, cls) {
-    cls.namespaceName = cls.namespaceName;
-    cls.scopes = new Set(info.scopes);
-
-    return cls;
   }
 
   _checkLoadModule(module, name) {
@@ -1059,22 +1264,19 @@ class SchemaAPIManager extends EventEmitter {
   _createExtGlobal() {
     let global = Cu.Sandbox(Services.scriptSecurityManager.getSystemPrincipal(), {
       wantXrays: false,
-      sandboxName: `Namespace of ext-*.js scripts for ${this.processType}`,
+      sandboxName: `Namespace of ext-*.js scripts for ${this.processType} (from: resource://gre/modules/ExtensionCommon.jsm)`,
     });
 
-    Object.assign(global, {global, Cc, Ci, Cu, Cr, XPCOMUtils, extensions: this});
+    Object.assign(global, {global, Cc, Ci, Cu, Cr, XPCOMUtils, ChromeWorker, ExtensionAPI, ExtensionCommon, MatchPattern, MatchPatternSet, StructuredCloneHolder, extensions: this});
 
     Cu.import("resource://gre/modules/AppConstants.jsm", global);
-    Cu.import("resource://gre/modules/ExtensionAPI.jsm", global);
 
     XPCOMUtils.defineLazyGetter(global, "console", getConsole);
 
-    XPCOMUtils.defineLazyModuleGetter(global, "ExtensionUtils",
-                                      "resource://gre/modules/ExtensionUtils.jsm");
-    XPCOMUtils.defineLazyModuleGetter(global, "XPCOMUtils",
-                                      "resource://gre/modules/XPCOMUtils.jsm");
-    XPCOMUtils.defineLazyModuleGetter(global, "require",
-                                      "resource://devtools/shared/Loader.jsm");
+    XPCOMUtils.defineLazyModuleGetters(global, {
+      ExtensionUtils: "resource://gre/modules/ExtensionUtils.jsm",
+      XPCOMUtils: "resource://gre/modules/XPCOMUtils.jsm",
+    });
 
     return global;
   }
@@ -1118,10 +1320,365 @@ class SchemaAPIManager extends EventEmitter {
   }
 }
 
-const ExtensionCommon = {
+function LocaleData(data) {
+  this.defaultLocale = data.defaultLocale;
+  this.selectedLocale = data.selectedLocale;
+  this.locales = data.locales || new Map();
+  this.warnedMissingKeys = new Set();
+
+  // Map(locale-name -> Map(message-key -> localized-string))
+  //
+  // Contains a key for each loaded locale, each of which is a
+  // Map of message keys to their localized strings.
+  this.messages = data.messages || new Map();
+
+  if (data.builtinMessages) {
+    this.messages.set(this.BUILTIN, data.builtinMessages);
+  }
+}
+
+LocaleData.prototype = {
+  // Representation of the object to send to content processes. This
+  // should include anything the content process might need.
+  serialize() {
+    return {
+      defaultLocale: this.defaultLocale,
+      selectedLocale: this.selectedLocale,
+      messages: this.messages,
+      locales: this.locales,
+    };
+  },
+
+  BUILTIN: "@@BUILTIN_MESSAGES",
+
+  has(locale) {
+    return this.messages.has(locale);
+  },
+
+  // https://developer.chrome.com/extensions/i18n
+  localizeMessage(message, substitutions = [], options = {}) {
+    let defaultOptions = {
+      defaultValue: "",
+      cloneScope: null,
+    };
+
+    let locales = this.availableLocales;
+    if (options.locale) {
+      locales = new Set([this.BUILTIN, options.locale, this.defaultLocale]
+                        .filter(locale => this.messages.has(locale)));
+    }
+
+    options = Object.assign(defaultOptions, options);
+
+    // Message names are case-insensitive, so normalize them to lower-case.
+    message = message.toLowerCase();
+    for (let locale of locales) {
+      let messages = this.messages.get(locale);
+      if (messages.has(message)) {
+        let str = messages.get(message);
+
+        if (!str.includes("$")) {
+          return str;
+        }
+
+        if (!Array.isArray(substitutions)) {
+          substitutions = [substitutions];
+        }
+
+        let replacer = (matched, index, dollarSigns) => {
+          if (index) {
+            // This is not quite Chrome-compatible. Chrome consumes any number
+            // of digits following the $, but only accepts 9 substitutions. We
+            // accept any number of substitutions.
+            index = parseInt(index, 10) - 1;
+            return index in substitutions ? substitutions[index] : "";
+          }
+          // For any series of contiguous `$`s, the first is dropped, and
+          // the rest remain in the output string.
+          return dollarSigns;
+        };
+        return str.replace(/\$(?:([1-9]\d*)|(\$+))/g, replacer);
+      }
+    }
+
+    // Check for certain pre-defined messages.
+    if (message == "@@ui_locale") {
+      return this.uiLocale;
+    } else if (message.startsWith("@@bidi_")) {
+      let rtl = Services.locale.isAppLocaleRTL;
+
+      if (message == "@@bidi_dir") {
+        return rtl ? "rtl" : "ltr";
+      } else if (message == "@@bidi_reversed_dir") {
+        return rtl ? "ltr" : "rtl";
+      } else if (message == "@@bidi_start_edge") {
+        return rtl ? "right" : "left";
+      } else if (message == "@@bidi_end_edge") {
+        return rtl ? "left" : "right";
+      }
+    }
+
+    if (!this.warnedMissingKeys.has(message)) {
+      let error = `Unknown localization message ${message}`;
+      if (options.cloneScope) {
+        error = new options.cloneScope.Error(error);
+      }
+      Cu.reportError(error);
+      this.warnedMissingKeys.add(message);
+    }
+    return options.defaultValue;
+  },
+
+  // Localize a string, replacing all |__MSG_(.*)__| tokens with the
+  // matching string from the current locale, as determined by
+  // |this.selectedLocale|.
+  //
+  // This may not be called before calling either |initLocale| or
+  // |initAllLocales|.
+  localize(str, locale = this.selectedLocale) {
+    if (!str) {
+      return str;
+    }
+
+    return str.replace(/__MSG_([A-Za-z0-9@_]+?)__/g, (matched, message) => {
+      return this.localizeMessage(message, [], {locale, defaultValue: matched});
+    });
+  },
+
+  // Validates the contents of a locale JSON file, normalizes the
+  // messages into a Map of message key -> localized string pairs.
+  addLocale(locale, messages, extension) {
+    let result = new Map();
+
+    // Chrome does not document the semantics of its localization
+    // system very well. It handles replacements by pre-processing
+    // messages, replacing |$[a-zA-Z0-9@_]+$| tokens with the value of their
+    // replacements. Later, it processes the resulting string for
+    // |$[0-9]| replacements.
+    //
+    // Again, it does not document this, but it accepts any number
+    // of sequential |$|s, and replaces them with that number minus
+    // 1. It also accepts |$| followed by any number of sequential
+    // digits, but refuses to process a localized string which
+    // provides more than 9 substitutions.
+    if (!instanceOf(messages, "Object")) {
+      extension.packagingError(`Invalid locale data for ${locale}`);
+      return result;
+    }
+
+    for (let key of Object.keys(messages)) {
+      let msg = messages[key];
+
+      if (!instanceOf(msg, "Object") || typeof(msg.message) != "string") {
+        extension.packagingError(`Invalid locale message data for ${locale}, message ${JSON.stringify(key)}`);
+        continue;
+      }
+
+      // Substitutions are case-insensitive, so normalize all of their names
+      // to lower-case.
+      let placeholders = new Map();
+      if (instanceOf(msg.placeholders, "Object")) {
+        for (let key of Object.keys(msg.placeholders)) {
+          placeholders.set(key.toLowerCase(), msg.placeholders[key]);
+        }
+      }
+
+      let replacer = (match, name) => {
+        let replacement = placeholders.get(name.toLowerCase());
+        if (instanceOf(replacement, "Object") && "content" in replacement) {
+          return replacement.content;
+        }
+        return "";
+      };
+
+      let value = msg.message.replace(/\$([A-Za-z0-9@_]+)\$/g, replacer);
+
+      // Message names are also case-insensitive, so normalize them to lower-case.
+      result.set(key.toLowerCase(), value);
+    }
+
+    this.messages.set(locale, result);
+    return result;
+  },
+
+  get acceptLanguages() {
+    let result = Preferences.get("intl.accept_languages", "", Ci.nsIPrefLocalizedString);
+    return result.split(/\s*,\s*/g);
+  },
+
+
+  get uiLocale() {
+    return Services.locale.getAppLocaleAsBCP47();
+  },
+};
+
+defineLazyGetter(LocaleData.prototype, "availableLocales", function() {
+  return new Set([this.BUILTIN, this.selectedLocale, this.defaultLocale]
+                 .filter(locale => this.messages.has(locale)));
+});
+
+// This is a generic class for managing event listeners. Example usage:
+//
+// new EventManager(context, "api.subAPI", fire => {
+//   let listener = (...) => {
+//     // Fire any listeners registered with addListener.
+//     fire.async(arg1, arg2);
+//   };
+//   // Register the listener.
+//   SomehowRegisterListener(listener);
+//   return () => {
+//     // Return a way to unregister the listener.
+//     SomehowUnregisterListener(listener);
+//   };
+// }).api()
+//
+// The result is an object with addListener, removeListener, and
+// hasListener methods. |context| is an add-on scope (either an
+// ExtensionContext in the chrome process or ExtensionContext in a
+// content process). |name| is for debugging. |register| is a function
+// to register the listener. |register| should return an
+// unregister function that will unregister the listener.
+function EventManager(context, name, register) {
+  this.context = context;
+  this.name = name;
+  this.register = register;
+  this.unregister = new Map();
+  this.inputHandling = false;
+}
+
+EventManager.prototype = {
+  addListener(callback, ...args) {
+    if (this.unregister.has(callback)) {
+      return;
+    }
+
+    let shouldFire = () => {
+      if (this.context.unloaded) {
+        dump(`${this.name} event fired after context unloaded.\n`);
+      } else if (!this.context.active) {
+        dump(`${this.name} event fired while context is inactive.\n`);
+      } else if (this.unregister.has(callback)) {
+        return true;
+      }
+      return false;
+    };
+
+    let fire = {
+      sync: (...args) => {
+        if (shouldFire()) {
+          return this.context.runSafe(callback, ...args);
+        }
+      },
+      async: (...args) => {
+        return Promise.resolve().then(() => {
+          if (shouldFire()) {
+            return this.context.runSafe(callback, ...args);
+          }
+        });
+      },
+      raw: (...args) => {
+        if (!shouldFire()) {
+          throw new Error("Called raw() on unloaded/inactive context");
+        }
+        return callback(...args);
+      },
+      asyncWithoutClone: (...args) => {
+        return Promise.resolve().then(() => {
+          if (shouldFire()) {
+            return this.context.runSafeWithoutClone(callback, ...args);
+          }
+        });
+      },
+    };
+
+
+    let unregister = this.register(fire, ...args);
+    this.unregister.set(callback, unregister);
+    this.context.callOnClose(this);
+  },
+
+  removeListener(callback) {
+    if (!this.unregister.has(callback)) {
+      return;
+    }
+
+    let unregister = this.unregister.get(callback);
+    this.unregister.delete(callback);
+    try {
+      unregister();
+    } catch (e) {
+      Cu.reportError(e);
+    }
+    if (this.unregister.size == 0) {
+      this.context.forgetOnClose(this);
+    }
+  },
+
+  hasListener(callback) {
+    return this.unregister.has(callback);
+  },
+
+  revoke() {
+    for (let callback of this.unregister.keys()) {
+      this.removeListener(callback);
+    }
+  },
+
+  close() {
+    this.revoke();
+  },
+
+  api() {
+    return {
+      addListener: (...args) => this.addListener(...args),
+      removeListener: (...args) => this.removeListener(...args),
+      hasListener: (...args) => this.hasListener(...args),
+      setUserInput: this.inputHandling,
+      [Schemas.REVOKE]: () => this.revoke(),
+    };
+  },
+};
+
+// Simple API for event listeners where events never fire.
+function ignoreEvent(context, name) {
+  return {
+    addListener: function(callback) {
+      let id = context.extension.id;
+      let frame = Components.stack.caller;
+      let msg = `In add-on ${id}, attempting to use listener "${name}", which is unimplemented.`;
+      let scriptError = Cc["@mozilla.org/scripterror;1"]
+        .createInstance(Ci.nsIScriptError);
+      scriptError.init(msg, frame.filename, null, frame.lineNumber,
+                       frame.columnNumber, Ci.nsIScriptError.warningFlag,
+                       "content javascript");
+      let consoleService = Cc["@mozilla.org/consoleservice;1"]
+        .getService(Ci.nsIConsoleService);
+      consoleService.logMessage(scriptError);
+    },
+    removeListener: function(callback) {},
+    hasListener: function(callback) {},
+  };
+}
+
+
+const stylesheetMap = new DefaultMap(url => {
+  let uri = Services.io.newURI(url);
+  return styleSheetService.preloadSheet(uri, styleSheetService.AGENT_SHEET);
+});
+
+
+ExtensionCommon = {
   BaseContext,
   CanOfAPIs,
+  EventManager,
+  ExtensionAPI,
+  ExtensionAPIs,
   LocalAPIImplementation,
+  LocaleData,
+  NoCloneSpreadArgs,
   SchemaAPIInterface,
   SchemaAPIManager,
+  SpreadArgs,
+  ignoreEvent,
+  stylesheetMap,
 };

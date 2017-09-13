@@ -18,6 +18,9 @@ try {
 } catch (e) {
 }
 
+const env = Cc["@mozilla.org/process/environment;1"]
+              .getService(Ci.nsIEnvironment);
+
 // We use a preferences whitelist to make sure we only show preferences that
 // are useful for support and won't compromise the user's privacy.  Note that
 // entries are *prefixes*: for example, "accessibility." applies to all prefs
@@ -29,18 +32,10 @@ const PREFS_WHITELIST = [
   "browser.display.",
   "browser.download.folderList",
   "browser.download.hide_plugins_without_extensions",
-  "browser.download.importedFromSqlite",
   "browser.download.lastDir.savePerSite",
   "browser.download.manager.addToRecentDocs",
   "browser.download.manager.alertOnEXEOpen",
-  "browser.download.manager.closeWhenDone",
-  "browser.download.manager.displayedHistoryDays",
-  "browser.download.manager.quitBehavior",
   "browser.download.manager.resumeOnWakeDelay",
-  "browser.download.manager.retention",
-  "browser.download.manager.scanWhenDone",
-  "browser.download.manager.showAlertOnComplete",
-  "browser.download.manager.showWhenStarting",
   "browser.download.preferred.",
   "browser.download.useDownloadDir",
   "browser.fixup.",
@@ -74,6 +69,7 @@ const PREFS_WHITELIST = [
   "keyword.",
   "layers.",
   "layout.css.dpi",
+  "layout.css.servo.enabled",
   "media.",
   "mousewheel.",
   "network.",
@@ -151,8 +147,7 @@ this.Troubleshoot = {
       snapshot[providerName] = providerData;
       if (--numPending == 0)
         // Ensure that done is always and truly called asynchronously.
-        Services.tm.mainThread.dispatch(done.bind(null, snapshot),
-                                        Ci.nsIThread.DISPATCH_NORMAL);
+        Services.tm.dispatchToMainThread(done.bind(null, snapshot));
     }
     for (let name in dataProviders) {
       try {
@@ -221,6 +216,13 @@ var dataProviders = {
 
     data.remoteAutoStart = Services.appinfo.browserTabsRemoteAutostart;
 
+    // Services.ppmm.childCount is a count of how many processes currently
+    // exist that might respond to messages sent through the ppmm, including
+    // the parent process. So we subtract the parent process with the "- 1",
+    // and that’s how many content processes we’re waiting for.
+    data.currentContentProcesses = Services.ppmm.childCount - 1;
+    data.maxContentProcesses = Services.appinfo.maxWebProcessCount;
+
     try {
       let e10sStatus = Cc["@mozilla.org/supports-PRUint64;1"]
                          .createInstance(Ci.nsISupportsPRUint64);
@@ -229,6 +231,23 @@ var dataProviders = {
       data.autoStartStatus = e10sStatus.data;
     } catch (e) {
       data.autoStartStatus = -1;
+    }
+
+    data.styloBuild = AppConstants.MOZ_STYLO;
+    data.styloDefault = Services.prefs.getDefaultBranch(null)
+                                .getBoolPref("layout.css.servo.enabled", false);
+    data.styloResult = false;
+    // Perhaps a bit redundant in places, but this is easier to compare with the
+    // the real check in `nsLayoutUtils.cpp` to ensure they test the same way.
+    if (AppConstants.MOZ_STYLO) {
+      if (env.get("STYLO_FORCE_ENABLED")) {
+        data.styloResult = true;
+      } else if (env.get("STYLO_FORCE_DISABLED")) {
+        data.styloResult = false;
+      } else {
+        data.styloResult =
+          Services.prefs.getBoolPref("layout.css.servo.enabled", false);
+      }
     }
 
     const keyGoogle = Services.urlFormatter.formatURL("%GOOGLE_API_KEY%").trim();
@@ -374,6 +393,7 @@ var dataProviders = {
         data.numTotalWindows++;
         data.windowLayerManagerType = winUtils.layerManagerType;
         data.windowLayerManagerRemote = winUtils.layerManagerRemote;
+        data.windowUsingAdvancedLayers = winUtils.usingAdvancedLayers;
       } catch (e) {
         continue;
       }
@@ -386,12 +406,6 @@ var dataProviders = {
       data.windowLayerManagerType = "Basic";
       data.windowLayerManagerRemote = false;
     }
-
-    let winUtils = Services.wm.getMostRecentWindow("").
-                   QueryInterface(Ci.nsIInterfaceRequestor).
-                   getInterface(Ci.nsIDOMWindowUtils)
-
-    data.currentAudioBackend = winUtils.currentAudioBackend;
 
     if (!data.numAcceleratedWindows && gfxInfo) {
       let win = AppConstants.platform == "win";
@@ -433,6 +447,7 @@ var dataProviders = {
       DWriteEnabled: "directWriteEnabled",
       DWriteVersion: "directWriteVersion",
       cleartypeParameters: "clearTypeParameters",
+      OffMainThreadPaintEnabled: "offMainThreadPaintEnabled",
     };
 
     for (let prop in gfxInfoProps) {
@@ -495,7 +510,7 @@ var dataProviders = {
 
         // //
 
-        let ext = gl.getExtension("MOZ_debug_get");
+        let ext = gl.getExtension("MOZ_debug");
         // This extension is unconditionally available to chrome. No need to check.
         let vendor = ext.getParameter(gl.VENDOR);
         let renderer = ext.getParameter(gl.RENDERER);
@@ -537,6 +552,49 @@ var dataProviders = {
     completed();
   },
 
+  media: function media(done) {
+    function convertDevices(devices) {
+      if (!devices) {
+        return undefined;
+      }
+      let infos = [];
+      for (let i = 0; i < devices.length; ++i) {
+        let device = devices.queryElementAt(i, Ci.nsIAudioDeviceInfo);
+        infos.push({
+          name: device.name,
+          groupId: device.groupId,
+          vendor: device.vendor,
+          type: device.type,
+          state: device.state,
+          preferred: device.preferred,
+          supportedFormat: device.supportedFormat,
+          defaultFormat: device.defaultFormat,
+          maxChannels: device.maxChannels,
+          defaultRate: device.defaultRate,
+          maxRate: device.maxRate,
+          minRate: device.minRate,
+          maxLatency: device.maxLatency,
+          minLatency: device.minLatency
+        });
+      }
+      return infos;
+    }
+
+    let data = {};
+    let winUtils = Services.wm.getMostRecentWindow("").
+                   QueryInterface(Ci.nsIInterfaceRequestor).
+                   getInterface(Ci.nsIDOMWindowUtils);
+    data.currentAudioBackend = winUtils.currentAudioBackend;
+    data.currentMaxAudioChannels = winUtils.currentMaxAudioChannels;
+    data.currentPreferredChannelLayout = winUtils.currentPreferredChannelLayout;
+    data.currentPreferredSampleRate = winUtils.currentPreferredSampleRate;
+    data.audioOutputDevices = convertDevices(winUtils.audioDevices(Ci.nsIDOMWindowUtils.AUDIO_OUTPUT).
+                                             QueryInterface(Ci.nsIArray));
+    data.audioInputDevices = convertDevices(winUtils.audioDevices(Ci.nsIDOMWindowUtils.AUDIO_INPUT).
+                                            QueryInterface(Ci.nsIArray));
+    done(data);
+  },
+
   javaScript: function javaScript(done) {
     let data = {};
     let winEnumer = Services.ww.getWindowEnumerator();
@@ -550,14 +608,14 @@ var dataProviders = {
 
   accessibility: function accessibility(done) {
     let data = {};
-    data.isActive = Cc["@mozilla.org/xre/app-info;1"].
-                    getService(Ci.nsIXULRuntime).
-                    accessibilityEnabled;
+    data.isActive = Services.appinfo.accessibilityEnabled;
     // eslint-disable-next-line mozilla/use-default-preference-values
     try {
       data.forceDisabled =
         Services.prefs.getIntPref("accessibility.force_disabled");
     } catch (e) {}
+    data.handlerUsed = Services.appinfo.accessibleHandlerUsed;
+    data.instantiator = Services.appinfo.accessibilityInstantiator;
     done(data);
   },
 
@@ -631,8 +689,12 @@ if (AppConstants.MOZ_SANDBOX) {
     }
 
     if (AppConstants.MOZ_CONTENT_SANDBOX) {
+      let sandboxSettings = Cc["@mozilla.org/sandbox/sandbox-settings;1"].
+                            getService(Ci.mozISandboxSettings);
       data.contentSandboxLevel =
         Services.prefs.getIntPref("security.sandbox.content.level");
+      data.effectiveContentSandboxLevel =
+        sandboxSettings.effectiveContentSandboxLevel;
     }
 
     done(data);

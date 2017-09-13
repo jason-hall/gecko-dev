@@ -5,6 +5,7 @@
 "use strict";
 
 Components.utils.import("resource:///modules/CustomizableUI.jsm");
+Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 var gManagers = new WeakMap();
 
@@ -379,9 +380,7 @@ AreaPositionManager.prototype = {
 
 var DragPositionManager = {
   start(aWindow) {
-    let areas = CustomizableUI.areas.filter((area) => CustomizableUI.getAreaType(area) != "toolbar");
-    areas = areas.map((area) => CustomizableUI.getCustomizeTargetForArea(area, aWindow));
-    areas.push(aWindow.document.getElementById(kPaletteId));
+    let areas = [aWindow.document.getElementById(kPaletteId)];
     for (let areaNode of areas) {
       let positionManager = gManagers.get(areaNode);
       if (positionManager) {
@@ -390,22 +389,6 @@ var DragPositionManager = {
         gManagers.set(areaNode, new AreaPositionManager(areaNode));
       }
     }
-  },
-
-  add(aWindow, aArea, aContainer) {
-    if (CustomizableUI.getAreaType(aArea) != "toolbar") {
-      return;
-    }
-
-    gManagers.set(aContainer, new AreaPositionManager(aContainer));
-  },
-
-  remove(aWindow, aArea, aContainer) {
-    if (CustomizableUI.getAreaType(aArea) != "toolbar") {
-      return;
-    }
-
-    gManagers.delete(aContainer);
   },
 
   stop() {

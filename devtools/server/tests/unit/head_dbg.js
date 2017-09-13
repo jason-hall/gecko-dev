@@ -25,6 +25,7 @@ _appInfo.updateAppInfo({
 const { require, loader } = Cu.import("resource://devtools/shared/Loader.jsm", {});
 const { worker } = Cu.import("resource://devtools/shared/worker/loader.js", {});
 const promise = require("promise");
+const defer = require("devtools/shared/defer");
 const { Task } = require("devtools/shared/task");
 const { console } = require("resource://gre/modules/Console.jsm");
 const { NetUtil } = require("resource://gre/modules/NetUtil.jsm");
@@ -47,8 +48,9 @@ const { addDebuggerToGlobal } = Cu.import("resource://gre/modules/jsdebugger.jsm
 const systemPrincipal = Cc["@mozilla.org/systemprincipal;1"]
                         .createInstance(Ci.nsIPrincipal);
 
-var { loadSubScript } = Cc["@mozilla.org/moz/jssubscript-loader;1"]
-                        .getService(Ci.mozIJSSubScriptLoader);
+var { loadSubScript, loadSubScriptWithOptions } =
+  Cc["@mozilla.org/moz/jssubscript-loader;1"]
+  .getService(Ci.mozIJSSubScriptLoader);
 
 /**
  * Initializes any test that needs to work with add-ons.
@@ -228,6 +230,14 @@ function waitForPause(threadClient) {
 function setBreakpoint(sourceClient, location) {
   dump("Setting breakpoint.\n");
   return sourceClient.setBreakpoint(location);
+}
+
+function getPrototypeAndProperties(objClient) {
+  dump("getting prototype and properties.\n");
+
+  return new Promise(resolve => {
+    objClient.getPrototypeAndProperties(response => resolve(response));
+  });
 }
 
 function dumpn(msg) {
@@ -585,9 +595,9 @@ StubTransport.prototype.send = function () {};
 StubTransport.prototype.close = function () {};
 
 function executeSoon(func) {
-  Services.tm.mainThread.dispatch({
+  Services.tm.dispatchToMainThread({
     run: DevToolsUtils.makeInfallible(func)
-  }, Ci.nsIThread.DISPATCH_NORMAL);
+  });
 }
 
 // The do_check_* family of functions expect their last argument to be an
@@ -691,6 +701,16 @@ function executeOnNextTickAndWaitForPause(action, client) {
   const paused = waitForPause(client);
   executeSoon(action);
   return paused;
+}
+
+function evalCallback(debuggeeGlobal, func) {
+  Components.utils.evalInSandbox(
+    "(" + func + ")()",
+    debuggeeGlobal,
+    "1.8",
+    "test.js",
+    1
+  );
 }
 
 /**
@@ -802,7 +822,7 @@ function getSourceContent(sourceClient) {
  * @returns Promise<SourceClient>
  */
 function getSource(threadClient, url) {
-  let deferred = promise.defer();
+  let deferred = defer();
   threadClient.getSources((res) => {
     let source = res.sources.filter(function (s) {
       return s.url === url;
@@ -823,7 +843,7 @@ function getSource(threadClient, url) {
  * @returns Promise<response>
  */
 function reload(tabClient) {
-  let deferred = promise.defer();
+  let deferred = defer();
   tabClient._reload({}, deferred.resolve);
   return deferred.promise;
 }

@@ -5,10 +5,16 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 DIRS += [
+    'activity-stream',
     'aushelper',
+    'clicktoplay-rollout',
     'e10srollout',
+    'followonsearch',
+    'onboarding',
     'pdfjs',
     'pocket',
+    'screenshots',
+    'shield-recipe-client',
     'webcompat',
 ]
 
@@ -16,20 +22,23 @@ DIRS += [
 if not CONFIG['RELEASE_OR_BETA']:
     DIRS += [
         'flyweb',
-        'formautofill',
         'presentation',
-        'shield-recipe-client',
+    ]
+
+# formautofill will be rolled out via balrog in release
+if CONFIG['MOZ_UPDATE_CHANNEL'] != 'release':
+    DIRS += [
+        'formautofill',
+    ]
+
+# Only include the following system add-ons if building DevEdition or Nightly
+if CONFIG['MOZ_DEV_EDITION'] or CONFIG['NIGHTLY_BUILD']:
+    DIRS += [
+        'webcompat-reporter',
     ]
 
 # Only include mortar system add-ons if we locally enable it
 if CONFIG['MOZ_MORTAR']:
     DIRS += [
         'mortar',
-    ]
-
-# Nightly-only system add-ons
-if CONFIG['NIGHTLY_BUILD']:
-    DIRS += [
-        'activity-stream',
-        'webcompat-reporter',
     ]

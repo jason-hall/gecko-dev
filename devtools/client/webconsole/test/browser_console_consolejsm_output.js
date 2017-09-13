@@ -117,7 +117,7 @@ add_task(function* () {
   let clickable = consoleErrorMsg.clickableElements[0];
   ok(clickable, "clickable object found for console.error");
 
-  let deferred = promise.defer();
+  let deferred = defer();
 
   let onFetch = (aEvent, aVar) => {
     // Skip the notification from console.dir variablesview-fetched.
@@ -302,7 +302,7 @@ add_task(function* testProfile() {
     profilerEvents.push(event);
   }
 
-  Services.obs.addObserver(observer, "console-api-profiler", false);
+  Services.obs.addObserver(observer, "console-api-profiler");
 
   console.profile("test");
   console.profileEnd("test");

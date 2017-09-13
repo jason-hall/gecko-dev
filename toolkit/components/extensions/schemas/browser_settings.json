@@ -1,0 +1,43 @@
+// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+[
+  {
+    "namespace": "manifest",
+    "types": [
+      {
+        "$extend": "Permission",
+        "choices": [{
+          "type": "string",
+          "enum": [
+            "browserSettings"
+          ]
+        }]
+      }
+    ]
+  },
+  {
+    "namespace": "browserSettings",
+    "description": "Use the <code>browser.browserSettings</code> API to control global settings of the browser.",
+    "permissions": ["browserSettings"],
+    "properties": {
+      "allowPopupsForUserEvents": {
+        "$ref": "types.Setting",
+        "description": "Allows or disallows pop-up windows from opening in response to user events."
+      },
+      "cacheEnabled": {
+        "$ref": "types.Setting",
+        "description": "Enables or disables the browser cache."
+      },
+      "homepageOverride": {
+        "$ref": "types.Setting",
+        "description": "Returns the value of the overridden home page. Read-only."
+      },
+      "newTabPageOverride": {
+        "$ref": "types.Setting",
+        "description": "Returns the value of the overridden new tab page. Read-only."
+      }
+    }
+  }
+]

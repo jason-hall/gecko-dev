@@ -5,10 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "EMEDecoderModule.h"
-#include "EMEVideoDecoder.h"
 #include "GMPDecoderModule.h"
 #include "GMPService.h"
-#include "MP4Decoder.h"
 #include "MediaInfo.h"
 #include "MediaPrefs.h"
 #include "PDMFactory.h"
@@ -21,6 +19,7 @@
 #include "nsClassHashtable.h"
 #include "nsServiceManagerUtils.h"
 #include "DecryptThroughputLimit.h"
+#include "ChromiumCDMVideoDecoder.h"
 
 namespace mozilla {
 
@@ -59,7 +58,7 @@ public:
     RefPtr<EMEDecryptor> self = this;
     mSamplesWaitingForKey->WaitIfKeyNotUsable(aSample)
       ->Then(mTaskQueue, __func__,
-             [self, this](MediaRawData* aSample) {
+             [self, this](RefPtr<MediaRawData> aSample) {
                mKeyRequest.Complete();
                ThrottleDecode(aSample);
              },
@@ -76,7 +75,7 @@ public:
     RefPtr<EMEDecryptor> self = this;
     mThroughputLimiter.Throttle(aSample)
       ->Then(mTaskQueue, __func__,
-             [self, this] (MediaRawData* aSample) {
+             [self, this] (RefPtr<MediaRawData> aSample) {
                mThrottleRequest.Complete();
                AttemptDecode(aSample);
              },
@@ -113,7 +112,7 @@ public:
     MOZ_ASSERT(aDecrypted.mSample);
 
     nsAutoPtr<DecryptPromiseRequestHolder> holder;
-    mDecrypts.RemoveAndForget(aDecrypted.mSample, holder);
+    mDecrypts.Remove(aDecrypted.mSample, &holder);
     if (holder) {
       holder->Complete();
     } else {
@@ -127,12 +126,12 @@ public:
       return;
     }
 
-    if (aDecrypted.mStatus == NoKeyErr) {
+    if (aDecrypted.mStatus == eme::NoKeyErr) {
       // Key became unusable after we sent the sample to CDM to decrypt.
       // Call Decode() again, so that the sample is enqueued for decryption
       // if the key becomes usable again.
       AttemptDecode(aDecrypted.mSample);
-    } else if (aDecrypted.mStatus != Ok) {
+    } else if (aDecrypted.mStatus != eme::Ok) {
       mDecodePromise.RejectIfExists(
         MediaResult(
           NS_ERROR_DOM_MEDIA_FATAL_ERR,
@@ -173,8 +172,12 @@ public:
       iter.Remove();
     }
     RefPtr<SamplesWaitingForKey> k = mSamplesWaitingForKey;
-    return mDecoder->Flush()->Then(mTaskQueue, __func__,
-                                   [k]() { k->Flush(); });
+    return mDecoder->Flush()->Then(
+      mTaskQueue, __func__,
+      [k]() {
+        k->Flush();
+        return FlushPromise::CreateAndResolve(true, __func__);
+      });
   }
 
   RefPtr<DecodePromise> Drain() override
@@ -202,7 +205,7 @@ public:
     return decoder->Shutdown();
   }
 
-  const char* GetDescriptionName() const override
+  nsCString GetDescriptionName() const override
   {
     return mDecoder->GetDescriptionName();
   }
@@ -266,7 +269,7 @@ EMEMediaDataDecoderProxy::Decode(MediaRawData* aSample)
   RefPtr<EMEMediaDataDecoderProxy> self = this;
   mSamplesWaitingForKey->WaitIfKeyNotUsable(aSample)
     ->Then(mTaskQueue, __func__,
-           [self, this](MediaRawData* aSample) {
+           [self, this](RefPtr<MediaRawData> aSample) {
              mKeyRequest.Complete();
 
              nsAutoPtr<MediaRawDataWriter> writer(aSample->CreateWriter());
@@ -353,11 +356,7 @@ EMEDecoderModule::CreateVideoDecoder(const CreateDecoderParams& aParams)
     RefPtr<MediaDataDecoderProxy> wrapper =
       CreateDecoderWrapper(mProxy, aParams);
     auto params = GMPVideoDecoderParams(aParams);
-    if (MediaPrefs::EMEChromiumAPIEnabled()) {
-      wrapper->SetProxyTarget(new ChromiumCDMVideoDecoder(params, mProxy));
-    } else {
-      wrapper->SetProxyTarget(new EMEVideoDecoder(mProxy, params));
-    }
+    wrapper->SetProxyTarget(new ChromiumCDMVideoDecoder(params, mProxy));
     return wrapper.forget();
   }
 

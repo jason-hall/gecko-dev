@@ -122,13 +122,13 @@ ifeq ($(MOZ_PKG_FORMAT),ZIP)
   endif
   PKG_SUFFIX	= .zip
   INNER_MAKE_PACKAGE = $(call py_action,make_zip,'$(MOZ_PKG_DIR)' '$(PACKAGE)')
-  INNER_UNMAKE_PACKAGE = $(call py_action,make_unzip,'$(UNPACKAGE)')
+  INNER_UNMAKE_PACKAGE = $(call py_action,make_unzip,$(UNPACKAGE))
 endif
 
 ifeq ($(MOZ_PKG_FORMAT),SFX7Z)
   PKG_SUFFIX	= .exe
-  INNER_MAKE_PACKAGE = $(call py_action,7z_exe_archive,'$(MOZ_PKG_DIR)' '$(MOZ_INSTALLER_PATH)/app.tag' '$(MOZ_SFX_PACKAGE)' '$(PACKAGE)')
-  INNER_UNMAKE_PACKAGE = $(call py_action,7z_exe_extract,'$(UNPACKAGE)' '$(MOZ_PKG_DIR)')
+  INNER_MAKE_PACKAGE = $(call py_action,exe_7z_archive,'$(MOZ_PKG_DIR)' '$(MOZ_INSTALLER_PATH)/app.tag' '$(MOZ_SFX_PACKAGE)' '$(PACKAGE)')
+  INNER_UNMAKE_PACKAGE = $(call py_action,exe_7z_extract,$(UNPACKAGE) $(MOZ_PKG_DIR))
 endif
 
 #Create an RPM file
@@ -221,7 +221,7 @@ ifeq ($(MOZ_PKG_FORMAT),DMG)
         $(if $(MOZ_PKG_MAC_DSSTORE),--dsstore '$(MOZ_PKG_MAC_DSSTORE)') \
         $(if $(MOZ_PKG_MAC_BACKGROUND),--background '$(MOZ_PKG_MAC_BACKGROUND)') \
         $(if $(MOZ_PKG_MAC_ICON),--icon '$(MOZ_PKG_MAC_ICON)') \
-        '$(UNPACKAGE)' '$(MOZ_PKG_DIR)' \
+        $(UNPACKAGE) $(MOZ_PKG_DIR) \
         )
 endif
 
@@ -239,19 +239,15 @@ endif
 
 ifdef MOZ_SIGN_PREPARED_PACKAGE_CMD
   ifeq (Darwin, $(OS_ARCH))
-    MAKE_PACKAGE    = $(or $(call MAKE_SIGN_EME_VOUCHER,$(MOZ_PKG_DIR)$(_BINPATH)/$(MOZ_CHILD_PROCESS_NAME).app/Contents/MacOS,$(MOZ_PKG_DIR)$(_RESPATH)),true) \
-                      && (cd $(MOZ_PKG_DIR)$(_RESPATH) && $(CREATE_PRECOMPLETE_CMD)) \
-                      && cd ./$(PKG_DMG_SOURCE) && $(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(MOZ_MACBUNDLE_NAME) \
+    MAKE_PACKAGE    = cd ./$(PKG_DMG_SOURCE) && $(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(MOZ_MACBUNDLE_NAME) \
                       && cd $(PACKAGE_BASE_DIR) && $(INNER_MAKE_PACKAGE)
   else
     MAKE_PACKAGE    = $(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(MOZ_PKG_DIR) \
-                      && $(or $(call MAKE_SIGN_EME_VOUCHER,$(MOZ_PKG_DIR)),true) \
-                      && (cd $(MOZ_PKG_DIR)$(_RESPATH) && $(CREATE_PRECOMPLETE_CMD)) \
                       && $(INNER_MAKE_PACKAGE)
   endif #Darwin
 
 else
-  MAKE_PACKAGE    = (cd $(MOZ_PKG_DIR)$(_RESPATH) && $(CREATE_PRECOMPLETE_CMD)) && $(INNER_MAKE_PACKAGE)
+  MAKE_PACKAGE    = $(INNER_MAKE_PACKAGE)
 endif
 
 ifdef MOZ_SIGN_PACKAGE_CMD
@@ -339,6 +335,7 @@ endif
 
 ifneq (android,$(MOZ_WIDGET_TOOLKIT))
   OPTIMIZEJARS = 1
+  JAR_COMPRESSION ?= none
 endif
 
 # A js binary is needed to perform verification of JavaScript minification.
@@ -400,6 +397,7 @@ UPLOAD_FILES= \
   $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(WP_TEST_PACKAGE)) \
   $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(GTEST_PACKAGE)) \
   $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip) \
+  $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(GENERATED_SOURCE_FILE_PACKAGE)) \
   $(call QUOTED_WILDCARD,$(MOZ_SOURCESTAMP_FILE)) \
   $(call QUOTED_WILDCARD,$(MOZ_BUILDINFO_FILE)) \
   $(call QUOTED_WILDCARD,$(MOZ_BUILDID_INFO_TXT_FILE)) \
@@ -407,7 +405,17 @@ UPLOAD_FILES= \
   $(call QUOTED_WILDCARD,$(MOZ_TEST_PACKAGES_FILE)) \
   $(call QUOTED_WILDCARD,$(PKG_JSSHELL)) \
   $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip) \
+  $(call QUOTED_WILDCARD,$(topobjdir)/browser/installer/windows/instgen/setup.exe) \
+  $(call QUOTED_WILDCARD,$(topobjdir)/browser/installer/windows/instgen/setup-stub.exe) \
+  $(call QUOTED_WILDCARD,$(topsrcdir)/toolchains.json) \
   $(if $(UPLOAD_EXTRA_FILES), $(foreach f, $(UPLOAD_EXTRA_FILES), $(wildcard $(DIST)/$(f))))
+
+ifneq ($(filter-out en-US x-test,$(AB_CD)),)
+  UPLOAD_FILES += \
+    $(call QUOTED_WILDCARD,$(topobjdir)/browser/installer/windows/l10ngen/setup.exe) \
+    $(call QUOTED_WILDCARD,$(topobjdir)/browser/installer/windows/l10ngen/setup-stub.exe)
+endif
+
 
 ifdef MOZ_CODE_COVERAGE
   UPLOAD_FILES += \

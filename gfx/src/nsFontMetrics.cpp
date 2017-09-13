@@ -6,6 +6,7 @@
 #include "nsFontMetrics.h"
 #include <math.h>                       // for floor, ceil
 #include <algorithm>                    // for max
+#include "gfxContext.h"                 // for gfxContext
 #include "gfxFontConstants.h"           // for NS_FONT_SYNTHESIS_*
 #include "gfxPlatform.h"                // for gfxPlatform
 #include "gfxPoint.h"                   // for gfxPoint
@@ -16,7 +17,6 @@
 #include "nsDeviceContext.h"            // for nsDeviceContext
 #include "nsIAtom.h"                    // for nsIAtom
 #include "nsMathUtils.h"                // for NS_round
-#include "nsRenderingContext.h"         // for nsRenderingContext
 #include "nsString.h"                   // for nsString
 #include "nsStyleConsts.h"              // for StyleHyphens::None
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT
@@ -38,7 +38,7 @@ public:
             reinterpret_cast<const uint8_t*>(aString), aLength,
             aDrawTarget,
             aMetrics->AppUnitsPerDevPixel(),
-            ComputeFlags(aMetrics),
+            ComputeFlags(aMetrics), nsTextFrameUtils::Flags(),
             nullptr);
     }
 
@@ -49,7 +49,7 @@ public:
             aString, aLength,
             aDrawTarget,
             aMetrics->AppUnitsPerDevPixel(),
-            ComputeFlags(aMetrics),
+            ComputeFlags(aMetrics), nsTextFrameUtils::Flags(),
             nullptr);
     }
 
@@ -57,21 +57,21 @@ public:
     gfxTextRun *operator->() { return mTextRun.get(); }
 
 private:
-    static uint32_t ComputeFlags(nsFontMetrics* aMetrics) {
-        uint32_t flags = 0;
+    static gfx::ShapedTextFlags ComputeFlags(nsFontMetrics* aMetrics) {
+        gfx::ShapedTextFlags flags = gfx::ShapedTextFlags();
         if (aMetrics->GetTextRunRTL()) {
-            flags |= gfxTextRunFactory::TEXT_IS_RTL;
+            flags |= gfx::ShapedTextFlags::TEXT_IS_RTL;
         }
         if (aMetrics->GetVertical()) {
             switch (aMetrics->GetTextOrientation()) {
             case NS_STYLE_TEXT_ORIENTATION_MIXED:
-                flags |= gfxTextRunFactory::TEXT_ORIENT_VERTICAL_MIXED;
+                flags |= gfx::ShapedTextFlags::TEXT_ORIENT_VERTICAL_MIXED;
                 break;
             case NS_STYLE_TEXT_ORIENTATION_UPRIGHT:
-                flags |= gfxTextRunFactory::TEXT_ORIENT_VERTICAL_UPRIGHT;
+                flags |= gfx::ShapedTextFlags::TEXT_ORIENT_VERTICAL_UPRIGHT;
                 break;
             case NS_STYLE_TEXT_ORIENTATION_SIDEWAYS:
-                flags |= gfxTextRunFactory::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT;
+                flags |= gfx::ShapedTextFlags::TEXT_ORIENT_VERTICAL_SIDEWAYS_RIGHT;
                 break;
             }
         }
@@ -354,7 +354,7 @@ nsFontMetrics::GetWidth(const char16_t* aString, uint32_t aLength,
 void
 nsFontMetrics::DrawString(const char *aString, uint32_t aLength,
                           nscoord aX, nscoord aY,
-                          nsRenderingContext *aContext)
+                          gfxContext *aContext)
 {
     if (aLength == 0)
         return;
@@ -373,7 +373,7 @@ nsFontMetrics::DrawString(const char *aString, uint32_t aLength,
             pt.x += textRun->GetAdvanceWidth(range, &provider);
         }
     }
-    gfxTextRun::DrawParams params(aContext->ThebesContext());
+    gfxTextRun::DrawParams params(aContext);
     params.provider = &provider;
     textRun->Draw(range, pt, params);
 }
@@ -381,7 +381,7 @@ nsFontMetrics::DrawString(const char *aString, uint32_t aLength,
 void
 nsFontMetrics::DrawString(const char16_t* aString, uint32_t aLength,
                           nscoord aX, nscoord aY,
-                          nsRenderingContext *aContext,
+                          gfxContext *aContext,
                           DrawTarget* aTextRunConstructionDrawTarget)
 {
     if (aLength == 0)
@@ -401,7 +401,7 @@ nsFontMetrics::DrawString(const char16_t* aString, uint32_t aLength,
             pt.x += textRun->GetAdvanceWidth(range, &provider);
         }
     }
-    gfxTextRun::DrawParams params(aContext->ThebesContext());
+    gfxTextRun::DrawParams params(aContext);
     params.provider = &provider;
     textRun->Draw(range, pt, params);
 }

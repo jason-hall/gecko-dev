@@ -168,8 +168,7 @@ def check_call(*args, **kwargs):
 
 
 def is_windows():
-    """ Detect windows, mingw, cygwin """
-    return sys.platform == 'win32' or sys.platform == 'msys' or sys.platform == 'cygwin'
+    return sys.platform == 'win32'
 
 
 def is_macosx():
@@ -190,12 +189,13 @@ def set_osmesa_env(bin_path, env):
         env["LD_LIBRARY_PATH"] = osmesa_path
         env["GALLIUM_DRIVER"] = "softpipe"
     elif is_macosx():
-        osmesa_path = path.join(find_dep_path_newest('osmesa-src', bin_path),
-                                "out", "src", "gallium", "targets", "osmesa", ".libs")
-        glapi_path = path.join(find_dep_path_newest('osmesa-src', bin_path),
-                               "out", "src", "mapi", "shared-glapi", ".libs")
-        if not (osmesa_path and glapi_path):
+        osmesa_dep_path = find_dep_path_newest('osmesa-src', bin_path)
+        if not osmesa_dep_path:
             return None
+        osmesa_path = path.join(osmesa_dep_path,
+                                "out", "src", "gallium", "targets", "osmesa", ".libs")
+        glapi_path = path.join(osmesa_dep_path,
+                               "out", "src", "mapi", "shared-glapi", ".libs")
         env["DYLD_LIBRARY_PATH"] = osmesa_path + ":" + glapi_path
         env["GALLIUM_DRIVER"] = "softpipe"
     return env
@@ -258,9 +258,6 @@ class CommandBase(object):
         self.config["tools"].setdefault("system-cargo", False)
         self.config["tools"].setdefault("rust-root", "")
         self.config["tools"].setdefault("cargo-root", "")
-        if not self.config["tools"]["system-cargo"]:
-            self.config["tools"]["cargo-root"] = path.join(
-                context.sharedir, "cargo", self.cargo_build_id())
         self.config["tools"].setdefault("rustc-with-gold", get_env_bool("SERVO_RUSTC_WITH_GOLD", True))
 
         # https://github.com/rust-lang/rust/pull/39754
@@ -281,15 +278,20 @@ class CommandBase(object):
         self.config["android"].setdefault("sdk", "")
         self.config["android"].setdefault("ndk", "")
         self.config["android"].setdefault("toolchain", "")
-        self.config["android"].setdefault("platform", "android-18")
-        self.config["android"].setdefault("target", "arm-linux-androideabi")
+        # Set default android target
+        self.handle_android_target("armv7-linux-androideabi")
 
+        self.set_cargo_root()
         self.set_use_stable_rust(False)
 
     _use_stable_rust = False
-    _rust_version = None
-    _rust_version_is_stable = False
-    _cargo_build_id = None
+    _rust_stable_version = None
+    _rust_nightly_date = None
+
+    def set_cargo_root(self):
+        if not self.config["tools"]["system-cargo"]:
+            self.config["tools"]["cargo-root"] = path.join(
+                self.context.sharedir, "cargo", self.rust_nightly_date())
 
     def set_use_stable_rust(self, use_stable_rust=True):
         self._use_stable_rust = use_stable_rust
@@ -305,28 +307,39 @@ class CommandBase(object):
     def use_stable_rust(self):
         return self._use_stable_rust
 
-    def rust_path(self):
-        version = self.rust_version()
+    def rust_install_dir(self):
         if self._use_stable_rust:
-            return os.path.join(version, "rustc-%s-%s" % (version, host_triple()))
-        if not self.config["build"]["llvm-assertions"]:
-            version += "-alt"
-        return os.path.join(version, "rustc-nightly-%s" % (host_triple()))
+            return self.rust_stable_version()
+        elif not self.config["build"]["llvm-assertions"]:
+            return self.rust_nightly_date() + "-alt"
+        else:
+            return self.rust_nightly_date()
 
-    def rust_version(self):
-        if self._rust_version is None or self._use_stable_rust != self._rust_version_is_stable:
-            filename = path.join(self.context.topdir,
-                                 "rust-stable-version" if self._use_stable_rust else "rust-commit-hash")
-            with open(filename) as f:
-                self._rust_version = f.read().strip()
-        return self._rust_version
+    def rust_path(self):
+        if self._use_stable_rust:
+            version = self.rust_stable_version()
+        else:
+            version = "nightly"
 
-    def cargo_build_id(self):
-        if self._cargo_build_id is None:
-            filename = path.join(self.context.topdir, "cargo-commit-hash")
+        subdir = "rustc-%s-%s" % (version, host_triple())
+        return os.path.join(self.rust_install_dir(), subdir)
+
+    def rust_stable_version(self):
+        if self._rust_stable_version is None:
+            filename = path.join("rust-stable-version")
             with open(filename) as f:
-                self._cargo_build_id = f.read().strip()
-        return self._cargo_build_id
+                self._rust_stable_version = f.read().strip()
+        return self._rust_stable_version
+
+    def rust_nightly_date(self):
+        if self._rust_nightly_date is None:
+            filename = path.join(self.context.topdir, "rust-toolchain")
+            with open(filename) as f:
+                toolchain = f.read().strip()
+                prefix = "nightly-"
+                assert toolchain.startswith(prefix)
+                self._rust_nightly_date = toolchain[len(prefix):]
+        return self._rust_nightly_date
 
     def get_top_dir(self):
         return self.context.topdir
@@ -420,9 +433,6 @@ class CommandBase(object):
         if not self.config["tools"]["system-rust"] \
                 or self.config["tools"]["rust-root"]:
             env["RUST_ROOT"] = self.config["tools"]["rust-root"]
-            # Add mingw64 binary path before rust paths to avoid conflict with libstdc++-6.dll
-            if sys.platform == "msys":
-                extra_path += [path.join(os.sep, "mingw64", "bin")]
             # These paths are for when rust-root points to an unpacked installer
             extra_path += [path.join(self.config["tools"]["rust-root"], "rustc", "bin")]
             extra_lib += [path.join(self.config["tools"]["rust-root"], "rustc", "lib")]
@@ -489,7 +499,7 @@ class CommandBase(object):
             env['RUSTFLAGS'] = env.get('RUSTFLAGS', "") + " " + self.config["build"]["rustflags"]
 
         # Don't run the gold linker if on Windows https://github.com/servo/servo/issues/9499
-        if self.config["tools"]["rustc-with-gold"] and sys.platform not in ("win32", "msys"):
+        if self.config["tools"]["rustc-with-gold"] and sys.platform != "win32":
             if subprocess.call(['which', 'ld.gold'], stdout=PIPE, stderr=PIPE) == 0:
                 env['RUSTFLAGS'] = env.get('RUSTFLAGS', "") + " -C link-args=-fuse-ld=gold"
 
@@ -539,7 +549,31 @@ class CommandBase(object):
         return path.join(self.context.topdir, "support", "android")
 
     def android_build_dir(self, dev):
-        return path.join(self.get_target_dir(), "arm-linux-androideabi", "debug" if dev else "release")
+        return path.join(self.get_target_dir(), self.config["android"]["target"], "debug" if dev else "release")
+
+    def handle_android_target(self, target):
+        if target == "arm-linux-androideabi":
+            self.config["android"]["platform"] = "android-18"
+            self.config["android"]["target"] = target
+            self.config["android"]["arch"] = "arm"
+            self.config["android"]["lib"] = "armeabi"
+            self.config["android"]["toolchain_name"] = target + "-4.9"
+            return True
+        elif target == "armv7-linux-androideabi":
+            self.config["android"]["platform"] = "android-18"
+            self.config["android"]["target"] = target
+            self.config["android"]["arch"] = "arm"
+            self.config["android"]["lib"] = "armeabi-v7a"
+            self.config["android"]["toolchain_name"] = "arm-linux-androideabi-4.9"
+            return True
+        elif target == "aarch64-linux-android":
+            self.config["android"]["platform"] = "android-21"
+            self.config["android"]["target"] = target
+            self.config["android"]["arch"] = "arm64"
+            self.config["android"]["lib"] = "arm64-v8a"
+            self.config["android"]["toolchain_name"] = target + "-4.9"
+            return True
+        return False
 
     def ensure_bootstrapped(self, target=None):
         if self.context.bootstrapped:
@@ -563,7 +597,7 @@ class CommandBase(object):
             Registrar.dispatch("bootstrap", context=self.context)
 
         if not (self.config['tools']['system-rust'] or (rustc_binary_exists and target_exists)):
-            print("looking for rustc at %s" % (rustc_path))
+            print("Looking for rustc at %s" % (rustc_path))
             Registrar.dispatch("bootstrap-rust", context=self.context, target=filter(None, [target]),
                                stable=self._use_stable_rust)
 
@@ -575,3 +609,30 @@ class CommandBase(object):
             Registrar.dispatch("bootstrap-cargo", context=self.context)
 
         self.context.bootstrapped = True
+
+    def ensure_clobbered(self, target_dir=None):
+        if target_dir is None:
+            target_dir = self.get_target_dir()
+        auto = True if os.environ.get('AUTOCLOBBER', False) else False
+        src_clobber = os.path.join(self.context.topdir, 'CLOBBER')
+        target_clobber = os.path.join(target_dir, 'CLOBBER')
+
+        if not os.path.exists(target_dir):
+            os.makedirs(target_dir)
+
+        if not os.path.exists(target_clobber):
+            # Simply touch the file.
+            with open(target_clobber, 'a'):
+                pass
+
+        if auto:
+            if os.path.getmtime(src_clobber) > os.path.getmtime(target_clobber):
+                print('Automatically clobbering target directory: {}'.format(target_dir))
+
+                try:
+                    Registrar.dispatch("clean", context=self.context, verbose=True)
+                    print('Successfully completed auto clobber.')
+                except subprocess.CalledProcessError as error:
+                    sys.exit(error)
+            else:
+                print("Clobber not needed.")

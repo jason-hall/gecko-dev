@@ -4,9 +4,8 @@
 
 "use strict";
 
-const events = require("sdk/event/core");
+const EventEmitter = require("devtools/shared/event-emitter");
 
-loader.lazyRequireGetter(this, "getOuterId", "sdk/window/utils", true);
 loader.lazyRequireGetter(this, "CommandState",
   "devtools/shared/gcli/command-state", true);
 
@@ -82,7 +81,7 @@ exports.items = [
 
       // Listen to the highlighter's destroy event which may happen if the
       // window is refreshed or closed with the rulers shown.
-      events.once(highlighter, "destroy", () => {
+      EventEmitter.once(highlighter, "destroy", () => {
         if (highlighters.has(document)) {
           let { environment: toDestroy } = highlighters.get(document);
           toDestroy.destroy();

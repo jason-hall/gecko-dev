@@ -13,6 +13,7 @@
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/UniquePtr.h"
+#include "gfxTypes.h" // for gfxAlphaType
 #include "nsCycleCollectionParticipant.h"
 
 struct JSContext;
@@ -63,7 +64,7 @@ struct ImageBitmapCloneData final
 {
   RefPtr<gfx::DataSourceSurface> mSurface;
   gfx::IntRect mPictureRect;
-  bool mIsPremultipliedAlpha;
+  gfxAlphaType mAlphaType;
   bool mIsCroppingAreaOutSideOfSourceImage;
 };
 
@@ -200,7 +201,7 @@ protected:
    * CreateInternal(from ImageData) method.
    */
   ImageBitmap(nsIGlobalObject* aGlobal, layers::Image* aData,
-              bool aIsPremultipliedAlpha = true);
+              gfxAlphaType aAlphaType = gfxAlphaType::Premult);
 
   virtual ~ImageBitmap();
 
@@ -272,7 +273,7 @@ protected:
    */
   gfx::IntRect mPictureRect;
 
-  const bool mIsPremultipliedAlpha;
+  const gfxAlphaType mAlphaType;
 
   /*
    * Set mIsCroppingAreaOutSideOfSourceImage if image bitmap was cropped to the

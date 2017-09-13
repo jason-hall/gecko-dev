@@ -5,14 +5,15 @@
 
 Components.utils.import("resource://gre/modules/Services.jsm");
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
-Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
+  "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cr = Components.results;
 
 function LOG(str) {
-  dump("*** " + str + "\n");
+  // dump("*** " + str + "\n");
 }
 
 const WCCR_CONTRACTID = "@mozilla.org/embeddor.implemented/web-content-handler-registrar;1";
@@ -297,11 +298,15 @@ WebContentConverterRegistrar.prototype = {
     if (handler) {
       request.cancel(Cr.NS_ERROR_FAILURE);
 
+      let triggeringPrincipal = channel.loadInfo
+        ? channel.loadInfo.triggeringPrincipal
+        : Services.scriptSecurityManager.getSystemPrincipal();
+
       let webNavigation =
           channel.notificationCallbacks.getInterface(Ci.nsIWebNavigation);
       webNavigation.loadURI(handler.getHandlerURI(channel.URI.spec),
                             Ci.nsIWebNavigation.LOAD_FLAGS_NONE,
-                            null, null, null);
+                            null, null, null, triggeringPrincipal);
     }
   },
 
@@ -437,7 +442,7 @@ WebContentConverterRegistrar.prototype = {
           let eps = Cc["@mozilla.org/uriloader/external-protocol-service;1"].
                     getService(Ci.nsIExternalProtocolService);
           let handlerInfo = eps.getProtocolHandlerInfo(protocol);
-          handlerInfo.possibleApplicationHandlers.appendElement(handler, false);
+          handlerInfo.possibleApplicationHandlers.appendElement(handler);
 
           // Since the user has agreed to add a new handler, chances are good
           // that the next time they see a handler of this type, they're going
@@ -841,7 +846,7 @@ WebContentConverterRegistrar.prototype = {
     let os = Services.obs;
     switch (topic) {
     case "app-startup":
-      os.addObserver(this, "browser-ui-startup-complete", false);
+      os.addObserver(this, "browser-ui-startup-complete");
       break;
     case "browser-ui-startup-complete":
       os.removeObserver(this, "browser-ui-startup-complete");

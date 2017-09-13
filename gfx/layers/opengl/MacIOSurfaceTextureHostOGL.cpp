@@ -5,6 +5,9 @@
 
 #include "MacIOSurfaceTextureHostOGL.h"
 #include "mozilla/gfx/MacIOSurface.h"
+#include "mozilla/webrender/RenderMacIOSurfaceTextureHostOGL.h"
+#include "mozilla/webrender/RenderThread.h"
+#include "mozilla/webrender/WebRenderAPI.h"
 #include "GLContextCGL.h"
 
 namespace mozilla {
@@ -35,7 +38,13 @@ MacIOSurfaceTextureHostOGL::CreateTextureSourceForPlane(size_t aPlane)
   gl->fTexParameteri(LOCAL_GL_TEXTURE_RECTANGLE_ARB, LOCAL_GL_TEXTURE_WRAP_T, LOCAL_GL_CLAMP_TO_EDGE);
   gl->fTexParameteri(LOCAL_GL_TEXTURE_RECTANGLE_ARB, LOCAL_GL_TEXTURE_WRAP_S, LOCAL_GL_CLAMP_TO_EDGE);
 
-  mSurface->CGLTexImageIOSurface2D(gl::GLContextCGL::Cast(gl)->GetCGLContext(), aPlane);
+  gfx::SurfaceFormat readFormat = gfx::SurfaceFormat::UNKNOWN;
+  mSurface->CGLTexImageIOSurface2D(gl,
+                                   gl::GLContextCGL::Cast(gl)->GetCGLContext(),
+                                   aPlane,
+                                   &readFormat);
+  // With compositorOGL, we doesn't support the yuv interleaving format yet.
+  MOZ_ASSERT(readFormat != gfx::SurfaceFormat::YUV422);
 
   return new GLTextureSource(mProvider, textureHandle, LOCAL_GL_TEXTURE_RECTANGLE_ARB,
                              gfx::IntSize(mSurface->GetDevicePixelWidth(aPlane),
@@ -107,70 +116,154 @@ MacIOSurfaceTextureHostOGL::gl() const
   return mProvider ? mProvider->GetGLContext() : nullptr;
 }
 
-MacIOSurfaceTextureSourceOGL::MacIOSurfaceTextureSourceOGL(
-                                CompositorOGL* aCompositor,
-                                MacIOSurface* aSurface)
-  : mCompositor(aCompositor)
-  , mSurface(aSurface)
+void
+MacIOSurfaceTextureHostOGL::CreateRenderTexture(const wr::ExternalImageId& aExternalImageId)
 {
-  MOZ_ASSERT(aCompositor);
-  MOZ_COUNT_CTOR(MacIOSurfaceTextureSourceOGL);
-}
+  RefPtr<wr::RenderTextureHost> texture =
+      new wr::RenderMacIOSurfaceTextureHostOGL(GetMacIOSurface());
 
-MacIOSurfaceTextureSourceOGL::~MacIOSurfaceTextureSourceOGL()
-{
-  MOZ_COUNT_DTOR(MacIOSurfaceTextureSourceOGL);
-}
-
-gfx::IntSize
-MacIOSurfaceTextureSourceOGL::GetSize() const
-{
-  return gfx::IntSize(mSurface->GetDevicePixelWidth(),
-                      mSurface->GetDevicePixelHeight());
-}
-
-gfx::SurfaceFormat
-MacIOSurfaceTextureSourceOGL::GetFormat() const
-{
-  return mSurface->HasAlpha() ? gfx::SurfaceFormat::R8G8B8A8
-                              : gfx::SurfaceFormat::R8G8B8X8;
+  wr::RenderThread::Get()->RegisterExternalImage(wr::AsUint64(aExternalImageId), texture.forget());
 }
 
 void
-MacIOSurfaceTextureSourceOGL::BindTexture(GLenum aTextureUnit,
-                                          gfx::SamplingFilter aSamplingFilter)
+MacIOSurfaceTextureHostOGL::GetWRImageKeys(nsTArray<wr::ImageKey>& aImageKeys,
+                                           const std::function<wr::ImageKey()>& aImageKeyAllocator)
 {
-  gl::GLContext* gl = this->gl();
-  if (!gl || !gl->MakeCurrent()) {
-    NS_WARNING("Trying to bind a texture without a working GLContext");
-    return;
-  }
-  GLuint tex = mCompositor->GetTemporaryTexture(GetTextureTarget(), aTextureUnit);
+  MOZ_ASSERT(aImageKeys.IsEmpty());
 
-  gl->fActiveTexture(aTextureUnit);
-  gl->fBindTexture(LOCAL_GL_TEXTURE_RECTANGLE_ARB, tex);
-  mSurface->CGLTexImageIOSurface2D(gl::GLContextCGL::Cast(gl)->GetCGLContext());
-  ApplySamplingFilterToBoundTexture(gl, aSamplingFilter, LOCAL_GL_TEXTURE_RECTANGLE_ARB);
+  switch (GetFormat()) {
+    case gfx::SurfaceFormat::R8G8B8X8:
+    case gfx::SurfaceFormat::R8G8B8A8:
+    case gfx::SurfaceFormat::B8G8R8A8:
+    case gfx::SurfaceFormat::B8G8R8X8: {
+      // 1 image key
+      aImageKeys.AppendElement(aImageKeyAllocator());
+      MOZ_ASSERT(aImageKeys.Length() == 1);
+      break;
+    }
+    case gfx::SurfaceFormat::YUV422: {
+      // 1 image key
+      aImageKeys.AppendElement(aImageKeyAllocator());
+      MOZ_ASSERT(aImageKeys.Length() == 1);
+      break;
+    }
+    case gfx::SurfaceFormat::NV12: {
+      // 2 image key
+      aImageKeys.AppendElement(aImageKeyAllocator());
+      aImageKeys.AppendElement(aImageKeyAllocator());
+      MOZ_ASSERT(aImageKeys.Length() == 2);
+      break;
+    }
+    default: {
+      MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+    }
+  }
 }
 
 void
-MacIOSurfaceTextureSourceOGL::SetTextureSourceProvider(TextureSourceProvider* aProvider)
+MacIOSurfaceTextureHostOGL::AddWRImage(wr::ResourceUpdateQueue& aResources,
+                                       Range<const wr::ImageKey>& aImageKeys,
+                                       const wr::ExternalImageId& aExtID)
 {
-  CompositorOGL* ogl = nullptr;
-  if (Compositor* compositor = aProvider->AsCompositor()) {
-    ogl = compositor->AsCompositorOGL();
-  }
+  MOZ_ASSERT(mSurface);
 
-  mCompositor = ogl;
-  if (mCompositor && mNextSibling) {
-    mNextSibling->SetTextureSourceProvider(aProvider);
+  switch (GetFormat()) {
+    case gfx::SurfaceFormat::R8G8B8X8:
+    case gfx::SurfaceFormat::R8G8B8A8:
+    case gfx::SurfaceFormat::B8G8R8A8:
+    case gfx::SurfaceFormat::B8G8R8X8: {
+      MOZ_ASSERT(aImageKeys.length() == 1);
+      MOZ_ASSERT(mSurface->GetPlaneCount() == 0);
+      wr::ImageDescriptor descriptor(GetSize(), GetFormat());
+      aResources.AddExternalImage(aImageKeys[0],
+                                  descriptor,
+                                  aExtID,
+                                  wr::WrExternalImageBufferType::TextureRectHandle,
+                                  0);
+      break;
+    }
+    case gfx::SurfaceFormat::YUV422: {
+      // This is the special buffer format. The buffer contents could be a
+      // converted RGB interleaving data or a YCbCr interleaving data depending
+      // on the different platform setting. (e.g. It will be RGB at OpenGL 2.1
+      // and YCbCr at OpenGL 3.1)
+      MOZ_ASSERT(aImageKeys.length() == 1);
+      MOZ_ASSERT(mSurface->GetPlaneCount() == 0);
+      wr::ImageDescriptor descriptor(GetSize(), gfx::SurfaceFormat::R8G8B8X8);
+      aResources.AddExternalImage(aImageKeys[0],
+                                  descriptor,
+                                  aExtID,
+                                  wr::WrExternalImageBufferType::TextureRectHandle,
+                                  0);
+      break;
+    }
+    case gfx::SurfaceFormat::NV12: {
+      MOZ_ASSERT(aImageKeys.length() == 2);
+      MOZ_ASSERT(mSurface->GetPlaneCount() == 2);
+      wr::ImageDescriptor descriptor0(gfx::IntSize(mSurface->GetDevicePixelWidth(0), mSurface->GetDevicePixelHeight(0)),
+                                      gfx::SurfaceFormat::A8);
+      wr::ImageDescriptor descriptor1(gfx::IntSize(mSurface->GetDevicePixelWidth(1), mSurface->GetDevicePixelHeight(1)),
+                                      gfx::SurfaceFormat::R8G8);
+      aResources.AddExternalImage(aImageKeys[0],
+                                  descriptor0,
+                                  aExtID,
+                                  wr::WrExternalImageBufferType::TextureRectHandle,
+                                  0);
+      aResources.AddExternalImage(aImageKeys[1],
+                                  descriptor1,
+                                  aExtID,
+                                  wr::WrExternalImageBufferType::TextureRectHandle,
+                                  1);
+      break;
+    }
+    default: {
+      MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+    }
   }
 }
 
-gl::GLContext*
-MacIOSurfaceTextureSourceOGL::gl() const
+void
+MacIOSurfaceTextureHostOGL::PushExternalImage(wr::DisplayListBuilder& aBuilder,
+                                              const wr::LayoutRect& aBounds,
+                                              const wr::LayoutRect& aClip,
+                                              wr::ImageRendering aFilter,
+                                              Range<const wr::ImageKey>& aImageKeys)
 {
-  return mCompositor ? mCompositor->gl() : nullptr;
+  switch (GetFormat()) {
+    case gfx::SurfaceFormat::R8G8B8X8:
+    case gfx::SurfaceFormat::R8G8B8A8:
+    case gfx::SurfaceFormat::B8G8R8A8:
+    case gfx::SurfaceFormat::B8G8R8X8: {
+      MOZ_ASSERT(aImageKeys.length() == 1);
+      MOZ_ASSERT(mSurface->GetPlaneCount() == 0);
+      aBuilder.PushImage(aBounds, aClip, aFilter, aImageKeys[0]);
+      break;
+    }
+    case gfx::SurfaceFormat::YUV422: {
+      MOZ_ASSERT(aImageKeys.length() == 1);
+      MOZ_ASSERT(mSurface->GetPlaneCount() == 0);
+      aBuilder.PushYCbCrInterleavedImage(aBounds,
+                                         aClip,
+                                         aImageKeys[0],
+                                         wr::WrYuvColorSpace::Rec601,
+                                         aFilter);
+      break;
+    }
+    case gfx::SurfaceFormat::NV12: {
+      MOZ_ASSERT(aImageKeys.length() == 2);
+      MOZ_ASSERT(mSurface->GetPlaneCount() == 2);
+      aBuilder.PushNV12Image(aBounds,
+                             aClip,
+                             aImageKeys[0],
+                             aImageKeys[1],
+                             wr::WrYuvColorSpace::Rec601,
+                             aFilter);
+      break;
+    }
+    default: {
+      MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+    }
+  }
 }
 
 } // namespace layers

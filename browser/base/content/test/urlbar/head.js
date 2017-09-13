@@ -2,16 +2,14 @@
 
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-  "resource://gre/modules/Promise.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Task",
-  "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
   "resource://gre/modules/PlacesUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesTestUtils",
   "resource://testing-common/PlacesTestUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
   "resource://gre/modules/Preferences.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "HttpServer",
+  "resource://testing-common/httpd.js");
 
 /**
  * Waits for the next top-level document load in the current browser.  The URI
@@ -133,6 +131,19 @@ function is_element_hidden(element, msg) {
   ok(is_hidden(element), msg || "Element should be hidden");
 }
 
+function runHttpServer(scheme, host, port = -1) {
+  let httpserver = new HttpServer();
+  try {
+    httpserver.start(port);
+    port = httpserver.identity.primaryPort;
+    httpserver.identity.setPrimary(scheme, host, port);
+  } catch (ex) {
+    info("We can't launch our http server successfully.")
+  }
+  is(httpserver.identity.has(scheme, host, port), true, `${scheme}://${host}:${port} is listening.`);
+  return httpserver;
+}
+
 function promisePopupEvent(popup, eventSuffix) {
   let endState = {shown: "open", hidden: "closed"}[eventSuffix];
 
@@ -140,12 +151,12 @@ function promisePopupEvent(popup, eventSuffix) {
     return Promise.resolve();
 
   let eventType = "popup" + eventSuffix;
-  let deferred = Promise.defer();
-  popup.addEventListener(eventType, function(event) {
-    deferred.resolve();
-  }, {once: true});
+  return new Promise(resolve => {
+    popup.addEventListener(eventType, function(event) {
+      resolve();
+    }, {once: true});
 
-  return deferred.promise;
+  });
 }
 
 function promisePopupShown(popup) {
@@ -156,11 +167,16 @@ function promisePopupHidden(popup) {
   return promisePopupEvent(popup, "hidden");
 }
 
-function promiseSearchComplete(win = window) {
+function promiseSearchComplete(win = window, dontAnimate = false) {
   return promisePopupShown(win.gURLBar.popup).then(() => {
     function searchIsComplete() {
-      return win.gURLBar.controller.searchStatus >=
-        Ci.nsIAutoCompleteController.STATUS_COMPLETE_NO_MATCH;
+      let isComplete = win.gURLBar.controller.searchStatus >=
+                       Ci.nsIAutoCompleteController.STATUS_COMPLETE_NO_MATCH;
+      if (isComplete) {
+        info(`Restore popup dontAnimate value to ${dontAnimate}`);
+        win.gURLBar.popup.setAttribute("dontanimate", dontAnimate);
+      }
+      return isComplete;
     }
 
     // Wait until there are at least two matches.
@@ -171,7 +187,10 @@ function promiseSearchComplete(win = window) {
 function promiseAutocompleteResultPopup(inputText,
                                         win = window,
                                         fireInputEvent = false) {
+  let dontAnimate = !!win.gURLBar.popup.getAttribute("dontanimate");
   waitForFocus(() => {
+    info(`Disable popup animation. Change dontAnimate value from ${dontAnimate} to true.`);
+    win.gURLBar.popup.setAttribute("dontanimate", "true");
     win.gURLBar.focus();
     win.gURLBar.value = inputText;
     if (fireInputEvent) {
@@ -183,7 +202,7 @@ function promiseAutocompleteResultPopup(inputText,
     win.gURLBar.controller.startSearch(inputText);
   }, win);
 
-  return promiseSearchComplete(win);
+  return promiseSearchComplete(win, dontAnimate);
 }
 
 function promiseNewSearchEngine(basename) {
@@ -202,4 +221,75 @@ function promiseNewSearchEngine(basename) {
       },
     });
   });
+}
+
+function promisePageActionPanelOpen() {
+  if (BrowserPageActions.panelNode.state == "open") {
+    return Promise.resolve();
+  }
+  // The main page action button is hidden for some URIs, so make sure it's
+  // visible before trying to click it.
+  let dwu = window.QueryInterface(Ci.nsIInterfaceRequestor)
+                  .getInterface(Ci.nsIDOMWindowUtils);
+  return BrowserTestUtils.waitForCondition(() => {
+    info("Waiting for main page action button to have non-0 size");
+    let bounds = dwu.getBoundsWithoutFlushing(BrowserPageActions.mainButtonNode);
+    return bounds.width > 0 && bounds.height > 0;
+  }).then(() => {
+    let shownPromise = promisePageActionPanelShown();
+    EventUtils.synthesizeMouseAtCenter(BrowserPageActions.mainButtonNode, {});
+    return shownPromise;
+  });
+}
+
+function promisePageActionPanelShown() {
+  return promisePanelShown(BrowserPageActions.panelNode);
+}
+
+function promisePageActionPanelHidden() {
+  return promisePanelHidden(BrowserPageActions.panelNode);
+}
+
+function promisePanelShown(panelIDOrNode) {
+  return promisePanelEvent(panelIDOrNode, "popupshown");
+}
+
+function promisePanelHidden(panelIDOrNode) {
+  return promisePanelEvent(panelIDOrNode, "popuphidden");
+}
+
+function promisePanelEvent(panelIDOrNode, eventType) {
+  return new Promise(resolve => {
+    let panel = typeof(panelIDOrNode) != "string" ? panelIDOrNode :
+                document.getElementById(panelIDOrNode);
+    if (!panel ||
+        (eventType == "popupshown" && panel.state == "open") ||
+        (eventType == "popuphidden" && panel.state == "closed")) {
+      executeSoon(resolve);
+      return;
+    }
+    panel.addEventListener(eventType, () => {
+      executeSoon(resolve);
+    }, { once: true });
+  });
+}
+
+function promisePageActionViewShown() {
+  return new Promise(resolve => {
+    BrowserPageActions.panelNode.addEventListener("ViewShown", (event) => {
+      let target = event.originalTarget;
+      window.setTimeout(() => {
+        resolve(target);
+      }, 5000);
+    }, { once: true });
+  });
+}
+
+function promiseSpeculativeConnection(httpserver) {
+  return BrowserTestUtils.waitForCondition(() => {
+    if (httpserver) {
+      return httpserver.connectionNumber == 1;
+    }
+    return false;
+  }, "Waiting for connection setup");
 }

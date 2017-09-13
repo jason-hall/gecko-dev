@@ -20,6 +20,7 @@ namespace mozilla {
 namespace dom {
 
 using base::Thread;
+using media::TimeUnit;
 using namespace ipc;
 using namespace layers;
 using namespace gfx;
@@ -111,8 +112,10 @@ VideoDecoderParent::RecvInit()
           self->mDecoder->IsHardwareAccelerated(hardwareReason);
         uint32_t conversion =
           static_cast<uint32_t>(self->mDecoder->NeedsConversion());
-        Unused << self->SendInitComplete(
-          hardwareAccelerated, hardwareReason, conversion);
+        Unused << self->SendInitComplete(self->mDecoder->GetDescriptionName(),
+                                         hardwareAccelerated,
+                                         hardwareReason,
+                                         conversion);
       }
     },
     [self] (MediaResult aReason) {
@@ -137,9 +140,9 @@ VideoDecoderParent::RecvInput(const MediaRawDataIPDL& aData)
     return IPC_OK();
   }
   data->mOffset = aData.base().offset();
-  data->mTime = aData.base().time();
-  data->mTimecode = aData.base().timecode();
-  data->mDuration = aData.base().duration();
+  data->mTime = TimeUnit::FromMicroseconds(aData.base().time());
+  data->mTimecode = TimeUnit::FromMicroseconds(aData.base().timecode());
+  data->mDuration = TimeUnit::FromMicroseconds(aData.base().duration());
   data->mKeyframe = aData.base().keyframe();
 
   DeallocShmem(aData.buffer());
@@ -164,6 +167,11 @@ VideoDecoderParent::ProcessDecodedData(
 {
   MOZ_ASSERT(OnManagerThread());
 
+  // If the video decoder bridge has shut down, stop.
+  if (!mKnowsCompositor->GetTextureForwarder()) {
+    return;
+  }
+
   for (const auto& data : aData) {
     MOZ_ASSERT(data->mType == MediaData::VIDEO_DATA,
                 "Can only decode videos using VideoDecoderParent!");
@@ -186,12 +194,14 @@ VideoDecoderParent::ProcessDecodedData(
     }
 
     VideoDataIPDL output(
-      MediaDataIPDL(data->mOffset, data->mTime, data->mTimecode,
-                    data->mDuration, data->mFrames, data->mKeyframe),
+      MediaDataIPDL(data->mOffset, data->mTime.ToMicroseconds(),
+                    data->mTimecode.ToMicroseconds(),
+                    data->mDuration.ToMicroseconds(),
+                    data->mFrames, data->mKeyframe),
       video->mDisplay,
       texture ? texture->GetSize() : IntSize(),
       texture ? mParent->StoreImage(video->mImage, texture)
-              : SurfaceDescriptorGPUVideo(0),
+              : SurfaceDescriptorGPUVideo(0, null_t()),
       video->mFrameID);
     Unused << SendOutput(output);
   }
@@ -250,7 +260,7 @@ VideoDecoderParent::RecvSetSeekThreshold(const int64_t& aTime)
 {
   MOZ_ASSERT(!mDestroyed);
   MOZ_ASSERT(OnManagerThread());
-  mDecoder->SetSeekThreshold(media::TimeUnit::FromMicroseconds(aTime));
+  mDecoder->SetSeekThreshold(TimeUnit::FromMicroseconds(aTime));
   return IPC_OK();
 }
 

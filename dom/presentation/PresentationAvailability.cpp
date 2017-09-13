@@ -32,7 +32,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_ADDREF_INHERITED(PresentationAvailability, DOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(PresentationAvailability, DOMEventTargetHelper)
 
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(PresentationAvailability)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(PresentationAvailability)
   NS_INTERFACE_MAP_ENTRY(nsIPresentationAvailabilityListener)
 NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)
 
@@ -172,10 +172,11 @@ PresentationAvailability::NotifyAvailableChange(const nsTArray<nsString>& aAvail
     available |= mAvailabilityOfUrl[i];
   }
 
-  return NS_DispatchToCurrentThread(NewRunnableMethod
-                                    <bool>(this,
-                                           &PresentationAvailability::UpdateAvailabilityAndDispatchEvent,
-                                           available));
+  return NS_DispatchToCurrentThread(NewRunnableMethod<bool>(
+    "dom::PresentationAvailability::UpdateAvailabilityAndDispatchEvent",
+    this,
+    &PresentationAvailability::UpdateAvailabilityAndDispatchEvent,
+    available));
 }
 
 void

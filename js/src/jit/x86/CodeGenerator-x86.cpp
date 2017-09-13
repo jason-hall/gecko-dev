@@ -111,15 +111,10 @@ CodeGeneratorX86::visitBox(LBox* box)
 void
 CodeGeneratorX86::visitBoxFloatingPoint(LBoxFloatingPoint* box)
 {
-    const LAllocation* in = box->getOperand(0);
+    const AnyRegister in = ToAnyRegister(box->getOperand(0));
     const ValueOperand out = ToOutValue(box);
 
-    FloatRegister reg = ToFloatRegister(in);
-    if (box->type() == MIRType::Float32) {
-        masm.convertFloat32ToDouble(reg, ScratchFloat32Reg);
-        reg = ScratchFloat32Reg;
-    }
-    masm.boxDouble(reg, out);
+    masm.moveValue(TypedOrValueRegister(box->type(), in), out);
 }
 
 void
@@ -303,43 +298,6 @@ CodeGeneratorX86::visitLoadTypedArrayElementStatic(LLoadTypedArrayElementStatic*
 
     if (ool)
         masm.bind(ool->rejoin());
-}
-
-void
-CodeGeneratorX86::emitWasmCall(LWasmCallBase* ins)
-{
-    MWasmCall* mir = ins->mir();
-
-    emitWasmCallBase(ins);
-
-    if (IsFloatingPointType(mir->type()) && mir->callee().which() == wasm::CalleeDesc::Builtin) {
-        if (mir->type() == MIRType::Float32) {
-            masm.reserveStack(sizeof(float));
-            Operand op(esp, 0);
-            masm.fstp32(op);
-            masm.loadFloat32(op, ReturnFloat32Reg);
-            masm.freeStack(sizeof(float));
-        } else {
-            MOZ_ASSERT(mir->type() == MIRType::Double);
-            masm.reserveStack(sizeof(double));
-            Operand op(esp, 0);
-            masm.fstp(op);
-            masm.loadDouble(op, ReturnDoubleReg);
-            masm.freeStack(sizeof(double));
-        }
-    }
-}
-
-void
-CodeGeneratorX86::visitWasmCall(LWasmCall* ins)
-{
-    emitWasmCall(ins);
-}
-
-void
-CodeGeneratorX86::visitWasmCallI64(LWasmCallI64* ins)
-{
-    emitWasmCall(ins);
 }
 
 template <typename T>
@@ -780,12 +738,15 @@ CodeGeneratorX86::visitOutOfLineTruncate(OutOfLineTruncate* ool)
     {
         saveVolatile(output);
 
-        masm.setupUnalignedABICall(output);
-        masm.passABIArg(input, MoveOp::DOUBLE);
-        if (gen->compilingWasm())
-            masm.callWithABI(wasm::SymbolicAddress::ToInt32);
-        else
+        if (gen->compilingWasm()) {
+            masm.setupWasmABICall();
+            masm.passABIArg(input, MoveOp::DOUBLE);
+            masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ToInt32);
+        } else {
+            masm.setupUnalignedABICall(output);
+            masm.passABIArg(input, MoveOp::DOUBLE);
             masm.callWithABI(BitwiseCast<void*, int32_t(*)(double)>(JS::ToInt32));
+        }
         masm.storeCallWordResult(output);
 
         restoreVolatile(output);
@@ -861,18 +822,23 @@ CodeGeneratorX86::visitOutOfLineTruncateFloat32(OutOfLineTruncateFloat32* ool)
     {
         saveVolatile(output);
 
-        masm.push(input);
-        masm.setupUnalignedABICall(output);
+        masm.Push(input);
+
+        if (gen->compilingWasm())
+            masm.setupWasmABICall();
+        else
+            masm.setupUnalignedABICall(output);
+
         masm.vcvtss2sd(input, input, input);
         masm.passABIArg(input.asDouble(), MoveOp::DOUBLE);
 
         if (gen->compilingWasm())
-            masm.callWithABI(wasm::SymbolicAddress::ToInt32);
+            masm.callWithABI(ins->mir()->bytecodeOffset(), wasm::SymbolicAddress::ToInt32);
         else
             masm.callWithABI(BitwiseCast<void*, int32_t(*)(double)>(JS::ToInt32));
 
         masm.storeCallWordResult(output);
-        masm.pop(input);
+        masm.Pop(input);
 
         restoreVolatile(output);
     }
@@ -960,12 +926,14 @@ CodeGeneratorX86::visitDivOrModI64(LDivOrModI64* lir)
     if (lir->canBeDivideByZero())
         masm.branchTest64(Assembler::Zero, rhs, rhs, temp, trap(lir, wasm::Trap::IntegerDivideByZero));
 
+    MDefinition* mir = lir->mir();
+
     // Handle an integer overflow exception from INT64_MIN / -1.
     if (lir->canBeNegativeOverflow()) {
         Label notmin;
         masm.branch64(Assembler::NotEqual, lhs, Imm64(INT64_MIN), &notmin);
         masm.branch64(Assembler::NotEqual, rhs, Imm64(-1), &notmin);
-        if (lir->mir()->isMod())
+        if (mir->isMod())
             masm.xor64(output, output);
         else
             masm.jump(trap(lir, wasm::Trap::IntegerOverflow));
@@ -973,17 +941,17 @@ CodeGeneratorX86::visitDivOrModI64(LDivOrModI64* lir)
         masm.bind(&notmin);
     }
 
-    masm.setupUnalignedABICall(temp);
+    masm.setupWasmABICall();
     masm.passABIArg(lhs.high);
     masm.passABIArg(lhs.low);
     masm.passABIArg(rhs.high);
     masm.passABIArg(rhs.low);
 
     MOZ_ASSERT(gen->compilingWasm());
-    if (lir->mir()->isMod())
-        masm.callWithABI(wasm::SymbolicAddress::ModI64);
+    if (mir->isMod())
+        masm.callWithABI(lir->bytecodeOffset(), wasm::SymbolicAddress::ModI64);
     else
-        masm.callWithABI(wasm::SymbolicAddress::DivI64);
+        masm.callWithABI(lir->bytecodeOffset(), wasm::SymbolicAddress::DivI64);
 
     // output in edx:eax, move to output register.
     masm.movl(edx, output.high);
@@ -1006,17 +974,18 @@ CodeGeneratorX86::visitUDivOrModI64(LUDivOrModI64* lir)
     if (lir->canBeDivideByZero())
         masm.branchTest64(Assembler::Zero, rhs, rhs, temp, trap(lir, wasm::Trap::IntegerDivideByZero));
 
-    masm.setupUnalignedABICall(temp);
+    masm.setupWasmABICall();
     masm.passABIArg(lhs.high);
     masm.passABIArg(lhs.low);
     masm.passABIArg(rhs.high);
     masm.passABIArg(rhs.low);
 
     MOZ_ASSERT(gen->compilingWasm());
-    if (lir->mir()->isMod())
-        masm.callWithABI(wasm::SymbolicAddress::UModI64);
+    MDefinition* mir = lir->mir();
+    if (mir->isMod())
+        masm.callWithABI(lir->bytecodeOffset(), wasm::SymbolicAddress::UModI64);
     else
-        masm.callWithABI(wasm::SymbolicAddress::UDivI64);
+        masm.callWithABI(lir->bytecodeOffset(), wasm::SymbolicAddress::UDivI64);
 
     // output in edx:eax, move to output register.
     masm.movl(edx, output.high);
@@ -1083,6 +1052,30 @@ CodeGeneratorX86::visitExtendInt32ToInt64(LExtendInt32ToInt64* lir)
         MOZ_ASSERT(output.high == edx);
         masm.cdq();
     }
+}
+
+void
+CodeGeneratorX86::visitSignExtendInt64(LSignExtendInt64* lir)
+{
+#ifdef DEBUG
+    Register64 input = ToRegister64(lir->getInt64Operand(0));
+    Register64 output = ToOutRegister64(lir);
+    MOZ_ASSERT(input.low == eax);
+    MOZ_ASSERT(output.low == eax);
+    MOZ_ASSERT(input.high == edx);
+    MOZ_ASSERT(output.high == edx);
+#endif
+    switch (lir->mode()) {
+      case MSignExtendInt64::Byte:
+        masm.move8SignExtend(eax, eax);
+        break;
+      case MSignExtendInt64::Half:
+        masm.move16SignExtend(eax, eax);
+        break;
+      case MSignExtendInt64::Word:
+        break;
+    }
+    masm.cdq();
 }
 
 void

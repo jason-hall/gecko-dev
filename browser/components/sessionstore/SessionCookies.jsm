@@ -93,7 +93,7 @@ var SessionCookiesInternal = {
         this._removeCookies(subject);
         break;
       default:
-        throw new Error("Unhandled cookie-changed notification.");
+        throw new Error("Unhandled session-cookie-changed notification.");
     }
   },
 
@@ -102,16 +102,17 @@ var SessionCookiesInternal = {
    * cookies service and puts them into the store if they're session cookies.
    */
   _ensureInitialized() {
-    if (!this._initialized) {
-      this._reloadCookies();
-      this._initialized = true;
-      Services.obs.addObserver(this, "cookie-changed", false);
-
-      // Listen for privacy level changes to reload cookies when needed.
-      Services.prefs.addObserver("browser.sessionstore.privacy_level", () => {
-        this._reloadCookies();
-      }, false);
+    if (this._initialized) {
+      return;
     }
+    this._reloadCookies();
+    this._initialized = true;
+    Services.obs.addObserver(this, "session-cookie-changed");
+
+    // Listen for privacy level changes to reload cookies when needed.
+    Services.prefs.addObserver("browser.sessionstore.privacy_level", () => {
+      this._reloadCookies();
+    });
   },
 
   /**
@@ -172,7 +173,7 @@ var SessionCookiesInternal = {
       return;
     }
 
-    let iter = Services.cookies.enumerator;
+    let iter = Services.cookies.sessionEnumerator;
     while (iter.hasMoreElements()) {
       this._addCookie(iter.getNext());
     }

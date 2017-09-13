@@ -10,6 +10,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/Sprintf.h"
 
 #include "jit/CompactBuffer.h"
 #include "jit/IonCode.h"
@@ -102,7 +103,7 @@ static constexpr Register InvalidReg { Registers::invalid_reg };
 static constexpr FloatRegister InvalidFloatReg;
 
 static constexpr Register StackPointer = sp;
-static constexpr Register FramePointer = InvalidReg;
+static constexpr Register FramePointer = fp;
 static constexpr Register ReturnReg = v0;
 static constexpr FloatRegister ReturnSimd128Reg = InvalidFloatReg;
 static constexpr FloatRegister ScratchSimd128Reg = InvalidFloatReg;
@@ -762,6 +763,9 @@ class MIPSBufferWithExecutableCopy : public MIPSBuffer
 
 class AssemblerMIPSShared : public AssemblerShared
 {
+#ifdef JS_JITSPEW
+   Sprinter* printer;
+#endif
   public:
 
     enum Condition {
@@ -877,14 +881,16 @@ class AssemblerMIPSShared : public AssemblerShared
 
     CompactBufferWriter jumpRelocations_;
     CompactBufferWriter dataRelocations_;
-    CompactBufferWriter preBarriers_;
 
     MIPSBufferWithExecutableCopy m_buffer;
 
   public:
     AssemblerMIPSShared()
       : m_buffer(),
-        isFinished(false)
+#ifdef JS_JITSPEW
+       printer(nullptr),
+#endif
+       isFinished(false)
     { }
 
     static Condition InvertCondition(Condition cond);
@@ -903,21 +909,46 @@ class AssemblerMIPSShared : public AssemblerShared
             dataRelocations_.writeUnsigned(nextOffset().getOffset());
         }
     }
-    void writePrebarrierOffset(CodeOffset label) {
-        preBarriers_.writeUnsigned(label.offset());
-    }
 
   public:
     bool oom() const;
 
-    void disableProtection() {}
-    void enableProtection() {}
-    void setLowerBoundForProtection(size_t) {}
-    void unprotectRegion(unsigned char*, size_t) {}
-    void reprotectRegion(unsigned char*, size_t) {}
-
     void setPrinter(Sprinter* sp) {
+#ifdef JS_JITSPEW
+            printer = sp;
+#endif
     }
+
+#ifdef JS_JITSPEW
+    inline void spew(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3) {
+        if (MOZ_UNLIKELY(printer || JitSpewEnabled(JitSpew_Codegen))) {
+            va_list va;
+            va_start(va, fmt);
+            spew(fmt, va);
+            va_end(va);
+        }
+    }
+
+    void decodeBranchInstAndSpew(InstImm branch);
+#else
+    MOZ_ALWAYS_INLINE void spew(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3) {
+    }
+#endif
+
+#ifdef JS_JITSPEW
+    MOZ_COLD void spew(const char* fmt, va_list va) MOZ_FORMAT_PRINTF(2, 0) {
+        // Buffer to hold the formatted string. Note that this may contain
+        // '%' characters, so do not pass it directly to printf functions.
+        char buf[200];
+
+        int i = VsprintfLiteral(buf, fmt, va);
+        if (i > -1) {
+            if (printer)
+                printer->printf("%s\n", buf);
+            js::jit::JitSpew(js::jit::JitSpew_Codegen, "%s", buf);
+        }
+    }
+#endif
 
     static const Register getStackPointer() {
         return StackPointer;
@@ -931,14 +962,12 @@ class AssemblerMIPSShared : public AssemblerShared
     void executableCopy(void* buffer, bool flushICache = true);
     void copyJumpRelocationTable(uint8_t* dest);
     void copyDataRelocationTable(uint8_t* dest);
-    void copyPreBarrierTable(uint8_t* dest);
 
     // Size of the instruction stream, in bytes.
     size_t size() const;
     // Size of the jump relocation table, in bytes.
     size_t jumpRelocationTableBytes() const;
     size_t dataRelocationTableBytes() const;
-    size_t preBarrierTableBytes() const;
 
     // Size of the data table, in bytes.
     size_t bytesNeeded() const;
@@ -1208,6 +1237,9 @@ class AssemblerMIPSShared : public AssemblerShared
     void bind(CodeOffset* label) {
         label->bind(currentOffset());
     }
+    void use(CodeOffset* label) {
+        label->bind(currentOffset());
+    }
     uint32_t currentOffset() {
         return nextOffset().getOffset();
     }
@@ -1266,8 +1298,7 @@ class AssemblerMIPSShared : public AssemblerShared
     }
 
     void comment(const char* msg) {
-        // This is not implemented because setPrinter() is not implemented.
-        // TODO spew("; %s", msg);
+        spew("; %s", msg);
     }
 
     static uint32_t NopSize() { return 4; }

@@ -19,7 +19,9 @@
 #include "AlternateServices.h"
 #include "ARefBase.h"
 #include "nsWeakReference.h"
+#include "TCPFastOpen.h"
 
+#include "nsINamed.h"
 #include "nsIObserver.h"
 #include "nsITimer.h"
 
@@ -54,7 +56,12 @@ public:
         MAX_CONNECTIONS,
         MAX_PERSISTENT_CONNECTIONS_PER_HOST,
         MAX_PERSISTENT_CONNECTIONS_PER_PROXY,
-        MAX_REQUEST_DELAY
+        MAX_REQUEST_DELAY,
+        THROTTLING_ENABLED,
+        THROTTLING_SUSPEND_FOR,
+        THROTTLING_RESUME_FOR,
+        THROTTLING_RESUME_IN,
+        THROTTLING_TIME_WINDOW
     };
 
     //-------------------------------------------------------------------------
@@ -67,7 +74,12 @@ public:
                                uint16_t maxConnections,
                                uint16_t maxPersistentConnectionsPerHost,
                                uint16_t maxPersistentConnectionsPerProxy,
-                               uint16_t maxRequestDelay);
+                               uint16_t maxRequestDelay,
+                               bool throttleEnabled,
+                               uint32_t throttleSuspendFor,
+                               uint32_t throttleResumeFor,
+                               uint32_t throttleResumeIn,
+                               uint32_t throttleTimeWindow);
     MOZ_MUST_USE nsresult Shutdown();
 
     //-------------------------------------------------------------------------
@@ -93,6 +105,10 @@ public:
     // added to the connection manager via AddTransaction.
     MOZ_MUST_USE nsresult RescheduleTransaction(nsHttpTransaction *,
                                                 int32_t priority);
+
+    // TOOD
+    void UpdateClassOfServiceOnTransaction(nsHttpTransaction *,
+                                           uint32_t classOfService);
 
     // cancels a transaction w/ the given reason.
     MOZ_MUST_USE nsresult CancelTransaction(nsHttpTransaction *,
@@ -202,6 +218,35 @@ public:
 
     nsresult UpdateCurrentTopLevelOuterContentWindowId(uint64_t aWindowId);
 
+    // tracks and untracks active transactions according their throttle status
+    void AddActiveTransaction(nsHttpTransaction* aTrans);
+    void RemoveActiveTransaction(nsHttpTransaction* aTrans,
+                                 Maybe<bool> const& aOverride = Nothing());
+    void UpdateActiveTransaction(nsHttpTransaction* aTrans);
+
+    // called by nsHttpTransaction::WriteSegments.  decides whether the transaction
+    // should stop reading data based on: the throttling ticker status, overall
+    // status of all active transactions regarding active tab and respective
+    // throttling state.
+    bool ShouldStopReading(nsHttpTransaction* aTrans);
+
+    // prolongs the throttling time window to now + the window preferred size
+    // called when:
+    // - any transaction is activated
+    // - or when a currently unthrottled transaction for the active window receives data
+    void TouchThrottlingTimeWindow(bool aEnsureTicker = true);
+
+    // return true iff the connection has pending transactions for the active tab.
+    // it's mainly used to disallow throttling (stop reading) of a response
+    // belonging to the same conn info to free up a connection ASAP.
+    // NOTE: relatively expensive to call, there are two hashtable lookups.
+    bool IsConnEntryUnderPressure(nsHttpConnectionInfo*);
+
+    uint64_t CurrentTopLevelOuterContentWindowId()
+    {
+        return mCurrentTopLevelOuterContentWindowId;
+    }
+
 private:
     virtual ~nsHttpConnectionMgr();
 
@@ -217,14 +262,16 @@ private:
     class nsConnectionEntry
     {
     public:
+        NS_INLINE_DECL_THREADSAFE_REFCOUNTING(nsConnectionEntry)
         explicit nsConnectionEntry(nsHttpConnectionInfo *ci);
-        ~nsConnectionEntry();
 
         RefPtr<nsHttpConnectionInfo> mConnInfo;
         nsTArray<RefPtr<PendingTransactionInfo> > mUrgentStartQ;// the urgent start transaction queue
 
         // This table provides a mapping from top level outer content window id
         // to a queue of pending transaction information.
+        // The transaction's order in pending queue is decided by whether it's a
+        // blocking transaction and its priority.
         // Note that the window id could be 0 if the http request
         // is initialized without a window.
         nsClassHashtable<nsUint64HashKey,
@@ -232,6 +279,7 @@ private:
         nsTArray<RefPtr<nsHttpConnection> >  mActiveConns; // active connections
         nsTArray<RefPtr<nsHttpConnection> >  mIdleConns;   // idle persistent connections
         nsTArray<nsHalfOpenSocket*>  mHalfOpens;   // half open connections
+        nsTArray<RefPtr<nsHalfOpenSocket> >  mHalfOpenFastOpenBackups;   // backup half open connections for connection in fast open phase
 
         bool AvailableForDispatchNow();
 
@@ -266,6 +314,11 @@ private:
         // True if this connection entry has initiated a socket
         bool mUsedForConnection : 1;
 
+        // Try using TCP Fast Open.
+        bool mUseFastOpen : 1;
+
+        bool mDoNotDestroy : 1;
+
         // Set the IP family preference flags according the connected family
         void RecordIPFamilyPreference(uint16_t family);
         // Resets all flags to their default values
@@ -277,7 +330,8 @@ private:
         // Add a transaction information into the pending queue in
         // |mPendingTransactionTable| according to the transaction's
         // top level outer content window id.
-        void InsertTransaction(PendingTransactionInfo *info);
+        void InsertTransaction(PendingTransactionInfo *info,
+                               bool aInsertAsFirstForTheSamePriority = false);
 
         // Append transactions to the |result| whose window id
         // is equal to |windowId|.
@@ -297,6 +351,9 @@ private:
 
         // Remove the empty pendingQ in |mPendingTransactionTable|.
         void RemoveEmptyPendingQ();
+
+    private:
+        ~nsConnectionEntry();
     };
 
 public:
@@ -312,7 +369,9 @@ private:
                                    public nsITransportEventSink,
                                    public nsIInterfaceRequestor,
                                    public nsITimerCallback,
-                                   public nsSupportsWeakReference
+                                   public nsINamed,
+                                   public nsSupportsWeakReference,
+                                   public TCPFastOpen
     {
         ~nsHalfOpenSocket();
 
@@ -323,6 +382,7 @@ private:
         NS_DECL_NSITRANSPORTEVENTSINK
         NS_DECL_NSIINTERFACEREQUESTOR
         NS_DECL_NSITIMERCALLBACK
+        NS_DECL_NSINAMED
 
         nsHalfOpenSocket(nsConnectionEntry *ent,
                          nsAHttpTransaction *trans,
@@ -358,14 +418,24 @@ private:
 
         bool Claim();
         void Unclaim();
+
+        bool FastOpenEnabled() override;
+        nsresult StartFastOpen() override;
+        void SetFastOpenConnected(nsresult, bool aWillRetry) override;
+        void FastOpenNotSupported() override;
+        void SetFastOpenStatus(uint8_t tfoStatus) override;
+        void CancelFastOpenConnection();
+
     private:
+        nsresult SetupConn(nsIAsyncOutputStream *out,
+                           bool aFastOpen);
+
         // To find out whether |mTransaction| is still in the connection entry's
         // pending queue. If the transaction is found and |removeWhenFound| is
         // true, the transaction will be removed from the pending queue.
         already_AddRefed<PendingTransactionInfo>
         FindTransactionHelper(bool removeWhenFound);
 
-        nsConnectionEntry              *mEnt;
         RefPtr<nsAHttpTransaction>     mTransaction;
         bool                           mDispatchedMTransaction;
         nsCOMPtr<nsISocketTransport>   mSocketTransport;
@@ -392,12 +462,6 @@ private:
         TimeStamp             mPrimarySynStarted;
         TimeStamp             mBackupSynStarted;
 
-        // for syn retry
-        nsCOMPtr<nsITimer>             mSynTimer;
-        nsCOMPtr<nsISocketTransport>   mBackupTransport;
-        nsCOMPtr<nsIAsyncOutputStream> mBackupStreamOut;
-        nsCOMPtr<nsIAsyncInputStream>  mBackupStreamIn;
-
         // mHasConnected tracks whether one of the sockets has completed the
         // connection process. It may have completed unsuccessfully.
         bool                           mHasConnected;
@@ -411,6 +475,16 @@ private:
         // transactions.
         bool                           mFreeToUse;
         nsresult                       mPrimaryStreamStatus;
+
+        bool                           mFastOpenInProgress;
+        RefPtr<nsHttpConnection>       mConnectionNegotiatingFastOpen;
+        uint8_t                        mFastOpenStatus;
+
+        RefPtr<nsConnectionEntry>      mEnt;
+        nsCOMPtr<nsITimer>             mSynTimer;
+        nsCOMPtr<nsISocketTransport>   mBackupTransport;
+        nsCOMPtr<nsIAsyncOutputStream> mBackupStreamOut;
+        nsCOMPtr<nsIAsyncInputStream>  mBackupStreamIn;
     };
     friend class nsHalfOpenSocket;
 
@@ -456,6 +530,11 @@ private:
     uint16_t mMaxPersistConnsPerHost;
     uint16_t mMaxPersistConnsPerProxy;
     uint16_t mMaxRequestDelay; // in seconds
+    bool mThrottleEnabled;
+    uint32_t mThrottleSuspendFor;
+    uint32_t mThrottleResumeFor;
+    uint32_t mThrottleResumeIn;
+    TimeDuration mThrottleTimeWindow;
     Atomic<bool, mozilla::Relaxed> mIsShuttingDown;
 
     //-------------------------------------------------------------------------
@@ -465,13 +544,29 @@ private:
     MOZ_MUST_USE bool ProcessPendingQForEntry(nsConnectionEntry *,
                                               bool considerAll);
     bool DispatchPendingQ(nsTArray<RefPtr<PendingTransactionInfo>> &pendingQ,
-                                   nsConnectionEntry *ent,
-                                   bool considerAll);
+                          nsConnectionEntry *ent,
+                          bool considerAll);
 
-    // Given the connection entry, return the available count for creating
-    // new connections. Return 0 if the active connection count is
-    // exceeded |mMaxPersistConnsPerProxy| or |mMaxPersistConnsPerHost|.
-    uint32_t AvailableNewConnectionCount(nsConnectionEntry * ent);
+    // This function selects transactions from mPendingTransactionTable to dispatch
+    // according to the following conditions:
+    // 1. When ActiveTabPriority() is false, only get transactions from the queue
+    //    whose window id is 0.
+    // 2. If |considerAll| is false, either get transactions from the focused window
+    //    queue or non-focused ones.
+    // 3. If |considerAll| is true, fill the |pendingQ| with the transactions from
+    //    both focused window and non-focused window queues.
+    void PreparePendingQForDispatching(nsConnectionEntry *ent,
+                                       nsTArray<RefPtr<PendingTransactionInfo>> &pendingQ,
+                                       bool considerAll);
+
+    // Return total active connection count, which is the sum of
+    // active connections and unconnected half open connections.
+    uint32_t TotalActiveConnections(nsConnectionEntry *ent) const;
+
+    // Return |mMaxPersistConnsPerProxy| or |mMaxPersistConnsPerHost|,
+    // depending whether the proxy is used.
+    uint32_t MaxPersistConnections(nsConnectionEntry *ent) const;
+
     bool     AtActiveConnectionLimit(nsConnectionEntry *, uint32_t caps);
     MOZ_MUST_USE nsresult TryDispatchTransaction(nsConnectionEntry *ent,
                                                  bool onlyReusedConnection,
@@ -505,7 +600,8 @@ private:
                                PendingTransactionInfo * pendingTransInfo);
 
     void InsertTransactionSorted(nsTArray<RefPtr<PendingTransactionInfo> > &pendingQ,
-                                 PendingTransactionInfo *pendingTransInfo);
+                                 PendingTransactionInfo *pendingTransInfo,
+                                 bool aInsertAsFirstForTheSamePriority = false);
 
     nsConnectionEntry *GetOrCreateConnectionEntry(nsHttpConnectionInfo *,
                                                   bool allowWildCard);
@@ -544,6 +640,7 @@ private:
     void OnMsgShutdownConfirm      (int32_t, ARefBase *);
     void OnMsgNewTransaction       (int32_t, ARefBase *);
     void OnMsgReschedTransaction   (int32_t, ARefBase *);
+    void OnMsgUpdateClassOfServiceOnTransaction  (int32_t, ARefBase *);
     void OnMsgCancelTransaction    (int32_t, ARefBase *);
     void OnMsgCancelTransactions   (int32_t, ARefBase *);
     void OnMsgProcessPendingQ      (int32_t, ARefBase *);
@@ -594,7 +691,7 @@ private:
     // nsConnectionEntry object. It is unlocked and therefore must only
     // be accessed from the socket thread.
     //
-    nsClassHashtable<nsCStringHashKey, nsConnectionEntry> mCT;
+    nsRefPtrHashtable<nsCStringHashKey, nsConnectionEntry> mCT;
 
     // Read Timeout Tick handlers
     void TimeoutTick();
@@ -604,6 +701,75 @@ private:
 
     nsCString mLogData;
     uint64_t mCurrentTopLevelOuterContentWindowId;
+
+    // Called on a pref change
+    void SetThrottlingEnabled(bool aEnable);
+
+    // we only want to throttle for a limited amount of time after a new
+    // active transaction is added so that we don't block downloads on comet,
+    // socket and any kind of longstanding requests that don't need bandwidth.
+    // these methods track this time.
+    bool InThrottlingTimeWindow();
+
+    // Two hashtalbes keeping track of active transactions regarding window id and throttling.
+    // Used by the throttling algorithm to obtain number of transactions for the active tab
+    // and for inactive tabs according their throttle status.
+    // mActiveTransactions[0] are all unthrottled transactions, mActiveTransactions[1] throttled.
+    nsClassHashtable<nsUint64HashKey, nsTArray<RefPtr<nsHttpTransaction>>> mActiveTransactions[2];
+
+    // Whether we are inside the "stop reading" interval, altered by the throttle ticker
+    bool mThrottlingInhibitsReading;
+
+    TimeStamp mThrottlingWindowEndsAt;
+
+    // ticker for the 'stop reading'/'resume reading' signal
+    nsCOMPtr<nsITimer> mThrottleTicker;
+    // Checks if the combination of active transactions requires the ticker.
+    bool IsThrottleTickerNeeded();
+    // The method also unschedules the delayed resume of background tabs timer
+    // if the ticker was about to be scheduled.
+    void EnsureThrottleTickerIfNeeded();
+    // Drops also the mThrottlingInhibitsReading flag.  Immediate or delayed resume
+    // of currently throttled transactions is not affected by this method.
+    void DestroyThrottleTicker();
+    // Handler for the ticker: alters the mThrottlingInhibitsReading flag.
+    void ThrottlerTick();
+
+    // mechanism to delay immediate resume of background tabs and chrome initiated
+    // throttled transactions after the last transaction blocking their unthrottle
+    // has been removed.  Needs to be delayed because during a page load there is
+    // a number of intervals when there is no transaction that would cause throttling.
+    // Hence, throttling of long standing responses, like downloads, would be mostly
+    // ineffective if resumed during every such interval.
+    nsCOMPtr<nsITimer> mDelayedResumeReadTimer;
+    // Schedule the resume
+    void DelayedResumeBackgroundThrottledTransactions();
+    // Simply destroys the timer
+    void CancelDelayedResumeBackgroundThrottledTransactions();
+    // Handler for the timer: resumes all background throttled transactions
+    void ResumeBackgroundThrottledTransactions();
+
+    // Simple helpers, iterates the given hash/array and resume.
+    // @param excludeActive: skip active tabid transactions.
+    void ResumeReadOf(nsClassHashtable<nsUint64HashKey, nsTArray<RefPtr<nsHttpTransaction>>>&,
+                      bool excludeActive = false);
+    void ResumeReadOf(nsTArray<RefPtr<nsHttpTransaction>>*);
+
+    // Cached status of the active tab active transactions existence,
+    // saves a lot of hashtable lookups
+    bool mActiveTabTransactionsExist;
+    bool mActiveTabUnthrottledTransactionsExist;
+
+    void LogActiveTransactions(char);
+
+    nsTArray<RefPtr<PendingTransactionInfo>>*
+    GetTransactionPendingQHelper(nsConnectionEntry *ent, nsAHttpTransaction *trans);
+
+    // When current active tab is changed, this function uses
+    // |previousWindowId| to select background transactions and
+    // mCurrentTopLevelOuterContentWindowId| to select foreground transactions.
+    // Then, it notifies selected transactions' connection of the new active tab id.
+    void NotifyConnectionOfWindowIdChange(uint64_t previousWindowId);
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsHttpConnectionMgr::nsHalfOpenSocket, NS_HALFOPENSOCKET_IID)

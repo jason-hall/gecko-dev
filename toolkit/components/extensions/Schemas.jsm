@@ -21,21 +21,24 @@ Cu.import("resource://gre/modules/ExtensionUtils.jsm");
 var {
   DefaultMap,
   DefaultWeakMap,
-  StartupCache,
   instanceOf,
 } = ExtensionUtils;
 
+XPCOMUtils.defineLazyModuleGetter(this, "ExtensionParent",
+                                  "resource://gre/modules/ExtensionParent.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
-				  "resource://gre/modules/NetUtil.jsm");
+                                  "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyServiceGetter(this, "contentPolicyService",
                                    "@mozilla.org/addons/content-policy;1",
                                    "nsIAddonContentPolicy");
+
+XPCOMUtils.defineLazyGetter(this, "StartupCache", () => ExtensionParent.StartupCache);
 
 this.EXPORTED_SYMBOLS = ["Schemas"];
 
 const {DEBUG} = AppConstants;
 
-/* globals Schemas, URL */
+const isParentProcess = Services.appinfo.processType === Services.appinfo.PROCESS_TYPE_DEFAULT;
 
 function readJSON(url) {
   return new Promise((resolve, reject) => {
@@ -64,6 +67,48 @@ function readJSON(url) {
   });
 }
 
+function stripDescriptions(json, stripThis = true) {
+  if (Array.isArray(json)) {
+    for (let i = 0; i < json.length; i++) {
+      if (typeof json[i] === "object" && json[i] !== null) {
+        json[i] = stripDescriptions(json[i]);
+      }
+    }
+    return json;
+  }
+
+  let result = {};
+
+  // Objects are handled much more efficiently, both in terms of memory and
+  // CPU, if they have the same shape as other objects that serve the same
+  // purpose. So, normalize the order of properties to increase the chances
+  // that the majority of schema objects wind up in large shape groups.
+  for (let key of Object.keys(json).sort()) {
+    if (stripThis && key === "description" && typeof json[key] === "string") {
+      continue;
+    }
+
+    if (typeof json[key] === "object" && json[key] !== null) {
+      result[key] = stripDescriptions(json[key], key !== "properties");
+    } else {
+      result[key] = json[key];
+    }
+  }
+
+  return result;
+}
+
+async function readJSONAndBlobbify(url) {
+  let json = await readJSON(url);
+
+  // We don't actually use descriptions at runtime, and they make up about a
+  // third of the size of our structured clone data, so strip them before
+  // blobbifying.
+  json = stripDescriptions(json);
+
+  return new StructuredCloneHolder(json);
+}
+
 /**
  * Defines a lazy getter for the given property on the given object. Any
  * security wrappers are waived on the object before the property is
@@ -83,7 +128,7 @@ function readJSON(url) {
  *        value.
  */
 function exportLazyGetter(object, prop, getter) {
-  object = Cu.waiveXrays(object);
+  object = ChromeUtils.waiveXrays(object);
 
   let redefine = value => {
     if (value === undefined) {
@@ -137,7 +182,7 @@ function exportLazyGetter(object, prop, getter) {
  *        undefined, which will cause the property to be deleted.
  */
 function exportLazyProperty(object, prop, getter) {
-  object = Cu.waiveXrays(object);
+  object = ChromeUtils.waiveXrays(object);
 
   let redefine = obj => {
     let desc = getter.call(obj);
@@ -199,21 +244,23 @@ function parsePattern(pattern) {
 }
 
 function getValueBaseType(value) {
-  let t = typeof(value);
-  if (t == "object") {
-    if (value === null) {
-      return "null";
-    } else if (Array.isArray(value)) {
-      return "array";
-    } else if (Object.prototype.toString.call(value) == "[object ArrayBuffer]") {
-      return "binary";
-    }
-  } else if (t == "number") {
-    if (value % 1 == 0) {
-      return "integer";
-    }
+  let type = typeof value;
+  switch (type) {
+    case "object":
+      if (value === null) {
+        return "null";
+      }
+      if (Array.isArray(value)) {
+        return "array";
+      }
+      break;
+
+    case "number":
+      if (value % 1 === 0) {
+        return "integer";
+      }
   }
-  return t;
+  return type;
 }
 
 // Methods of Context that are used by Schemas.normalize. These methods can be
@@ -232,6 +279,15 @@ const CONTEXT_FOR_INJECTION = [
   "isPermissionRevokable",
   "shouldInject",
 ];
+
+// If the message is a function, call it and return the result.
+// Otherwise, assume it's a string.
+function forceString(msg) {
+  if (typeof msg === "function") {
+    return msg();
+  }
+  return msg;
+}
 
 /**
  * A context for schema validation and error reporting. This class is only used
@@ -301,8 +357,9 @@ class Context {
   checkLoadURL(url) {
     let ssm = Services.scriptSecurityManager;
     try {
-      ssm.checkLoadURIStrWithPrincipal(this.principal, url,
-                                       ssm.DISALLOW_INHERIT_PRINCIPAL);
+      ssm.checkLoadURIWithPrincipal(this.principal,
+                                    Services.io.newURI(url),
+                                    ssm.DISALLOW_INHERIT_PRINCIPAL);
     } catch (e) {
       return false;
     }
@@ -341,10 +398,12 @@ class Context {
    * If the context has a `currentTarget` value, this is prepended to
    * the message to indicate the location of the error.
    *
-   * @param {string} errorMessage
+   * @param {string|function} errorMessage
    *        The error message which will be displayed when this is the
-   *        only possible matching schema.
-   * @param {string} choicesMessage
+   *        only possible matching schema. If a function is passed, it
+   *        will be evaluated when the error string is first needed, and
+   *        must return a string.
+   * @param {string|function} choicesMessage
    *        The message describing the valid what constitutes a valid
    *        value for this schema, which will be displayed when multiple
    *        schema choices are available and none match.
@@ -365,7 +424,8 @@ class Context {
     }
 
     if (this.currentTarget) {
-      return {error: `Error processing ${this.currentTarget}: ${errorMessage}`};
+      let {currentTarget} = this;
+      return {error: () => `Error processing ${currentTarget}: ${forceString(errorMessage)}`};
     }
     return {error: errorMessage};
   }
@@ -382,7 +442,7 @@ class Context {
    * @returns {Error}
    */
   makeError(message) {
-    let {error} = this.error(message);
+    let error = forceString(this.error(message).error);
     if (this.cloneScope) {
       return new this.cloneScope.Error(error);
     }
@@ -433,19 +493,23 @@ class Context {
     try {
       let result = callback();
 
-      return {result, choices: Array.from(choices)};
+      return {result, choices};
     } finally {
       this.currentChoices = currentChoices;
       this.choicePathIndex = choicePathIndex;
 
-      choices = Array.from(choices);
-      if (choices.length == 1) {
-        currentChoices.add(choices[0]);
-      } else if (choices.length) {
-        let n = choices.length - 1;
-        choices[n] = `or ${choices[n]}`;
+      if (choices.size == 1) {
+        for (let choice of choices) {
+          currentChoices.add(choice);
+        }
+      } else if (choices.size) {
+        this.error(null, () => {
+          let array = Array.from(choices, forceString);
+          let n = array.length - 1;
+          array[n] = `or ${array[n]}`;
 
-        this.error(null, `must either [${choices.join(", ")}]`);
+          return `must either [${array.join(", ")}]`;
+        });
       }
     }
   }
@@ -557,7 +621,7 @@ class InjectionEntry {
       }
 
       try {
-        let unwrapped = Cu.waiveXrays(this.parentObj);
+        let unwrapped = ChromeUtils.waiveXrays(this.parentObj);
         delete unwrapped[this.name];
       } catch (e) {
         Cu.reportError(e);
@@ -808,6 +872,22 @@ class InjectionContext extends Context {
  * format.
  */
 const FORMATS = {
+  hostname(string, context) {
+    let valid = true;
+
+    try {
+      valid = new URL(`http://${string}`).host === string;
+    } catch (e) {
+      valid = false;
+    }
+
+    if (!valid) {
+      throw new Error(`Invalid hostname ${string}`);
+    }
+
+    return string;
+  },
+
   url(string, context) {
     let url = new URL(string).href;
 
@@ -848,6 +928,19 @@ const FORMATS = {
     }
 
     throw new SyntaxError(`String ${JSON.stringify(string)} must be a relative URL`);
+  },
+
+  imageDataOrStrictRelativeUrl(string, context) {
+    // Do not accept a string which resolves as an absolute URL, or any
+    // protocol-relative URL, except PNG or JPG data URLs
+    if (!string.startsWith("data:image/png;base64,") && !string.startsWith("data:image/jpeg;base64,")) {
+      try {
+        return FORMATS.strictRelativeUrl(string, context);
+      } catch (e) {
+        throw new SyntaxError(`String ${JSON.stringify(string)} must be a relative or PNG or JPG data:image URL`);
+      }
+    }
+    return string;
   },
 
   contentSecurityPolicy(string, context) {
@@ -1104,13 +1197,13 @@ class Type extends Entry {
     }
 
     let choice;
-    if (/^[aeiou]/.test(type)) {
+    if ("aeiou".includes(type[0])) {
       choice = `be an ${type} value`;
     } else {
       choice = `be a ${type} value`;
     }
 
-    return context.error(`Expected ${type} instead of ${JSON.stringify(value)}`,
+    return context.error(() => `Expected ${type} instead of ${JSON.stringify(value)}`,
                          choice);
   }
 }
@@ -1169,14 +1262,20 @@ class ChoiceType extends Type {
     if (result) {
       return result;
     }
-    if (choices.length <= 1) {
+    if (choices.size <= 1) {
       return error;
     }
 
+    choices = Array.from(choices, forceString);
     let n = choices.length - 1;
     choices[n] = `or ${choices[n]}`;
 
-    let message = `Value must either: ${choices.join(", ")}`;
+    let message;
+    if (typeof value === "object") {
+      message = () => `Value must either: ${choices.join(", ")}`;
+    } else {
+      message = () => `Value ${JSON.stringify(value)} must either: ${choices.join(", ")}`;
+    }
 
     return context.error(message, null);
   }
@@ -1301,21 +1400,21 @@ class StringType extends Type {
 
       let choices = this.enumeration.map(JSON.stringify).join(", ");
 
-      return context.error(`Invalid enumeration value ${JSON.stringify(value)}`,
+      return context.error(() => `Invalid enumeration value ${JSON.stringify(value)}`,
                            `be one of [${choices}]`);
     }
 
     if (value.length < this.minLength) {
-      return context.error(`String ${JSON.stringify(value)} is too short (must be ${this.minLength})`,
+      return context.error(() => `String ${JSON.stringify(value)} is too short (must be ${this.minLength})`,
                            `be longer than ${this.minLength}`);
     }
     if (value.length > this.maxLength) {
-      return context.error(`String ${JSON.stringify(value)} is too long (must be ${this.maxLength})`,
+      return context.error(() => `String ${JSON.stringify(value)} is too long (must be ${this.maxLength})`,
                            `be shorter than ${this.maxLength}`);
     }
 
     if (this.pattern && !this.pattern.test(value)) {
-      return context.error(`String ${JSON.stringify(value)} must match ${this.pattern}`,
+      return context.error(() => `String ${JSON.stringify(value)} must match ${this.pattern}`,
                            `match the pattern ${this.pattern.toSource()}`);
     }
 
@@ -1350,6 +1449,7 @@ class StringType extends Type {
 }
 
 let FunctionEntry;
+let Event;
 let SubModuleType;
 
 class ObjectType extends Type {
@@ -1460,28 +1560,13 @@ class ObjectType extends Type {
     // Proxy). Then we copy the properties out of it into a normal
     // object using a waiver wrapper.
 
-    let klass = Cu.getClassName(value, true);
+    let klass = ChromeUtils.getClassName(value, true);
     if (klass != "Object") {
       throw context.error(`Expected a plain JavaScript object, got a ${klass}`,
                           `be a plain JavaScript object`);
     }
 
-    let properties = Object.create(null);
-
-    let waived = Cu.waiveXrays(value);
-    for (let prop of Object.getOwnPropertyNames(waived)) {
-      let desc = Object.getOwnPropertyDescriptor(waived, prop);
-      if (desc.get || desc.set) {
-        throw context.error("Objects cannot have getters or setters on properties",
-                            "contain no getter or setter properties");
-      }
-      // Chrome ignores non-enumerable properties.
-      if (desc.enumerable) {
-        properties[prop] = Cu.unwaiveXrays(desc.value);
-      }
-    }
-
-    return properties;
+    return ChromeUtils.shallowClone(value);
   }
 
   checkProperty(context, prop, propType, result, properties, remainingProps) {
@@ -1515,7 +1600,7 @@ class ObjectType extends Type {
 
     if (error) {
       if (onError == "warn") {
-        context.logError(error.error);
+        context.logError(forceString(error.error));
       } else if (onError != "ignore") {
         throw error;
       }
@@ -1613,12 +1698,20 @@ SubModuleType = class SubModuleType extends Type {
     let functions = schema.functions.filter(fun => !fun.unsupported)
                           .map(fun => FunctionEntry.parseSchema(fun, path));
 
-    return new this(functions);
+    let events = [];
+
+    if (schema.events) {
+      events = schema.events.filter(event => !event.unsupported)
+                     .map(event => Event.parseSchema(event, path));
+    }
+
+    return new this(functions, events);
   }
 
-  constructor(functions) {
+  constructor(functions, events) {
     super();
     this.functions = functions;
+    this.events = events;
   }
 };
 
@@ -1707,7 +1800,7 @@ class ArrayType extends Type {
   static parseSchema(schema, path, extraProperties = []) {
     this.checkSchemaProperties(schema, path, extraProperties);
 
-    let items = Schemas.parseSchema(schema.items, path);
+    let items = Schemas.parseSchema(schema.items, path, ["onError"]);
 
     return new this(schema, items, schema.minItems || 0, schema.maxItems || Infinity);
   }
@@ -1717,6 +1810,7 @@ class ArrayType extends Type {
     this.itemType = itemType;
     this.minItems = minItems;
     this.maxItems = maxItems;
+    this.onError = schema.items.onError || null;
   }
 
   normalize(value, context) {
@@ -1730,7 +1824,12 @@ class ArrayType extends Type {
     for (let [i, element] of value.entries()) {
       element = context.withPath(String(i), () => this.itemType.normalize(element, context));
       if (element.error) {
-        return element;
+        if (this.onError == "warn") {
+          context.logError(forceString(element.error));
+        } else if (this.onError != "ignore") {
+          return element;
+        }
+        continue;
       }
       result.push(element.value);
     }
@@ -1755,7 +1854,8 @@ class ArrayType extends Type {
 
 class FunctionType extends Type {
   static get EXTRA_PROPERTIES() {
-    return ["parameters", "async", "returns", ...super.EXTRA_PROPERTIES];
+    return ["parameters", "async", "returns", "requireUserInput",
+            ...super.EXTRA_PROPERTIES];
   }
 
   static parseSchema(schema, path, extraProperties = []) {
@@ -1806,14 +1906,16 @@ class FunctionType extends Type {
     }
 
 
-    return new this(schema, parameters, isAsync, hasAsyncCallback);
+    return new this(schema, parameters, isAsync, hasAsyncCallback,
+                    !!schema.requireUserInput);
   }
 
-  constructor(schema, parameters, isAsync, hasAsyncCallback) {
+  constructor(schema, parameters, isAsync, hasAsyncCallback, requireUserInput) {
     super(schema);
     this.parameters = parameters;
     this.isAsync = isAsync;
     this.hasAsyncCallback = hasAsyncCallback;
+    this.requireUserInput = requireUserInput;
   }
 
   normalize(value, context) {
@@ -1877,7 +1979,7 @@ class TypeProperty extends Entry {
       let setStub = (value) => {
         let normalized = this.type.normalize(value, context);
         if (normalized.error) {
-          this.throwError(context, normalized.error);
+          this.throwError(context, forceString(normalized.error));
         }
 
         apiImpl.setProperty(normalized.value);
@@ -1941,12 +2043,17 @@ class SubModuleProperty extends Entry {
       context.injectInto(fun, obj, fun.name, subpath, ns);
     }
 
+    let events = type.events;
+    for (let event of events) {
+      context.injectInto(event, obj, event.name, subpath, ns);
+    }
+
     // TODO: Inject this.properties.
 
     return {
       descriptor: {value: obj},
       revoke() {
-        let unwrapped = Cu.waiveXrays(obj);
+        let unwrapped = ChromeUtils.waiveXrays(obj);
         for (let fun of functions) {
           try {
             delete unwrapped[fun.name];
@@ -2040,7 +2147,7 @@ class CallEntry extends Entry {
       let parameter = this.parameters[parameterIndex];
       let r = parameter.type.normalize(arg, context);
       if (r.error) {
-        this.throwError(context, `Type error for parameter ${parameter.name} (${r.error})`);
+        this.throwError(context, `Type error for parameter ${parameter.name} (${forceString(r.error)})`);
       }
       return r.value;
     });
@@ -2052,6 +2159,16 @@ class CallEntry extends Entry {
 // Represents a "function" defined in a schema namespace.
 FunctionEntry = class FunctionEntry extends CallEntry {
   static parseSchema(schema, path) {
+    // When not in DEBUG mode, we just need to know *if* this returns.
+    let returns = !!schema.returns;
+    if (DEBUG && "returns" in schema) {
+      returns = {
+        type: Schemas.parseSchema(schema.returns, path, ["optional", "name"]),
+        optional: schema.returns.optional || false,
+        name: "result",
+      };
+    }
+
     return new this(schema, path, schema.name,
                     Schemas.parseSchema(schema, path,
                       ["name", "unsupported", "returns",
@@ -2059,7 +2176,7 @@ FunctionEntry = class FunctionEntry extends CallEntry {
                        "allowAmbiguousOptionalArguments"]),
                     schema.unsupported || false,
                     schema.allowAmbiguousOptionalArguments || false,
-                    schema.returns || null,
+                    returns,
                     schema.permissions || null);
   }
 
@@ -2071,6 +2188,31 @@ FunctionEntry = class FunctionEntry extends CallEntry {
 
     this.isAsync = type.isAsync;
     this.hasAsyncCallback = type.hasAsyncCallback;
+    this.requireUserInput = type.requireUserInput;
+  }
+
+  checkValue({type, optional, name}, value, context) {
+    if (optional && value == null) {
+      return;
+    }
+    if (type.reference === "ExtensionPanel" ||
+        type.reference === "ExtensionSidebarPane" ||
+        type.reference === "Port") {
+      // TODO: We currently treat objects with functions as SubModuleType,
+      // which is just wrong, and a bigger yak.  Skipping for now.
+      return;
+    }
+    const {error} = type.normalize(value, context);
+    if (error) {
+      this.throwError(context, `Type error for ${name} value (${forceString(error)})`);
+    }
+  }
+
+  checkCallback(args, context) {
+    const callback = this.parameters[this.parameters.length - 1];
+    for (const [i, param] of callback.type.parameters.entries()) {
+      this.checkValue(param, args[i], context);
+    }
   }
 
   getDescriptor(path, context) {
@@ -2091,7 +2233,21 @@ FunctionEntry = class FunctionEntry extends CallEntry {
           // and lastError values are reported immediately.
           callback = () => {};
         }
-        return apiImpl.callAsyncFunction(actuals, callback);
+        if (DEBUG && this.hasAsyncCallback && callback) {
+          let original = callback;
+          callback = (...args) => {
+            this.checkCallback(args, context);
+            original(...args);
+          };
+        }
+        let result = apiImpl.callAsyncFunction(actuals, callback, this.requireUserInput);
+        if (DEBUG && this.hasAsyncCallback && !callback) {
+          return result.then(result => {
+            this.checkCallback([result], context);
+            return result;
+          });
+        }
+        return result;
       };
     } else if (!this.returns) {
       stub = (...args) => {
@@ -2103,7 +2259,11 @@ FunctionEntry = class FunctionEntry extends CallEntry {
       stub = (...args) => {
         this.checkDeprecated(context);
         let actuals = this.checkParameters(args, context);
-        return apiImpl.callFunction(actuals);
+        let result = apiImpl.callFunction(actuals);
+        if (DEBUG && this.returns) {
+          this.checkValue(this.returns, result, context);
+        }
+        return result;
       };
     }
 
@@ -2118,7 +2278,10 @@ FunctionEntry = class FunctionEntry extends CallEntry {
 };
 
 // Represents an "event" defined in a schema namespace.
-class Event extends CallEntry {
+//
+// TODO(rpl): we should be able to remove the eslint-disable-line that follows
+// once Bug 1369722 has been fixed.
+Event = class Event extends CallEntry { // eslint-disable-line no-native-reassign
   static parseSchema(event, path) {
     let extraParameters = Array.from(event.extraParameters || [], param => ({
       type: Schemas.parseSchema(param, path, ["name", "optional", "default"]),
@@ -2184,14 +2347,14 @@ class Event extends CallEntry {
         apiImpl.revoke();
         apiImpl = null;
 
-        let unwrapped = Cu.waiveXrays(obj);
+        let unwrapped = ChromeUtils.waiveXrays(obj);
         delete unwrapped.addListener;
         delete unwrapped.removeListener;
         delete unwrapped.hasListener;
       },
     };
   }
-}
+};
 
 const TYPES = Object.freeze(Object.assign(Object.create(null), {
   any: AnyType,
@@ -2216,9 +2379,12 @@ class Namespace extends Map {
     super();
 
     this._lazySchemas = [];
+    this.initialized = false;
 
     this.name = name;
     this.path = name ? [...path, name] : [...path];
+
+    this.superNamespace = null;
 
     this.permissions = null;
     this.allowedContexts = [];
@@ -2241,15 +2407,23 @@ class Namespace extends Map {
         this[prop] = schema[prop];
       }
     }
+
+    if (schema.$import) {
+      this.superNamespace = Schemas.getNamespace(schema.$import);
+    }
   }
 
   /**
    * Initializes the keys of this namespace based on the schema objects
    * added via previous `addSchema` calls.
    */
-  init() { // eslint-disable-line complexity
-    if (!this._lazySchemas) {
+  init() {
+    if (this.initialized) {
       return;
+    }
+
+    if (this.superNamespace) {
+      this._lazySchemas.unshift(...this.superNamespace._lazySchemas);
     }
 
     for (let type of Object.keys(LOADERS)) {
@@ -2293,7 +2467,7 @@ class Namespace extends Map {
       }
     }
 
-    this._lazySchemas = null;
+    this.initialized = true;
 
     if (DEBUG) {
       for (let key of this.keys()) {
@@ -2487,6 +2661,10 @@ this.Schemas = {
   // is useful for sending the JSON across processes.
   schemaJSON: new Map(),
 
+  // A separate map of schema JSON which should be available in all
+  // content processes.
+  contentSchemaJSON: new Map(),
+
   // Map[<schema-name> -> Map[<symbol-name> -> Entry]]
   // This keeps track of all the schemas that have been loaded so far.
   rootNamespace: new Namespace("", []),
@@ -2533,6 +2711,7 @@ this.Schemas = {
       if (schemas) {
         this.schemaJSON = schemas;
       }
+
       Services.cpmm.addMessageListener("Schema:Add", this);
     }
 
@@ -2542,7 +2721,9 @@ this.Schemas = {
   receiveMessage(msg) {
     switch (msg.name) {
       case "Schema:Add":
-        this.schemaJSON.set(msg.data.url, msg.data.schema);
+        for (let [url, schema] of msg.data) {
+          this.schemaJSON.set(url, schema);
+        }
         this.flushSchemas();
         break;
 
@@ -2553,21 +2734,39 @@ this.Schemas = {
     }
   },
 
+  _needFlush: true,
   flushSchemas() {
-    XPCOMUtils.defineLazyGetter(this, "rootNamespace",
-                                () => this.parseSchemas());
+    if (this._needFlush) {
+      this._needFlush = false;
+      XPCOMUtils.defineLazyGetter(this, "rootNamespace",
+                                  () => this.parseSchemas());
+    }
   },
 
   parseSchemas() {
+    this._needFlush = true;
+
     Object.defineProperty(this, "rootNamespace", {
       enumerable: true,
       configurable: true,
       value: new Namespace("", []),
     });
 
-    for (let json of this.schemaJSON.values()) {
+    for (let [key, schema] of this.schemaJSON.entries()) {
       try {
-        this.loadSchema(json);
+        if (typeof schema.deserialize === "function") {
+          schema = schema.deserialize(global);
+
+          // If we're in the parent process, we need to keep the
+          // StructuredCloneHolder blob around in order to send to future child
+          // processes. If we're in a child, we have no further use for it, so
+          // just store the deserialized schema data in its place.
+          if (!isParentProcess) {
+            this.schemaJSON.set(key, schema);
+          }
+        }
+
+        this.loadSchema(schema);
       } catch (e) {
         Cu.reportError(e);
       }
@@ -2583,18 +2782,46 @@ this.Schemas = {
     }
   },
 
-  load(url) {
-    if (Services.appinfo.processType != Services.appinfo.PROCESS_TYPE_CONTENT) {
-      return StartupCache.schemas.get(url, readJSON).then(json => {
-        this.schemaJSON.set(url, json);
-
-        let data = Services.ppmm.initialProcessData;
-        data["Extension:Schemas"] = this.schemaJSON;
-
-        Services.ppmm.broadcastAsyncMessage("Schema:Add", {url, schema: json});
-
-        this.flushSchemas();
+  _loadCachedSchemasPromise: null,
+  loadCachedSchemas() {
+    if (!this._loadCachedSchemasPromise) {
+      this._loadCachedSchemasPromise = StartupCache.schemas.getAll().then(results => {
+        return results;
       });
+    }
+
+    return this._loadCachedSchemasPromise;
+  },
+
+  addSchema(url, schema, content = false) {
+    this.schemaJSON.set(url, schema);
+
+    if (content) {
+      this.contentSchemaJSON.set(url, schema);
+
+      let data = Services.ppmm.initialProcessData;
+      data["Extension:Schemas"] = this.contentSchemaJSON;
+
+      Services.ppmm.broadcastAsyncMessage("Schema:Add", [[url, schema]]);
+    } else if (this.schemaHook) {
+      this.schemaHook([[url, schema]]);
+    }
+
+    this.flushSchemas();
+  },
+
+  async load(url, content = false) {
+    if (!isParentProcess) {
+      return;
+    }
+
+    let schemaCache = await this.loadCachedSchemas();
+
+    let blob = (schemaCache.get(url) ||
+                await StartupCache.schemas.get(url, readJSONAndBlobbify));
+
+    if (!this.schemaJSON.has(url)) {
+      this.addSchema(url, blob, content);
     }
   },
 
@@ -2624,6 +2851,10 @@ this.Schemas = {
    *        True if the context has permission for the given namespace.
    */
   checkPermissions(namespace, wrapperFuncs) {
+    if (!this.initialized) {
+      this.init();
+    }
+
     let ns = this.getNamespace(namespace);
     if (ns && ns.permissions) {
       return ns.permissions.some(perm => wrapperFuncs.hasPermission(perm));
@@ -2642,6 +2873,10 @@ this.Schemas = {
    *     interface, which runs the actual functionality of the generated API.
    */
   inject(dest, wrapperFuncs) {
+    if (!this.initialized) {
+      this.init();
+    }
+
     let context = new InjectionContext(wrapperFuncs);
 
     this.rootNamespace.injectInto(dest, context);
@@ -2657,10 +2892,18 @@ this.Schemas = {
    * @returns {object} The normalized object.
    */
   normalize(obj, typeName, context) {
+    if (!this.initialized) {
+      this.init();
+    }
+
     let [namespaceName, prop] = typeName.split(".");
     let ns = this.getNamespace(namespaceName);
     let type = ns.get(prop);
 
-    return type.normalize(obj, new Context(context));
+    let result = type.normalize(obj, new Context(context));
+    if (result.error) {
+      return {error: forceString(result.error)};
+    }
+    return result;
   },
 };

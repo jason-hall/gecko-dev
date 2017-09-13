@@ -6,19 +6,27 @@
 
 package org.mozilla.gecko;
 
+import java.io.File;
+import java.net.URLConnection;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Set;
 
 import org.mozilla.gecko.annotation.ReflectionTarget;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.mozglue.JNIObject;
+import org.mozilla.gecko.util.ActivityUtils;
 import org.mozilla.gecko.util.BundleEventListener;
 import org.mozilla.gecko.util.EventCallback;
 import org.mozilla.gecko.util.GeckoBundle;
 
 import android.app.Activity;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Resources;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
@@ -26,6 +34,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -34,8 +43,7 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 
-public class GeckoView extends LayerView
-    implements ContextGetter {
+public class GeckoView extends LayerView {
 
     private static final String DEFAULT_SHARED_PREFERENCES_FILE = "GeckoView";
     private static final String LOGTAG = "GeckoView";
@@ -64,38 +72,266 @@ public class GeckoView extends LayerView
         }
     }
 
+    static {
+        EventDispatcher.getInstance().registerUiThreadListener(new BundleEventListener() {
+            @Override
+            public void handleMessage(final String event, final GeckoBundle message,
+                                      final EventCallback callback) {
+                if ("GeckoView:Prompt".equals(event)) {
+                    handlePromptEvent(/* view */ null, message, callback);
+                }
+            }
+        }, "GeckoView:Prompt");
+    }
+
+    private static PromptDelegate sDefaultPromptDelegate;
+
     private final NativeQueue mNativeQueue =
         new NativeQueue(State.INITIAL, State.READY);
 
     private final EventDispatcher mEventDispatcher =
         new EventDispatcher(mNativeQueue);
 
-    private ChromeDelegate mChromeDelegate;
-    /* package */ ContentListener mContentListener;
-    /* package */ NavigationListener mNavigationListener;
-    /* package */ ProgressListener mProgressListener;
+    private final GeckoViewHandler<ContentListener> mContentHandler =
+        new GeckoViewHandler<ContentListener>(
+            "GeckoViewContent", this,
+            new String[]{
+                "GeckoView:ContextMenu",
+                "GeckoView:DOMTitleChanged",
+                "GeckoView:FullScreenEnter",
+                "GeckoView:FullScreenExit"
+            }
+        ) {
+            @Override
+            public void handleMessage(final ContentListener listener,
+                                      final String event,
+                                      final GeckoBundle message,
+                                      final EventCallback callback) {
+
+                if ("GeckoView:ContextMenu".equals(event)) {
+                    listener.onContextMenu(GeckoView.this,
+                                           message.getInt("screenX"),
+                                           message.getInt("screenY"),
+                                           message.getString("uri"),
+                                           message.getString("elementSrc"));
+                } else if ("GeckoView:DOMTitleChanged".equals(event)) {
+                    listener.onTitleChange(GeckoView.this,
+                                           message.getString("title"));
+                } else if ("GeckoView:FullScreenEnter".equals(event)) {
+                    listener.onFullScreen(GeckoView.this, true);
+                } else if ("GeckoView:FullScreenExit".equals(event)) {
+                    listener.onFullScreen(GeckoView.this, false);
+                }
+            }
+        };
+
+    private final GeckoViewHandler<NavigationListener> mNavigationHandler =
+        new GeckoViewHandler<NavigationListener>(
+            "GeckoViewNavigation", this,
+            new String[]{
+                "GeckoView:LocationChange",
+                "GeckoView:OnLoadUri"
+            }
+        ) {
+            @Override
+            public void handleMessage(final NavigationListener listener,
+                                      final String event,
+                                      final GeckoBundle message,
+                                      final EventCallback callback) {
+                if ("GeckoView:LocationChange".equals(event)) {
+                    listener.onLocationChange(GeckoView.this,
+                                              message.getString("uri"));
+                    listener.onCanGoBack(GeckoView.this,
+                                         message.getBoolean("canGoBack"));
+                    listener.onCanGoForward(GeckoView.this,
+                                            message.getBoolean("canGoForward"));
+                } else if ("GeckoView:OnLoadUri".equals(event)) {
+                    final String uri = message.getString("uri");
+                    final NavigationListener.TargetWindow where =
+                        NavigationListener.TargetWindow.forGeckoValue(
+                            message.getInt("where"));
+                    final boolean result =
+                        listener.onLoadUri(GeckoView.this, uri, where);
+                    callback.sendSuccess(result);
+                }
+            }
+        };
+
+    private final GeckoViewHandler<ProgressListener> mProgressHandler =
+        new GeckoViewHandler<ProgressListener>(
+            "GeckoViewProgress", this,
+            new String[]{
+                "GeckoView:PageStart",
+                "GeckoView:PageStop",
+                "GeckoView:SecurityChanged"
+            }
+        ) {
+            @Override
+            public void handleMessage(final ProgressListener listener,
+                                      final String event,
+                                      final GeckoBundle message,
+                                      final EventCallback callback) {
+                if ("GeckoView:PageStart".equals(event)) {
+                    listener.onPageStart(GeckoView.this,
+                                         message.getString("uri"));
+                } else if ("GeckoView:PageStop".equals(event)) {
+                    listener.onPageStop(GeckoView.this,
+                                        message.getBoolean("success"));
+                } else if ("GeckoView:SecurityChanged".equals(event)) {
+                    final GeckoBundle identity = message.getBundle("identity");
+                    listener.onSecurityChange(GeckoView.this, new ProgressListener.SecurityInformation(identity));
+                }
+            }
+        };
+
+    private final GeckoViewHandler<ScrollListener> mScrollHandler =
+        new GeckoViewHandler<ScrollListener>(
+            "GeckoViewScroll", this,
+            new String[]{ "GeckoView:ScrollChanged" }
+        ) {
+            @Override
+            public void handleMessage(final ScrollListener listener,
+                                      final String event,
+                                      final GeckoBundle message,
+                                      final EventCallback callback) {
+
+                if ("GeckoView:ScrollChanged".equals(event)) {
+                    listener.onScrollChanged(GeckoView.this,
+                                             message.getInt("scrollX"),
+                                             message.getInt("scrollY"));
+                }
+            }
+        };
+
+    private final GeckoViewHandler<PermissionDelegate> mPermissionHandler =
+        new GeckoViewHandler<PermissionDelegate>(
+            "GeckoViewPermission", this,
+            new String[] {
+                "GeckoView:AndroidPermission",
+                "GeckoView:ContentPermission",
+                "GeckoView:MediaPermission"
+            }, /* alwaysListen */ true
+        ) {
+            @Override
+            public void handleMessage(final PermissionDelegate listener,
+                                      final String event,
+                                      final GeckoBundle message,
+                                      final EventCallback callback) {
+
+                if (listener == null) {
+                    callback.sendSuccess(/* granted */ false);
+                    return;
+                }
+                if ("GeckoView:AndroidPermission".equals(event)) {
+                    listener.requestAndroidPermissions(
+                            GeckoView.this, message.getStringArray("perms"),
+                            new PermissionCallback("android", callback));
+                } else if ("GeckoView:ContentPermission".equals(event)) {
+                    final String type = message.getString("perm");
+                    listener.requestContentPermission(
+                            GeckoView.this, message.getString("uri"),
+                            type, message.getString("access"),
+                            new PermissionCallback(type, callback));
+                } else if ("GeckoView:MediaPermission".equals(event)) {
+                    listener.requestMediaPermission(
+                            GeckoView.this, message.getString("uri"),
+                            message.getBundleArray("video"), message.getBundleArray("audio"),
+                            new PermissionCallback("media", callback));
+                }
+            }
+        };
+
+    private static class PermissionCallback implements
+        PermissionDelegate.Callback, PermissionDelegate.MediaCallback {
+
+        private final String mType;
+        private EventCallback mCallback;
+
+        public PermissionCallback(final String type, final EventCallback callback) {
+            mType = type;
+            mCallback = callback;
+        }
+
+        private void submit(final Object response) {
+            if (mCallback != null) {
+                mCallback.sendSuccess(response);
+                mCallback = null;
+            }
+        }
+
+        @Override // PermissionDelegate.Callback
+        public void grant() {
+            if ("media".equals(mType)) {
+                throw new UnsupportedOperationException();
+            }
+            submit(/* response */ true);
+        }
+
+        @Override // PermissionDelegate.Callback, PermissionDelegate.MediaCallback
+        public void reject() {
+            submit(/* response */ false);
+        }
+
+        @Override // PermissionDelegate.MediaCallback
+        public void grant(final String video, final String audio) {
+            if (!"media".equals(mType)) {
+                throw new UnsupportedOperationException();
+            }
+            final GeckoBundle response = new GeckoBundle(2);
+            response.putString("video", video);
+            response.putString("audio", audio);
+            submit(response);
+        }
+
+        @Override // PermissionDelegate.MediaCallback
+        public void grant(final GeckoBundle video, final GeckoBundle audio) {
+            grant(video != null ? video.getString("id") : null,
+                  audio != null ? audio.getString("id") : null);
+        }
+    }
+
+    /**
+     * Get the current prompt delegate for this GeckoView.
+     * @return PromptDelegate instance or null if using default delegate.
+     */
+    public PermissionDelegate getPermissionDelegate() {
+        return mPermissionHandler.getListener();
+    }
+
+    /**
+     * Set the current permission delegate for this GeckoView.
+     * @param delegate PermissionDelegate instance or null to use the default delegate.
+     */
+    public void setPermissionDelegate(final PermissionDelegate delegate) {
+        mPermissionHandler.setListener(delegate, this);
+    }
+
+    private PromptDelegate mPromptDelegate;
     private InputConnectionListener mInputConnectionListener;
 
     private GeckoViewSettings mSettings;
 
-    protected boolean mOnAttachedToWindowCalled;
     protected String mChromeUri;
     protected int mScreenId = 0; // default to the primary screen
 
     @WrapForJNI(dispatchTo = "proxy")
     protected static final class Window extends JNIObject {
         @WrapForJNI(skip = true)
+        public final String chromeUri;
+
+        @WrapForJNI(skip = true)
         /* package */ NativeQueue mNativeQueue;
 
         @WrapForJNI(skip = true)
-        /* package */ Window(final NativeQueue queue) {
+        /* package */ Window(final String chromeUri, final NativeQueue queue) {
+            this.chromeUri = chromeUri;
             mNativeQueue = queue;
         }
 
         static native void open(Window instance, GeckoView view,
                                 Object compositor, EventDispatcher dispatcher,
                                 String chromeUri, GeckoBundle settings,
-                                int screenId);
+                                int screenId, boolean privateMode);
 
         @Override protected native void disposeNative();
 
@@ -108,7 +344,21 @@ public class GeckoView extends LayerView
 
         @WrapForJNI(calledFrom = "gecko")
         private synchronized void setState(final State newState) {
+            if (mNativeQueue.getState() != State.READY &&
+                newState == State.READY) {
+                Log.i(LOGTAG, "zerdatime " + SystemClock.elapsedRealtime() +
+                      " - chrome startup finished");
+            }
             mNativeQueue.setState(newState);
+        }
+
+        @WrapForJNI(calledFrom = "gecko")
+        private synchronized void onReattach(final GeckoView view) {
+            if (view.mNativeQueue == mNativeQueue) {
+                return;
+            }
+            view.mNativeQueue.setState(mNativeQueue.getState());
+            mNativeQueue = view.mNativeQueue;
         }
     }
 
@@ -159,11 +409,7 @@ public class GeckoView extends LayerView
     private class Listener implements BundleEventListener {
         /* package */ void registerListeners() {
             getEventDispatcher().registerUiThreadListener(this,
-                "GeckoView:DOMTitleChanged",
-                "GeckoView:LocationChange",
-                "GeckoView:PageStart",
-                "GeckoView:PageStop",
-                "GeckoView:SecurityChanged",
+                "GeckoView:Prompt",
                 null);
         }
 
@@ -174,31 +420,8 @@ public class GeckoView extends LayerView
                 Log.d(LOGTAG, "handleMessage: event = " + event);
             }
 
-            if ("GeckoView:DOMTitleChanged".equals(event)) {
-                if (mContentListener != null) {
-                    mContentListener.onTitleChange(GeckoView.this, message.getString("title"));
-                }
-            } else if ("GeckoView:LocationChange".equals(event)) {
-                if (mNavigationListener == null) {
-                    // We shouldn't be getting this event.
-                    mEventDispatcher.dispatch("GeckoViewNavigation:Inactive", null);
-                } else {
-                    mNavigationListener.onLocationChange(GeckoView.this, message.getString("uri"));
-                    mNavigationListener.onCanGoBack(GeckoView.this, message.getBoolean("canGoBack"));
-                    mNavigationListener.onCanGoForward(GeckoView.this, message.getBoolean("canGoForward"));
-                }
-            } else if ("GeckoView:PageStart".equals(event)) {
-                if (mProgressListener != null) {
-                    mProgressListener.onPageStart(GeckoView.this, message.getString("uri"));
-                }
-            } else if ("GeckoView:PageStop".equals(event)) {
-                if (mProgressListener != null) {
-                    mProgressListener.onPageStop(GeckoView.this, message.getBoolean("success"));
-                }
-            } else if ("GeckoView:SecurityChanged".equals(event)) {
-                if (mProgressListener != null) {
-                    mProgressListener.onSecurityChange(GeckoView.this, message.getInt("status"));
-                }
+            if ("GeckoView:Prompt".equals(event)) {
+                handlePromptEvent(GeckoView.this, message, callback);
             }
         }
     }
@@ -209,25 +432,61 @@ public class GeckoView extends LayerView
 
     public GeckoView(Context context) {
         super(context);
-        init(context);
+
+        init(context, null);
     }
 
     public GeckoView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        init(context);
+        // TODO: Convert custom attributes to GeckoViewSettings
+        init(context, null);
     }
 
-    private void init(Context context) {
+    public GeckoView(Context context, final GeckoViewSettings settings) {
+        super(context);
+
+        final GeckoViewSettings newSettings = new GeckoViewSettings(settings, getEventDispatcher());
+        init(context, settings);
+    }
+
+    public GeckoView(Context context, AttributeSet attrs, final GeckoViewSettings settings) {
+        super(context, attrs);
+
+        final GeckoViewSettings newSettings = new GeckoViewSettings(settings, getEventDispatcher());
+        init(context, newSettings);
+    }
+
+    /**
+     * Preload GeckoView by starting Gecko in the background, if Gecko is not already running.
+     *
+     * @param context Activity or Application Context for starting GeckoView.
+     */
+    public static void preload(final Context context) {
+        preload(context, /* geckoArgs */ null);
+    }
+
+    /**
+     * Preload GeckoView by starting Gecko with the specified arguments in the background,
+     * if Gecko is not already running.
+     *
+     * @param context Activity or Application Context for starting GeckoView.
+     * @param geckoArgs Arguments to be passed to Gecko, if Gecko is not already running
+     */
+    public static void preload(final Context context, final String geckoArgs) {
+        final Context appContext = context.getApplicationContext();
         if (GeckoAppShell.getApplicationContext() == null) {
-            GeckoAppShell.setApplicationContext(context.getApplicationContext());
+            GeckoAppShell.setApplicationContext(appContext);
         }
 
-        // Set the GeckoInterface if the context is an activity and the GeckoInterface
-        // has not already been set
-        if (context instanceof Activity && getGeckoInterface() == null) {
-            setGeckoInterface(new BaseGeckoInterface(context));
-            GeckoAppShell.setContextGetter(this);
+        if (GeckoThread.initMainProcess(/* profile */ null,
+                                        geckoArgs,
+                                        /* debugging */ false)) {
+            GeckoThread.launch();
         }
+    }
+
+    private void init(final Context context, final GeckoViewSettings settings) {
+        preload(context);
 
         // Perform common initialization for Fennec/GeckoView.
         GeckoAppShell.setLayerView(this);
@@ -235,7 +494,11 @@ public class GeckoView extends LayerView
         initializeView();
         mListener.registerListeners();
 
-        mSettings = new GeckoViewSettings(getEventDispatcher());
+        if (settings == null) {
+            mSettings = new GeckoViewSettings(getEventDispatcher());
+        } else {
+            mSettings = settings;
+        }
     }
 
     @Override
@@ -254,23 +517,45 @@ public class GeckoView extends LayerView
         }
         mStateSaved = false;
 
-        if (mOnAttachedToWindowCalled) {
-            reattachWindow();
-        }
-
         // We have to always call super.onRestoreInstanceState because View keeps
         // track of these calls and throws an exception when we don't call it.
         super.onRestoreInstanceState(stateBinder.superState);
     }
 
-    protected void openWindow() {
-        if (mChromeUri == null) {
-            mChromeUri = getGeckoInterface().getDefaultChromeURI();
+    /**
+     * Return the URI of the underlying chrome window opened or to be opened, or null if
+     * using the default GeckoView URI.
+     *
+     * @return Current chrome URI or null.
+     */
+    public String getChromeUri() {
+        if (mWindow != null) {
+            return mWindow.chromeUri;
         }
+        return mChromeUri;
+    }
+
+    /**
+     * Set the URI of the underlying chrome window to be opened, or null to use the
+     * default GeckoView URI. Can only be called before the chrome window is opened during
+     * {@link #onAttachedToWindow}.
+     *
+     * @param uri New chrome URI or null.
+     */
+    public void setChromeUri(final String uri) {
+        if (mWindow != null) {
+            throw new IllegalStateException("Already opened chrome window");
+        }
+        mChromeUri = uri;
+    }
+
+    protected void openWindow() {
+        mWindow = new Window(mChromeUri, mNativeQueue);
 
         if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
             Window.open(mWindow, this, getCompositor(), mEventDispatcher,
-                        mChromeUri, mSettings.asBundle(), mScreenId);
+                        mChromeUri, mSettings.asBundle(), mScreenId,
+                        mSettings.getBoolean(GeckoViewSettings.USE_PRIVATE_MODE));
         } else {
             GeckoThread.queueNativeCallUntil(
                 GeckoThread.State.PROFILE_READY,
@@ -280,18 +565,11 @@ public class GeckoView extends LayerView
                 EventDispatcher.class, mEventDispatcher,
                 String.class, mChromeUri,
                 GeckoBundle.class, mSettings.asBundle(),
-                mScreenId);
+                mScreenId, mSettings.getBoolean(GeckoViewSettings.USE_PRIVATE_MODE));
         }
     }
 
     protected void reattachWindow() {
-        synchronized (mWindow) {
-            if (mNativeQueue != mWindow.mNativeQueue) {
-                mNativeQueue.setState(mWindow.mNativeQueue.getState());
-                mWindow.mNativeQueue = mNativeQueue;
-            }
-        }
-
         if (GeckoThread.isStateAtLeast(GeckoThread.State.PROFILE_READY)) {
             mWindow.reattach(this, getCompositor(), mEventDispatcher);
         } else {
@@ -307,15 +585,12 @@ public class GeckoView extends LayerView
 
         if (mWindow == null) {
             // Open a new nsWindow if we didn't have one from before.
-            mWindow = new Window(mNativeQueue);
             openWindow();
         } else {
             reattachWindow();
         }
 
         super.onAttachedToWindow();
-
-        mOnAttachedToWindowCalled = true;
     }
 
     @Override
@@ -337,8 +612,6 @@ public class GeckoView extends LayerView
             GeckoThread.queueNativeCallUntil(GeckoThread.State.PROFILE_READY,
                     mWindow, "disposeNative");
         }
-
-        mOnAttachedToWindowCalled = false;
     }
 
     @WrapForJNI public static final int LOAD_DEFAULT = 0;
@@ -386,6 +659,13 @@ public class GeckoView extends LayerView
     */
     public void reload() {
         mEventDispatcher.dispatch("GeckoView:Reload", null);
+    }
+
+    /**
+    * Stop loading.
+    */
+    public void stop() {
+        mEventDispatcher.dispatch("GeckoView:Stop", null);
     }
 
     /* package */ void setInputConnectionListener(final InputConnectionListener icl) {
@@ -488,21 +768,19 @@ public class GeckoView extends LayerView
     }
 
     /**
-    * Set the chrome callback handler.
-    * This will replace the current handler.
-    * @param chrome An implementation of GeckoViewChrome.
+    * Exits fullscreen mode
     */
-    public void setChromeDelegate(ChromeDelegate chrome) {
-        mChromeDelegate = chrome;
+    public void exitFullScreen() {
+        mEventDispatcher.dispatch("GeckoViewContent:ExitFullScreen", null);
     }
 
     /**
     * Set the content callback handler.
     * This will replace the current handler.
-    * @param content An implementation of ContentListener.
+    * @param listener An implementation of ContentListener.
     */
-    public void setContentListener(ContentListener content) {
-        mContentListener = content;
+    public void setContentListener(ContentListener listener) {
+        mContentHandler.setListener(listener, this);
     }
 
     /**
@@ -510,16 +788,16 @@ public class GeckoView extends LayerView
     * @return The current content callback handler.
     */
     public ContentListener getContentListener() {
-        return mContentListener;
+        return mContentHandler.getListener();
     }
 
     /**
     * Set the progress callback handler.
     * This will replace the current handler.
-    * @param progress An implementation of ProgressListener.
+    * @param listener An implementation of ProgressListener.
     */
-    public void setProgressListener(ProgressListener progress) {
-        mProgressListener = progress;
+    public void setProgressListener(ProgressListener listener) {
+        mProgressHandler.setListener(listener, this);
     }
 
     /**
@@ -527,25 +805,16 @@ public class GeckoView extends LayerView
     * @return The current progress callback handler.
     */
     public ProgressListener getProgressListener() {
-        return mProgressListener;
+        return mProgressHandler.getListener();
     }
 
     /**
     * Set the navigation callback handler.
     * This will replace the current handler.
-    * @param navigation An implementation of NavigationListener.
+    * @param listener An implementation of NavigationListener.
     */
-    public void setNavigationDelegate(NavigationListener listener) {
-        if (mNavigationListener == listener) {
-            return;
-        }
-        if (listener == null) {
-            mEventDispatcher.dispatch("GeckoViewNavigation:Inactive", null);
-        } else if (mNavigationListener == null) {
-            mEventDispatcher.dispatch("GeckoViewNavigation:Active", null);
-        }
-
-        mNavigationListener = listener;
+    public void setNavigationListener(NavigationListener listener) {
+        mNavigationHandler.setListener(listener, this);
     }
 
     /**
@@ -553,100 +822,492 @@ public class GeckoView extends LayerView
     * @return The current navigation callback handler.
     */
     public NavigationListener getNavigationListener() {
-        return mNavigationListener;
+        return mNavigationHandler.getListener();
     }
 
-    public static void setGeckoInterface(final BaseGeckoInterface geckoInterface) {
-        GeckoAppShell.setGeckoInterface(geckoInterface);
+    /**
+     * Set the default prompt delegate for all GeckoView instances. The default prompt
+     * delegate is used for certain types of prompts and for GeckoViews that do not have
+     * custom prompt delegates.
+     * @param delegate PromptDelegate instance or null to use the built-in delegate.
+     * @see #setPromptDelegate(PromptDelegate)
+     */
+    public static void setDefaultPromptDelegate(PromptDelegate delegate) {
+        sDefaultPromptDelegate = delegate;
     }
 
-    public static GeckoAppShell.GeckoInterface getGeckoInterface() {
-        return GeckoAppShell.getGeckoInterface();
+    /**
+    * Set the content scroll callback handler.
+    * This will replace the current handler.
+    * @param listener An implementation of ScrollListener.
+    */
+    public void setScrollListener(ScrollListener listener) {
+        mScrollHandler.setListener(listener, this);
     }
 
-    protected String getSharedPreferencesFile() {
-        return DEFAULT_SHARED_PREFERENCES_FILE;
+    /**
+     * Get the default prompt delegate for all GeckoView instances.
+     * @return PromptDelegate instance
+     * @see #getPromptDelegate()
+     */
+    public static PromptDelegate getDefaultPromptDelegate() {
+        return sDefaultPromptDelegate;
     }
 
-    @Override
-    public SharedPreferences getSharedPreferences() {
-        return getContext().getSharedPreferences(getSharedPreferencesFile(), 0);
+    /**
+     * Set the current prompt delegate for this GeckoView.
+     * @param delegate PromptDelegate instance or null to use the default delegate.
+     * @see #setDefaultPromptDelegate(PromptDelegate)
+     */
+    public void setPromptDelegate(PromptDelegate delegate) {
+        mPromptDelegate = delegate;
+    }
+
+    /**
+     * Get the current prompt delegate for this GeckoView.
+     * @return PromptDelegate instance or null if using default delegate.
+     * @see #getDefaultPromptDelegate()
+     */
+    public PromptDelegate getPromptDelegate() {
+        return mPromptDelegate;
+    }
+
+    private static class PromptCallback implements
+        PromptDelegate.AlertCallback, PromptDelegate.ButtonCallback,
+        PromptDelegate.TextCallback, PromptDelegate.AuthCallback,
+        PromptDelegate.ChoiceCallback, PromptDelegate.FileCallback {
+
+        private final String mType;
+        private final String mMode;
+        private final boolean mHasCheckbox;
+        private final String mCheckboxMessage;
+
+        private EventCallback mCallback;
+        private boolean mCheckboxValue;
+        private GeckoBundle mResult;
+
+        public PromptCallback(final String type, final String mode,
+                              final GeckoBundle message, final EventCallback callback) {
+            mType = type;
+            mMode = mode;
+            mCallback = callback;
+            mHasCheckbox = message.getBoolean("hasCheck");
+            mCheckboxMessage = message.getString("checkMsg");
+            mCheckboxValue = message.getBoolean("checkValue");
+        }
+
+        private GeckoBundle ensureResult() {
+            if (mResult == null) {
+                // Usually result object contains two items.
+                mResult = new GeckoBundle(2);
+            }
+            return mResult;
+        }
+
+        private void submit() {
+            if (mHasCheckbox) {
+                ensureResult().putBoolean("checkValue", mCheckboxValue);
+            }
+            if (mCallback != null) {
+                mCallback.sendSuccess(mResult);
+                mCallback = null;
+            }
+        }
+
+        @Override // AlertCallbcak
+        public void dismiss() {
+            // Send a null result.
+            mResult = null;
+            submit();
+        }
+
+        @Override // AlertCallbcak
+        public boolean hasCheckbox() {
+            return mHasCheckbox;
+        }
+
+        @Override // AlertCallbcak
+        public String getCheckboxMessage() {
+            return mCheckboxMessage;
+        }
+
+        @Override // AlertCallbcak
+        public boolean getCheckboxValue() {
+            return mCheckboxValue;
+        }
+
+        @Override // AlertCallbcak
+        public void setCheckboxValue(final boolean value) {
+            mCheckboxValue = value;
+        }
+
+        @Override // ButtonCallback
+        public void confirm(final int value) {
+            if ("button".equals(mType)) {
+                ensureResult().putInt("button", value);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+            submit();
+        }
+
+        @Override // TextCallback, AuthCallback, ChoiceCallback, FileCallback
+        public void confirm(final String value) {
+            if ("text".equals(mType) || "color".equals(mType) || "datetime".equals(mType)) {
+                ensureResult().putString(mType, value);
+            } else if ("auth".equals(mType)) {
+                if (!"password".equals(mMode)) {
+                    throw new IllegalArgumentException();
+                }
+                ensureResult().putString("password", value);
+            } else if ("choice".equals(mType)) {
+                confirm(new String[] { value });
+                return;
+            } else {
+                throw new UnsupportedOperationException();
+            }
+            submit();
+        }
+
+        @Override // AuthCallback
+        public void confirm(final String username, final String password) {
+            if ("auth".equals(mType)) {
+                if (!"auth".equals(mMode)) {
+                    throw new IllegalArgumentException();
+                }
+                ensureResult().putString("username", username);
+                ensureResult().putString("password", password);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+            submit();
+        }
+
+        @Override // ChoiceCallback, FileCallback
+        public void confirm(final String[] values) {
+            if (("menu".equals(mMode) || "single".equals(mMode)) &&
+                (values == null || values.length != 1)) {
+                throw new IllegalArgumentException();
+            }
+            if ("choice".equals(mType)) {
+                ensureResult().putStringArray("choices", values);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+            submit();
+        }
+
+        @Override // ChoiceCallback
+        public void confirm(GeckoBundle item) {
+            if ("choice".equals(mType)) {
+                confirm(item == null ? null : item.getString("id"));
+                return;
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        @Override // ChoiceCallback
+        public void confirm(GeckoBundle[] items) {
+            if (("menu".equals(mMode) || "single".equals(mMode)) &&
+                (items == null || items.length != 1)) {
+                throw new IllegalArgumentException();
+            }
+            if ("choice".equals(mType)) {
+                if (items == null) {
+                    confirm((String[]) null);
+                    return;
+                }
+                final String[] ids = new String[items.length];
+                for (int i = 0; i < ids.length; i++) {
+                    ids[i] = (items[i] == null) ? null : items[i].getString("id");
+                }
+                confirm(ids);
+                return;
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        @Override // FileCallback
+        public void confirm(final Uri uri) {
+            if ("file".equals(mType)) {
+                confirm(uri == null ? null : new Uri[] { uri });
+                return;
+            } else {
+                throw new UnsupportedOperationException();
+            }
+        }
+
+        private static String getFile(final Uri uri) {
+            if (uri == null) {
+                return null;
+            }
+            if ("file".equals(uri.getScheme())) {
+                return uri.getPath();
+            }
+            final ContentResolver cr =
+                    GeckoAppShell.getApplicationContext().getContentResolver();
+            final Cursor cur = cr.query(uri, new String[] { "_data" }, /* selection */ null,
+                                        /* args */ null, /* sort */ null);
+            if (cur == null) {
+                return null;
+            }
+            try {
+                final int idx = cur.getColumnIndex("_data");
+                if (idx < 0 || !cur.moveToFirst()) {
+                    return null;
+                }
+                do {
+                    try {
+                        final String path = cur.getString(idx);
+                        if (path != null && !path.isEmpty()) {
+                            return path;
+                        }
+                    } catch (final Exception e) {
+                    }
+                } while (cur.moveToNext());
+            } finally {
+                cur.close();
+            }
+            return null;
+        }
+
+        @Override // FileCallback
+        public void confirm(final Uri[] uris) {
+            if ("single".equals(mMode) && (uris == null || uris.length != 1)) {
+                throw new IllegalArgumentException();
+            }
+            if ("file".equals(mType)) {
+                final String[] paths = new String[uris != null ? uris.length : 0];
+                for (int i = 0; i < paths.length; i++) {
+                    paths[i] = getFile(uris[i]);
+                    if (paths[i] == null) {
+                        Log.e(LOGTAG, "Only file URI is supported: " + uris[i]);
+                    }
+                }
+                ensureResult().putStringArray("files", paths);
+            } else {
+                throw new UnsupportedOperationException();
+            }
+            submit();
+        }
+    }
+
+    /* package */ static void handlePromptEvent(final GeckoView view,
+                                                final GeckoBundle message,
+                                                final EventCallback callback) {
+        final PromptDelegate delegate;
+        if (view != null && view.mPromptDelegate != null) {
+            delegate = view.mPromptDelegate;
+        } else {
+            delegate = sDefaultPromptDelegate;
+        }
+
+        if (delegate == null) {
+            // Default behavior is same as calling dismiss() on callback.
+            callback.sendSuccess(null);
+            return;
+        }
+
+        final String type = message.getString("type");
+        final String mode = message.getString("mode");
+        final PromptCallback cb = new PromptCallback(type, mode, message, callback);
+        final String title = message.getString("title");
+        final String msg = message.getString("msg");
+        switch (type) {
+            case "alert": {
+                delegate.alert(view, title, msg, cb);
+                break;
+            }
+            case "button": {
+                final String[] btnTitle = message.getStringArray("btnTitle");
+                final String[] btnCustomTitle = message.getStringArray("btnCustomTitle");
+                for (int i = 0; i < btnCustomTitle.length; i++) {
+                    final int resId;
+                    if ("ok".equals(btnTitle[i])) {
+                        resId = android.R.string.ok;
+                    } else if ("cancel".equals(btnTitle[i])) {
+                        resId = android.R.string.cancel;
+                    } else if ("yes".equals(btnTitle[i])) {
+                        resId = android.R.string.yes;
+                    } else if ("no".equals(btnTitle[i])) {
+                        resId = android.R.string.no;
+                    } else {
+                        continue;
+                    }
+                    btnCustomTitle[i] = Resources.getSystem().getString(resId);
+                }
+                delegate.promptForButton(view, title, msg, btnCustomTitle, cb);
+                break;
+            }
+            case "text": {
+                delegate.promptForText(view, title, msg, message.getString("value"), cb);
+                break;
+            }
+            case "auth": {
+                delegate.promptForAuth(view, title, msg, message.getBundle("options"), cb);
+                break;
+            }
+            case "choice": {
+                final int intMode;
+                if ("menu".equals(mode)) {
+                    intMode = PromptDelegate.CHOICE_TYPE_MENU;
+                } else if ("single".equals(mode)) {
+                    intMode = PromptDelegate.CHOICE_TYPE_SINGLE;
+                } else if ("multiple".equals(mode)) {
+                    intMode = PromptDelegate.CHOICE_TYPE_MULTIPLE;
+                } else {
+                    callback.sendError("Invalid mode");
+                    return;
+                }
+                delegate.promptForChoice(view, title, msg, intMode,
+                                         message.getBundleArray("choices"), cb);
+                break;
+            }
+            case "color": {
+                delegate.promptForColor(view, title, message.getString("value"), cb);
+                break;
+            }
+            case "datetime": {
+                final int intMode;
+                if ("date".equals(mode)) {
+                    intMode = PromptDelegate.DATETIME_TYPE_DATE;
+                } else if ("month".equals(mode)) {
+                    intMode = PromptDelegate.DATETIME_TYPE_MONTH;
+                } else if ("week".equals(mode)) {
+                    intMode = PromptDelegate.DATETIME_TYPE_WEEK;
+                } else if ("time".equals(mode)) {
+                    intMode = PromptDelegate.DATETIME_TYPE_TIME;
+                } else if ("datetime-local".equals(mode)) {
+                    intMode = PromptDelegate.DATETIME_TYPE_DATETIME_LOCAL;
+                } else {
+                    callback.sendError("Invalid mode");
+                    return;
+                }
+                delegate.promptForDateTime(view, title, intMode,
+                                           message.getString("value"),
+                                           message.getString("min"),
+                                           message.getString("max"), cb);
+                break;
+            }
+            case "file": {
+                final int intMode;
+                if ("single".equals(mode)) {
+                    intMode = PromptDelegate.FILE_TYPE_SINGLE;
+                } else if ("multiple".equals(mode)) {
+                    intMode = PromptDelegate.FILE_TYPE_MULTIPLE;
+                } else {
+                    callback.sendError("Invalid mode");
+                    return;
+                }
+                String[] mimeTypes = message.getStringArray("mimeTypes");
+                final String[] extensions = message.getStringArray("extension");
+                if (extensions != null) {
+                    final ArrayList<String> combined =
+                            new ArrayList<>(mimeTypes.length + extensions.length);
+                    combined.addAll(Arrays.asList(mimeTypes));
+                    for (final String extension : extensions) {
+                        final String mimeType =
+                                URLConnection.guessContentTypeFromName(extension);
+                        if (mimeType != null) {
+                            combined.add(mimeType);
+                        }
+                    }
+                    mimeTypes = combined.toArray(new String[combined.size()]);
+                }
+                delegate.promptForFile(view, title, intMode, mimeTypes, cb);
+                break;
+            }
+            default: {
+                callback.sendError("Invalid type");
+                break;
+            }
+        }
     }
 
     public EventDispatcher getEventDispatcher() {
         return mEventDispatcher;
     }
 
-    /* Provides a means for the client to indicate whether a JavaScript
-     * dialog request should proceed. An instance of this class is passed to
-     * various GeckoViewChrome callback actions.
-     */
-    public class PromptResult {
-        public PromptResult() {
-        }
-
-        /**
-        * Handle a confirmation response from the user.
-        */
-        public void confirm() {
-        }
-
-        /**
-        * Handle a confirmation response from the user.
-        * @param value String value to return to the browser context.
-        */
-        public void confirmWithValue(String value) {
-        }
-
-        /**
-        * Handle a cancellation response from the user.
-        */
-        public void cancel() {
-        }
-    }
-
-    public interface ChromeDelegate {
-        /**
-        * Tell the host application to display an alert dialog.
-        * @param view The GeckoView that initiated the callback.
-        * @param message The string to display in the dialog.
-        * @param result A PromptResult used to send back the result without blocking.
-        * Defaults to cancel requests.
-        */
-        void onAlert(GeckoView view, String message, GeckoView.PromptResult result);
-
-        /**
-        * Tell the host application to display a confirmation dialog.
-        * @param view The GeckoView that initiated the callback.
-        * @param message The string to display in the dialog.
-        * @param result A PromptResult used to send back the result without blocking.
-        * Defaults to cancel requests.
-        */
-        void onConfirm(GeckoView view, String message, GeckoView.PromptResult result);
-
-        /**
-        * Tell the host application to display an input prompt dialog.
-        * @param view The GeckoView that initiated the callback.
-        * @param message The string to display in the dialog.
-        * @param defaultValue The string to use as default input.
-        * @param result A PromptResult used to send back the result without blocking.
-        * Defaults to cancel requests.
-        */
-        void onPrompt(GeckoView view, String message, String defaultValue, GeckoView.PromptResult result);
-
-        /**
-        * Tell the host application to display a remote debugging request dialog.
-        * @param view The GeckoView that initiated the callback.
-        * @param result A PromptResult used to send back the result without blocking.
-        * Defaults to cancel requests.
-        */
-        void onDebugRequest(GeckoView view, GeckoView.PromptResult result);
-    }
-
     public interface ProgressListener {
-        static final int STATE_IS_BROKEN = 1;
-        static final int STATE_IS_SECURE = 2;
-        static final int STATE_IS_INSECURE = 4;
+        /**
+         * Class representing security information for a site.
+         */
+        public class SecurityInformation {
+            /**
+             * Indicates whether or not the site is secure.
+             */
+            public final boolean isSecure;
+            /**
+             * Indicates whether or not the site is a security exception.
+             */
+            public final boolean isException;
+            /**
+             * Contains the origin of the certificate.
+             */
+            public final String origin;
+            /**
+             * Contains the host associated with the certificate.
+             */
+            public final String host;
+            /**
+             * Contains the human-readable name of the certificate subject.
+             */
+            public final String organization;
+            /**
+             * Contains the full name of the certificate subject, including location.
+             */
+            public final String subjectName;
+            /**
+             * Contains the common name of the issuing authority.
+             */
+            public final String issuerCommonName;
+            /**
+             * Contains the full/proper name of the issuing authority.
+             */
+            public final String issuerOrganization;
+            /**
+             * Indicates the security level of the site; possible values are "unknown",
+             * "identified", and "verified". "identified" indicates domain validation only,
+             * while "verified" indicates extended validation.
+             */
+            public final String securityMode;
+            /**
+             * Indicates the presence of passive mixed content; possible values are
+             * "unknown", "blocked", and "loaded".
+             */
+            public final String mixedModePassive;
+            /**
+             * Indicates the presence of active mixed content; possible values are
+             * "unknown", "blocked", and "loaded".
+             */
+            public final String mixedModeActive;
+            /**
+             * Indicates the status of tracking protection; possible values are
+             * "unknown", "blocked", and "loaded".
+             */
+            public final String trackingMode;
+
+            /* package */ SecurityInformation(GeckoBundle identityData) {
+                final GeckoBundle mode = identityData.getBundle("mode");
+
+                mixedModePassive = mode.getString("mixed_display");
+                mixedModeActive = mode.getString("mixed_active");
+                trackingMode = mode.getString("tracking");
+
+                securityMode = mode.getString("identity");
+
+                isSecure = identityData.getBoolean("secure");
+                isException = identityData.getBoolean("securityException");
+                origin = identityData.getString("origin");
+                host = identityData.getString("host");
+                organization = identityData.getString("organization");
+                subjectName = identityData.getString("subjectName");
+                issuerCommonName = identityData.getString("issuerCommonName");
+                issuerOrganization = identityData.getString("issuerOrganization");
+            }
+        }
 
         /**
         * A View has started loading content from the network.
@@ -665,9 +1326,9 @@ public class GeckoView extends LayerView
         /**
         * The security status has been updated.
         * @param view The GeckoView that initiated the callback.
-        * @param status The new security status.
+        * @param securityInfo The new security information.
         */
-        void onSecurityChange(GeckoView view, int status);
+        void onSecurityChange(GeckoView view, SecurityInformation securityInfo);
     }
 
     public interface ContentListener {
@@ -678,6 +1339,33 @@ public class GeckoView extends LayerView
         * @param title The title sent from the content.
         */
         void onTitleChange(GeckoView view, String title);
+
+        /**
+         * A page has entered or exited full screen mode. Typically, the implementation
+         * would set the Activity containing the GeckoView to full screen when the page is
+         * in full screen mode.
+         *
+         * @param view The GeckoView that initiated the callback.
+         * @param fullScreen True if the page is in full screen mode.
+         */
+        void onFullScreen(GeckoView view, boolean fullScreen);
+
+
+        /**
+         * A user has initiated the context menu via long-press.
+         * This event is fired on links, (nested) images and (nested) media
+         * elements.
+         *
+         * @param view The GeckoView that initiated the callback.
+         * @param screenX The screen coordinates of the press.
+         * @param screenY The screen coordinates of the press.
+         * @param uri The URI of the pressed link, set for links and
+         *            image-links.
+         * @param elementSrc The source URI of the pressed element, set for
+         *                   (nested) images and media elements.
+         */
+        void onContextMenu(GeckoView view, int screenX, int screenY,
+                           String uri, String elementSrc);
     }
 
     public interface NavigationListener {
@@ -701,5 +1389,547 @@ public class GeckoView extends LayerView
         * @param canGoForward The new value for the ability.
         */
         void onCanGoForward(GeckoView view, boolean canGoForward);
+
+        enum TargetWindow {
+            DEFAULT(0),
+            CURRENT(1),
+            NEW(2);
+
+            private static final TargetWindow[] sValues = TargetWindow.values();
+            private int mValue;
+
+            private TargetWindow(int value) {
+                mValue = value;
+            }
+
+            public static TargetWindow forValue(int value) {
+                return sValues[value];
+            }
+
+            public static TargetWindow forGeckoValue(int value) {
+                // DEFAULT(0),
+                // CURRENT(1),
+                // NEW(2),
+                // NEWTAB(3),
+                // SWITCHTAB(4);
+                final TargetWindow[] sMap = {
+                    DEFAULT,
+                    CURRENT,
+                    NEW,
+                    NEW,
+                    NEW
+                };
+                return sMap[value];
+            }
+        }
+
+        enum LoadUriResult {
+            HANDLED(0),
+            LOAD_IN_FRAME(1);
+
+            private int mValue;
+
+            private LoadUriResult(int value) {
+                mValue = value;
+            }
+        }
+
+        /**
+        * A request to open an URI.
+        * @param view The GeckoView that initiated the callback.
+        * @param uri The URI to be loaded.
+        * @param where The target window.
+        *
+        * @return True if the URI loading has been handled, false if Gecko
+        *         should handle the loading.
+        */
+        boolean onLoadUri(GeckoView view, String uri, TargetWindow where);
+    }
+
+    /**
+     * GeckoView applications implement this interface to handle prompts triggered by
+     * content in the GeckoView, such as alerts, authentication dialogs, and select list
+     * pickers.
+     **/
+    public interface PromptDelegate {
+        /**
+         * Callback interface for notifying the result of a prompt, and for accessing the
+         * optional features for prompts (e.g. optional checkbox).
+         */
+        interface AlertCallback {
+            /**
+             * Called by the prompt implementation when the prompt is dismissed without a
+             * result, for example if the user presses the "Back" button. All prompts
+             * must call dismiss() or confirm(), if available, when the prompt is dismissed.
+             */
+            void dismiss();
+
+            /**
+             * Return whether the prompt shown should include a checkbox. For example, if
+             * a page shows multiple prompts within a short period of time, the next
+             * prompt will include a checkbox to let the user disable future prompts.
+             * Although the API allows checkboxes for all prompts, in practice, only
+             * alert/button/text/auth prompts will possibly have a checkbox.
+             */
+            boolean hasCheckbox();
+
+            /**
+             * Return the message label for the optional checkbox.
+             */
+            String getCheckboxMessage();
+
+            /**
+             * Return the initial value for the optional checkbox.
+             */
+            boolean getCheckboxValue();
+
+            /**
+             * Set the current value for the optional checkbox.
+             */
+            void setCheckboxValue(boolean value);
+        }
+
+        /**
+         * Display a simple message prompt.
+         *
+         * @param view The GeckoView that triggered the prompt
+         *             or null if the prompt is a global prompt.
+         * @param title Title for the prompt dialog.
+         * @param msg Message for the prompt dialog.
+         * @param callback Callback interface.
+         */
+        void alert(GeckoView view, String title, String msg, AlertCallback callback);
+
+        /**
+         * Callback interface for notifying the result of a button prompt.
+         */
+        interface ButtonCallback extends AlertCallback {
+            /**
+             * Called by the prompt implementation when the button prompt is dismissed by
+             * the user pressing one of the buttons.
+             */
+            void confirm(int button);
+        }
+
+        static final int BUTTON_TYPE_POSITIVE = 0;
+        static final int BUTTON_TYPE_NEUTRAL = 1;
+        static final int BUTTON_TYPE_NEGATIVE = 2;
+
+        /**
+         * Display a prompt with up to three buttons.
+         *
+         * @param view The GeckoView that triggered the prompt
+         *             or null if the prompt is a global prompt.
+         * @param title Title for the prompt dialog.
+         * @param msg Message for the prompt dialog.
+         * @param btnMsg Array of 3 elements indicating labels for the individual buttons.
+         *               btnMsg[BUTTON_TYPE_POSITIVE] is the label for the "positive" button.
+         *               btnMsg[BUTTON_TYPE_NEUTRAL] is the label for the "neutral" button.
+         *               btnMsg[BUTTON_TYPE_NEGATIVE] is the label for the "negative" button.
+         *               The button is hidden if the corresponding label is null.
+         * @param callback Callback interface.
+         */
+        void promptForButton(GeckoView view, String title, String msg,
+                             String[] btnMsg, ButtonCallback callback);
+
+        /**
+         * Callback interface for notifying the result of prompts that have text results,
+         * including color and date/time pickers.
+         */
+        interface TextCallback extends AlertCallback {
+            /**
+             * Called by the prompt implementation when the text prompt is confirmed by
+             * the user, for example by pressing the "OK" button.
+             */
+            void confirm(String text);
+        }
+
+        /**
+         * Display a prompt for inputting text.
+         *
+         * @param view The GeckoView that triggered the prompt
+         *             or null if the prompt is a global prompt.
+         * @param title Title for the prompt dialog.
+         * @param msg Message for the prompt dialog.
+         * @param value Default input text for the prompt.
+         * @param callback Callback interface.
+         */
+        void promptForText(GeckoView view, String title, String msg,
+                           String value, TextCallback callback);
+
+        /**
+         * Callback interface for notifying the result of authentication prompts.
+         */
+        interface AuthCallback extends AlertCallback {
+            /**
+             * Called by the prompt implementation when a password-only prompt is
+             * confirmed by the user.
+             */
+            void confirm(String password);
+
+            /**
+             * Called by the prompt implementation when a username/password prompt is
+             * confirmed by the user.
+             */
+            void confirm(String username, String password);
+        }
+
+        /**
+         * The auth prompt is for a network host.
+         */
+        static final int AUTH_FLAG_HOST = 1;
+        /**
+         * The auth prompt is for a proxy.
+         */
+        static final int AUTH_FLAG_PROXY = 2;
+        /**
+         * The auth prompt should only request a password.
+         */
+        static final int AUTH_FLAG_ONLY_PASSWORD = 8;
+        /**
+         * The auth prompt is the result of a previous failed login.
+         */
+        static final int AUTH_FLAG_PREVIOUS_FAILED = 16;
+        /**
+         * The auth prompt is for a cross-origin sub-resource.
+         */
+        static final int AUTH_FLAG_CROSS_ORIGIN_SUB_RESOURCE = 32;
+
+        /**
+         * The auth request is unencrypted or the encryption status is unknown.
+         */
+        static final int AUTH_LEVEL_NONE = 0;
+        /**
+         * The auth request only encrypts password but not data.
+         */
+        static final int AUTH_LEVEL_PW_ENCRYPTED = 1;
+        /**
+         * The auth request encrypts both password and data.
+         */
+        static final int AUTH_LEVEL_SECURE = 2;
+
+        /**
+         * Display a prompt for authentication credentials.
+         *
+         * @param view The GeckoView that triggered the prompt
+         *             or null if the prompt is a global prompt.
+         * @param title Title for the prompt dialog.
+         * @param msg Message for the prompt dialog.
+         * @param options Bundle containing options for the prompt with keys,
+         *                "flags": int, bit field of AUTH_FLAG_* flags;
+         *                "uri": String, URI for the auth request or null if unknown;
+         *                "level": int, one of AUTH_LEVEL_* indicating level of encryption;
+         *                "username": String, initial username or null if password-only;
+         *                "password": String, intiial password;
+         * @param callback Callback interface.
+         */
+        void promptForAuth(GeckoView view, String title, String msg,
+                           GeckoBundle options, AuthCallback callback);
+
+        /**
+         * Callback interface for notifying the result of menu or list choice.
+         */
+        interface ChoiceCallback extends AlertCallback {
+            /**
+             * Called by the prompt implementation when the menu or single-choice list is
+             * dismissed by the user.
+             *
+             * @param id ID of the selected item.
+             */
+            void confirm(String id);
+
+            /**
+             * Called by the prompt implementation when the multiple-choice list is
+             * dismissed by the user.
+             *
+             * @param id IDs of the selected items.
+             */
+            void confirm(String[] ids);
+
+            /**
+             * Called by the prompt implementation when the menu or single-choice list is
+             * dismissed by the user.
+             *
+             * @param item Bundle representing the selected item; must be an original
+             *             GeckoBundle object that was passed to the implementation.
+             */
+            void confirm(GeckoBundle item);
+
+            /**
+             * Called by the prompt implementation when the multiple-choice list is
+             * dismissed by the user.
+             *
+             * @param item Bundle array representing the selected items; must be original
+             *             GeckoBundle objects that were passed to the implementation.
+             */
+            void confirm(GeckoBundle[] items);
+        }
+
+        /**
+         * Display choices in a menu that dismisses as soon as an item is chosen.
+         */
+        static final int CHOICE_TYPE_MENU = 1;
+
+        /**
+         * Display choices in a list that allows a single selection.
+         */
+        static final int CHOICE_TYPE_SINGLE = 2;
+
+        /**
+         * Display choices in a list that allows multiple selections.
+         */
+        static final int CHOICE_TYPE_MULTIPLE = 3;
+
+        /**
+         * Display a menu prompt or list prompt.
+         *
+         * @param view The GeckoView that triggered the prompt
+         *             or null if the prompt is a global prompt.
+         * @param title Title for the prompt dialog, or null for no title.
+         * @param msg Message for the prompt dialog, or null for no message.
+         * @param type One of CHOICE_TYPE_* indicating the type of prompt.
+         * @param choices Array of bundles each representing an item or group, with keys,
+         *                "disabled": boolean, true if the item should not be selectable;
+         *                "icon": String, URI of the item icon or null if none
+         *                        (only valid for menus);
+         *                "id": String, ID of the item or group;
+         *                "items": GeckoBundle[], array of sub-items in a group or null
+         *                         if not a group.
+         *                "label": String, label for displaying the item or group;
+         *                "selected": boolean, true if the item should be pre-selected
+         *                            (pre-checked for menu items);
+         *                "separator": boolean, true if the item should be a menu separator
+         *                             (only valid for menus);
+         * @param callback Callback interface.
+         */
+        void promptForChoice(GeckoView view, String title, String msg, int type,
+                             GeckoBundle[] choices, ChoiceCallback callback);
+
+        /**
+         * Display a color prompt.
+         *
+         * @param view The GeckoView that triggered the prompt
+         *             or null if the prompt is a global prompt.
+         * @param title Title for the prompt dialog.
+         * @param value Initial color value in HTML color format.
+         * @param callback Callback interface; the result passed to confirm() must be in
+         *                 HTML color format.
+         */
+        void promptForColor(GeckoView view, String title, String value,
+                            TextCallback callback);
+
+        /**
+         * Prompt for year, month, and day.
+         */
+        static final int DATETIME_TYPE_DATE = 1;
+
+        /**
+         * Prompt for year and month.
+         */
+        static final int DATETIME_TYPE_MONTH = 2;
+
+        /**
+         * Prompt for year and week.
+         */
+        static final int DATETIME_TYPE_WEEK = 3;
+
+        /**
+         * Prompt for hour and minute.
+         */
+        static final int DATETIME_TYPE_TIME = 4;
+
+        /**
+         * Prompt for year, month, day, hour, and minute, without timezone.
+         */
+        static final int DATETIME_TYPE_DATETIME_LOCAL = 5;
+
+        /**
+         * Display a date/time prompt.
+         *
+         * @param view The GeckoView that triggered the prompt
+         *             or null if the prompt is a global prompt.
+         * @param title Title for the prompt dialog; currently always null.
+         * @param type One of DATETIME_TYPE_* indicating the type of prompt.
+         * @param value Initial date/time value in HTML date/time format.
+         * @param min Minimum date/time value in HTML date/time format.
+         * @param max Maximum date/time value in HTML date/time format.
+         * @param callback Callback interface; the result passed to confirm() must be in
+         *                 HTML date/time format.
+         */
+        void promptForDateTime(GeckoView view, String title, int type,
+                               String value, String min, String max, TextCallback callback);
+
+        /**
+         * Callback interface for notifying the result of file prompts.
+         */
+        interface FileCallback extends AlertCallback {
+            /**
+             * Called by the prompt implementation when the user makes a file selection in
+             * single-selection mode.
+             *
+             * @param uri The URI of the selected file.
+             */
+            void confirm(Uri uri);
+
+            /**
+             * Called by the prompt implementation when the user makes file selections in
+             * multiple-selection mode.
+             *
+             * @param uris Array of URI objects for the selected files.
+             */
+            void confirm(Uri[] uris);
+        }
+
+        static final int FILE_TYPE_SINGLE = 1;
+        static final int FILE_TYPE_MULTIPLE = 2;
+
+        /**
+         * Display a file prompt.
+         *
+         * @param view The GeckoView that triggered the prompt
+         *             or null if the prompt is a global prompt.
+         * @param title Title for the prompt dialog.
+         * @param type One of FILE_TYPE_* indicating the prompt type.
+         * @param mimeTypes Array of permissible MIME types for the selected files, in
+         *                  the form "type/subtype", where "type" and/or "subtype" can be
+         *                  "*" to indicate any value.
+         * @param callback Callback interface.
+         */
+        void promptForFile(GeckoView view, String title, int type,
+                           String[] mimeTypes, FileCallback callback);
+    }
+
+    /**
+     * GeckoView applications implement this interface to handle content scroll
+     * events.
+     **/
+    public interface ScrollListener {
+        /**
+         * The scroll position of the content has changed.
+         *
+        * @param view The GeckoView that initiated the callback.
+        * @param scrollX The new horizontal scroll position in pixels.
+        * @param scrollY The new vertical scroll position in pixels.
+        */
+        public void onScrollChanged(GeckoView view, int scrollX, int scrollY);
+    }
+
+    /**
+     * GeckoView applications implement this interface to handle requests for permissions
+     * from content, such as geolocation and notifications. For each permission, usually
+     * two requests are generated: one request for the Android app permission through
+     * requestAppPermissions, which is typically handled by a system permission dialog;
+     * and another request for the content permission (e.g. through
+     * requestContentPermission), which is typically handled by an app-specific
+     * permission dialog.
+     **/
+    public interface PermissionDelegate {
+        /**
+         * Callback interface for notifying the result of a permission request.
+         */
+        interface Callback {
+            /**
+             * Called by the implementation after permissions are granted; the
+             * implementation must call either grant() or reject() for every request.
+             */
+            void grant();
+
+            /**
+             * Called by the implementation when permissions are not granted; the
+             * implementation must call either grant() or reject() for every request.
+             */
+            void reject();
+        }
+
+        /**
+         * Request Android app permissions.
+         *
+         * @param view GeckoView instance requesting the permissions.
+         * @param permissions List of permissions to request; possible values are,
+         *                    android.Manifest.permission.ACCESS_FINE_LOCATION
+         *                    android.Manifest.permission.CAMERA
+         *                    android.Manifest.permission.RECORD_AUDIO
+         * @param callback Callback interface.
+         */
+        void requestAndroidPermissions(GeckoView view, String[] permissions,
+                                       Callback callback);
+
+        /**
+         * Request content permission.
+         *
+         * @param view GeckoView instance requesting the permission.
+         * @param uri The URI of the content requesting the permission.
+         * @param type The type of the requested permission; possible values are,
+         *             "geolocation": permission for using the geolocation API
+         *             "desktop-notification": permission for using the notifications API
+         * @param access Not used.
+         * @param callback Callback interface.
+         */
+        void requestContentPermission(GeckoView view, String uri, String type,
+                                      String access, Callback callback);
+
+        /**
+         * Callback interface for notifying the result of a media permission request,
+         * including which media source(s) to use.
+         */
+        interface MediaCallback {
+            /**
+             * Called by the implementation after permissions are granted; the
+             * implementation must call one of grant() or reject() for every request.
+             *
+             * @param video "id" value from the bundle for the video source to use,
+             *              or null when video is not requested.
+             * @param audio "id" value from the bundle for the audio source to use,
+             *              or null when audio is not requested.
+             */
+            void grant(final String video, final String audio);
+
+            /**
+             * Called by the implementation after permissions are granted; the
+             * implementation must call one of grant() or reject() for every request.
+             *
+             * @param video Bundle for the video source to use (must be an original
+             *              GeckoBundle object that was passed to the implementation);
+             *              or null when video is not requested.
+             * @param audio Bundle for the audio source to use (must be an original
+             *              GeckoBundle object that was passed to the implementation);
+             *              or null when audio is not requested.
+             */
+            void grant(final GeckoBundle video, final GeckoBundle audio);
+
+            /**
+             * Called by the implementation when permissions are not granted; the
+             * implementation must call one of grant() or reject() for every request.
+             */
+            void reject();
+        }
+
+        /**
+         * Request content media permissions, including request for which video and/or
+         * audio source to use.
+         *
+         * @param view GeckoView instance requesting the permission.
+         * @param uri The URI of the content requesting the permission.
+         * @param video List of video sources, or null if not requesting video.
+         *              Each bundle represents a video source, with keys,
+         *              "id": String, the origin-specific source identifier;
+         *              "rawId": String, the non-origin-specific source identifier;
+         *              "name": String, the name of the video source from the system
+         *                      (for example, "Camera 0, Facing back, Orientation 90");
+         *                      may be empty;
+         *              "mediaSource": String, the media source type; possible values are,
+         *                             "camera", "screen", "application", "window",
+         *                             "browser", and "other";
+         *              "type": String, always "video";
+         * @param audio List of audio sources, or null if not requesting audio.
+         *              Each bundle represents an audio source with same keys and possible
+         *              values as video source bundles above, except for:
+         *              "mediaSource", String; possible values are "microphone",
+         *                             "audioCapture", and "other";
+         *              "type", String, always "audio";
+         * @param callback Callback interface.
+         */
+        void requestMediaPermission(GeckoView view, String uri, GeckoBundle[] video,
+                                    GeckoBundle[] audio, MediaCallback callback);
     }
 }

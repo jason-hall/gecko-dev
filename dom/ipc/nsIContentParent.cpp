@@ -10,11 +10,11 @@
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentBridgeParent.h"
+#include "mozilla/dom/ContentProcessManager.h"
 #include "mozilla/dom/PTabContext.h"
 #include "mozilla/dom/PermissionMessageUtils.h"
 #include "mozilla/dom/TabParent.h"
-#include "mozilla/dom/ipc/BlobParent.h"
-#include "mozilla/dom/ipc/MemoryStreamParent.h"
+#include "mozilla/dom/ipc/IPCBlobInputStreamParent.h"
 #include "mozilla/dom/ipc/StructuredCloneData.h"
 #include "mozilla/jsipc/CrossProcessObjectWrappers.h"
 #include "mozilla/ipc/FileDescriptorSetParent.h"
@@ -121,11 +121,14 @@ nsIContentParent::CanOpenBrowser(const IPCTabContext& aContext)
 
 PBrowserParent*
 nsIContentParent::AllocPBrowserParent(const TabId& aTabId,
+                                      const TabId& aSameTabGroupAs,
                                       const IPCTabContext& aContext,
                                       const uint32_t& aChromeFlags,
                                       const ContentParentId& aCpId,
                                       const bool& aIsForBrowser)
 {
+  MOZ_ASSERT(!aSameTabGroupAs);
+
   Unused << aCpId;
   Unused << aIsForBrowser;
 
@@ -134,12 +137,17 @@ nsIContentParent::AllocPBrowserParent(const TabId& aTabId,
   }
 
   uint32_t chromeFlags = aChromeFlags;
+  TabId openerTabId(0);
+  ContentParentId openerCpId(0);
   if (aContext.type() == IPCTabContext::TPopupIPCTabContext) {
     // CanOpenBrowser has ensured that the IPCTabContext is of
     // type PopupIPCTabContext, and that the opener TabParent is
     // reachable.
     const PopupIPCTabContext& popupContext = aContext.get_PopupIPCTabContext();
     auto opener = TabParent::GetFrom(popupContext.opener().get_PBrowserParent());
+    openerTabId = opener->GetTabId();
+    openerCpId = opener->Manager()->ChildID();
+
     // We must ensure that the private browsing and remoteness flags
     // match those of the opener.
     nsCOMPtr<nsILoadContext> loadContext = opener->GetLoadContext();
@@ -151,6 +159,29 @@ nsIContentParent::AllocPBrowserParent(const TabId& aTabId,
     loadContext->GetUsePrivateBrowsing(&isPrivate);
     if (isPrivate) {
       chromeFlags |= nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW;
+    }
+  }
+
+  if (openerTabId > 0 ||
+      aContext.type() == IPCTabContext::TUnsafeIPCTabContext) {
+    // Creation of PBrowser triggered from grandchild process is currently
+    // broken and not supported (i.e. this code path doesn't work in
+    // ContentBridgeParent).
+    //
+    // If you're working on fixing the code path for ContentBridgeParent,
+    // remember to handle the remote frame registration below carefully as it
+    // has to be registered in parent process.
+    MOZ_ASSERT(XRE_IsParentProcess());
+    if (!XRE_IsParentProcess()) {
+      return nullptr;
+    }
+
+    // The creation of PBrowser was triggered from content process through
+    // either window.open() or service worker's openWindow().
+    // We need to register remote frame with the child generated tab id.
+    ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+    if (!cpm->RegisterRemoteFrame(aTabId, openerCpId, openerTabId, aContext, aCpId)) {
+      return nullptr;
     }
   }
 
@@ -175,54 +206,38 @@ nsIContentParent::DeallocPBrowserParent(PBrowserParent* aFrame)
   return true;
 }
 
-PBlobParent*
-nsIContentParent::AllocPBlobParent(const BlobConstructorParams& aParams)
+mozilla::ipc::IPCResult
+nsIContentParent::RecvPBrowserConstructor(PBrowserParent* actor,
+                                          const TabId& tabId,
+                                          const TabId& sameTabGroupAs,
+                                          const IPCTabContext& context,
+                                          const uint32_t& chromeFlags,
+                                          const ContentParentId& cpId,
+                                          const bool& isForBrowser)
 {
-  return BlobParent::Create(this, aParams);
+  TabParent* parent = TabParent::GetFrom(actor);
+  // When enabling input event prioritization, input events may preempt other
+  // normal priority IPC messages. To prevent the input events preempt
+  // PBrowserConstructor, we use an IPC 'RemoteIsReadyToHandleInputEvents' to
+  // notify parent that TabChild is created. In this case, PBrowser is initiated
+  // from content so that we can set TabParent as ready to handle input events.
+  parent->SetReadyToHandleInputEvents();
+  return IPC_OK();
+}
+
+PIPCBlobInputStreamParent*
+nsIContentParent::AllocPIPCBlobInputStreamParent(const nsID& aID,
+                                                 const uint64_t& aSize)
+{
+  MOZ_CRASH("PIPCBlobInputStreamParent actors should be manually constructed!");
+  return nullptr;
 }
 
 bool
-nsIContentParent::DeallocPBlobParent(PBlobParent* aActor)
-{
-  BlobParent::Destroy(aActor);
-  return true;
-}
-
-PMemoryStreamParent*
-nsIContentParent::AllocPMemoryStreamParent(const uint64_t& aSize)
-{
-  return new MemoryStreamParent(aSize);
-}
-
-bool
-nsIContentParent::DeallocPMemoryStreamParent(PMemoryStreamParent* aActor)
+nsIContentParent::DeallocPIPCBlobInputStreamParent(PIPCBlobInputStreamParent* aActor)
 {
   delete aActor;
   return true;
-}
-
-BlobParent*
-nsIContentParent::GetOrCreateActorForBlob(Blob* aBlob)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aBlob);
-
-  RefPtr<BlobImpl> blobImpl = aBlob->Impl();
-  MOZ_ASSERT(blobImpl);
-
-  return GetOrCreateActorForBlobImpl(blobImpl);
-}
-
-BlobParent*
-nsIContentParent::GetOrCreateActorForBlobImpl(BlobImpl* aImpl)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aImpl);
-
-  BlobParent* actor = BlobParent::GetOrCreate(this, aImpl);
-  NS_ENSURE_TRUE(actor, nullptr);
-
-  return actor;
 }
 
 mozilla::ipc::IPCResult
@@ -233,9 +248,8 @@ nsIContentParent::RecvSyncMessage(const nsString& aMsg,
                                   nsTArray<ipc::StructuredCloneData>* aRetvals)
 {
   NS_LossyConvertUTF16toASCII messageNameCStr(aMsg);
-  PROFILER_LABEL_DYNAMIC("nsIContentParent", "RecvSyncMessage",
-                         js::ProfileEntry::Category::EVENTS,
-                         messageNameCStr.get());
+  AUTO_PROFILER_LABEL_DYNAMIC("nsIContentParent::RecvSyncMessage", EVENTS,
+                              messageNameCStr.get());
 
   CrossProcessCpowHolder cpows(this, aCpows);
   RefPtr<nsFrameMessageManager> ppm = mMessageManager;
@@ -257,9 +271,8 @@ nsIContentParent::RecvRpcMessage(const nsString& aMsg,
                                  nsTArray<ipc::StructuredCloneData>* aRetvals)
 {
   NS_LossyConvertUTF16toASCII messageNameCStr(aMsg);
-  PROFILER_LABEL_DYNAMIC("nsIContentParent", "RecvRpcMessage",
-                         js::ProfileEntry::Category::EVENTS,
-                         messageNameCStr.get());
+  AUTO_PROFILER_LABEL_DYNAMIC("nsIContentParent::RecvRpcMessage", EVENTS,
+                              messageNameCStr.get());
 
   CrossProcessCpowHolder cpows(this, aCpows);
   RefPtr<nsFrameMessageManager> ppm = mMessageManager;
@@ -319,9 +332,8 @@ nsIContentParent::RecvAsyncMessage(const nsString& aMsg,
                                    const ClonedMessageData& aData)
 {
   NS_LossyConvertUTF16toASCII messageNameCStr(aMsg);
-  PROFILER_LABEL_DYNAMIC("nsIContentParent", "RecvAsyncMessage",
-                          js::ProfileEntry::Category::EVENTS,
-                          messageNameCStr.get());
+  AUTO_PROFILER_LABEL_DYNAMIC("nsIContentParent::RecvAsyncMessage", EVENTS,
+                              messageNameCStr.get());
 
   CrossProcessCpowHolder cpows(this, aCpows);
   RefPtr<nsFrameMessageManager> ppm = mMessageManager;

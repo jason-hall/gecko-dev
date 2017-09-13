@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 .landing-page {
   flex: 1;
   display: flex;
@@ -8,7 +12,7 @@
   /* Customs properties */
   --title-font-size: 24px;
   --ui-element-font-size: 16px;
-  --primary-line-height: 30px;
+  --primary-line-height: 22px;
   --secondary-line-height: 25px;
   --base-spacing: 20px;
   --base-transition: all 0.25s ease;
@@ -43,7 +47,15 @@
   transition: var(--base-transition);
 }
 
-.landing-page .panel header input[type=button] {
+.landing-page .panel .hero {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.landing-page button {
   background-color: var(--theme-tab-toolbar-background);
   color: var(--theme-comment);
   font-size: var(--ui-element-font-size);
@@ -51,6 +63,7 @@
   padding: calc(var(--base-spacing) / 2);
   margin: 0 var(--base-spacing);
   transition: var(--base-transition);
+  cursor: pointer;
 }
 
 .landing-page .panel header h1 {
@@ -91,6 +104,31 @@
   font-size: 14px;
   color: var(--theme-comment);
 }
+
+.landing-page .panel .launch-action-container {
+  text-align: center;
+}
+
+.landing-page .panel .under-construction {
+  display: flex;
+  width: 417px;
+  color: var(--theme-comment);
+  font-size: calc(var(--ui-element-font-size) / 1);
+  margin: var(--base-spacing) auto;
+  line-height: 1.4em;
+}
+
+.landing-page .panel .under-construction .under-construction-message {
+  max-width: 350px;
+}
+
+.landing-page .panel .under-construction .github-link {
+  display: block;
+}
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 .landing-page .tab-group {
   flex: 1;
   overflow-y: auto;
@@ -106,6 +144,7 @@
   border-bottom: 1px solid var(--theme-splitter-color);
   padding: calc(var(--base-spacing) / 2) var(--base-spacing);
   font-family: sans-serif;
+  cursor: pointer;
 }
 
 .landing-page .tab-sides {
@@ -136,7 +175,6 @@
 .landing-page .tab.active {
   background: var(--theme-selection-background);
   color: var(--theme-selection-color);
-  cursor: pointer;
   transition: var(--base-transition);
 }
 
@@ -149,10 +187,15 @@
 .landing-page .tab.active .tab-url {
   color: var(--theme-highlight-gray);
 }
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 .landing-page .sidebar {
+  --sidebar-width: 200px;
   display: flex;
   background-color: var(--theme-tab-toolbar-background);
-  width: 200px;
+  width: var(--sidebar-width);
   flex-direction: column;
   border-right: 1px solid var(--theme-splitter-color);
 }
@@ -162,8 +205,8 @@
   font-size: var(--title-font-size);
   margin: 0;
   line-height: var(--primary-line-height);
-  font-weight: normal;
-  padding: calc(2 * var(--base-spacing)) var(--base-spacing);
+  font-weight: bold;
+  padding: var(--base-spacing) var(--base-spacing);
 }
 
 .landing-page .sidebar ul {
@@ -202,6 +245,129 @@
 .landing-page .sidebar li:focus a {
   color: inherit;
 }
+
+.landing-page .sidebar li:last-child {
+  border-top: 2px solid var(--theme-splitter-color);
+  margin: 2px;
+}
+
+.landing-page .sidebar .title-wrapper .launchpad-container {
+  padding-left: var(--base-spacing);
+}
+
+.landing-page .sidebar .title-wrapper  .launchpad-container .launchpad-container-icon {
+  display: inline-block;
+}
+
+.landing-page .sidebar .title-wrapper  .launchpad-container svg {
+  width: 24px;
+  height: 24px;
+}
+
+.landing-page .sidebar .title-wrapper  .launchpad-container svg path {
+  width: 24px;
+  height: 24px;
+  fill: var(--theme-body-color);
+}
+
+.landing-page .sidebar .title-wrapper .launchpad-container .launchpad-container-title {
+  display: inline;
+  padding-left: 3px;
+}
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+menu {
+  display: inline;
+  padding: 0;
+}
+
+menu > menuitem::after {
+  content: "\25BA";
+  float: right;
+  padding-left: 5px;
+}
+
+menu > menupopup {
+  display: none;
+}
+
+menu > menuitem:hover + menupopup,
+menu > menupopup:hover {
+  display: block;
+}
+
+menupopup {
+  position: fixed;
+  z-index: 10000;
+  background: white;
+  border: 1px solid #cccccc;
+  padding: 5px 0;
+  background: #f2f2f2;
+  border-radius: 5px;
+  color: #585858;
+  box-shadow: 0 0 4px 0 rgba(190, 190, 190, 0.8);
+  min-width: 130px;
+}
+
+menuitem {
+  display: block;
+  padding: 0 20px;
+  line-height: 20px;
+  font-weight: 500;
+  font-size: 13px;
+  -moz-user-select: none;
+  user-select: none;
+}
+
+menuitem:hover {
+  background: #3780fb;
+  color: white;
+  cursor: pointer;
+}
+
+menuitem[disabled=true] {
+  color: #cccccc;
+}
+
+menuitem[disabled=true]:hover {
+  background-color: transparent;
+  cursor: default;
+}
+
+menuitem[type=checkbox]::before {
+  content: "";
+  width: 10px;
+  display: inline-block;
+}
+
+menuitem[type=checkbox][checked=true]::before {
+  content: "\2713";
+  left: -8px;
+  position: relative;
+}
+
+menuseparator {
+  border-bottom: 1px solid #cacdd3;
+  width: 100%;
+  height: 5px;
+  display: block;
+  margin-bottom: 5px;
+}
+
+#contextmenu-mask.show {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 999;
+}
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 :root.theme-light,
 :root .theme-light {
   --theme-search-overlays-semitransparent: rgba(221, 225, 228, 0.66);
@@ -243,662 +409,16 @@ body {
 :root.theme-dark .CodeMirror-scrollbar-filler {
   background: transparent;
 }
-/* BASICS */
-
-.CodeMirror {
-  /* Set height, width, borders, and global font properties here */
-  font-family: monospace;
-  height: 300px;
-  color: black;
-}
-
-/* PADDING */
-
-.CodeMirror-lines {
-  padding: 4px 0; /* Vertical padding around content */
-}
-.CodeMirror pre {
-  padding: 0 4px; /* Horizontal padding of content */
-}
-
-.CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler {
-  background-color: white; /* The little square between H and V scrollbars */
-}
-
-/* GUTTER */
-
-.CodeMirror-gutters {
-  border-right: 1px solid #ddd;
-  background-color: #f7f7f7;
-  white-space: nowrap;
-}
-.CodeMirror-linenumbers {}
-.CodeMirror-linenumber {
-  padding: 0 3px 0 5px;
-  min-width: 20px;
-  text-align: right;
-  color: #999;
-  white-space: nowrap;
-}
-
-.CodeMirror-guttermarker { color: black; }
-.CodeMirror-guttermarker-subtle { color: #999; }
-
-/* CURSOR */
-
-.CodeMirror-cursor {
-  border-left: 1px solid black;
-  border-right: none;
-  width: 0;
-}
-/* Shown when moving in bi-directional text */
-.CodeMirror div.CodeMirror-secondarycursor {
-  border-left: 1px solid silver;
-}
-.cm-fat-cursor .CodeMirror-cursor {
-  width: auto;
-  border: 0 !important;
-  background: #7e7;
-}
-.cm-fat-cursor div.CodeMirror-cursors {
-  z-index: 1;
-}
-
-.cm-animate-fat-cursor {
-  width: auto;
-  border: 0;
-  -webkit-animation: blink 1.06s steps(1) infinite;
-  -moz-animation: blink 1.06s steps(1) infinite;
-  animation: blink 1.06s steps(1) infinite;
-  background-color: #7e7;
-}
-@-moz-keyframes blink {
-  0% {}
-  50% { background-color: transparent; }
-  100% {}
-}
-@-webkit-keyframes blink {
-  0% {}
-  50% { background-color: transparent; }
-  100% {}
-}
-@keyframes blink {
-  0% {}
-  50% { background-color: transparent; }
-  100% {}
-}
-
-/* Can style cursor different in overwrite (non-insert) mode */
-.CodeMirror-overwrite .CodeMirror-cursor {}
-
-.cm-tab { display: inline-block; text-decoration: inherit; }
-
-.CodeMirror-rulers {
-  position: absolute;
-  left: 0; right: 0; top: -50px; bottom: -20px;
-  overflow: hidden;
-}
-.CodeMirror-ruler {
-  border-left: 1px solid #ccc;
-  top: 0; bottom: 0;
-  position: absolute;
-}
-
-/* DEFAULT THEME */
-
-.cm-s-default .cm-header {color: blue;}
-.cm-s-default .cm-quote {color: #090;}
-.cm-negative {color: #d44;}
-.cm-positive {color: #292;}
-.cm-header, .cm-strong {font-weight: bold;}
-.cm-em {font-style: italic;}
-.cm-link {text-decoration: underline;}
-.cm-strikethrough {text-decoration: line-through;}
-
-.cm-s-default .cm-keyword {color: #708;}
-.cm-s-default .cm-atom {color: #219;}
-.cm-s-default .cm-number {color: #164;}
-.cm-s-default .cm-def {color: #00f;}
-.cm-s-default .cm-variable,
-.cm-s-default .cm-punctuation,
-.cm-s-default .cm-property,
-.cm-s-default .cm-operator {}
-.cm-s-default .cm-variable-2 {color: #05a;}
-.cm-s-default .cm-variable-3 {color: #085;}
-.cm-s-default .cm-comment {color: #a50;}
-.cm-s-default .cm-string {color: #a11;}
-.cm-s-default .cm-string-2 {color: #f50;}
-.cm-s-default .cm-meta {color: #555;}
-.cm-s-default .cm-qualifier {color: #555;}
-.cm-s-default .cm-builtin {color: #30a;}
-.cm-s-default .cm-bracket {color: #997;}
-.cm-s-default .cm-tag {color: #170;}
-.cm-s-default .cm-attribute {color: #00c;}
-.cm-s-default .cm-hr {color: #999;}
-.cm-s-default .cm-link {color: #00c;}
-
-.cm-s-default .cm-error {color: #f00;}
-.cm-invalidchar {color: #f00;}
-
-.CodeMirror-composing { border-bottom: 2px solid; }
-
-/* Default styles for common addons */
-
-div.CodeMirror span.CodeMirror-matchingbracket {color: #0f0;}
-div.CodeMirror span.CodeMirror-nonmatchingbracket {color: #f22;}
-.CodeMirror-matchingtag { background: rgba(255, 150, 0, .3); }
-.CodeMirror-activeline-background {background: #e8f2ff;}
-
-/* STOP */
-
-/* The rest of this file contains styles related to the mechanics of
-   the editor. You probably shouldn't touch them. */
-
-.CodeMirror {
-  position: relative;
-  overflow: hidden;
-  background: white;
-}
-
-.CodeMirror-scroll {
-  overflow: scroll !important; /* Things will break if this is overridden */
-  /* 30px is the magic margin used to hide the element's real scrollbars */
-  /* See overflow: hidden in .CodeMirror */
-  margin-bottom: -30px; margin-right: -30px;
-  padding-bottom: 30px;
-  height: 100%;
-  outline: none; /* Prevent dragging from highlighting the element */
-  position: relative;
-}
-.CodeMirror-sizer {
-  position: relative;
-  border-right: 30px solid transparent;
-}
-
-/* The fake, visible scrollbars. Used to force redraw during scrolling
-   before actual scrolling happens, thus preventing shaking and
-   flickering artifacts. */
-.CodeMirror-vscrollbar, .CodeMirror-hscrollbar, .CodeMirror-scrollbar-filler, .CodeMirror-gutter-filler {
-  position: absolute;
-  z-index: 6;
-  display: none;
-}
-.CodeMirror-vscrollbar {
-  right: 0; top: 0;
-  overflow-x: hidden;
-  overflow-y: scroll;
-}
-.CodeMirror-hscrollbar {
-  bottom: 0; left: 0;
-  overflow-y: hidden;
-  overflow-x: scroll;
-}
-.CodeMirror-scrollbar-filler {
-  right: 0; bottom: 0;
-}
-.CodeMirror-gutter-filler {
-  left: 0; bottom: 0;
-}
-
-.CodeMirror-gutters {
-  position: absolute; left: 0; top: 0;
-  min-height: 100%;
-  z-index: 3;
-}
-.CodeMirror-gutter {
-  white-space: normal;
-  height: 100%;
-  display: inline-block;
-  vertical-align: top;
-  margin-bottom: -30px;
-}
-.CodeMirror-gutter-wrapper {
-  position: absolute;
-  z-index: 4;
-  background: none !important;
-  border: none !important;
-}
-.CodeMirror-gutter-background {
-  position: absolute;
-  top: 0; bottom: 0;
-  z-index: 4;
-}
-.CodeMirror-gutter-elt {
-  position: absolute;
-  cursor: default;
-  z-index: 4;
-}
-.CodeMirror-gutter-wrapper {
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  user-select: none;
-}
-
-.CodeMirror-lines {
-  cursor: text;
-  min-height: 1px; /* prevents collapsing before first draw */
-}
-.CodeMirror pre {
-  /* Reset some styles that the rest of the page might have set */
-  -moz-border-radius: 0; -webkit-border-radius: 0; border-radius: 0;
-  border-width: 0;
-  background: transparent;
-  font-family: inherit;
-  font-size: inherit;
-  margin: 0;
-  white-space: pre;
-  word-wrap: normal;
-  line-height: inherit;
-  color: inherit;
-  z-index: 2;
-  position: relative;
-  overflow: visible;
-  -webkit-tap-highlight-color: transparent;
-  -webkit-font-variant-ligatures: contextual;
-  font-variant-ligatures: contextual;
-}
-.CodeMirror-wrap pre {
-  word-wrap: break-word;
-  white-space: pre-wrap;
-  word-break: normal;
-}
-
-.CodeMirror-linebackground {
-  position: absolute;
-  left: 0; right: 0; top: 0; bottom: 0;
-  z-index: 0;
-}
-
-.CodeMirror-linewidget {
-  position: relative;
-  z-index: 2;
-  overflow: auto;
-}
-
-.CodeMirror-widget {}
-
-.CodeMirror-code {
-  outline: none;
-}
-
-/* Force content-box sizing for the elements where we expect it */
-.CodeMirror-scroll,
-.CodeMirror-sizer,
-.CodeMirror-gutter,
-.CodeMirror-gutters,
-.CodeMirror-linenumber {
-  -moz-box-sizing: content-box;
-  box-sizing: content-box;
-}
-
-.CodeMirror-measure {
-  position: absolute;
-  width: 100%;
-  height: 0;
-  overflow: hidden;
-  visibility: hidden;
-}
-
-.CodeMirror-cursor {
-  position: absolute;
-  pointer-events: none;
-}
-.CodeMirror-measure pre { position: static; }
-
-div.CodeMirror-cursors {
-  visibility: hidden;
-  position: relative;
-  z-index: 3;
-}
-div.CodeMirror-dragcursors {
-  visibility: visible;
-}
-
-.CodeMirror-focused div.CodeMirror-cursors {
-  visibility: visible;
-}
-
-.CodeMirror-selected { background: #d9d9d9; }
-.CodeMirror-focused .CodeMirror-selected { background: #d7d4f0; }
-.CodeMirror-crosshair { cursor: crosshair; }
-.CodeMirror-line::selection, .CodeMirror-line > span::selection, .CodeMirror-line > span > span::selection { background: #d7d4f0; }
-.CodeMirror-line::-moz-selection, .CodeMirror-line > span::-moz-selection, .CodeMirror-line > span > span::-moz-selection { background: #d7d4f0; }
-
-.cm-searching {
-  background: #ffa;
-  background: rgba(255, 255, 0, .4);
-}
-
-/* Used to force a border model for a node */
-.cm-force-border { padding-right: .1px; }
-
-@media print {
-  /* Hide the cursor when printing */
-  .CodeMirror div.CodeMirror-cursors {
-    visibility: hidden;
-  }
-}
-
-/* See issue #2901 */
-.cm-tab-wrap-hack:after { content: ''; }
-
-/* Help users use markselection to safely style text background */
-span.CodeMirror-selectedtext { background: none; }
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-:root {
-  /* --breakpoint-background: url("chrome://devtools/skin/images/breakpoint.svg#light"); */
-  /* --breakpoint-hover-background: url("chrome://devtools/skin/images/breakpoint.svg#light-hover"); */
-  --breakpoint-active-color: rgba(44,187,15,.2);
-  --breakpoint-active-color-hover: rgba(44,187,15,.5);
-  /* --breakpoint-conditional-background: url("chrome://devtools/skin/images/breakpoint.svg#light-conditional"); */
-}
-
-.theme-dark:root {
-  /* --breakpoint-background: url("chrome://devtools/skin/images/breakpoint.svg#dark"); */
-  /* --breakpoint-hover-background: url("chrome://devtools/skin/images/breakpoint.svg#dark-hover"); */
-  --breakpoint-active-color: rgba(0,255,175,.4);
-  --breakpoint-active-color-hover: rgba(0,255,175,.7);
-  /* --breakpoint-conditional-background: url("chrome://devtools/skin/images/breakpoint.svg#dark-conditional"); */
-}
-
-.CodeMirror .errors {
-  width: 16px;
-}
-
-.CodeMirror .error {
-  display: inline-block;
-  margin-left: 5px;
-  width: 12px;
-  height: 12px;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: contain;
-  /* background-image: url("chrome://devtools/skin/images/editor-error.png"); */
-  opacity: 0.75;
-}
-
-.CodeMirror .hit-counts {
-  width: 6px;
-}
-
-.CodeMirror .hit-count {
-  display: inline-block;
-  height: 12px;
-  border: solid rgba(0,0,0,0.2);
-  border-width: 1px 1px 1px 0;
-  border-radius: 0 3px 3px 0;
-  padding: 0 3px;
-  font-size: 10px;
-  pointer-events: none;
-}
-
-.CodeMirror-linenumber:before {
-  content: " ";
-  display: block;
-  width: calc(100% - 3px);
-  position: absolute;
-  top: 1px;
-  left: 0;
-  height: 12px;
-  z-index: -1;
-  background-size: calc(100% - 2px) 12px;
-  background-repeat: no-repeat;
-  background-position: right center;
-  padding-inline-end: 9px;
-}
-
-.breakpoint .CodeMirror-linenumber {
-  color: var(--theme-body-background);
-}
-
-.breakpoint .CodeMirror-linenumber:before {
-  background-image: var(--breakpoint-background) !important;
-}
-
-.conditional .CodeMirror-linenumber:before {
-  background-image: var(--breakpoint-conditional-background) !important;
-}
-
-.debug-line .CodeMirror-linenumber {
-  background-color: var(--breakpoint-active-color);
-}
-
-.theme-dark .debug-line .CodeMirror-linenumber {
-  color: #c0c0c0;
-}
-
-.debug-line .CodeMirror-line {
-  background-color: var(--breakpoint-active-color) !important;
-}
-
-/* Don't display the highlight color since the debug line
-   is already highlighted */
-.debug-line .CodeMirror-activeline-background {
-  display: none;
-}
-
-.CodeMirror {
-  cursor: text;
-  height: 100%;
-}
-
-.CodeMirror-gutters {
-  cursor: default;
-}
-
-/* This is to avoid the fake horizontal scrollbar div of codemirror to go 0
-height when floating scrollbars are active. Make sure that this value is equal
-to the maximum of `min-height` specific to the `scrollbar[orient="horizontal"]`
-selector in floating-scrollbar-light.css across all platforms. */
-.CodeMirror-hscrollbar {
-  min-height: 10px;
-}
-
-/* This is to avoid the fake vertical scrollbar div of codemirror to go 0
-width when floating scrollbars are active. Make sure that this value is equal
-to the maximum of `min-width` specific to the `scrollbar[orient="vertical"]`
-selector in floating-scrollbar-light.css across all platforms. */
-.CodeMirror-vscrollbar {
-  min-width: 10px;
-}
-
-.cm-trailingspace {
-  background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAB3RJTUUH3QUXCToH00Y1UgAAACFJREFUCNdjPMDBUc/AwNDAAAFMTAwMDA0OP34wQgX/AQBYgwYEx4f9lQAAAABJRU5ErkJggg==");
-  opacity: 0.75;
-  background-position: left bottom;
-  background-repeat: repeat-x;
-}
-
-.cm-highlight {
-  position: relative;
-}
-
-.cm-highlight:before {
-  position: absolute;
-  border-top-style: solid;
-  border-bottom-style: solid;
-  border-top-color: var(--theme-comment-alt);
-  border-bottom-color: var(--theme-comment-alt);
-  border-top-width: 1px;
-  border-bottom-width: 1px;
-  top: -1px;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  content: "";
-  margin-bottom: -1px;
-}
-
-.cm-highlight-full:before {
-  border: 1px solid var(--theme-comment-alt);
-}
-
-.cm-highlight-start:before {
-  border-left-width: 1px;
-  border-left-style: solid;
-  border-left-color: var(--theme-comment-alt);
-  margin: 0 0 -1px -1px;
-  border-top-left-radius: 2px;
-  border-bottom-left-radius: 2px;
-}
-
-.cm-highlight-end:before {
-  border-right-width: 1px;
-  border-right-style: solid;
-  border-right-color: var(--theme-comment-alt);
-  margin: 0 -1px -1px 0;
-  border-top-right-radius: 2px;
-  border-bottom-right-radius: 2px;
-}
-
-/* CodeMirror dialogs styling */
-
-.CodeMirror-dialog {
-  padding: 4px 3px;
-}
-
-.CodeMirror-dialog,
-.CodeMirror-dialog input {
-  font: message-box;
-}
-
-/* Fold addon */
-
-.CodeMirror-foldmarker {
-  color: blue;
-  text-shadow: #b9f 1px 1px 2px, #b9f -1px -1px 2px, #b9f 1px -1px 2px, #b9f -1px 1px 2px;
-  font-family: sans-serif;
-  line-height: .3;
-  cursor: pointer;
-}
-
-.CodeMirror-foldgutter {
-  width: 16px; /* Same as breakpoints gutter above */
-}
-
-.CodeMirror-foldgutter-open,
-.CodeMirror-foldgutter-folded {
-  color: #555;
-  cursor: pointer;
-}
-
-.CodeMirror-foldgutter-open:after {
-  font-size: 120%;
-  content: "\25BE";
-}
-
-.CodeMirror-foldgutter-folded:after {
-  font-size: 120%;
-  content: "\25B8";
-}
-
-.CodeMirror-hints {
-  position: absolute;
-  z-index: 10;
-  overflow: hidden;
-  list-style: none;
-  margin: 0;
-  padding: 2px;
-  border-radius: 3px;
-  font-size: 90%;
-  max-height: 20em;
-  overflow-y: auto;
-}
-
-.CodeMirror-hint {
-  margin: 0;
-  padding: 0 4px;
-  border-radius: 2px;
-  max-width: 19em;
-  overflow: hidden;
-  white-space: pre;
-  cursor: pointer;
-}
-
-.CodeMirror-Tern-completion {
-  padding-inline-start: 22px;
-  position: relative;
-  line-height: 18px;
-}
-
-.CodeMirror-Tern-completion:before {
-  position: absolute;
-  left: 2px;
-  bottom: 2px;
-  border-radius: 50%;
-  font-size: 12px;
-  font-weight: bold;
-  height: 15px;
-  width: 15px;
-  line-height: 16px;
-  text-align: center;
-  color: #ffffff;
-  box-sizing: border-box;
-}
-
-.CodeMirror-Tern-completion-unknown:before {
-  content: "?";
-}
-
-.CodeMirror-Tern-completion-object:before {
-  content: "O";
-}
-
-.CodeMirror-Tern-completion-fn:before {
-  content: "F";
-}
-
-.CodeMirror-Tern-completion-array:before {
-  content: "A";
-}
-
-.CodeMirror-Tern-completion-number:before {
-  content: "N";
-}
-
-.CodeMirror-Tern-completion-string:before {
-  content: "S";
-}
-
-.CodeMirror-Tern-completion-bool:before {
-  content: "B";
-}
-
-.CodeMirror-Tern-completion-guess {
-  color: #999;
-}
-
-.CodeMirror-Tern-tooltip {
-  border-radius: 3px;
-  padding: 2px 5px;
-  white-space: pre-wrap;
-  max-width: 40em;
-  position: absolute;
-  z-index: 10;
-}
-
-.CodeMirror-Tern-hint-doc {
-  max-width: 25em;
-}
-
-.CodeMirror-Tern-farg-current {
-  text-decoration: underline;
-}
-
-.CodeMirror-Tern-fhint-guess {
-  opacity: .7;
-}
 :root.theme-light,
 :root .theme-light {
   --search-overlays-semitransparent: rgba(221, 225, 228, 0.66);
+  --popup-shadow-color: #d0d0d0;
 }
 
 :root.theme-dark,
 :root .theme-dark {
   --search-overlays-semitransparent: rgba(42, 46, 56, 0.66);
+  --popup-shadow-color: #5c667b;
 }
 .debugger {
   display: flex;
@@ -919,10 +439,6 @@ selector in floating-scrollbar-light.css across all platforms. */
   width: 100%;
 }
 
-.subsettings:hover {
-  cursor: pointer;
-}
-
 .search-container {
   position: absolute;
   top: 0;
@@ -938,6 +454,14 @@ selector in floating-scrollbar-light.css across all platforms. */
   width: 16px;
   margin-top: 25px;
   margin-right: 20px;
+}
+
+/* Utils */
+.absolute-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 menupopup {
   position: fixed;
@@ -965,14 +489,13 @@ menuitem {
 menuitem:hover {
   background: #3780fb;
   color: white;
-  cursor: pointer;
 }
 
-menuitem[disabled=true] {
+menuitem[disabled="true"] {
   color: #cccccc;
 }
 
-menuitem[disabled=true]:hover {
+menuitem[disabled="true"]:hover {
   background-color: transparent;
   cursor: default;
 }
@@ -998,94 +521,6 @@ menuseparator {
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-.split-box {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  width: 100%;
-}
-
-.split-box.vert {
-  flex-direction: row;
-}
-
-.split-box.horz {
-  flex-direction: column;
-}
-
-.split-box > .uncontrolled {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  overflow: auto;
-}
-
-.split-box > .controlled {
-  display: flex;
-  overflow: auto;
-}
-
-.split-box > .splitter {
-  background-image: none;
-  border: 0;
-  border-style: solid;
-  border-color: transparent;
-  background-color: var(--theme-splitter-color);
-  background-clip: content-box;
-  position: relative;
-
-  box-sizing: border-box;
-
-  /* Positive z-index positions the splitter on top of its siblings and makes
-     it clickable on both sides. */
-  z-index: 1;
-}
-
-.split-box.vert > .splitter {
-  min-width: calc(var(--devtools-splitter-inline-start-width) +
-    var(--devtools-splitter-inline-end-width) + 1px);
-
-  border-left-width: var(--devtools-splitter-inline-start-width);
-  border-right-width: var(--devtools-splitter-inline-end-width);
-
-  margin-left: calc(-1 * var(--devtools-splitter-inline-start-width) - 1px);
-  margin-right: calc(-1 * var(--devtools-splitter-inline-end-width));
-
-  cursor: ew-resize;
-}
-
-.split-box.horz > .splitter {
-  min-height: calc(var(--devtools-splitter-top-width) +
-    var(--devtools-splitter-bottom-width) + 1px);
-
-  border-top-width: var(--devtools-splitter-top-width);
-  border-bottom-width: var(--devtools-splitter-bottom-width);
-
-  margin-top: calc(-1 * var(--devtools-splitter-top-width) - 1px);
-  margin-bottom: calc(-1 * var(--devtools-splitter-bottom-width));
-
-  cursor: ns-resize;
-}
-
-.split-box.disabled {
-  pointer-events: none;
-}
-
-/**
- * Make sure splitter panels are not processing any mouse
- * events. This is good for performance during splitter
- * bar dragging.
- */
-.split-box.dragging > .controlled,
-.split-box.dragging > .uncontrolled {
-  pointer-events: none;
-}
-/* vim:set ts=2 sw=2 sts=2 et: */
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 .theme-dark,
 .theme-light {
   --number-color: var(--theme-highlight-green);
@@ -1101,7 +536,7 @@ menuseparator {
 
 .theme-firebug {
   --number-color: #000088;
-  --string-color: #FF0000;
+  --string-color: #ff0000;
   --null-color: #787878;
   --object-color: DarkGreen;
   --caption-color: #444444;
@@ -1114,7 +549,6 @@ menuseparator {
 /******************************************************************************/
 
 .objectLink:hover {
-  cursor: pointer;
   text-decoration: underline;
 }
 
@@ -1210,7 +644,6 @@ menuseparator {
 .objectRightBrace,
 .arrayLeftBracket,
 .arrayRightBracket {
-  cursor: pointer;
   font-weight: bold;
 }
 
@@ -1239,7 +672,7 @@ menuseparator {
 
 .caption {
   font-weight: bold;
-  color:  var(--caption-color);
+  color: var(--caption-color);
 }
 
 /******************************************************************************/
@@ -1262,27 +695,94 @@ menuseparator {
 .theme-light .caption {
   font-weight: normal;
 }
+/* vim:set ts=2 sw=2 sts=2 et: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-.search-container {
-  position: absolute;
-  top: 30px;
-  left: 0;
-  width: calc(100% - 1px);
-  height: calc(100% - 31px);
+.split-box {
   display: flex;
-  z-index: 200;
-  background-color: var(--theme-body-background);
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  width: 100%;
 }
 
-.searchinput-container {
+.split-box.vert {
+  flex-direction: row;
+}
+
+.split-box.horz {
+  flex-direction: column;
+}
+
+.split-box > .uncontrolled {
   display: flex;
-  border-bottom: 1px solid var(--theme-splitter-color);
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
 }
 
-.theme-dark .result-list li .subtitle {
-  color: var(--theme-comment-alt);
+.split-box > .controlled {
+  display: flex;
+  overflow: auto;
 }
 
+.split-box > .splitter {
+  background-image: none;
+  border: 0;
+  border-style: solid;
+  border-color: transparent;
+  background-color: var(--theme-splitter-color);
+  background-clip: content-box;
+  position: relative;
+
+  box-sizing: border-box;
+
+  /* Positive z-index positions the splitter on top of its siblings and makes
+     it clickable on both sides. */
+  z-index: 1;
+}
+
+.split-box.vert > .splitter {
+  min-width: calc(var(--devtools-splitter-inline-start-width) +
+    var(--devtools-splitter-inline-end-width) + 1px);
+
+  border-left-width: var(--devtools-splitter-inline-start-width);
+  border-right-width: var(--devtools-splitter-inline-end-width);
+
+  margin-left: calc(-1 * var(--devtools-splitter-inline-start-width) - 1px);
+  margin-right: calc(-1 * var(--devtools-splitter-inline-end-width));
+
+  cursor: ew-resize;
+}
+
+.split-box.horz > .splitter {
+  min-height: calc(var(--devtools-splitter-top-width) +
+    var(--devtools-splitter-bottom-width) + 1px);
+
+  border-top-width: var(--devtools-splitter-top-width);
+  border-bottom-width: var(--devtools-splitter-bottom-width);
+
+  margin-top: calc(-1 * var(--devtools-splitter-top-width) - 1px);
+  margin-bottom: calc(-1 * var(--devtools-splitter-bottom-width));
+
+  cursor: ns-resize;
+}
+
+.split-box.disabled {
+  pointer-events: none;
+}
+
+/**
+ * Make sure splitter panels are not processing any mouse
+ * events. This is good for performance during splitter
+ * bar dragging.
+ */
+.split-box.dragging > .controlled,
+.split-box.dragging > .uncontrolled {
+  pointer-events: none;
+}
 .arrow,
 .folder,
 .domain,
@@ -1353,19 +853,67 @@ html .arrow.expanded svg {
 .arrow.hidden {
   visibility: hidden;
 }
+.managed-tree .tree {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -o-user-select: none;
+  user-select: none;
+
+  white-space: nowrap;
+  overflow: auto;
+  min-width: 100%;
+}
+
+.managed-tree .tree button {
+  display: block;
+}
+
+.managed-tree .tree .node {
+  padding: 2px 3px 2px 3px;
+  position: relative;
+}
+
+.managed-tree .tree .node.focused {
+  color: white;
+  background-color: var(--theme-selection-background);
+  padding-bottom: 2px;
+}
+
+.theme-dark .managed-tree .tree .node.focused {
+  background-color: var(--theme-selection-background-hover);
+  padding-bottom: 2px;
+}
+
+html:not([dir="rtl"]) .managed-tree .tree .node > div {
+  margin-left: 10px;
+}
+
+html[dir="rtl"] .managed-tree .tree .node > div {
+  margin-right: 10px;
+}
+
+.managed-tree .tree .node.focused svg {
+  fill: white;
+}
+
+.managed-tree .tree-node button {
+  position: fixed;
+}
 .close-btn path {
   fill: var(--theme-comment-alt);
 }
 
 .close-btn .close {
-  cursor: pointer;
   width: 14px;
   height: 14px;
-  padding: 2px;
-  text-align: center;
-  margin-top: 2px;
-  line-height: 7px;
-  transition: all 0.25s easeinout;
+  transition: all 0.25s ease-in-out;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  padding: 0;
+  margin-top: 0;
+  display: inline-flex;
+  justify-content: center;
 }
 
 .close-btn .close svg {
@@ -1378,40 +926,27 @@ html .arrow.expanded svg {
 
 .close-btn:hover .close {
   background: var(--theme-selection-background);
-  border-radius: 2px;
 }
 
 .close-btn:hover .close path {
   fill: white;
 }
 
-.close-btn-big {
+.close-btn.big {
   padding: 11px;
   margin-right: 7px;
   width: 27px;
   height: 40px;
 }
 
-.close-btn-big .close {
-  cursor: pointer;
-  display: inline-block;
-  padding: 2px;
-  text-align: center;
-  transition: all 0.25s easeinout;
-  line-height: 100%;
+.close-btn.big .close {
   width: 16px;
   height: 16px;
 }
 
-.close-btn-big .close svg {
+.close-btn.big .close svg {
   width: 9px;
-  height: 9px;
 }
-
-.close-btn-big .close:hover {
-  border-radius: 2px;
-}
-
 .search-field {
   width: calc(100% - 1px);
   height: 27px;
@@ -1424,11 +959,6 @@ html .arrow.expanded svg {
 
 .search-field.big {
   height: 40px;
-  font-size: 14px;
-}
-
-.search-field.big input {
-  font-size: 14px;
 }
 
 .search-field i {
@@ -1475,10 +1005,6 @@ html .arrow.expanded svg {
   stroke: var(--theme-splitter-color);
 }
 
-.search-field ::-webkit-input-placeholder {
-  color: var(--theme-body-color-inactive);
-}
-
 .search-field input::placeholder {
   color: var(--theme-body-color-inactive);
 }
@@ -1501,13 +1027,130 @@ html .arrow.expanded svg {
   color: var(--theme-body-color-inactive);
 }
 
+.search-field .search-nav-buttons {
+  display: flex;
+  user-select: none;
+}
+
+.search-field .search-nav-buttons .nav-btn {
+  display: flex;
+  height: 100%;
+  background: transparent;
+  transition: all 0.25s ease-in-out;
+  border: 1px solid transparent;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.search-field .search-nav-buttons .nav-btn:hover {
+  background: var(--theme-toolbar-background-hover);
+}
+
+.search-field .search-nav-buttons .nav-btn:active path {
+  fill: var(--theme-comment-alt);
+}
+
+.search-field .search-nav-buttons .nav-btn path {
+  fill: var(--theme-comment);
+}
+.project-text-search {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: hidden;
+  height: 100%;
+}
+
+.project-text-search .result {
+  display: flex;
+  cursor: default;
+  padding: 4px 0 4px 30px;
+  line-height: 16px;
+  font-size: 10px;
+}
+
+.project-text-search .matches-summary {
+  margin-left: 5px;
+}
+
+.project-text-search .result {
+  font-family: Menlo, monospace;
+}
+
+.project-text-search .result.focused {
+  background-color: var(--theme-codemirror-gutter-background);
+}
+
+.project-text-search .result .query-match {
+  background-color: var(--theme-selection-background);
+  color: white;
+  padding: 1px 4px;
+  margin: 0 2px 0 2px;
+  border-radius: 2px;
+}
+
+.project-text-search .result.focused .line-number {
+  font-weight: bolder;
+}
+
+.project-text-search .result .line-number {
+  margin-right: 1em;
+  width: 2em;
+}
+
+.project-text-search .file-result {
+  font-weight: bold;
+  line-height: 20px;
+  cursor: default;
+  padding: 2px 0 2px 5px;
+  font-size: 12px;
+}
+
+.project-text-search .file-result .arrow {
+  margin: 2px 0 2px 0;
+}
+
+.project-text-search .file-result.focused {
+  background-color: var(--theme-codemirror-gutter-background);
+}
+
+.project-text-search .line-match {
+  display: "flex";
+  grow: 1;
+}
+
+.project-text-search .search-field {
+  display: flex;
+  align-self: stretch;
+  flex-grow: 1;
+}
+
+.project-text-search .managed-tree {
+  overflow-y: auto;
+  height: calc(100% - 81px);
+}
+
+.project-text-search .managed-tree .tree {
+  height: 100%;
+}
+.autocomplete {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.autocomplete .no-result-msg {
+  color: var(--theme-body-color-inactive);
+  font-size: 24px;
+  padding: 4px;
+  word-break: break-all;
+}
 .result-list {
   list-style: none;
-  width: 100%;
-  background-color: var(--theme-toolbar-background);
   margin: 0px;
   padding: 0px;
   overflow: auto;
+  width: calc(100% - 1px); /* 1px fixes the hidden right border */
 }
 
 .result-list.big {
@@ -1521,14 +1164,10 @@ html .arrow.expanded svg {
 
 .result-list li {
   color: var(--theme-body-color);
-  background-color: var(--theme-tab-toolbar-background);
   padding: 4px 13px;
   display: flex;
   justify-content: space-between;
-}
-
-.result-list li:first-child {
-  border-top: none;
+  border: 1px solid transparent;
 }
 
 .result-list.big li {
@@ -1539,21 +1178,19 @@ html .arrow.expanded svg {
 
 .result-list li:hover {
   background: var(--theme-tab-toolbar-background);
-  cursor: pointer;
 }
 
 .result-list li.selected {
-  border: 1px solid var(--theme-selection-background);
+  border-color: var(--theme-selection-background);
 }
 
-.result-list.big li.selected {
-  padding-left: 9px;
-  padding-top: 9px;
-}
-
-.search-bar .result-list li.selected {
+.result-list.small li.selected {
   background-color: var(--theme-selection-background);
   color: white;
+}
+
+.theme-dark .result-list.small li.selected {
+  background-color: var(--theme-body-background);
 }
 
 .result-list li .title {
@@ -1589,81 +1226,59 @@ html .arrow.expanded svg {
 .theme-dark .result-list {
   background-color: var(--theme-body-background);
 }
-
-.autocomplete {
-  flex: 1;
-  width: 100%;
-}
-
-.autocomplete .no-result-msg {
+.search-container {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  width: calc(100% - 1px);
+  height: calc(100% - 31px);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  color: var(--theme-graphs-full-red);
-  font-size: 24px;
-  padding: 4px;
-  word-break: break-all;
+  flex-direction: column;
+  z-index: 200;
+  background-color: var(--theme-body-background);
+  overflow-y: auto;
 }
 
-.autocomplete .no-result-msg .sad-face {
-  width: 24px;
-  margin: 0 4px;
-  line-height: 0;
+.searchinput-container {
+  display: flex;
+  border-bottom: 1px solid var(--theme-splitter-color);
+}
+
+.theme-dark .result-list li .subtitle {
+  color: var(--theme-comment-alt);
+}
+
+.toggle-search {
+  background-color: var(--theme-toolbar-background);
+  border-bottom: 1px solid var(--theme-splitter-color);
+  color: var(--theme-comment-alt);
+  display: flex;
   flex-shrink: 0;
+  justify-content: flex-start;
+  line-height: 40px;
+  padding: 0 13px;
+  width: calc(100% - 1px);
 }
 
-.autocomplete .no-result-msg .sad-face svg {
-  fill: var(--theme-graphs-full-red);
-}
-.tree {
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  -o-user-select: none;
-  user-select: none;
-
-  white-space: nowrap;
-  overflow: auto;
-  min-width: 100%;
+.toggle-search .title {
+  font-weight: 500;
+  font-size: 120%;
 }
 
-.tree button {
-  display: block;
+.toggle-search .text {
+  margin-left: 1em;
 }
 
-.tree .node {
-  padding: 2px 5px;
-  position: relative;
-  cursor: pointer;
-}
-
-.tree .node.focused {
-  color: white;
-  background-color: var(--theme-selection-background);
-}
-
-html:not([dir="rtl"]) .tree .node > div {
-  margin-left: 10px;
-}
-
-html[dir="rtl"] .tree .node > div {
-  margin-right: 10px;
-}
-
-.tree .node.focused svg {
-  fill: white;
-}
-
-.tree-node button {
-  position: fixed;
+.toggle-search .active {
+  color: var(--theme-selection-background);
+  cursor: default;
 }
 .sources-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 
 .sources-panel * {
@@ -1699,27 +1314,175 @@ html[dir="rtl"] .tree .node > div {
   font-weight: lighter;
   white-space: nowrap;
   padding-inline-end: 10px;
-  cursor: pointer;
 }
 
 .sources-list {
   flex: 1;
   display: flex;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.sources-list .managed-tree {
+  flex: 1;
+  display: flex;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .theme-dark .sources-list .tree .node:not(.focused) svg {
-  fill: var(--theme-comment);
+  fill: var(--theme-content-color3);
 }
 
 .theme-dark .source-list .tree .node.focused {
   background-color: var(--theme-tab-toolbar-background);
 }
+
+.no-sources-message {
+  font-size: 12px;
+  color: var(--theme-comment-alt);
+  font-weight: lighter;
+  padding-top: 5px;
+  flex-grow: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.sources-panel .source-footer {
+  position: relative;
+}
+
+.sources-panel .outline {
+  display: flex;
+  flex: 1;
+}
+
+.sources-panel .outline.hidden {
+  display: none;
+}
+
+.hidden {
+  display: none;
+}
+
+.source-footer {
+  width: 100%;
+}
+
+.source-footer .tab {
+  flex: 1;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-bottom-left-radius: 2px;
+  border-bottom-right-radius: 2px;
+  display: inline-flex;
+  position: relative;
+  transition: all 0.25s ease;
+  overflow: hidden;
+  padding: 5px;
+  margin-bottom: 0px;
+  margin-top: -1px;
+}
+
+.source-footer .tab:hover {
+  background-color: var(--theme-toolbar-background-alt);
+  border-color: var(--theme-splitter-color);
+}
+
+.source-footer .tab.active {
+  color: var(--theme-body-color);
+  background-color: var(--theme-toolbar-background);
+  border-color: var(--theme-splitter-color);
+}
+
+.source-footer .tab.active path,
+.source-footer .tab:hover path {
+  fill: var(--theme-body-color);
+}
+.outline {
+  overflow-y: auto;
+}
+
+.outline-list {
+  list-style-type: none;
+  padding-left: 0px;
+  width: 100%;
+}
+
+.outline-list__element {
+  color: blue;
+  padding-bottom: 0.2rem;
+  padding-left: 1rem;
+  padding-right: 0.5rem;
+  padding-top: 0.2rem;
+}
+
+.outline-list__element:hover {
+  background: var(--theme-toolbar-background-hover);
+}
+.function-signature {
+  align-self: center;
+}
+
+.function-signature .function-name {
+  color: var(--theme-highlight-blue);
+}
+
+.function-signature .param {
+  color: var(--string-color);
+}
+
+.function-signature .paren {
+  color: var(--object-color);
+}
+
+.function-signature .comma {
+  color: var(--object-color);
+}
+.conditional-breakpoint-panel {
+  cursor: initial;
+  margin: 1em 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--theme-toolbar-background);
+  border-top: 1px solid var(--theme-splitter-color);
+  border-bottom: 1px solid var(--theme-splitter-color);
+}
+
+.conditional-breakpoint-panel .prompt {
+  font-size: 1.8em;
+  color: var(--theme-conditional-breakpoint-color);
+  padding-left: 3px;
+  padding-right: 3px;
+  padding-bottom: 3px;
+  text-align: right;
+  width: 30px;
+}
+
+.conditional-breakpoint-panel input {
+  margin: 5px 10px;
+  width: calc(100% - 4em);
+  border: none;
+  background: var(--theme-toolbar-background);
+  font-size: 14px;
+  color: var(--theme-conditional-breakpoint-color);
+  line-height: 30px;
+}
+
+.conditional-breakpoint-panel input:focus {
+  outline-width: 0;
+}
 .toggle-button-start,
 .toggle-button-end {
   transform: translate(0, 2px);
   transition: transform 0.25s ease-in-out;
-  cursor: pointer;
+  padding: 5px 2px;
+}
+
+.toggle-button-start.vertical,
+.toggle-button-end.vertical {
   padding: 4px 2px;
 }
 
@@ -1735,12 +1498,12 @@ html[dir="rtl"] .tree .node > div {
 }
 
 .toggle-button-end {
-  margin-left: auto;
-  margin-right: 5px;
+  margin-inline-end: 5px;
+  margin-inline-start: auto;
 }
 
 .toggle-button-start {
-  margin-left: 5px;
+  margin-inline-start: 5px;
 }
 
 html:not([dir="rtl"]) .toggle-button-end svg,
@@ -1752,17 +1515,12 @@ html .toggle-button-end.vertical svg {
   transform: rotate(-90deg);
 }
 
-.toggle-button-end.vertical {
-  margin-bottom: 2px;
-}
-
 .toggle-button-start.collapsed,
 .toggle-button-end.collapsed {
   transform: rotate(180deg);
 }
-
 .source-footer {
-  background: var(--theme-toolbar-background);
+  background: var(--theme-body-background);
   border-top: 1px solid var(--theme-splitter-color);
   position: absolute;
   display: flex;
@@ -1770,15 +1528,16 @@ html .toggle-button-end.vertical svg {
   left: 0;
   right: 1px;
   opacity: 1;
-  z-index: 100;
+  z-index: 1;
   -moz-user-select: none;
   user-select: none;
-  height: 27px;
+  height: var(--editor-footer-height);
   box-sizing: border-box;
 }
 
 .source-footer .commands {
   display: flex;
+  align-items: center;
 }
 
 .source-footer .commands * {
@@ -1787,14 +1546,13 @@ html .toggle-button-end.vertical svg {
 }
 
 .source-footer > .commands > .action {
-  cursor: pointer;
   display: flex;
   justify-content: center;
   align-items: center;
   transition: opacity 200ms;
   border: none;
   background: transparent;
-  padding: 8px 0.7em;
+  padding: 6px 0.7em;
 }
 
 .source-footer > .commands > .action i {
@@ -1802,6 +1560,10 @@ html .toggle-button-end.vertical svg {
   display: flex;
   flex-direction: column;
   justify-content: center;
+}
+
+.source-footer > .commands > button.action:focus {
+  outline: none;
 }
 
 :root.theme-dark .source-footer > .commands > .action {
@@ -1827,14 +1589,21 @@ html .toggle-button-end.vertical svg {
   border-radius: 2px;
 }
 
+.source-footer .black-box.blackboxed svg {
+  fill: var(--theme-highlight-blue);
+}
+
+.source-footer .blackbox-summary {
+  color: var(--theme-body-color);
+}
 .search-bar {
   display: flex;
   flex-direction: column;
-  max-height: 50%;
 }
 
 .search-bar .search-field {
   padding-left: 7px;
+  height: var(--editor-searchbar-height);
 }
 
 .search-bar .close-btn {
@@ -1851,7 +1620,7 @@ html .toggle-button-end.vertical svg {
   flex-shrink: 0;
   justify-content: space-between;
   width: calc(100% - 1px);
-  height: 27px;
+  height: var(--editor-second-searchbar-height);
   background-color: var(--theme-toolbar-background);
   border-bottom: 1px solid var(--theme-splitter-color);
   padding: 0 13px;
@@ -1890,8 +1659,8 @@ html .toggle-button-end.vertical svg {
   width: 16px;
 }
 
-.search-bottom-bar .search-modifiers button svg:hover {
-  cursor: pointer;
+.search-bottom-bar .search-modifiers button:hover {
+  background: var(--theme-toolbar-background-hover);
 }
 
 .search-bottom-bar .search-modifiers button:active {
@@ -1906,31 +1675,18 @@ html .toggle-button-end.vertical svg {
   fill: white;
 }
 
-.search-bottom-bar .search-modifiers button.disabled svg {
-  fill: var(--theme-comment-alt);
-}
-
 .search-bottom-bar .search-type-toggles {
   display: flex;
   align-items: center;
+  max-width: 68%;
 }
 
-.search-bottom-bar .search-type-toggles .search-toggle-title {
-  color: var(--theme-body-color-inactive);
-  font-size: 11px;
-  font-weight: normal;
-  margin: 0;
-}
-
-.search-bottom-bar .search-type-toggles .search-type-btn {
-  margin: 0 6px;
+.search-bottom-bar .search-type-name {
+  padding: 1px 0 0 0;
+  margin: 0 0 0 6px;
   border: none;
   background: transparent;
   color: var(--theme-comment-alt);
-}
-
-.search-bottom-bar .search-type-toggles .search-type-btn:hover {
-  cursor: pointer;
 }
 
 .search-bottom-bar .search-type-toggles .search-type-btn:active {
@@ -1948,49 +1704,347 @@ html .toggle-button-end.vertical svg {
 .search-bar .result-list {
   max-height: 230px;
 }
-.popover {
-  position: fixed;
-  z-index: 4;
+/* vim:set ts=2 sw=2 sts=2 et: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+.theme-dark,
+.theme-light {
+  --number-color: var(--theme-highlight-green);
+  --string-color: var(--theme-highlight-orange);
+  --null-color: var(--theme-comment);
+  --object-color: var(--theme-body-color);
+  --caption-color: var(--theme-highlight-blue);
+  --location-color: var(--theme-content-color1);
+  --source-link-color: var(--theme-highlight-blue);
+  --node-color: var(--theme-highlight-bluegrey);
+  --reference-color: var(--theme-highlight-purple);
 }
 
-.popover-gap {
-  height: 10px;
-  padding-top: 10px;
+.theme-firebug {
+  --number-color: #000088;
+  --string-color: #FF0000;
+  --null-color: #787878;
+  --object-color: DarkGreen;
+  --caption-color: #444444;
+  --location-color: #555555;
+  --source-link-color: blue;
+  --node-color: rgb(0, 0, 136);
+  --reference-color: rgb(102, 102, 255);
 }
 
-.popover::before,
-.popover::after {
-  content: '';
+/******************************************************************************/
+
+.inline {
+  display: inline;
+  white-space: normal;
+}
+
+.objectBox-object {
+  font-weight: bold;
+  color: var(--object-color);
+  white-space: pre-wrap;
+}
+
+.objectBox-string,
+.objectBox-symbol,
+.objectBox-text,
+.objectBox-textNode,
+.objectBox-table {
+  white-space: pre-wrap;
+}
+
+.objectBox-number,
+.objectBox-styleRule,
+.objectBox-element,
+.objectBox-textNode,
+.objectBox-array > .length {
+  color: var(--number-color);
+}
+
+.objectBox-textNode,
+.objectBox-string,
+.objectBox-symbol {
+  color: var(--string-color);
+}
+
+.objectBox-string a, .objectBox-string a:visited {
+  color: currentColor;
+}
+
+.objectBox-function,
+.objectBox-stackTrace,
+.objectBox-profile {
+  color: var(--object-color);
+}
+
+.objectBox-Location {
+  font-style: italic;
+  color: var(--location-color);
+}
+
+.objectBox-null,
+.objectBox-undefined,
+.objectBox-hint,
+.logRowHint {
+  font-style: italic;
+  color: var(--null-color);
+}
+
+.objectBox-sourceLink {
+  position: absolute;
+  right: 4px;
+  top: 2px;
+  padding-left: 8px;
+  font-weight: bold;
+  color: var(--source-link-color);
+}
+
+.objectBox-failure {
+  color: var(--string-color);
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 2px;
+  font-size: 0.8em;
+  padding: 0 2px;
+}
+
+/******************************************************************************/
+
+.objectBox-event,
+.objectBox-eventLog,
+.objectBox-regexp,
+.objectBox-object,
+.objectBox-Date {
+  font-weight: bold;
+  color: var(--object-color);
+  white-space: pre-wrap;
+}
+
+/******************************************************************************/
+
+.objectBox-object .nodeName,
+.objectBox-NamedNodeMap .nodeName,
+.objectBox-NamedNodeMap .objectEqual,
+.objectBox-Attr .attrEqual,
+.objectBox-Attr .attrTitle {
+  color: var(--node-color);
+}
+
+.objectBox-object .nodeName {
+  font-weight: normal;
+}
+
+/******************************************************************************/
+
+.objectLeftBrace,
+.objectRightBrace,
+.arrayLeftBracket,
+.arrayRightBracket {
+  color: var(--theme-highlight-blue);
+}
+
+/******************************************************************************/
+/* Cycle reference*/
+
+.objectBox-Reference {
+  font-weight: bold;
+  color: var(--reference-color);
+}
+
+[class*="objectBox-"] > .objectTitle {
+  color: var(--theme-highlight-blue);
+  font-style: italic;
+}
+
+.caption {
+  font-weight: bold;
+  color:  var(--caption-color);
+}
+
+/******************************************************************************/
+/* Themes */
+
+.theme-dark .objectBox-null,
+.theme-dark .objectBox-undefined,
+.theme-light .objectBox-null,
+.theme-light .objectBox-undefined {
+  font-style: normal;
+}
+
+.theme-dark .objectBox-object,
+.theme-light .objectBox-object {
+  font-weight: normal;
+  white-space: pre-wrap;
+}
+
+.theme-dark .caption,
+.theme-light .caption {
+  font-weight: normal;
+}
+
+/******************************************************************************/
+/* Open DOMNode in inspector button */
+
+.open-inspector svg {
+  fill: rgb(215, 215, 215);
+  height: 16px;
+  width: 16px;
+  margin-left: .25em;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.objectBox-node:hover .open-inspector svg,
+.objectBox-textNode:hover .open-inspector svg,
+.open-inspector svg:hover {
+  fill: rgb(65, 175, 230);
+}
+
+/******************************************************************************/
+/* "more…" ellipsis */
+.more-ellipsis {
+  color: var(--theme-comment);
+}
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+.tree {
+  overflow: auto;
+}
+
+.tree.inline {
+  display: inline-block;
+}
+
+.tree.nowrap {
+  white-space: nowrap;
+}
+
+.tree.noselect {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -o-user-select: none;
+  user-select: none;
+}
+
+.tree button {
+  display: block;
+}
+
+.tree .node {
+  padding: 0 0.25em;
+  position: relative;
+  cursor: pointer;
+}
+
+.tree .node.focused {
+  color: white;
+  background-color: var(--theme-selection-background);
+}
+
+.arrow svg {
+  fill: var(--theme-splitter-color);
+  transition: transform 0.125s ease;
+  width: 10px;
+  margin-inline-end: 5px;
+  transform: rotate(-90deg);
+}
+
+html[dir="rtl"] .arrow svg,
+.arrow svg:dir(rtl),
+.arrow svg:-moz-locale-dir(rtl) {
+  transform: rotate(90deg);
+}
+
+.arrow.expanded.expanded svg {
+  transform: rotate(0deg);
+}
+
+.object-label, .object-label * {
+  color: var(--theme-highlight-blue);
+}
+
+.tree .node .unavailable {
+  color: var(--theme-content-color3);
+}
+
+.lessen {
+  opacity: 0.6;
+}
+
+.bracket-arrow {
+  position: absolute;
+}
+
+.bracket-arrow::before,
+.bracket-arrow::after {
+  content: "";
   height: 0;
   width: 0;
   position: absolute;
-  border: 10px solid transparent;
-  left: calc(20% - 10px); /* corresponds to calculation in Popover.js */
+  border: 7px solid transparent;
 }
 
-.popover::before {
-  border-bottom-color: var(--theme-comment);
-  top: -10px;
+.bracket-arrow.up::before {
+  border-bottom-color: var(--theme-splitter-color);
+  top: -1px;
 }
 
-.popover::after {
+.theme-dark .bracket-arrow.up::before {
+  border-bottom-color: var(--theme-body-color);
+}
+
+.bracket-arrow.up::after {
   border-bottom-color: var(--theme-body-background);
-  top: -8px;
+  top: 0px;
 }
-.preview {
+
+.bracket-arrow.down::before {
+  border-bottom-color: transparent;
+  border-top-color: var(--theme-splitter-color);
+  top: 0px;
+}
+
+.theme-dark .bracket-arrow.down::before {
+  border-top-color: var(--theme-body-color);
+}
+
+.bracket-arrow.down::after {
+  border-bottom-color: transparent;
+  border-top-color: var(--theme-body-background);
+  top: -1px;
+}
+.popover {
+  position: fixed;
+  z-index: 100;
+}
+
+.popover .gap {
+  height: 5px;
+  padding-top: 5px;
+}
+.popover .preview-popup {
   background: var(--theme-body-background);
-  min-width: 200px;
+  width: 350px;
   min-height: 80px;
-  border: 1px solid var(--theme-comment);
+  border: 1px solid var(--theme-splitter-color);
   padding: 10px;
   height: auto;
   min-height: inherit;
-  max-height: 130px;
+  max-height: 200px;
   overflow: auto;
-  max-width: 400px;
+  box-shadow: 1px 2px 3px var(--popup-shadow-color);
 }
 
-.preview .header {
+.theme-dark .popover .preview-popup {
+  box-shadow: 1px 2px 3px var(--popup-shadow-color);
+}
+
+.popover .preview-popup .header {
   width: 100%;
   line-height: 20px;
   border-bottom: 1px solid #cccccc;
@@ -1998,91 +2052,179 @@ html .toggle-button-end.vertical svg {
   flex-direction: column;
 }
 
-.preview .header .link {
+.popover .preview-popup .header .link {
   align-self: flex-end;
   color: var(--theme-highlight-blue);
   text-decoration: underline;
 }
-.preview .header .link:hover {
-  cursor: pointer;
+
+.preview-selection:hover {
+  cursor: default;
 }
 
-.selected-token {
-  background-color: var(--theme-search-overlays-semitransparent);
-  color: var(--theme-selection-color);
+.preview-selection,
+.debug-expression.preview-selection {
+  background-color: var(--theme-highlight-yellow);
 }
 
-.selected-token:hover {
-  cursor: pointer;
+.theme-dark .preview-selection,
+.theme-dark .debug-expression.preview-selection {
+  background-color: #743884;
 }
 
-.preview .function-signature {
+.theme-dark .cm-s-mozilla .preview-selection,
+.theme-dark .cm-s-mozilla .debug-expression.preview-selection {
+  color: #e7ebee;
+}
+
+.popover .preview-popup .function-signature {
   padding-top: 10px;
 }
 
-.function-signature {
-  line-height: 20px;
-  align-self: center;
-}
-
-.function-signature .function-name {
-  color: var(--theme-highlight-blue);
-}
-
-.function-signature .param {
-  color: var(--string-color);
-}
-
-.function-signature .paren {
-  color: var(--object-color);
-}
-
-.function-signature .comma {
-  color: var(--object-color);
-}
-
-.theme-dark .preview {
+.theme-dark .popover .preview-popup {
   border-color: var(--theme-body-color);
 }
 
-.theme-dark .preview .arrow svg {
-  fill: var(--theme-comment);
+.theme-dark .popover .preview-popup .arrow svg {
+  fill: var(--theme-content-color3);
 }
-.conditional-breakpoint-panel {
-  cursor: initial;
-  margin: 1em 0;
-  position: relative;
+
+.tooltip {
+  position: fixed;
+  z-index: 100;
+}
+
+.tooltip .preview-popup {
+  background: var(--theme-toolbar-background);
+  max-width: inherit;
+  min-height: 80px;
+  border: 1px solid var(--theme-splitter-color);
+  box-shadow: 1px 2px 4px 1px var(--theme-toolbar-background-alt);
+  padding: 5px;
+  height: auto;
+  min-height: inherit;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.theme-dark .tooltip .preview-popup {
+  border-color: var(--theme-body-color);
+}
+
+.tooltip .gap {
+  height: 4px;
+  padding-top: 4px;
+}
+
+.add-to-expression-bar {
+  border: 1px solid var(--theme-splitter-color);
+  border-top: none;
+  display: -webkit-box;
+  display: -ms-flexbox;
   display: flex;
+  -webkit-box-align: center;
+  -ms-flex-align: center;
   align-items: center;
-  background: var(--theme-toolbar-background);
-  border-top: 1px solid var(--theme-splitter-color);
-  border-bottom: 1px solid var(--theme-splitter-color);
-}
-
-.conditional-breakpoint-panel .prompt {
-  font-size: 1.8em;
-  color: var(--theme-comment-alt);
-  padding-left: 3px;
-}
-
-.conditional-breakpoint-panel input {
-  margin: 5px 10px;
-  width: calc(100% - 4em);
-  border: none;
-  background: var(--theme-toolbar-background);
   font-size: 14px;
-  color: var(--theme-comment);
   line-height: 30px;
+  background: var(--theme-toolbar-background);
+  color: var(--theme-comment-alt);
+  padding: 0 4px;
 }
 
-.conditional-breakpoint-panel input:focus {
-  outline-width: 0;
+.add-to-expression-bar .prompt {
+  width: 1em;
 }
-/* vim:set ts=2 sw=2 sts=2 et: */
 
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+.add-to-expression-bar .expression-to-save-label {
+  width: calc(100% - 4em);
+}
+
+.add-to-expression-bar .expression-to-save-button {
+  font-size: 14px;
+  color: var(--theme-content-color3);
+}
+.call-site {
+  background: #f0f9ff;
+  position: relative;
+}
+
+.call-site::before {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: calc(100% - 2px);
+  border-bottom: 2px solid #aed3ef;
+}
+
+.call-site-bp {
+  position: relative;
+}
+
+.debug-expression.call-site-bp,
+.call-site-bp {
+  background-color: #fce7e7;
+}
+
+.call-site-bp::before {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: calc(100% - 2px);
+  border-bottom: 2px solid red;
+}
+
+.theme-dark .call-site {
+  background-color: #4b5462;
+}
+
+.theme-dark .call-site::before {
+  border-bottom-color: #5f78a4;
+}
+
+.theme-dark .call-site-bp {
+  background-color: #4b3f3f;
+}
+
+.theme-dark .call-site-bp::before {
+  border-bottom-color: #dd4d4d;
+}
+.empty-line .CodeMirror-linenumber {
+  opacity: 0.5;
+}
+.editor-wrapper {
+  --debug-line-border: rgb(145, 188, 219);
+  --debug-expression-background: rgba(202, 227, 255, 0.5);
+  --editor-searchbar-height: 27px;
+  --editor-second-searchbar-height: 27px;
+}
+
+.theme-dark .editor-wrapper {
+  --debug-expression-background: #54617e;
+  --debug-line-border: #7786a2;
+}
+
+.editor-wrapper .CodeMirror-linewidget {
+  margin-right: -7px;
+}
+
+.theme-dark {
+  --theme-conditional-breakpoint-color: #9fa4a9;
+}
+
+.theme-light {
+  --theme-conditional-breakpoint-color: var(--theme-body-color);
+}
+
+.paused .in-scope .CodeMirror-line,
+.paused .in-scope .CodeMirror-linenumber {
+  opacity: 1;
+}
+
+.paused .CodeMirror-line,
+.paused .CodeMirror-linenumber {
+  opacity: 0.7;
+}
 
 /**
  * There's a known codemirror flex issue with chrome that this addresses.
@@ -2091,9 +2233,10 @@ html .toggle-button-end.vertical svg {
 .editor-wrapper {
   position: absolute;
   height: calc(100% - 31px);
-  width: 100%;
+  width: calc(100% - 1.5px);
   top: 30px;
   left: 0px;
+  --editor-footer-height: 27px;
 }
 
 html[dir="rtl"] .editor-mount {
@@ -2119,6 +2262,10 @@ html[dir="rtl"] .editor-mount {
   height: 14px;
 }
 
+.editor-wrapper .highlight-lines {
+  background: var(--theme-selection-background-hover);
+}
+
 .coverage-on .CodeMirror-code :not(.hit-marker) .CodeMirror-line,
 .coverage-on .CodeMirror-code :not(.hit-marker) .CodeMirror-gutter-wrapper {
   opacity: 0.5;
@@ -2133,11 +2280,36 @@ html[dir="rtl"] .editor-mount {
   right: -4px;
 }
 
+.inline-bp {
+  background-color: #9ddfff;
+  width: 20px;
+  padding: 0px 5px;
+  margin: 0px 4px;
+  border-radius: 5px;
+  border-color: blue;
+  border: 1px solid #00b6ff;
+}
+
+.editor.new-breakpoint.folding-enabled svg {
+  right: -16px;
+}
+
 .new-breakpoint.has-condition svg {
   fill: var(--theme-graphs-yellow);
 }
 
 .editor.new-breakpoint.breakpoint-disabled svg {
+  opacity: 0.3;
+}
+
+.editor.column-breakpoint svg {
+  fill: var(--theme-selection-background);
+  vertical-align: middle;
+  width: 17px;
+  height: 14px;
+}
+
+.editor.column-breakpoint.breakpoint-disabled svg {
   opacity: 0.3;
 }
 
@@ -2148,12 +2320,7 @@ html[dir="rtl"] .editor-mount {
 
 .editor-wrapper .editor-mount {
   width: 100%;
-  height: calc(100% - 32px);
   background-color: var(--theme-body-background);
-}
-
-.search-bar ~ .editor-mount {
-  height: calc(100% - 72px);
 }
 
 .CodeMirror-linenumber {
@@ -2161,32 +2328,41 @@ html[dir="rtl"] .editor-mount {
   line-height: 14px;
 }
 
+.folding-enabled .CodeMirror-linenumber {
+  text-align: left;
+  padding: 0 0 0 2px;
+}
+
 /* set the linenumber white when there is a breakpoint */
 .new-breakpoint .CodeMirror-gutter-wrapper .CodeMirror-linenumber {
   color: white;
 }
 
-/* move the breakpoint below the linenumber */
-.new-breakpoint .CodeMirror-gutter-elt:last-child {
+/* move the breakpoint below the other gutter elements */
+.new-breakpoint .CodeMirror-gutter-elt:nth-child(2) {
   z-index: 0;
 }
 
 .editor-wrapper .CodeMirror-line {
   font-size: 11px;
-  line-height: 14px;
 }
 
 .theme-dark .editor-wrapper .CodeMirror-line .cm-comment {
   color: var(--theme-content-color3);
 }
 
-.debug-line .CodeMirror-line {
-  background-color: var(--breakpoint-active-color) !important;
+.debug-expression {
+  background-color: var(--debug-expression-background);
+}
+
+.new-debug-line .CodeMirror-line {
+  background-color: transparent !important;
+  outline: var(--debug-line-border) solid 1px;
 }
 
 /* Don't display the highlight color since the debug line
    is already highlighted */
-.debug-line .CodeMirror-activeline-background {
+.new-debug-line .CodeMirror-activeline-background {
   display: none;
 }
 
@@ -2195,8 +2371,25 @@ html[dir="rtl"] .editor-mount {
 }
 
 @keyframes fade-highlight-out {
-  0% { background-color: var(--theme-highlight-gray); }
-  100% { background-color: transparent; }
+  0% {
+    background-color: var(--theme-highlight-gray);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.theme-dark .highlight-line .CodeMirror-line {
+  animation: fade-highlight-out-dark 1.5s normal forwards;
+}
+
+@keyframes fade-highlight-out-dark {
+  0% {
+    background-color: var(--theme-content-color3);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 
 .welcomebox {
@@ -2217,111 +2410,59 @@ html[dir="rtl"] .editor-mount {
   -moz-user-select: none;
   user-select: none;
 }
-.input-expression {
-  width: 100%;
-  margin: 0px;
-  border: 1px;
-  cursor: pointer;
-  background-color: var(--theme-body-background);
-  font-size: 12px;
-  padding: 0px 20px;
-  color: var(--theme-highlight-blue);
+
+.CodeMirror-guttermarker-subtle {
+  visibility: hidden;
 }
 
-.input-expression::-webkit-input-placeholder {
-  text-align: center;
-  font-style: italic;
-  color: var(--theme-comment-alt);
+.visible {
+  visibility: visible;
 }
-
-.input-expression::placeholder {
-  text-align: center;
-  font-style: italic;
-  color: var(--theme-comment-alt);
-  opacity: 1;
-}
-
-.input-expression:focus {
-  outline: none;
-  cursor: text;
-}
-
-.expression-input-container {
-  padding: 0.5em;
-  display: flex;
-}
-
-.expression-container {
-  border: 1px;
-  padding: 8px 5px 0px 0px;
-  width: 100%;
-  color: var(--theme-body-color);
-  background-color: var(--theme-body-background);
-  display: flex;
+.cm-highlight {
   position: relative;
 }
 
-.expression-container > .tree {
-  width: 100%;
-  overflow: hidden;
-}
-
-:root.theme-light .expression-container:hover {
-  background-color: var(--theme-tab-toolbar-background);
-}
-
-:root.theme-dark .expression-container:hover {
-  background-color: var(--search-overlays-semitransparent);
-}
-
-.expression-container .close-btn {
+.cm-highlight::before {
   position: absolute;
-  offset-inline-end: 6px;
-  top: 6px;
+  border-top-style: solid;
+  border-bottom-style: solid;
+  border-top-color: var(--theme-comment-alt);
+  border-bottom-color: var(--theme-comment-alt);
+  border-top-width: 1px;
+  border-bottom-width: 1px;
+  top: -1px;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  content: "";
+  margin-bottom: -1px;
 }
 
-.expression-container .close {
-  display: none;
+.cm-highlight-full::before {
+  border: 1px solid var(--theme-comment-alt);
 }
 
-.expression-container:hover .close {
-  display: block;
+.cm-highlight-start::before {
+  border-left-width: 1px;
+  border-left-style: solid;
+  border-left-color: var(--theme-comment-alt);
+  margin: 0 0 -1px -1px;
+  border-top-left-radius: 2px;
+  border-bottom-left-radius: 2px;
 }
 
-.expression-input {
-  cursor: pointer;
-  max-width: 50%;
+.cm-highlight-end::before {
+  border-right-width: 1px;
+  border-right-style: solid;
+  border-right-color: var(--theme-comment-alt);
+  margin: 0 -1px -1px 0;
+  border-top-right-radius: 2px;
+  border-bottom-right-radius: 2px;
+}
+.breakpoints-toggle {
+  margin: 2px 3px;
 }
 
-.expression-separator {
-  padding: 0px 5px;
-}
-
-.expression-value {
-  overflow-x: scroll;
-  color: var(--theme-content-color2);
-  max-width: 50% !important;
-}
-
-.expression-error {
-  color: var(--theme-highlight-red);
-}
-
-.why-paused {
-  background-color: var(--breakpoint-active-color);
-  border: 1.7px solid var(--breakpoint-active-color);
-  color: var(--theme-highlight-blue);
-  padding: 10px 10px 10px 20px;
-  white-space: normal;
-  opacity: 0.9;
-  font-size: 12px;
-  font-weight: bold;
-  flex: 0 1 auto;
-}
-
-.theme-dark .secondary-panes .why-paused {
-  color: white;
-}
 .breakpoints-list * {
   -moz-user-select: none;
   user-select: none;
@@ -2330,7 +2471,7 @@ html[dir="rtl"] .editor-mount {
 .breakpoints-list .breakpoint {
   font-size: 12px;
   color: var(--theme-content-color1);
-  padding: 0.5em 1px;
+  padding: 0.5em 1em 0.5em 0.5em;
   line-height: 1em;
   position: relative;
   transition: all 0.25s ease;
@@ -2367,7 +2508,6 @@ html .breakpoints-list .breakpoint.paused {
 }
 
 .breakpoints-list .breakpoint:hover {
-  cursor: pointer;
   background-color: var(--search-overlays-semitransparent);
 }
 
@@ -2377,6 +2517,7 @@ html .breakpoints-list .breakpoint.paused {
 
 .breakpoints-list .breakpoint-checkbox {
   margin-inline-start: 0;
+  vertical-align: -2px;
 }
 
 .breakpoints-list .breakpoint-label {
@@ -2409,43 +2550,155 @@ html .breakpoints-list .breakpoint.paused {
 
 .breakpoint .close-btn {
   position: absolute;
-  offset-inline-end: 6px;
-  top: 12px;
+  offset-inline-end: 13px;
+  offset-inline-start: auto;
+  top: 9px;
 }
 
 .breakpoint .close {
-  display: none;
+  visibility: hidden;
 }
 
 .breakpoint:hover .close {
+  visibility: visible;
+}
+.input-expression {
+  width: 100%;
+  margin: 0px;
+  border: 1px;
+  background-color: var(--theme-body-background);
+  font-size: 12px;
+  padding: 0px 20px;
+  color: var(--theme-body-color);
+}
+
+.input-expression::placeholder {
+  text-align: center;
+  font-style: italic;
+  color: var(--theme-comment-alt);
+  opacity: 1;
+}
+
+.input-expression:focus {
+  outline: none;
+  cursor: text;
+}
+
+.expressions-list {
+  /* TODO: add normalize */
+  margin: 0;
+  padding: 0.5em 0;
+}
+.expression-input-container {
+  padding: 0.5em;
+  display: flex;
+}
+
+.expression-container {
+  border: 1px;
+  padding: 0.25em 1em 0.25em 0.5em;
+  width: 100%;
+  color: var(--theme-body-color);
+  background-color: var(--theme-body-background);
+  display: block;
+  position: relative;
+}
+
+.expression-container > .tree {
+  width: 100%;
+  overflow: hidden;
+}
+
+:root.theme-light .expression-container:hover {
+  background-color: var(--theme-tab-toolbar-background);
+}
+
+:root.theme-dark .expression-container:hover {
+  background-color: var(--search-overlays-semitransparent);
+}
+
+.expression-container__close-btn {
+  position: absolute;
+  offset-inline-end: 0px;
+  top: 4px;
+}
+
+.expression-content {
+  position: relative;
+}
+
+.expression-container .close-btn {
+  display: none;
+}
+
+.expression-container:hover .close-btn {
   display: block;
 }
 
-.object-node.default-property {
-  opacity: 0.6;
+.expression-input {
+  max-width: 50%;
 }
 
-.object-label {
+.expression-separator {
+  padding: 0px 5px;
+}
+
+.expression-value {
+  overflow-x: scroll;
+  color: var(--theme-content-color2);
+  max-width: 50% !important;
+}
+
+.expression-error {
+  color: var(--theme-highlight-red);
+}
+.frames ul .frames-group .group,
+.frames ul .frames-group .group .location {
+  font-weight: 500;
+}
+
+.frames ul .frames-group.expanded .group,
+.frames ul .frames-group.expanded .group .location {
   color: var(--theme-highlight-blue);
 }
 
-.objectBox-object,
-.objectBox-string,
-.objectBox-text,
-.objectBox-table,
-.objectLink-textNode,
-.objectLink-event,
-.objectLink-eventLog,
-.objectLink-regexp,
-.objectLink-object,
-.objectLink-Date,
-.theme-dark .objectBox-object,
-.theme-light .objectBox-object {
-  white-space: nowrap;
+.frames ul .frames-group.expanded .react path {
+  fill: var(--theme-highlight-blue);
 }
 
-.scopes-list .tree-node {
-  overflow: hidden;
+.frames ul .frames-group .frames-list li {
+  padding-left: 30px;
+}
+
+.frames ul .frames-group .frames-list {
+  border-top: 1px solid var(--theme-splitter-color);
+  border-bottom: 1px solid var(--theme-splitter-color);
+}
+.why-paused {
+  background-color: var(--theme-body-background);
+  color: var(--theme-body-color);
+  padding: 10px 10px 10px 20px;
+  white-space: normal;
+  opacity: 0.6;
+  font-size: 12px;
+  flex: 0 1 auto;
+  text-align: center;
+  font-style: italic;
+  font-weight: 300;
+}
+
+.theme-dark .secondary-panes .why-paused {
+  color: white;
+}
+
+.why-paused .message {
+  font-size: 10px;
+}
+
+.why-paused .message.warning {
+  font-size: 10px;
+  color: var(--theme-graphs-full-red);
+  font-weight: bold;
 }
 .frames ul {
   list-style: none;
@@ -2454,18 +2707,14 @@ html .breakpoints-list .breakpoint.paused {
 }
 
 .frames ul li {
-  cursor: pointer;
   padding: 7px 10px 7px 21px;
   overflow: hidden;
   display: flex;
   justify-content: space-between;
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
 }
-
-/* Style the focused call frame like so:
-.frames ul li:focus {
-  border: 3px solid red;
-}
-*/
 
 .frames ul li * {
   -moz-user-select: none;
@@ -2476,12 +2725,21 @@ html .breakpoints-list .breakpoint.paused {
   background-color: var(--theme-tab-toolbar-background);
 }
 
-.frames .location {
-  font-weight: lighter;
+.theme-dark .frames ul li:nth-of-type(2n) {
+  background-color: var(--theme-toolbar-background-alt);
 }
 
-:root.theme-light .frames .location,
-:root.theme-firebug .frames .location {
+.frames .location {
+  font-weight: lighter;
+  display: flex;
+  justify-content: space-between;
+  flex-direction: row;
+  align-items: center;
+  margin: 0;
+}
+
+.theme-light .frames .location,
+.theme-firebug .frames .location {
   color: var(--theme-comment);
 }
 
@@ -2502,9 +2760,18 @@ html .breakpoints-list .breakpoint.paused {
   outline: none;
 }
 
+.theme-dark .frames ul li:hover,
+.theme-dark .frames ul li:focus {
+  background-color: var(--theme-tab-toolbar-background);
+}
+
 .frames ul li.selected {
   background-color: var(--theme-selection-background);
   color: white;
+}
+
+.frames ul li.selected i.annotation-logo svg path {
+  fill: white;
 }
 
 :root.theme-light .frames ul li.selected .location,
@@ -2519,15 +2786,25 @@ html .breakpoints-list .breakpoint.paused {
 }
 
 .show-more {
-  cursor: pointer;
   text-align: center;
   padding: 8px 0px;
-  border-top: 1px solid var(--theme-splitter-color);
+  margin: 7px 10px 7px 7px;
+  border: 1px solid var(--theme-splitter-color);
   background-color: var(--theme-tab-toolbar-background);
 }
 
 .show-more:hover {
-  background-color: var(--search-overlays-semitransparent);
+  background-color: var(--theme-toolbar-background-hover);
+}
+
+.annotation-logo {
+  width: 12px;
+  margin-left: 3px;
+  line-height: 8px;
+}
+
+:root.theme-dark .annotation-logo svg path {
+  fill: var(--theme-highlight-blue);
 }
 .event-listeners {
   list-style: none;
@@ -2536,7 +2813,6 @@ html .breakpoints-list .breakpoint.paused {
 }
 
 .event-listeners .listener {
-  cursor: pointer;
   padding: 7px 10px 7px 21px;
   clear: both;
   overflow: hidden;
@@ -2583,11 +2859,11 @@ html .breakpoints-list .breakpoint.paused {
 .accordion ._header {
   background-color: var(--theme-toolbar-background);
   border-bottom: 1px solid var(--theme-splitter-color);
-  cursor: pointer;
   font-size: 12px;
   padding: 5px;
   transition: all 0.25s ease;
   width: 100%;
+  align-items: center;
 
   -webkit-user-select: none;
   -moz-user-select: none;
@@ -2601,7 +2877,7 @@ html .breakpoints-list .breakpoint.paused {
 }
 
 .accordion ._header:hover {
-  background-color: var(--search-overlays-semitransparent);
+  background-color: var(--theme-toolbar-background-hover);
 }
 
 .accordion ._header button svg,
@@ -2613,6 +2889,10 @@ html .breakpoints-list .breakpoint.paused {
 .accordion ._content {
   border-bottom: 1px solid var(--theme-splitter-color);
   font-size: 12px;
+}
+
+.accordion div:last-child ._content {
+  border-bottom: none;
 }
 
 .accordion ._header .header-buttons {
@@ -2652,6 +2932,14 @@ html .breakpoints-list .breakpoint.paused {
   background-color: var(--theme-body-background);
 }
 
+.command-bar.vertical {
+  width: 100vw;
+}
+
+html[dir="rtl"] .command-bar {
+  border-right: 1px solid var(--theme-splitter-color);
+}
+
 .theme-dark .command-bar {
   background-color: var(--theme-tab-toolbar-background);
 }
@@ -2662,13 +2950,15 @@ html .breakpoints-list .breakpoint.paused {
   appearance: none;
   background: transparent;
   border: none;
-  cursor: pointer;
   display: inline-block;
   text-align: center;
-  transition: all 0.25s ease;
   padding: 8px 5px;
   position: relative;
   fill: currentColor;
+}
+
+.command-bar > button:not(.disabled):hover {
+  background: var(--theme-toolbar-background-hover);
 }
 
 :root.theme-dark .command-bar > button {
@@ -2679,8 +2969,12 @@ html .breakpoints-list .breakpoint.paused {
   margin-inline-end: 0.7em;
 }
 
+.command-bar > button:focus {
+  outline: none;
+}
+
 html .command-bar > button:disabled {
-  opacity: 0.3;
+  opacity: 0.8;
   cursor: default;
 }
 
@@ -2710,6 +3004,36 @@ html .command-bar > button:disabled {
 .command-bar button.pause-exceptions.all {
   color: var(--theme-highlight-blue);
 }
+.object-node.default-property {
+  opacity: 0.6;
+}
+
+.object-label {
+  color: var(--theme-highlight-blue);
+}
+
+.objectBox-object,
+.objectBox-string,
+.objectBox-text,
+.objectBox-table,
+.objectLink-textNode,
+.objectLink-event,
+.objectLink-eventLog,
+.objectLink-regexp,
+.objectLink-object,
+.objectLink-Date,
+.theme-dark .objectBox-object,
+.theme-light .objectBox-object {
+  white-space: nowrap;
+}
+
+.scopes-pane {
+  overflow: auto;
+}
+
+.scopes-list .function-signature {
+  display: inline-block;
+}
 .secondary-panes {
   display: flex;
   flex-direction: column;
@@ -2717,14 +3041,18 @@ html .command-bar > button:disabled {
   white-space: nowrap;
 }
 
-.secondary-panes * {
-  -moz-user-select: none;
-  user-select: none;
+/*
+  We apply overflow to the container with the commandbar.
+  This allows the commandbar to remain fixed when scrolling
+  until the content completely ends. Not just the height of
+  the wrapper.
+  Ref: https://github.com/devtools-html/debugger.html/issues/3426
+*/
+.secondary-panes--sticky-commandbar {
+  overflow-y: scroll;
 }
 
 .secondary-panes .accordion {
-  overflow-y: auto;
-  overflow-x: hidden;
   flex: 1 0 auto;
 }
 
@@ -2741,7 +3069,7 @@ html .command-bar > button:disabled {
 }
 
 .theme-dark .secondary-panes .accordion .arrow svg {
-  fill: var(--theme-comment);
+  fill: var(--theme-content-color3);
 }
 .welcomebox {
   width: calc(100% - 1px);
@@ -2760,75 +3088,21 @@ html .command-bar > button:disabled {
   z-index: 100;
 }
 
-html .welcomebox .toggle-button-end {
-  bottom: 11px;
+.alignlabel {
+  display: inline-block;
+  text-align: left;
+}
+
+.welcomebox .toggle-button-end {
   position: absolute;
   top: auto;
-}
-.dropdown {
-  --width: 150px;
-  background: var(--theme-body-background);
-  border: 1px solid var(--theme-splitter-color);
-  box-shadow: 0 4px 4px 0 var(--search-overlays-semitransparent);
-  max-height: 300px;
-  position: absolute;
-  right: 8px;
-  top: 35px;
-  width: var(--width);
-  z-index: 1000;
+  bottom: 0;
+  offset-inline-end: 0;
+  offset-inline-start: auto;
 }
 
-html[dir="rtl"] .dropdown {
-  right: calc((var(--width) - 11px) * (-1));
-}
-
-.dropdown-block {
-  padding: 0px 2px;
-  position: relative;
-  align-self: center;
-}
-
-.dropdown-button {
-  cursor: pointer;
-  color: var(--theme-comment);
-  background: none;
-  border: none;
-  padding: 0;
-  font-weight: 100;
-  margin-top: 6px;
-  font-size: 14px;
-}
-
-.dropdown li {
-  transition: all 0.25s ease;
-  padding: 2px 10px 10px 5px;
-  overflow: hidden;
-  height: 30px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dropdown li:hover {
-  background-color: var(--search-overlays-semitransparent);
-  cursor: pointer;
-}
-
-.dropdown ul {
-  list-style: none;
-  line-height: 2em;
-  font-size: 1em;
-  margin: 0;
-  padding: 0;
-}
-
-.dropdown-mask {
-  position: fixed;
-  width: 100%;
-  height: 100%;
-  background: transparent;
-  z-index: 999;
-  left: 0;
-  top: 0;
+html .welcomebox .toggle-button-end.collapsed {
+  bottom: 1px;
 }
 .source-header {
   border-bottom: 1px solid var(--theme-splitter-color);
@@ -2844,16 +3118,21 @@ html[dir="rtl"] .dropdown {
 }
 
 .source-header .new-tab-btn {
-  padding: 0px 4px;
-  margin-top: 8px;
-  cursor: pointer;
-  fill: var(--theme-comment);
+  padding: 4px;
+  margin-top: 4px;
+  margin-left: 2px;
+  fill: var(--theme-content-color3);
   transition: 0.1s ease;
   align-self: center;
 }
 
+.source-header .new-tab-btn:hover {
+  background-color: var(--theme-toolbar-background-hover);
+}
+
 .source-header .new-tab-btn svg {
   width: 12px;
+  display: block;
 }
 
 .source-tabs {
@@ -2865,22 +3144,20 @@ html[dir="rtl"] .dropdown {
   border: 1px solid transparent;
   border-top-left-radius: 2px;
   border-top-right-radius: 2px;
-  height: 30px;
   display: inline-flex;
-  align-items: center;
+  align-items: flex-end;
   position: relative;
   transition: all 0.25s ease;
   min-width: 40px;
   overflow: hidden;
-  padding: 6px;
+  padding: 5px;
   margin-inline-start: 3px;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 .source-tab:hover {
   background-color: var(--theme-toolbar-background-alt);
   border-color: var(--theme-splitter-color);
-  cursor: pointer;
 }
 
 .source-tab.active {
@@ -2908,20 +3185,36 @@ html[dir="rtl"] .dropdown {
   fill: var(--theme-textbox-box-shadow);
 }
 
+.source-tab .blackBox,
+.source-tab .prettyPrint {
+  line-height: 0;
+  align-self: center;
+}
+
+.source-tab .blackBox svg {
+  height: 12px;
+  width: 12px;
+}
+
+.source-tab .blackBox path {
+  fill: var(--theme-textbox-box-shadow);
+}
+
+.theme-dark .source-tab .blackBox circle {
+  fill: var(--theme-body-color);
+}
+
 .source-tab .filename {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
-}
-
-.source-tab.pretty .filename {
-  padding-inline-start: 8px;
+  padding: 0 4px;
+  align-self: flex-start;
 }
 
 .source-tab .close-btn {
   visibility: hidden;
   line-height: 0;
-  margin-inline-start: 6px;
 }
 
 .source-tab.active .close-btn {
@@ -2931,10 +3224,136 @@ html[dir="rtl"] .dropdown {
 .source-tab:hover .close-btn {
   visibility: visible;
 }
+.dropdown {
+  --width: 150px;
+  background: var(--theme-body-background);
+  border: 1px solid var(--theme-splitter-color);
+  box-shadow: 0 4px 4px 0 var(--search-overlays-semitransparent);
+  max-height: 300px;
+  position: absolute;
+  right: 0;
+  top: 23px;
+  width: var(--width);
+  z-index: 1000;
+  overflow: scroll;
+}
 
-.source-tab .close-btn .close {
+html[dir="rtl"] .dropdown {
+  right: calc((var(--width) - 11px) * (-1));
+}
+
+.dropdown-block {
+  padding: 0px 2px;
+  position: relative;
+  align-self: center;
+}
+
+.dropdown-button {
+  color: var(--theme-content-color3);
+  background: none;
+  border: none;
   padding: 0;
-  margin-top: 0;
-  display: inline-flex;
+  font-weight: 100;
+  font-size: 14px;
+}
+
+.dropdown li {
+  transition: all 0.25s ease;
+  padding: 2px 10px 10px 5px;
+  overflow: hidden;
+  height: 30px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropdown li:hover {
+  background-color: var(--search-overlays-semitransparent);
+}
+
+.dropdown ul {
+  list-style: none;
+  line-height: 2em;
+  font-size: 1em;
+  margin: 0;
+  padding: 0;
+}
+
+.dropdown-mask {
+  position: fixed;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  z-index: 999;
+  left: 0;
+  top: 0;
+}
+.modal-wrapper {
+  position: fixed;
+  display: flex;
   justify-content: center;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  transition: z-index 200ms;
+  z-index: 9;
+}
+
+.modal {
+  top: 0;
+  z-index: 10;
+  width: 500px;
+  height: 230px;
+  background-color: var(--theme-codemirror-gutter-background);
+  transform: translateY(-250px);
+  transition: transform 150ms cubic-bezier(0.07, 0.95, 0, 1);
+  box-shadow: 2px 4px 6px var(--popup-shadow-color);
+}
+
+.modal.entering,
+.modal.exited {
+  transform: translateY(-250px);
+}
+
+.modal.entered,
+.modal.exiting {
+  transform: translateY(30px);
+}
+
+@media (max-width: 520px) {
+  .modal {
+    width: 80%;
+    left: 10%;
+  }
+}
+.symbol-modal-wrapper {
+  position: fixed;
+  width: 100%;
+  height: 100%;
+  z-index: 9;
+}
+
+.symbol-modal {
+  position: absolute;
+  left: calc(50% - 250px);
+  z-index: 10;
+  width: 500px;
+  height: 230px;
+  background-color: var(--theme-codemirror-gutter-background);
+  top: 30px;
+}
+
+.symbol-modal .input-wrapper,
+.modal .input-wrapper {
+  display: flex;
+  justify-content: center;
+}
+
+.modal .close-btn {
+  padding: 6px;
+}
+
+.modal .result-list {
+  height: calc(100% - 28px);
+  overflow-y: auto;
 }

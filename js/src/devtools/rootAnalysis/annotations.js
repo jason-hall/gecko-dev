@@ -71,8 +71,8 @@ var ignoreCallees = {
     "js::ClassOps.finalize" : true,
     "JSRuntime.destroyPrincipals" : true,
     "icu_50::UObject.__deleting_dtor" : true, // destructors in ICU code can't cause GC
-    "mozilla::CycleCollectedJSContext.DescribeCustomObjects" : true, // During tracing, cannot GC.
-    "mozilla::CycleCollectedJSContext.NoteCustomGCThingXPCOMChildren" : true, // During tracing, cannot GC.
+    "mozilla::CycleCollectedJSRuntime.DescribeCustomObjects" : true, // During tracing, cannot GC.
+    "mozilla::CycleCollectedJSRuntime.NoteCustomGCThingXPCOMChildren" : true, // During tracing, cannot GC.
     "PLDHashTableOps.hashKey" : true,
     "z_stream_s.zfree" : true,
     "z_stream_s.zalloc" : true,
@@ -170,6 +170,7 @@ var ignoreFunctions = {
 
     // Bug 1056410 - devirtualization prevents the standard nsISupports::Release heuristic from working
     "uint32 nsXPConnect::Release()" : true,
+    "uint32 nsIAtom::Release()" : true,
 
     // Allocation API
     "malloc": true,
@@ -231,6 +232,10 @@ var ignoreFunctions = {
     // The big hammers.
     "PR_GetCurrentThread" : true,
     "calloc" : true,
+
+    "uint8 nsContentUtils::IsExpandedPrincipal(nsIPrincipal*)" : true,
+
+    "void mozilla::AutoProfilerLabel::~AutoProfilerLabel(int32)" : true,
 };
 
 function extraGCFunctions() {

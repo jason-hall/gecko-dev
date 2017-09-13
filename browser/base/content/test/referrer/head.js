@@ -1,7 +1,5 @@
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-  "resource://gre/modules/Promise.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "BrowserTestUtils",
   "resource://testing-common/BrowserTestUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "ContentTask",
@@ -12,8 +10,6 @@ const REFERRER_POLICYSERVER_URL =
   "test1.example.com" + REFERRER_URL_BASE + "file_referrer_policyserver.sjs";
 const REFERRER_POLICYSERVER_URL_ATTRIBUTE =
   "test1.example.com" + REFERRER_URL_BASE + "file_referrer_policyserver_attr.sjs";
-
-SpecialPowers.pushPrefEnv({"set": [["network.http.enablePerElementReferrer", true]]});
 
 var gTestWindow = null;
 var rounds = 0;
@@ -129,7 +125,7 @@ function delayedStartupFinished(aWindow) {
         Services.obs.removeObserver(observer, aTopic);
         resolve();
       }
-    }, "browser-delayed-startup-finished", false);
+    }, "browser-delayed-startup-finished");
   });
 }
 

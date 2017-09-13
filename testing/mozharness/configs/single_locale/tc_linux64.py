@@ -8,7 +8,7 @@ config = {
     "mozconfig": "src/browser/config/mozconfigs/linux64/l10n-mozconfig",
     "bootstrap_env": {
         "NO_MERCURIAL_SETUP_CHECK": "1",
-        "MOZ_OBJDIR": "obj-l10n",
+        "MOZ_OBJDIR": "obj-firefox",
         "EN_US_BINARY_URL": os.environ.get("EN_US_BINARY_URL", EN_US_BINARY_URL),
         "LOCALE_MERGEDIR": "%(abs_merge_dir)s/",
         "MOZ_UPDATE_CHANNEL": "%(update_channel)s",
@@ -20,7 +20,7 @@ config = {
     },
     "upload_env": {
         'UPLOAD_HOST': 'localhost',
-        'UPLOAD_PATH': '/home/worker/artifacts/',
+        'UPLOAD_PATH': '/builds/worker/artifacts/',
     },
     "mozilla_dir": "src/",
     "simple_name_move": True,

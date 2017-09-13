@@ -164,14 +164,13 @@ WrapperFactory::PrepareForWrapping(JSContext* cx, HandleObject scope,
     // Outerize any raw inner objects at the entry point here, so that we don't
     // have to worry about them for the rest of the wrapping code.
     if (js::IsWindow(obj)) {
-        JSAutoCompartment ac(cx, obj);
         obj = js::ToWindowProxyIfWindow(obj);
         MOZ_ASSERT(obj);
         // ToWindowProxyIfWindow can return a CCW if |obj| was a
         // navigated-away-from Window. Strip any CCWs.
         obj = js::UncheckedUnwrap(obj);
         if (JS_IsDeadWrapper(obj)) {
-            JS_ReportErrorASCII(cx, "Can't wrap dead object");
+            retObj.set(JS_NewDeadWrapper(cx, obj));
             return;
         }
         MOZ_ASSERT(js::IsWindowProxy(obj));
@@ -181,20 +180,27 @@ WrapperFactory::PrepareForWrapping(JSContext* cx, HandleObject scope,
         ExposeObjectToActiveJS(obj);
     }
 
+    // If the object is a dead wrapper, return a new dead wrapper rather than
+    // trying to wrap it for a different compartment.
+    if (JS_IsDeadWrapper(obj)) {
+        retObj.set(JS_NewDeadWrapper(cx, obj));
+        return;
+    }
+
     // If we've somehow gotten to this point after either the source or target
     // compartment has been nuked, return a DeadObjectProxy to prevent further
     // access.
+    // However, we always need to provide live wrappers for ScriptSourceObjects,
+    // since they're used for cross-compartment cloned scripts, and need to
+    // remain accessible even after the original compartment has been nuked.
     JSCompartment* origin = js::GetObjectCompartment(obj);
     JSCompartment* target = js::GetObjectCompartment(scope);
-    if (CompartmentPrivate::Get(origin)->wasNuked ||
-        CompartmentPrivate::Get(target)->wasNuked) {
+    if (!JS_IsScriptSourceObject(obj) &&
+        (CompartmentPrivate::Get(origin)->wasNuked ||
+         CompartmentPrivate::Get(target)->wasNuked)) {
         NS_WARNING("Trying to create a wrapper into or out of a nuked compartment");
 
-        RootedObject ccw(cx, Wrapper::New(cx, obj, &CrossCompartmentWrapper::singleton));
-
-        NukeCrossCompartmentWrapper(cx, ccw);
-
-        retObj.set(ccw);
+        retObj.set(JS_NewDeadWrapper(cx));
         return;
     }
 
@@ -349,7 +355,8 @@ static void
 DEBUG_CheckUnwrapSafety(HandleObject obj, const js::Wrapper* handler,
                         JSCompartment* origin, JSCompartment* target)
 {
-    if (CompartmentPrivate::Get(origin)->wasNuked || CompartmentPrivate::Get(target)->wasNuked) {
+    if (!JS_IsScriptSourceObject(obj) &&
+        (CompartmentPrivate::Get(origin)->wasNuked || CompartmentPrivate::Get(target)->wasNuked)) {
         // If either compartment has already been nuked, we should have returned
         // a dead wrapper from our prewrap callback, and this function should
         // not be called.
@@ -558,9 +565,11 @@ WrapperFactory::Rewrap(JSContext* cx, HandleObject existing, HandleObject obj)
             wrapper = SelectAddonWrapper(cx, obj, wrapper);
     }
 
-    if (!targetSubsumesOrigin) {
+    if (!targetSubsumesOrigin &&
+        !originCompartmentPrivate->forcePermissiveCOWs) {
         // Do a belt-and-suspenders check against exposing eval()/Function() to
-        // non-subsuming content.
+        // non-subsuming content.  But don't worry about doing it in the
+        // SpecialPowers case.
         if (JSFunction* fun = JS_GetObjectFunction(obj)) {
             if (JS_IsBuiltinEvalFunction(fun) || JS_IsBuiltinFunctionConstructor(fun)) {
                 NS_WARNING("Trying to expose eval or Function to non-subsuming content!");

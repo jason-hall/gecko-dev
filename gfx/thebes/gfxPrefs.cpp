@@ -197,8 +197,8 @@ std::string gfxPrefs::PrefGet(const char* aPref, std::string aDefault)
 {
   MOZ_ASSERT(IsPrefsServiceAvailable());
 
-  nsAdoptingCString result;
-  Preferences::GetCString(aPref, &result);
+  nsAutoCString result;
+  Preferences::GetCString(aPref, result);
 
   if (result.IsEmpty()) {
     return aDefault;
@@ -310,4 +310,9 @@ void gfxPrefs::CopyPrefValue(const GfxPrefValue* aValue, std::string* aOutValue)
 bool gfxPrefs::OverrideBase_WebRender()
 {
   return gfx::gfxVars::UseWebRender();
+}
+
+bool gfxPrefs::OverrideBase_WebRendest()
+{
+  return gfx::gfxVars::UseWebRender() && gfxPrefs::WebRendestEnabled();
 }

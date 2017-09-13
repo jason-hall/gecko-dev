@@ -16,12 +16,12 @@
 #include "nsCOMPtr.h"
 #include "nsIObserver.h"
 #include "nsServiceManagerUtils.h"
+#include "nsStringFwd.h"
 #include "plstr.h"
 #include "js/TypeDecls.h"
 
 #include <stdint.h>
 
-class nsCString;
 class nsIIOService;
 class nsIStringBundle;
 class SystemPrincipal;
@@ -68,7 +68,7 @@ public:
     static uint32_t SecurityHashURI(nsIURI* aURI);
 
     static nsresult
-    ReportError(JSContext* cx, const nsAString& messageTag,
+    ReportError(JSContext* cx, const char* aMessageTag,
                 nsIURI* aSource, nsIURI* aTarget);
 
     static uint32_t

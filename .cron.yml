@@ -2,11 +2,17 @@
 # `taskcluster/taskgraph/cron/schema.py`.  For documentation, see
 # `taskcluster/docs/cron.rst`.
 
+<<<<<<< HEAD
+=======
+---
+
+>>>>>>> a17af05f6f9f79dd18cb2721cc8d0a0dfa1d04de
 jobs:
     - name: nightly-desktop
       job:
           type: decision-task
           treeherder-symbol: Nd
+<<<<<<< HEAD
           triggered-by: nightly
           target-tasks-method: nightly_linux
       run-on-projects:
@@ -20,11 +26,64 @@ jobs:
             mozilla-central: [{hour: 10, minute: 0}]
             mozilla-aurora: [{hour: 7, minute: 45}]  # Buildbot uses minute 40
             # No default
+=======
+          target-tasks-method: nightly_desktop
+      run-on-projects:
+          - mozilla-central
+          - date
+      when:
+          by-project:
+              # Match buildbot starts for now
+              date: [{hour: 15, minute: 0}]
+              mozilla-central: [{hour: 10, minute: 0}, {hour: 22, minute: 0}]
+              # No default
+
+    - name: nightly-desktop-linux
+      job:
+          type: decision-task
+          treeherder-symbol: Nd-Ln
+          target-tasks-method: nightly_linux
+      run-on-projects:
+          - mozilla-central
+          - date
+      when: []  # never (hook only)
+
+    - name: nightly-desktop-osx
+      job:
+          type: decision-task
+          treeherder-symbol: Nd-OSX
+          target-tasks-method: nightly_macosx
+      run-on-projects:
+          - mozilla-central
+          - date
+      when: []  # never (hook only)
+
+    - name: nightly-desktop-win32
+      job:
+          type: decision-task
+          treeherder-symbol: Nd-win32
+          target-tasks-method: nightly_win32
+      run-on-projects:
+          - mozilla-central
+          - date
+      when: []  # never (hook only)
+
+    - name: nightly-desktop-win64
+      job:
+          type: decision-task
+          treeherder-symbol: Nd-win64
+          target-tasks-method: nightly_win64
+      run-on-projects:
+          - mozilla-central
+          - date
+      when: []  # never (hook only)
+>>>>>>> a17af05f6f9f79dd18cb2721cc8d0a0dfa1d04de
 
     - name: nightly-android
       job:
           type: decision-task
           treeherder-symbol: Na
+<<<<<<< HEAD
           triggered-by: nightly
           target-tasks-method: nightly_fennec
       run-on-projects:
@@ -38,6 +97,18 @@ jobs:
             mozilla-central: [{hour: 10, minute: 0}]
             mozilla-aurora: [{hour: 7, minute: 45}]  # Buildbot uses minute 40
             # No default
+=======
+          target-tasks-method: nightly_fennec
+      run-on-projects:
+          - mozilla-central
+          - date
+      when:
+          by-project:
+              # Match buildbot starts for now
+              date: [{hour: 15, minute: 0}]
+              mozilla-central: [{hour: 10, minute: 0}]
+              # No default
+>>>>>>> a17af05f6f9f79dd18cb2721cc8d0a0dfa1d04de
 
     - name: nightly-mochitest-valgrind
       job:
@@ -50,6 +121,7 @@ jobs:
           - {hour: 16, minute: 0}
           - {hour: 4, minute: 0}
 
+<<<<<<< HEAD
     - name: nightly-code-coverage
       job:
           type: decision-task
@@ -59,3 +131,16 @@ jobs:
           - mozilla-central
       when:
           - {hour: 18, minute: 0}
+=======
+    - name: nightly-dmd
+      job:
+          type: decision-task
+          treeherder-symbol: Ndmd
+          target-tasks-method: nightly_dmd
+      run-on-projects:
+          - mozilla-central
+      when:
+          by-project:
+              mozilla-central: [{hour: 10, minute: 0}]
+              # No default
+>>>>>>> a17af05f6f9f79dd18cb2721cc8d0a0dfa1d04de

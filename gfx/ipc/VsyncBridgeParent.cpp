@@ -15,7 +15,10 @@ VsyncBridgeParent::Start(Endpoint<PVsyncBridgeParent>&& aEndpoint)
   RefPtr<VsyncBridgeParent> parent = new VsyncBridgeParent();
 
   RefPtr<Runnable> task = NewRunnableMethod<Endpoint<PVsyncBridgeParent>&&>(
-    parent, &VsyncBridgeParent::Open, Move(aEndpoint));
+    "gfx::VsyncBridgeParent::Open",
+    parent,
+    &VsyncBridgeParent::Open,
+    Move(aEndpoint));
   CompositorThreadHolder::Loop()->PostTask(task.forget());
 
   return parent;
@@ -25,6 +28,7 @@ VsyncBridgeParent::VsyncBridgeParent()
  : mOpen(false)
 {
   MOZ_COUNT_CTOR(VsyncBridgeParent);
+  mCompositorThreadRef = CompositorThreadHolder::GetSingleton();
 }
 
 VsyncBridgeParent::~VsyncBridgeParent()
@@ -55,7 +59,9 @@ VsyncBridgeParent::Shutdown()
 {
   MessageLoop* ccloop = CompositorThreadHolder::Loop();
   if (MessageLoop::current() != ccloop) {
-    ccloop->PostTask(NewRunnableMethod(this, &VsyncBridgeParent::ShutdownImpl));
+    ccloop->PostTask(NewRunnableMethod("gfx::VsyncBridgeParent::ShutdownImpl",
+                                       this,
+                                       &VsyncBridgeParent::ShutdownImpl));
     return;
   }
 
@@ -75,6 +81,7 @@ void
 VsyncBridgeParent::ActorDestroy(ActorDestroyReason aWhy)
 {
   mOpen = false;
+  mCompositorThreadRef = nullptr;
 }
 
 void

@@ -5,15 +5,20 @@
 "use strict";
 
 const {Cc, Ci, Cu, CC} = require("chrome");
-const events = require("sdk/event/core");
 const protocol = require("devtools/shared/protocol");
 const {LongStringActor} = require("devtools/server/actors/string");
 const {DebuggerServer} = require("devtools/server/main");
 const Services = require("Services");
 const promise = require("promise");
+const defer = require("devtools/shared/defer");
 const {isWindowIncluded} = require("devtools/shared/layout/utils");
 const specs = require("devtools/shared/specs/storage");
 const { Task } = require("devtools/shared/task");
+
+const DEFAULT_VALUE = "value";
+
+loader.lazyRequireGetter(this, "naturalSortCaseInsensitive",
+  "devtools/client/shared/natural-sort", true);
 
 // GUID to be used as a separator in compound keys. This must match the same
 // constant in devtools/client/storage/ui.js,
@@ -72,7 +77,7 @@ var storageTypePool = new Map();
  *        The wait time in milliseconds.
  */
 function sleep(time) {
-  let deferred = promise.defer();
+  let deferred = defer();
 
   setTimeout(() => {
     deferred.resolve(null);
@@ -181,13 +186,13 @@ StorageActors.defaults = function (typeName, observationTopics) {
       this.populateStoresForHosts();
       if (observationTopics) {
         observationTopics.forEach((observationTopic) => {
-          Services.obs.addObserver(this, observationTopic, false);
+          Services.obs.addObserver(this, observationTopic);
         });
       }
       this.onWindowReady = this.onWindowReady.bind(this);
       this.onWindowDestroyed = this.onWindowDestroyed.bind(this);
-      events.on(this.storageActor, "window-ready", this.onWindowReady);
-      events.on(this.storageActor, "window-destroyed", this.onWindowDestroyed);
+      this.storageActor.on("window-ready", this.onWindowReady);
+      this.storageActor.on("window-destroyed", this.onWindowDestroyed);
     },
 
     destroy() {
@@ -196,8 +201,8 @@ StorageActors.defaults = function (typeName, observationTopics) {
           Services.obs.removeObserver(this, observationTopic);
         });
       }
-      events.off(this.storageActor, "window-ready", this.onWindowReady);
-      events.off(this.storageActor, "window-destroyed", this.onWindowDestroyed);
+      this.storageActor.off("window-ready", this.onWindowReady);
+      this.storageActor.off("window-destroyed", this.onWindowDestroyed);
 
       this.hostVsStores.clear();
 
@@ -357,15 +362,20 @@ StorageActors.defaults = function (typeName, observationTopics) {
             toReturn.data.push(...values);
           }
         }
+
         toReturn.total = this.getObjectsSize(host, names, options);
+
         if (offset > toReturn.total) {
           // In this case, toReturn.data is an empty array.
           toReturn.offset = toReturn.total;
           toReturn.data = [];
         } else {
-          toReturn.data = toReturn.data.sort((a, b) => {
-            return a[sortOn] - b[sortOn];
-          }).slice(offset, offset + size).map(a => this.toStoreObject(a));
+          // We need to use natural sort before slicing.
+          let sorted = toReturn.data.sort((a, b) => {
+            return naturalSortCaseInsensitive(a[sortOn], b[sortOn]);
+          });
+          let sliced = sorted.slice(offset, offset + size);
+          toReturn.data = sliced.map(a => this.toStoreObject(a));
         }
       } else {
         let obj = yield this.getValuesForHost(host, undefined, undefined,
@@ -375,15 +385,18 @@ StorageActors.defaults = function (typeName, observationTopics) {
         }
 
         toReturn.total = obj.length;
+
         if (offset > toReturn.total) {
           // In this case, toReturn.data is an empty array.
           toReturn.offset = offset = toReturn.total;
           toReturn.data = [];
         } else {
-          toReturn.data = obj.sort((a, b) => {
-            return a[sortOn] - b[sortOn];
-          }).slice(offset, offset + size)
-            .map(object => this.toStoreObject(object));
+          // We need to use natural sort before slicing.
+          let sorted = obj.sort((a, b) => {
+            return naturalSortCaseInsensitive(a[sortOn], b[sortOn]);
+          });
+          let sliced = sorted.slice(offset, offset + size);
+          toReturn.data = sliced.map(object => this.toStoreObject(object));
         }
       }
 
@@ -440,8 +453,8 @@ StorageActors.createActor({
 
     this.onWindowReady = this.onWindowReady.bind(this);
     this.onWindowDestroyed = this.onWindowDestroyed.bind(this);
-    events.on(this.storageActor, "window-ready", this.onWindowReady);
-    events.on(this.storageActor, "window-destroyed", this.onWindowDestroyed);
+    this.storageActor.on("window-ready", this.onWindowReady);
+    this.storageActor.on("window-destroyed", this.onWindowDestroyed);
   },
 
   destroy() {
@@ -454,8 +467,8 @@ StorageActors.createActor({
       this.removeCookieObservers();
     }
 
-    events.off(this.storageActor, "window-ready", this.onWindowReady);
-    events.off(this.storageActor, "window-destroyed", this.onWindowDestroyed);
+    this.storageActor.off("window-ready", this.onWindowReady);
+    this.storageActor.off("window-destroyed", this.onWindowDestroyed);
 
     this._pendingResponse = null;
 
@@ -492,7 +505,7 @@ StorageActors.createActor({
       return host == null;
     }
 
-    host = trimHttpHttps(host);
+    host = trimHttpHttpsPort(host);
 
     if (cookie.host.startsWith(".")) {
       return ("." + host).endsWith(cookie.host);
@@ -657,6 +670,14 @@ StorageActors.createActor({
     this.editCookie(data);
   }),
 
+  addItem: Task.async(function* (guid) {
+    let doc = this.storageActor.document;
+    let time = new Date().getTime();
+    let expiry = new Date(time + 3600 * 24 * 1000).toGMTString();
+
+    doc.cookie = `${guid}=${DEFAULT_VALUE};expires=${expiry}`;
+  }),
+
   removeItem: Task.async(function* (host, name) {
     let doc = this.storageActor.document;
     this.removeCookie(host, name, doc.nodePrincipal
@@ -667,6 +688,12 @@ StorageActors.createActor({
     let doc = this.storageActor.document;
     this.removeAllCookies(host, domain, doc.nodePrincipal
                                            .originAttributes);
+  }),
+
+  removeAllSessionCookies: Task.async(function* (host, domain) {
+    let doc = this.storageActor.document;
+    this.removeAllSessionCookies(host, domain, doc.nodePrincipal
+        .originAttributes);
   }),
 
   maybeSetupChildProcess() {
@@ -685,6 +712,8 @@ StorageActors.createActor({
         cookieHelpers.removeCookie.bind(cookieHelpers);
       this.removeAllCookies =
         cookieHelpers.removeAllCookies.bind(cookieHelpers);
+      this.removeAllSessionCookies =
+        cookieHelpers.removeAllSessionCookies.bind(cookieHelpers);
       return;
     }
 
@@ -708,6 +737,8 @@ StorageActors.createActor({
       callParentProcess.bind(null, "removeCookie");
     this.removeAllCookies =
       callParentProcess.bind(null, "removeAllCookies");
+    this.removeAllSessionCookies =
+      callParentProcess.bind(null, "removeAllSessionCookies");
 
     addMessageListener("debug:storage-cookie-request-child",
                        cookieHelpers.handleParentRequest);
@@ -742,7 +773,7 @@ var cookieHelpers = {
       host = "";
     }
 
-    host = trimHttpHttps(host);
+    host = trimHttpHttpsPort(host);
 
     let cookies = Services.cookies.getCookiesFromHost(host, originAttributes);
     let store = [];
@@ -878,7 +909,7 @@ var cookieHelpers = {
       opts.path = split[2];
     }
 
-    host = trimHttpHttps(host);
+    host = trimHttpHttpsPort(host);
 
     function hostMatches(cookieHost, matchHost) {
       if (cookieHost == null) {
@@ -898,7 +929,8 @@ var cookieHelpers = {
       if (hostMatches(cookie.host, host) &&
           (!opts.name || cookie.name === opts.name) &&
           (!opts.domain || cookie.host === opts.domain) &&
-          (!opts.path || cookie.path === opts.path)) {
+          (!opts.path || cookie.path === opts.path) &&
+          (!opts.session || (!cookie.expires && !cookie.maxAge))) {
         Services.cookies.remove(
           cookie.host,
           cookie.name,
@@ -920,8 +952,12 @@ var cookieHelpers = {
     this._removeCookies(host, { domain, originAttributes });
   },
 
+  removeAllSessionCookies(host, domain, originAttributes) {
+    this._removeCookies(host, { domain, originAttributes, session: true });
+  },
+
   addCookieObservers() {
-    Services.obs.addObserver(cookieHelpers, "cookie-changed", false);
+    Services.obs.addObserver(cookieHelpers, "cookie-changed");
     return null;
   },
 
@@ -984,6 +1020,12 @@ var cookieHelpers = {
         let rowdata = msg.data.args[0];
         return cookieHelpers.editCookie(rowdata);
       }
+      case "createNewCookie": {
+        let host = msg.data.args[0];
+        let guid = msg.data.args[1];
+        let originAttributes = msg.data.args[2];
+        return cookieHelpers.createNewCookie(host, guid, originAttributes);
+      }
       case "removeCookie": {
         let host = msg.data.args[0];
         let name = msg.data.args[1];
@@ -995,6 +1037,12 @@ var cookieHelpers = {
         let domain = msg.data.args[1];
         let originAttributes = msg.data.args[2];
         return cookieHelpers.removeAllCookies(host, domain, originAttributes);
+      }
+      case "removeAllSessionCookies": {
+        let host = msg.data.args[0];
+        let domain = msg.data.args[1];
+        let originAttributes = msg.data.args[2];
+        return cookieHelpers.removeAllSessionCookies(host, domain, originAttributes);
       }
       default:
         console.error("ERR_DIRECTOR_PARENT_UNKNOWN_METHOD", msg.json.method);
@@ -1109,6 +1157,14 @@ function getObjectForLocalOrSessionStorage(type) {
         { name: "name", editable: true },
         { name: "value", editable: true }
       ];
+    }),
+
+    addItem: Task.async(function* (guid, host) {
+      let storage = this.hostVsStores.get(host);
+      if (!storage) {
+        return;
+      }
+      storage.setItem(guid, DEFAULT_VALUE);
     }),
 
     /**
@@ -1525,16 +1581,16 @@ StorageActors.createActor({
     this.onWindowReady = this.onWindowReady.bind(this);
     this.onWindowDestroyed = this.onWindowDestroyed.bind(this);
 
-    events.on(this.storageActor, "window-ready", this.onWindowReady);
-    events.on(this.storageActor, "window-destroyed", this.onWindowDestroyed);
+    this.storageActor.on("window-ready", this.onWindowReady);
+    this.storageActor.on("window-destroyed", this.onWindowDestroyed);
   },
 
   destroy() {
     this.hostVsStores.clear();
     this.objectsSize = null;
 
-    events.off(this.storageActor, "window-ready", this.onWindowReady);
-    events.off(this.storageActor, "window-destroyed", this.onWindowDestroyed);
+    this.storageActor.off("window-ready", this.onWindowReady);
+    this.storageActor.off("window-destroyed", this.onWindowDestroyed);
 
     protocol.Actor.prototype.destroy.call(this);
 
@@ -1816,7 +1872,7 @@ StorageActors.createActor({
 
     let unresolvedPromises = new Map();
     function callParentProcessAsync(methodName, ...args) {
-      let deferred = promise.defer();
+      let deferred = defer();
 
       unresolvedPromises.set(methodName, deferred);
 
@@ -1889,7 +1945,7 @@ var indexedDBHelpers = {
    */
   getDBMetaData: Task.async(function* (host, principal, name, storage) {
     let request = this.openWithPrincipal(principal, name, storage);
-    let success = promise.defer();
+    let success = defer();
 
     request.onsuccess = event => {
       let db = event.target.result;
@@ -2251,7 +2307,7 @@ var indexedDBHelpers = {
   getObjectStoreData(host, principal, dbName, storage, requestOptions) {
     let {name} = this.splitNameAndStorage(dbName);
     let request = this.openWithPrincipal(principal, name, storage);
-    let success = promise.defer();
+    let success = defer();
     let {objectStore, id, index, offset, size} = requestOptions;
     let data = [];
     let db;
@@ -2418,7 +2474,12 @@ exports.setupParentProcessForIndexedDB = function ({ mm, prefix }) {
 /**
  * General helpers
  */
-function trimHttpHttps(url) {
+function trimHttpHttpsPort(url) {
+  let match = url.match(/(.+):\d+$/);
+
+  if (match) {
+    url = match[1];
+  }
   if (url.startsWith("http://")) {
     return url.substr(7);
   }
@@ -2464,8 +2525,8 @@ let StorageActor = protocol.ActorClassWithSpec(specs.storageSpec, {
 
     // Notifications that help us keep track of newly added windows and windows
     // that got removed
-    Services.obs.addObserver(this, "content-document-global-created", false);
-    Services.obs.addObserver(this, "inner-window-destroyed", false);
+    Services.obs.addObserver(this, "content-document-global-created");
+    Services.obs.addObserver(this, "inner-window-destroyed");
     this.onPageChange = this.onPageChange.bind(this);
 
     let handler = tabActor.chromeEventHandler;
@@ -2573,12 +2634,12 @@ let StorageActor = protocol.ActorClassWithSpec(specs.storageSpec, {
     if (topic == "content-document-global-created" &&
         this.isIncludedInTopLevelWindow(subject)) {
       this.childWindowPool.add(subject);
-      events.emit(this, "window-ready", subject);
+      this.emit("window-ready", subject);
     } else if (topic == "inner-window-destroyed") {
       let window = this.getWindowFromInnerWindowID(subject);
       if (window) {
         this.childWindowPool.delete(window);
-        events.emit(this, "window-destroyed", window);
+        this.emit("window-destroyed", window);
       }
     }
     return null;
@@ -2604,12 +2665,12 @@ let StorageActor = protocol.ActorClassWithSpec(specs.storageSpec, {
     let window = target.defaultView;
 
     if (type == "pagehide" && this.childWindowPool.delete(window)) {
-      events.emit(this, "window-destroyed", window);
+      this.emit("window-destroyed", window);
     } else if (type == "pageshow" && persisted && window.location.href &&
                window.location.href != "about:blank" &&
                this.isIncludedInTopLevelWindow(window)) {
       this.childWindowPool.add(window);
-      events.emit(this, "window-ready", window);
+      this.emit("window-ready", window);
     }
   },
 
@@ -2658,7 +2719,7 @@ let StorageActor = protocol.ActorClassWithSpec(specs.storageSpec, {
    */
   update(action, storeType, data) {
     if (action == "cleared") {
-      events.emit(this, "stores-cleared", { [storeType]: data });
+      this.emit("stores-cleared", { [storeType]: data });
       return null;
     }
 
@@ -2714,7 +2775,7 @@ let StorageActor = protocol.ActorClassWithSpec(specs.storageSpec, {
 
     this.batchTimer = setTimeout(() => {
       clearTimeout(this.batchTimer);
-      events.emit(this, "stores-update", this.boundUpdate);
+      this.emit("stores-update", this.boundUpdate);
       this.boundUpdate = {};
     }, BATCH_DELAY);
 

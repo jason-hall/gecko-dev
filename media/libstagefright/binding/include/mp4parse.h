@@ -23,6 +23,7 @@ typedef enum mp4parse_status {
 	mp4parse_status_UNSUPPORTED = 3,
 	mp4parse_status_EOF = 4,
 	mp4parse_status_IO = 5,
+	mp4parse_status_TABLE_TOO_LARGE = 6,
 } mp4parse_status;
 
 typedef enum mp4parse_track_type {
@@ -38,6 +39,10 @@ typedef enum mp4parse_codec {
 	mp4parse_codec_AVC,
 	mp4parse_codec_VP9,
 	mp4parse_codec_MP3,
+	mp4parse_codec_MP4V,
+	mp4parse_codec_JPEG,
+	mp4parse_codec_AC3,
+	mp4parse_codec_EC3,
 } mp4parse_codec;
 
 typedef struct mp4parse_track_info {
@@ -78,8 +83,8 @@ typedef struct mp4parse_track_audio_info {
 	uint16_t bit_depth;
 	uint32_t sample_rate;
 	uint16_t profile;
-	mp4parse_byte_data codec_specific_data;
 	mp4parse_byte_data codec_specific_config;
+	mp4parse_byte_data extra_data;
 	mp4parse_sinf_info protected_data;
 } mp4parse_track_audio_info;
 

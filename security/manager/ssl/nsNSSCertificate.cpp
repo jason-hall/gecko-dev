@@ -39,7 +39,6 @@
 #include "pkix/pkixtypes.h"
 #include "pkix/Result.h"
 #include "prerror.h"
-#include "prmem.h"
 #include "secasn1.h"
 #include "secder.h"
 #include "secerr.h"
@@ -664,6 +663,7 @@ nsNSSCertificate::GetChain(nsIArray** _rvChain)
                                nullptr, /*XXX fixme*/
                                nullptr, /* hostname */
                                nssChain,
+                               nullptr, // no peerCertChain
                                CertVerifier::FLAG_LOCAL_ONLY)
         != mozilla::pkix::Success) {
     nssChain = nullptr;
@@ -688,6 +688,7 @@ nsNSSCertificate::GetChain(nsIArray** _rvChain)
                                  nullptr, /*XXX fixme*/
                                  nullptr, /*hostname*/
                                  nssChain,
+                                 nullptr, // no peerCertChain
                                  CertVerifier::FLAG_LOCAL_ONLY)
           != mozilla::pkix::Success) {
       nssChain = nullptr;
@@ -894,6 +895,11 @@ nsNSSCertificate::ExportAsCMS(uint32_t chainMode,
   nsNSSShutDownPreventionLock locker;
   if (isAlreadyShutDown())
     return NS_ERROR_NOT_AVAILABLE;
+
+  nsresult rv = BlockUntilLoadableRootsLoaded();
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   if (!mCert)
     return NS_ERROR_FAILURE;
@@ -1506,7 +1512,7 @@ nsNSSCertificate::Read(nsIObjectInputStream* aStream)
     return rv;
   }
 
-  nsXPIDLCString str;
+  nsCString str;
   rv = aStream->ReadBytes(len, getter_Copies(str));
   if (NS_FAILED(rv)) {
     return rv;

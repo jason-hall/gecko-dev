@@ -81,7 +81,7 @@ using namespace mozilla::widget;
 } while (0)
 
 static bool
-CreateConfig(EGLConfig* aConfig);
+CreateConfig(EGLConfig* aConfig, bool aEnableDepthBuffer);
 
 // append three zeros at the end of attribs list to work around
 // EGL implementation bugs that iterate until they find 0, instead of
@@ -176,7 +176,7 @@ GLContextEGLFactory::Create(EGLNativeWindowType aWindow,
     bool doubleBuffered = true;
 
     EGLConfig config;
-    if (!CreateConfig(&config)) {
+    if (!CreateConfig(&config, aWebRender)) {
         MOZ_CRASH("GFX: Failed to create EGLConfig!\n");
         return nullptr;
     }
@@ -210,7 +210,7 @@ GLContextEGLFactory::Create(EGLNativeWindowType aWindow,
 GLContextEGL::GLContextEGL(CreateContextFlags flags, const SurfaceCaps& caps,
                            bool isOffscreen, EGLConfig config, EGLSurface surface,
                            EGLContext context)
-    : GLContext(flags, caps, nullptr, isOffscreen)
+    : GLContext(flags, caps, nullptr, isOffscreen, sEGLLibrary.IsANGLE())
     , mConfig(config)
     , mSurface(surface)
     , mContext(context)
@@ -242,7 +242,6 @@ GLContextEGL::~GLContextEGL()
 #endif
 
     sEGLLibrary.fDestroyContext(EGL_DISPLAY(), mContext);
-    sEGLLibrary.UnsetCachedCurrentContext();
 
     mozilla::gl::DestroySurface(mSurface);
 }
@@ -346,18 +345,8 @@ GLContextEGL::MakeCurrentImpl(bool aForce) {
     // Assume that EGL has the same problem as WGL does,
     // where MakeCurrent with an already-current context is
     // still expensive.
-    bool hasDifferentContext = false;
-    if (sEGLLibrary.CachedCurrentContext() != mContext) {
-        // even if the cached context doesn't match the current one
-        // might still
-        if (sEGLLibrary.fGetCurrentContext() != mContext) {
-            hasDifferentContext = true;
-        } else {
-            sEGLLibrary.SetCachedCurrentContext(mContext);
-        }
-    }
-
-    if (aForce || hasDifferentContext) {
+    bool needsMakeCurrent = (aForce || sEGLLibrary.fGetCurrentContext() != mContext);
+    if (needsMakeCurrent) {
         EGLSurface surface = mSurfaceOverride != EGL_NO_SURFACE
                               ? mSurfaceOverride
                               : mSurface;
@@ -378,11 +367,7 @@ GLContextEGL::MakeCurrentImpl(bool aForce) {
                 printf_stderr("EGL Error: 0x%04x\n", eglError);
 #endif
             }
-        } else {
-            sEGLLibrary.SetCachedCurrentContext(mContext);
         }
-    } else {
-        MOZ_ASSERT(sEGLLibrary.CachedCurrentContextMatches());
     }
 
     return succeeded;
@@ -497,7 +482,9 @@ GLContextEGL::CreateGLContext(CreateContextFlags flags,
             // Skip EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT, since it doesn't help us.
         }
 
-        if (sEGLLibrary.IsExtensionSupported(GLLibraryEGL::KHR_create_context)) {
+        if (sEGLLibrary.IsExtensionSupported(GLLibraryEGL::KHR_create_context) &&
+            !sEGLLibrary.IsANGLE())
+        {
             rbab_attribs = required_attribs;
             rbab_attribs.push_back(LOCAL_EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY_KHR);
             rbab_attribs.push_back(LOCAL_EGL_LOSE_CONTEXT_ON_RESET_KHR);
@@ -519,14 +506,14 @@ GLContextEGL::CreateGLContext(CreateContextFlags flags,
 
     EGLContext context;
     do {
-        if (rbab_attribs.size()) {
+        if (!rbab_attribs.empty()) {
             context = fnCreate(rbab_attribs);
             if (context)
                 break;
             NS_WARNING("Failed to create EGLContext with rbab_attribs");
         }
 
-        if (robustness_attribs.size()) {
+        if (!robustness_attribs.empty()) {
             context = fnCreate(robustness_attribs);
             if (context)
                 break;
@@ -641,7 +628,7 @@ static const EGLint kEGLConfigAttribsRGBA32[] = {
 };
 
 static bool
-CreateConfig(EGLConfig* aConfig, int32_t depth)
+CreateConfig(EGLConfig* aConfig, int32_t depth, bool aEnableDepthBuffer)
 {
     EGLConfig configs[64];
     const EGLint* attribs;
@@ -683,6 +670,13 @@ CreateConfig(EGLConfig* aConfig, int32_t depth)
              (depth == 24 && r == 8 && g == 8 && b == 8) ||
              (depth == 32 && r == 8 && g == 8 && b == 8 && a == 8)))
         {
+            EGLint z;
+            if (aEnableDepthBuffer) {
+                if (!sEGLLibrary.fGetConfigAttrib(EGL_DISPLAY(), config, LOCAL_EGL_DEPTH_SIZE, &z) ||
+                    z != 24) {
+                    continue;
+                }
+            }
             *aConfig = config;
             return true;
         }
@@ -696,20 +690,20 @@ CreateConfig(EGLConfig* aConfig, int32_t depth)
 // NB: It's entirely legal for the returned EGLConfig to be valid yet
 // have the value null.
 static bool
-CreateConfig(EGLConfig* aConfig)
+CreateConfig(EGLConfig* aConfig, bool aEnableDepthBuffer)
 {
     int32_t depth = gfxVars::ScreenDepth();
-    if (!CreateConfig(aConfig, depth)) {
+    if (!CreateConfig(aConfig, depth, aEnableDepthBuffer)) {
 #ifdef MOZ_WIDGET_ANDROID
         // Bug 736005
         // Android doesn't always support 16 bit so also try 24 bit
         if (depth == 16) {
-            return CreateConfig(aConfig, 24);
+            return CreateConfig(aConfig, 24, aEnableDepthBuffer);
         }
         // Bug 970096
         // Some devices that have 24 bit screens only support 16 bit OpenGL?
         if (depth == 24) {
-            return CreateConfig(aConfig, 16);
+            return CreateConfig(aConfig, 16, aEnableDepthBuffer);
         }
 #endif
         return false;
@@ -759,18 +753,27 @@ GLContextProviderEGL::CreateForWindow(nsIWidget* aWidget,
                                        aWebRender);
 }
 
-#if defined(ANDROID)
+#if defined(MOZ_WIDGET_ANDROID)
 EGLSurface
-GLContextProviderEGL::CreateEGLSurface(void* aWindow)
+GLContextEGL::CreateCompatibleSurface(void* aWindow)
+{
+    if (mConfig == EGL_NO_CONFIG) {
+        MOZ_CRASH("GFX: Failed with invalid EGLConfig 2!\n");
+    }
+
+    return GLContextProviderEGL::CreateEGLSurface(aWindow, mConfig);
+}
+
+/* static */ EGLSurface
+GLContextProviderEGL::CreateEGLSurface(void* aWindow, EGLConfig aConfig)
 {
     // NOTE: aWindow is an ANativeWindow
     nsCString discardFailureId;
     if (!sEGLLibrary.EnsureInitialized(false, &discardFailureId)) {
         MOZ_CRASH("GFX: Failed to load EGL library 4!\n");
     }
-
-    EGLConfig config;
-    if (!CreateConfig(&config)) {
+    EGLConfig config = aConfig;
+    if (!config && !CreateConfig(&config, /* aEnableDepthBuffer */ false)) {
         MOZ_CRASH("GFX: Failed to create EGLConfig 2!\n");
     }
 
@@ -785,7 +788,7 @@ GLContextProviderEGL::CreateEGLSurface(void* aWindow)
     return surface;
 }
 
-void
+/* static */ void
 GLContextProviderEGL::DestroyEGLSurface(EGLSurface surface)
 {
     nsCString discardFailureId;
@@ -970,6 +973,12 @@ GLContextProviderEGL::CreateOffscreen(const mozilla::gfx::IntSize& size,
         // ANGLE needs to use PBuffers.
         canOffscreenUseHeadless = false;
     }
+
+#if defined(MOZ_WIDGET_ANDROID)
+    // Using a headless context loses the SurfaceCaps
+    // which can cause a loss of depth and/or stencil
+    canOffscreenUseHeadless = false;
+#endif //  defined(MOZ_WIDGET_ANDROID)
 
     RefPtr<GLContext> gl;
     SurfaceCaps minOffscreenCaps = minCaps;

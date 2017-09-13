@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use cssparser::Parser;
+use cssparser::{Parser, ParserInput};
 use dom::bindings::codegen::Bindings::CSSSupportsRuleBinding;
 use dom::bindings::codegen::Bindings::WindowBinding::WindowBinding::WindowMethods;
 use dom::bindings::js::Root;
@@ -13,12 +13,12 @@ use dom::cssrule::SpecificCSSRule;
 use dom::cssstylesheet::CSSStyleSheet;
 use dom::window::Window;
 use dom_struct::dom_struct;
-use std::sync::Arc;
+use servo_arc::Arc;
 use style::parser::ParserContext;
 use style::shared_lock::{Locked, ToCssWithGuard};
-use style::stylesheets::SupportsRule;
-use style::supports::SupportsCondition;
-use style_traits::ToCss;
+use style::stylesheets::{CssRuleType, SupportsRule};
+use style::stylesheets::supports_rule::SupportsCondition;
+use style_traits::{PARSING_MODE_DEFAULT, ToCss};
 
 #[dom_struct]
 pub struct CSSSupportsRule {
@@ -55,13 +55,17 @@ impl CSSSupportsRule {
 
     /// https://drafts.csswg.org/css-conditional-3/#the-csssupportsrule-interface
     pub fn set_condition_text(&self, text: DOMString) {
-        let mut input = Parser::new(&text);
+        let mut input = ParserInput::new(&text);
+        let mut input = Parser::new(&mut input);
         let cond = SupportsCondition::parse(&mut input);
         if let Ok(cond) = cond {
             let global = self.global();
             let win = global.as_window();
             let url = win.Document().url();
-            let context = ParserContext::new_for_cssom(&url, win.css_error_reporter());
+            let quirks_mode = win.Document().quirks_mode();
+            let context = ParserContext::new_for_cssom(&url, Some(CssRuleType::Supports),
+                                                       PARSING_MODE_DEFAULT,
+                                                       quirks_mode);
             let enabled = cond.eval(&context);
             let mut guard = self.cssconditionrule.shared_lock().write();
             let rule = self.supportsrule.write_with(&mut guard);

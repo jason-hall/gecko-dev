@@ -22,8 +22,8 @@ var TrackingProtection = {
     this.icon = $("#tracking-protection-icon");
 
     this.updateEnabled();
-    Services.prefs.addObserver(this.PREF_ENABLED_GLOBALLY, this, false);
-    Services.prefs.addObserver(this.PREF_ENABLED_IN_PRIVATE_WINDOWS, this, false);
+    Services.prefs.addObserver(this.PREF_ENABLED_GLOBALLY, this);
+    Services.prefs.addObserver(this.PREF_ENABLED_IN_PRIVATE_WINDOWS, this);
 
     this.activeTooltipText =
       gNavigatorBundle.getString("trackingProtection.icon.activeTooltip");
@@ -194,7 +194,7 @@ var TrackingProtection = {
     }
   },
 
-  showIntroPanel: Task.async(function*() {
+  async showIntroPanel() {
     let brandBundle = document.getElementById("bundle_brand");
     let brandShortName = brandBundle.getString("brandShortName");
 
@@ -210,6 +210,7 @@ var TrackingProtection = {
         // (e.g. if the user manually visited the tour or clicked the link from
         // about:privatebrowsing) so we can avoid a reload.
         ignoreFragment: "whenComparingAndReplace",
+        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
       });
     };
 
@@ -225,7 +226,7 @@ var TrackingProtection = {
       },
     ];
 
-    let panelTarget = yield UITour.getTarget(window, "trackingProtection");
+    let panelTarget = await UITour.getTarget(window, "trackingProtection");
     UITour.initForBrowser(gBrowser.selectedBrowser, window);
     UITour.showInfo(window, panelTarget,
                     gNavigatorBundle.getString("trackingProtection.intro.title"),
@@ -233,5 +234,5 @@ var TrackingProtection = {
                                                         [brandShortName]),
                     undefined, buttons,
                     { closeButtonCallback: () => this.dontShowIntroPanelAgain() });
-  }),
+  },
 };

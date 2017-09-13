@@ -126,14 +126,6 @@ protected:
   nsresult LoadContentProcessTempDir();
 #endif
 
-  // Calculate and register extension and theme bundle directories.
-  void LoadExtensionBundleDirectories();
-
-#ifdef MOZ_B2G
-  // Calculate and register app-bundled extension directories.
-  void LoadAppBundleDirs();
-#endif
-
   void Append(nsIFile* aDirectory);
 
   nsCOMPtr<nsIDirectoryServiceProvider> mAppProvider;
@@ -151,8 +143,6 @@ protected:
   nsCOMPtr<nsIFile>      mContentProcessSandboxTempDir;
 #endif
   nsCOMArray<nsIFile>    mAppBundleDirectories;
-  nsCOMArray<nsIFile>    mExtensionDirectories;
-  nsCOMArray<nsIFile>    mThemeDirectories;
 };
 
 #endif

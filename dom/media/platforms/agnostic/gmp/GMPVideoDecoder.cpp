@@ -8,10 +8,11 @@
 #include "GMPDecoderModule.h"
 #include "GMPVideoHost.h"
 #include "MediaData.h"
-#include "VPXDecoder.h"
 #include "mozilla/EndianUtils.h"
-#include "prsystem.h"
 #include "mp4_demuxer/AnnexB.h"
+#include "MP4Decoder.h"
+#include "prsystem.h"
+#include "VPXDecoder.h"
 
 namespace mozilla {
 
@@ -25,7 +26,7 @@ static bool IsOnGMPThread()
   nsCOMPtr<nsIThread> gmpThread;
   nsresult rv = mps->GetThread(getter_AddRefs(gmpThread));
   MOZ_ASSERT(NS_SUCCEEDED(rv) && gmpThread);
-  return NS_GetCurrentThread() == gmpThread;
+  return gmpThread->EventTarget()->IsOnCurrentThread();
 }
 #endif
 
@@ -62,16 +63,16 @@ GMPVideoDecoder::Decoded(GMPVideoi420Frame* aDecodedFrame)
 
   gfx::IntRect pictureRegion(
     0, 0, decodedFrame->Width(), decodedFrame->Height());
-  RefPtr<VideoData> v =
-    VideoData::CreateAndCopyData(mConfig,
-                                 mImageContainer,
-                                 mLastStreamOffset,
-                                 decodedFrame->Timestamp(),
-                                 decodedFrame->Duration(),
-                                 b,
-                                 false,
-                                 -1,
-                                 pictureRegion);
+  RefPtr<VideoData> v = VideoData::CreateAndCopyData(
+    mConfig,
+    mImageContainer,
+    mLastStreamOffset,
+    media::TimeUnit::FromMicroseconds(decodedFrame->Timestamp()),
+    media::TimeUnit::FromMicroseconds(decodedFrame->Duration()),
+    b,
+    false,
+    media::TimeUnit::FromMicroseconds(-1),
+    pictureRegion);
   RefPtr<GMPVideoDecoder> self = this;
   if (v) {
     mDecodedData.AppendElement(Move(v));
@@ -200,9 +201,9 @@ GMPVideoDecoder::CreateFrame(MediaRawData* aSample)
 
   frame->SetEncodedWidth(mConfig.mDisplay.width);
   frame->SetEncodedHeight(mConfig.mDisplay.height);
-  frame->SetTimeStamp(aSample->mTime);
+  frame->SetTimeStamp(aSample->mTime.ToMicroseconds());
   frame->SetCompleteFrame(true);
-  frame->SetDuration(aSample->mDuration);
+  frame->SetDuration(aSample->mDuration.ToMicroseconds());
   frame->SetFrameType(aSample->mKeyframe ? kGMPKeyFrame : kGMPDeltaFrame);
 
   return frame;

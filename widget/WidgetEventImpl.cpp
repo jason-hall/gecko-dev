@@ -6,12 +6,14 @@
 #include "gfxPrefs.h"
 #include "mozilla/BasicEvents.h"
 #include "mozilla/ContentEvents.h"
+#include "mozilla/EventStateManager.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
+#include "nsIContent.h"
 #include "nsIDOMEventTarget.h"
 #include "nsPrintfCString.h"
 
@@ -319,7 +321,7 @@ WidgetEvent::CanBeSentToRemoteProcess() const
 {
   // If this event is explicitly marked as shouldn't be sent to remote process,
   // just return false.
-  if (mFlags.mNoCrossProcessBoundaryForwarding) {
+  if (IsCrossProcessForwardingStopped()) {
     return false;
   }
 
@@ -347,6 +349,24 @@ WidgetEvent::CanBeSentToRemoteProcess() const
     default:
       return false;
   }
+}
+
+bool
+WidgetEvent::WillBeSentToRemoteProcess() const
+{
+  // This event won't be posted to remote process if it's already explicitly
+  // stopped.
+  if (IsCrossProcessForwardingStopped()) {
+    return false;
+  }
+
+  // When mOriginalTarget is nullptr, this method shouldn't be used.
+  if (NS_WARN_IF(!mOriginalTarget)) {
+    return false;
+  }
+
+  nsCOMPtr<nsIContent> originalTarget = do_QueryInterface(mOriginalTarget);
+  return EventStateManager::IsRemoteTarget(originalTarget);
 }
 
 bool
@@ -603,6 +623,77 @@ WidgetKeyboardEvent::KeyNameIndexHashtable*
 WidgetKeyboardEvent::CodeNameIndexHashtable*
   WidgetKeyboardEvent::sCodeNameIndexHashtable = nullptr;
 
+void
+WidgetKeyboardEvent::InitAllEditCommands()
+{
+  // If the event was created without widget, e.g., created event in chrome
+  // script, this shouldn't execute native key bindings.
+  if (NS_WARN_IF(!mWidget)) {
+    return;
+  }
+
+  // This event should be trusted event here and we shouldn't expose native
+  // key binding information to web contents with untrusted events.
+  if (NS_WARN_IF(!IsTrusted())) {
+    return;
+  }
+
+  MOZ_ASSERT(XRE_IsParentProcess(),
+    "It's too expensive to retrieve all edit commands from remote process");
+  MOZ_ASSERT(!AreAllEditCommandsInitialized(),
+    "Shouldn't be called two or more times");
+
+  InitEditCommandsFor(nsIWidget::NativeKeyBindingsForSingleLineEditor);
+  InitEditCommandsFor(nsIWidget::NativeKeyBindingsForMultiLineEditor);
+  InitEditCommandsFor(nsIWidget::NativeKeyBindingsForRichTextEditor);
+}
+
+void
+WidgetKeyboardEvent::InitEditCommandsFor(nsIWidget::NativeKeyBindingsType aType)
+{
+  if (NS_WARN_IF(!mWidget) || NS_WARN_IF(!IsTrusted())) {
+    return;
+  }
+
+  bool& initialized = IsEditCommandsInitializedRef(aType);
+  if (initialized) {
+    return;
+  }
+  nsTArray<CommandInt>& commands = EditCommandsRef(aType);
+  mWidget->GetEditCommands(aType, *this, commands);
+  initialized = true;
+}
+
+bool
+WidgetKeyboardEvent::ExecuteEditCommands(nsIWidget::NativeKeyBindingsType aType,
+                                         DoCommandCallback aCallback,
+                                         void* aCallbackData)
+{
+  // If the event was created without widget, e.g., created event in chrome
+  // script, this shouldn't execute native key bindings.
+  if (NS_WARN_IF(!mWidget)) {
+    return false;
+  }
+
+  // This event should be trusted event here and we shouldn't expose native
+  // key binding information to web contents with untrusted events.
+  if (NS_WARN_IF(!IsTrusted())) {
+    return false;
+  }
+
+  InitEditCommandsFor(aType);
+
+  const nsTArray<CommandInt>& commands = EditCommandsRef(aType);
+  if (commands.IsEmpty()) {
+    return false;
+  }
+
+  for (CommandInt command : commands) {
+    aCallback(static_cast<Command>(command), aCallbackData);
+  }
+  return true;
+}
+
 bool
 WidgetKeyboardEvent::ShouldCauseKeypressEvents() const
 {
@@ -661,7 +752,7 @@ IsCaseChangeableChar(uint32_t aChar)
 
 void
 WidgetKeyboardEvent::GetShortcutKeyCandidates(
-                       ShortcutKeyCandidateArray& aCandidates)
+                       ShortcutKeyCandidateArray& aCandidates) const
 {
   MOZ_ASSERT(aCandidates.IsEmpty(), "aCandidates must be empty");
 
@@ -755,7 +846,7 @@ WidgetKeyboardEvent::GetShortcutKeyCandidates(
 }
 
 void
-WidgetKeyboardEvent::GetAccessKeyCandidates(nsTArray<uint32_t>& aCandidates)
+WidgetKeyboardEvent::GetAccessKeyCandidates(nsTArray<uint32_t>& aCandidates) const
 {
   MOZ_ASSERT(aCandidates.IsEmpty(), "aCandidates must be empty");
 
@@ -796,7 +887,128 @@ WidgetKeyboardEvent::GetAccessKeyCandidates(nsTArray<uint32_t>& aCandidates)
       mCodeNameIndex == CODE_NAME_INDEX_Space && mCharCode != ' ') {
     aCandidates.AppendElement(' ');
   }
-  return;
+}
+
+// mask values for ui.key.chromeAccess and ui.key.contentAccess
+#define NS_MODIFIER_SHIFT    1
+#define NS_MODIFIER_CONTROL  2
+#define NS_MODIFIER_ALT      4
+#define NS_MODIFIER_META     8
+#define NS_MODIFIER_OS       16
+
+static Modifiers PrefFlagsToModifiers(int32_t aPrefFlags)
+{
+  Modifiers result = 0;
+  if (aPrefFlags & NS_MODIFIER_SHIFT) {
+    result |= MODIFIER_SHIFT;
+  }
+  if (aPrefFlags & NS_MODIFIER_CONTROL) {
+    result |= MODIFIER_CONTROL;
+  }
+  if (aPrefFlags & NS_MODIFIER_ALT) {
+    result |= MODIFIER_ALT;
+  }
+  if (aPrefFlags & NS_MODIFIER_META) {
+    result |= MODIFIER_META;
+  }
+  if (aPrefFlags & NS_MODIFIER_OS) {
+    result |= MODIFIER_OS;
+  }
+  return result;
+}
+
+bool
+WidgetKeyboardEvent::ModifiersMatchWithAccessKey(AccessKeyType aType) const
+{
+  if (!ModifiersForAccessKeyMatching()) {
+    return false;
+  }
+  return ModifiersForAccessKeyMatching() == AccessKeyModifiers(aType);
+}
+
+Modifiers
+WidgetKeyboardEvent::ModifiersForAccessKeyMatching() const
+{
+  static const Modifiers kModifierMask =
+    MODIFIER_SHIFT | MODIFIER_CONTROL |
+    MODIFIER_ALT | MODIFIER_META | MODIFIER_OS;
+  return mModifiers & kModifierMask;
+}
+
+/* static */
+Modifiers
+WidgetKeyboardEvent::AccessKeyModifiers(AccessKeyType aType)
+{
+  switch (GenericAccessModifierKeyPref()) {
+    case -1:
+      break; // use the individual prefs
+    case NS_VK_SHIFT:
+      return MODIFIER_SHIFT;
+    case NS_VK_CONTROL:
+      return MODIFIER_CONTROL;
+    case NS_VK_ALT:
+      return MODIFIER_ALT;
+    case NS_VK_META:
+      return MODIFIER_META;
+    case NS_VK_WIN:
+      return MODIFIER_OS;
+    default:
+      return MODIFIER_NONE;
+  }
+
+  switch (aType) {
+    case AccessKeyType::eChrome:
+      return PrefFlagsToModifiers(ChromeAccessModifierMaskPref());
+    case AccessKeyType::eContent:
+      return PrefFlagsToModifiers(ContentAccessModifierMaskPref());
+    default:
+      return MODIFIER_NONE;
+  }
+}
+
+/* static */
+int32_t
+WidgetKeyboardEvent::GenericAccessModifierKeyPref()
+{
+  static bool sInitialized = false;
+  static int32_t sValue = -1;
+  if (!sInitialized) {
+    nsresult rv =
+      Preferences::AddIntVarCache(&sValue, "ui.key.generalAccessKey", sValue);
+    sInitialized = NS_SUCCEEDED(rv);
+    MOZ_ASSERT(sInitialized);
+  }
+  return sValue;
+}
+
+/* static */
+int32_t
+WidgetKeyboardEvent::ChromeAccessModifierMaskPref()
+{
+  static bool sInitialized = false;
+  static int32_t sValue = 0;
+  if (!sInitialized) {
+    nsresult rv =
+      Preferences::AddIntVarCache(&sValue, "ui.key.chromeAccess", sValue);
+    sInitialized = NS_SUCCEEDED(rv);
+    MOZ_ASSERT(sInitialized);
+  }
+  return sValue;
+}
+
+/* static */
+int32_t
+WidgetKeyboardEvent::ContentAccessModifierMaskPref()
+{
+  static bool sInitialized = false;
+  static int32_t sValue = 0;
+  if (!sInitialized) {
+    nsresult rv =
+      Preferences::AddIntVarCache(&sValue, "ui.key.contentAccess", sValue);
+    sInitialized = NS_SUCCEEDED(rv);
+    MOZ_ASSERT(sInitialized);
+  }
+  return sValue;
 }
 
 /* static */ void

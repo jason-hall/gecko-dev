@@ -1,15 +1,16 @@
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionManagement",
-                                  "resource://gre/modules/ExtensionManagement.jsm");
+// The ext-* files are imported into the same scopes.
+/* import-globals-from ext-toolkit.js */
+
+// This file expectes tabTracker to be defined in the global scope (e.g.
+// by ext-utils.js).
+/* global tabTracker */
+
 XPCOMUtils.defineLazyModuleGetter(this, "MatchURLFilters",
                                   "resource://gre/modules/MatchPattern.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "WebNavigation",
                                   "resource://gre/modules/WebNavigation.jsm");
-
-var {
-  SingletonEventManager,
-} = ExtensionUtils;
 
 const defaultTransitionTypes = {
   topFrame: "link",
@@ -35,11 +36,11 @@ const tabTransitions = {
   },
 };
 
-function isTopLevelFrame({frameId, parentFrameId}) {
+const isTopLevelFrame = ({frameId, parentFrameId}) => {
   return frameId == 0 && parentFrameId == -1;
-}
+};
 
-function fillTransitionProperties(eventName, src, dst) {
+const fillTransitionProperties = (eventName, src, dst) => {
   if (eventName == "onCommitted" ||
       eventName == "onHistoryStateUpdated" ||
       eventName == "onReferenceFragmentUpdated") {
@@ -89,7 +90,7 @@ function fillTransitionProperties(eventName, src, dst) {
     dst.transitionType = transitionType;
     dst.transitionQualifiers = transitionQualifiers;
   }
-}
+};
 
 // Similar to WebRequestEventManager but for WebNavigation.
 function WebNavigationEventManager(context, eventName) {
@@ -113,13 +114,13 @@ function WebNavigationEventManager(context, eventName) {
         data2.error = data.error;
       }
 
-      if (data.windowId) {
-        data2.frameId = ExtensionManagement.getFrameId(data.windowId);
-        data2.parentFrameId = ExtensionManagement.getParentFrameId(data.parentWindowId, data.windowId);
+      if (data.frameId != undefined) {
+        data2.frameId = data.frameId;
+        data2.parentFrameId = data.parentFrameId;
       }
 
-      if (data.sourceWindowId) {
-        data2.sourceFrameId = ExtensionManagement.getFrameId(data.sourceWindowId);
+      if (data.sourceFrameId != undefined) {
+        data2.sourceFrameId = data.sourceFrameId;
       }
 
       // Fills in tabId typically.
@@ -143,20 +144,20 @@ function WebNavigationEventManager(context, eventName) {
     };
   };
 
-  return SingletonEventManager.call(this, context, name, register);
+  return EventManager.call(this, context, name, register);
 }
 
-WebNavigationEventManager.prototype = Object.create(SingletonEventManager.prototype);
+WebNavigationEventManager.prototype = Object.create(EventManager.prototype);
 
-function convertGetFrameResult(tabId, data) {
+const convertGetFrameResult = (tabId, data) => {
   return {
     errorOccurred: data.errorOccurred,
     url: data.url,
     tabId,
-    frameId: ExtensionManagement.getFrameId(data.windowId),
-    parentFrameId: ExtensionManagement.getParentFrameId(data.parentWindowId, data.windowId),
+    frameId: data.frameId,
+    parentFrameId: data.parentFrameId,
   };
-}
+};
 
 this.webNavigation = class extends ExtensionAPI {
   getAPI(context) {
@@ -164,7 +165,7 @@ this.webNavigation = class extends ExtensionAPI {
 
     return {
       webNavigation: {
-        onTabReplaced: new SingletonEventManager(context, "webNavigation.onTabReplaced", fire => {
+        onTabReplaced: new EventManager(context, "webNavigation.onTabReplaced", fire => {
           return () => {};
         }).api(),
         onBeforeNavigate: new WebNavigationEventManager(context, "onBeforeNavigate").api(),

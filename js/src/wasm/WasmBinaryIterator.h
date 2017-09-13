@@ -158,7 +158,7 @@ enum class OpKind {
 // Return the OpKind for a given Op. This is used for sanity-checking that
 // API users use the correct read function for a given Op.
 OpKind
-Classify(Op op);
+Classify(OpBytes op);
 #endif
 
 // Common fields for linear memory access.
@@ -310,7 +310,9 @@ class MOZ_STACK_CLASS OpIter : private Policy
     Vector<TypeAndValue<Value>, 8, SystemAllocPolicy> valueStack_;
     Vector<ControlStackEntry<ControlItem>, 8, SystemAllocPolicy> controlStack_;
 
-    DebugOnly<Op> op_;
+#ifdef DEBUG
+    OpBytes op_;
+#endif
     size_t offsetOfLastReadOp_;
 
     MOZ_MUST_USE bool readFixedU8(uint8_t* out) {
@@ -426,9 +428,15 @@ class MOZ_STACK_CLASS OpIter : private Policy
   public:
     typedef Vector<Value, 8, SystemAllocPolicy> ValueVector;
 
+#ifdef DEBUG
     explicit OpIter(const ModuleEnvironment& env, Decoder& decoder)
-      : d_(decoder), env_(env), op_(Op::Limit), offsetOfLastReadOp_(0)
+      : d_(decoder), env_(env), op_(OpBytes(Op::Limit)), offsetOfLastReadOp_(0)
     {}
+#else
+    explicit OpIter(const ModuleEnvironment& env, Decoder& decoder)
+      : d_(decoder), env_(env), offsetOfLastReadOp_(0)
+    {}
+#endif
 
     // Return the decoding byte offset.
     uint32_t currentOffset() const {
@@ -436,13 +444,13 @@ class MOZ_STACK_CLASS OpIter : private Policy
     }
 
     // Return the offset within the entire module of the last-read op.
-    size_t errorOffset() const {
+    size_t lastOpcodeOffset() const {
         return offsetOfLastReadOp_ ? offsetOfLastReadOp_ : d_.currentOffset();
     }
 
-    // Return a TrapOffset describing where the current op should be reported to trap.
-    TrapOffset trapOffset() const {
-        return TrapOffset(errorOffset());
+    // Return a BytecodeOffset describing where the current op should be reported to trap/call.
+    BytecodeOffset bytecodeOffset() const {
+        return BytecodeOffset(lastOpcodeOffset());
     }
 
     // Test whether the iterator has reached the end of the buffer.
@@ -459,7 +467,7 @@ class MOZ_STACK_CLASS OpIter : private Policy
     MOZ_MUST_USE bool fail(const char* msg) MOZ_COLD;
 
     // Report an unrecognized opcode.
-    MOZ_MUST_USE bool unrecognizedOpcode(uint32_t expr) MOZ_COLD;
+    MOZ_MUST_USE bool unrecognizedOpcode(const OpBytes* expr) MOZ_COLD;
 
     // Return whether the innermost block has a polymorphic base of its stack.
     // Ideally this accessor would be removed; consider using something else.
@@ -470,7 +478,7 @@ class MOZ_STACK_CLASS OpIter : private Policy
     // ------------------------------------------------------------------------
     // Decoding and validation interface.
 
-    MOZ_MUST_USE bool readOp(uint16_t* op);
+    MOZ_MUST_USE bool readOp(OpBytes* op);
     MOZ_MUST_USE bool readFunctionStart(ExprType ret);
     MOZ_MUST_USE bool readFunctionEnd(const uint8_t* bodyEnd);
     MOZ_MUST_USE bool readReturn(Value* value);
@@ -559,8 +567,8 @@ class MOZ_STACK_CLASS OpIter : private Policy
 
     // At a location where readOp is allowed, peek at the next opcode
     // without consuming it or updating any internal state.
-    // Never fails: returns uint16_t(Op::Limit) if it can't read.
-    uint16_t peekOp();
+    // Never fails: returns uint16_t(Op::Limit) in op->b0 if it can't read.
+    void peekOp(OpBytes* op);
 
     // ------------------------------------------------------------------------
     // Stack management.
@@ -599,9 +607,10 @@ class MOZ_STACK_CLASS OpIter : private Policy
 
 template <typename Policy>
 inline bool
-OpIter<Policy>::unrecognizedOpcode(uint32_t expr)
+OpIter<Policy>::unrecognizedOpcode(const OpBytes* expr)
 {
-    UniqueChars error(JS_smprintf("unrecognized opcode: %x", expr));
+    UniqueChars error(JS_smprintf("unrecognized opcode: %x %x", expr->b0,
+                                  IsPrefixByte(expr->b0) ? expr->b1 : 0));
     if (!error)
         return false;
 
@@ -612,7 +621,7 @@ template <typename Policy>
 inline bool
 OpIter<Policy>::fail(const char* msg)
 {
-    return d_.fail(errorOffset(), msg);
+    return d_.fail(lastOpcodeOffset(), msg);
 }
 
 // This function pops exactly one value from the stack, yielding Any types in
@@ -830,7 +839,7 @@ OpIter<Policy>::readBlockType(ExprType* type)
 
 template <typename Policy>
 inline bool
-OpIter<Policy>::readOp(uint16_t* op)
+OpIter<Policy>::readOp(OpBytes* op)
 {
     MOZ_ASSERT(!controlStack_.empty());
 
@@ -839,24 +848,23 @@ OpIter<Policy>::readOp(uint16_t* op)
     if (MOZ_UNLIKELY(!d_.readOp(op)))
         return fail("unable to read opcode");
 
-    op_ = Op(*op);  // debug-only
+#ifdef DEBUG
+    op_ = *op;
+#endif
 
     return true;
 }
 
 template <typename Policy>
-inline uint16_t
-OpIter<Policy>::peekOp()
+inline void
+OpIter<Policy>::peekOp(OpBytes* op)
 {
     const uint8_t* pos = d_.currentPosition();
-    uint16_t op;
 
-    if (MOZ_UNLIKELY(!d_.readOp(&op)))
-        op = uint16_t(Op::Limit);
+    if (MOZ_UNLIKELY(!d_.readOp(op)))
+        op->b0 = uint16_t(Op::Limit);
 
     d_.rollbackPosition(pos);
-
-    return op;
 }
 
 template <typename Policy>
@@ -865,7 +873,7 @@ OpIter<Policy>::readFunctionStart(ExprType ret)
 {
     MOZ_ASSERT(valueStack_.empty());
     MOZ_ASSERT(controlStack_.empty());
-    MOZ_ASSERT(Op(op_) == Op::Limit);
+    MOZ_ASSERT(op_.b0 == uint16_t(Op::Limit));
 
     return pushControl(LabelKind::Block, ret);
 }
@@ -880,7 +888,9 @@ OpIter<Policy>::readFunctionEnd(const uint8_t* bodyEnd)
     if (!controlStack_.empty())
         return fail("unbalanced function body control flow");
 
-    op_ = Op::Limit;
+#ifdef DEBUG
+    op_ = OpBytes(Op::Limit);
+#endif
     valueStack_.clear();
     return true;
 }
@@ -1081,6 +1091,9 @@ OpIter<Policy>::readBrTable(Uint32Vector* depths, uint32_t* defaultDepth,
     if (!readVarU32(&tableLength))
         return fail("unable to read br_table table length");
 
+    if (tableLength > MaxBrTableElems)
+        return fail("br_table too big");
+
     if (!popWithType(ValType::I32, index))
         return false;
 
@@ -1274,11 +1287,11 @@ OpIter<Policy>::readCurrentMemory()
     if (!env_.usesMemory())
         return fail("can't touch memory without memory");
 
-    uint32_t flags;
-    if (!readVarU32(&flags))
+    uint8_t flags;
+    if (!readFixedU8(&flags))
         return false;
 
-    if (flags != uint32_t(MemoryTableFlags::Default))
+    if (flags != uint8_t(MemoryTableFlags::Default))
         return fail("unexpected flags");
 
     return push(ValType::I32);
@@ -1293,11 +1306,11 @@ OpIter<Policy>::readGrowMemory(Value* input)
     if (!env_.usesMemory())
         return fail("can't touch memory without memory");
 
-    uint32_t flags;
-    if (!readVarU32(&flags))
+    uint8_t flags;
+    if (!readFixedU8(&flags))
         return false;
 
-    if (flags != uint32_t(MemoryTableFlags::Default))
+    if (flags != uint8_t(MemoryTableFlags::Default))
         return fail("unexpected flags");
 
     if (!popWithType(ValType::I32, input))
@@ -1591,11 +1604,11 @@ OpIter<Policy>::readCallIndirect(uint32_t* sigIndex, Value* callee, ValueVector*
     if (*sigIndex >= env_.numSigs())
         return fail("signature index out of range");
 
-    uint32_t flags;
-    if (!readVarU32(&flags))
+    uint8_t flags;
+    if (!readFixedU8(&flags))
         return false;
 
-    if (flags != uint32_t(MemoryTableFlags::Default))
+    if (flags != uint8_t(MemoryTableFlags::Default))
         return fail("unexpected flags");
 
     if (!popWithType(ValType::I32, callee))

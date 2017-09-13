@@ -126,7 +126,7 @@ DataViewObject::create(JSContext* cx, uint32_t byteOffset, uint32_t byteLength,
             MOZ_ASSERT(arrayBuffer->byteLength() == 0 &&
                        (uintptr_t(ptr.unwrapValue()) & gc::ChunkMask) == 0);
         } else {
-            //cx->zone()->group()->storeBuffer().putWholeCell(obj);
+            cx->zone()->group()->storeBuffer().putWholeCell(obj);
         }
     }
 
@@ -212,8 +212,7 @@ DataViewObject::constructSameCompartment(JSContext* cx, HandleObject bufobj, con
         return false;
 
     RootedObject proto(cx);
-    RootedObject newTarget(cx, &args.newTarget().toObject());
-    if (!GetPrototypeFromConstructor(cx, newTarget, &proto))
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto))
         return false;
 
     Rooted<ArrayBufferObjectMaybeShared*> buffer(cx, &AsArrayBufferMaybeShared(bufobj));
@@ -237,12 +236,6 @@ DataViewObject::constructSameCompartment(JSContext* cx, HandleObject bufobj, con
 // A's DataView.prototype. So even though we're creating the DataView in B,
 // its [[Prototype]] must be (a cross-compartment wrapper for) the
 // DataView.prototype in A.
-//
-// As if this were not confusing enough, the way we actually do this is also
-// tricky. We call compartment A's createDataViewForThis method, passing it
-// bufobj as `this`. That calls ArrayBufferObject::createDataViewForThis(),
-// which uses CallNonGenericMethod to switch to compartment B so that
-// the new DataView is created there.
 bool
 DataViewObject::constructWrapped(JSContext* cx, HandleObject bufobj, const CallArgs& args)
 {
@@ -263,8 +256,7 @@ DataViewObject::constructWrapped(JSContext* cx, HandleObject bufobj, const CallA
     // Make sure to get the [[Prototype]] for the created view from this
     // compartment.
     RootedObject proto(cx);
-    RootedObject newTarget(cx, &args.newTarget().toObject());
-    if (!GetPrototypeFromConstructor(cx, newTarget, &proto))
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto))
         return false;
 
     Rooted<GlobalObject*> global(cx, cx->compartment()->maybeGlobal());
@@ -937,9 +929,8 @@ DataViewObject::CreatePrototype(JSContext* cx, JSProtoKey key)
 static const ClassOps DataViewObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     nullptr, /* finalize */
@@ -1020,7 +1011,7 @@ JS_GetDataViewByteOffset(JSObject* obj)
 }
 
 JS_FRIEND_API(void*)
-JS_GetDataViewData(JSObject* obj, bool* isSharedMemory, const JS::AutoCheckCannotGC&)
+JS_GetDataViewData(JSObject* obj, bool* isSharedMemory, const JS::AutoRequireNoGC&)
 {
     obj = CheckedUnwrap(obj);
     if (!obj)

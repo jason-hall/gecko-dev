@@ -736,7 +736,8 @@ MediaPipelineFactory::GetOrCreateAudioConduit(
         && configs.values.back()->mName == "telephone-event") {
       // we have a telephone event codec, so we need to make sure
       // the dynamic pt is set properly
-      conduit->SetDtmfPayloadType(configs.values.back()->mType);
+      conduit->SetDtmfPayloadType(configs.values.back()->mType,
+                                  configs.values.back()->mFreq);
     }
 
     auto error = conduit->ConfigureSendMediaCodec(configs.values[0]);
@@ -845,7 +846,7 @@ MediaPipelineFactory::GetOrCreateVideoConduit(
     }
 
     if (!extmaps.empty()) {
-      conduit->AddLocalRTPExtensions(false, extmaps);
+      conduit->SetLocalRTPExtensions(false, extmaps);
     }
     auto error = conduit->ConfigureRecvMediaCodecs(configs.values);
     if (error) {
@@ -873,7 +874,7 @@ MediaPipelineFactory::GetOrCreateVideoConduit(
     }
 
     if (!extmaps.empty()) {
-      conduit->AddLocalRTPExtensions(true, extmaps);
+      conduit->SetLocalRTPExtensions(true, extmaps);
     }
     auto error = conduit->ConfigureSendMediaCodec(configs.values[0]);
     if (error) {

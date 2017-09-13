@@ -55,30 +55,6 @@
 class nsIDocShell;
 
 /*
- * Minimum value constants defined in 6.2 State Tables of OpenGL ES - 2.0.25
- *   https://bugzilla.mozilla.org/show_bug.cgi?id=686732
- *
- * Exceptions: some of the following values are set to higher values than in the spec because
- * the values in the spec are ridiculously low. They are explicitly marked below
- */
-#define MINVALUE_GL_MAX_TEXTURE_SIZE                  1024  // Different from the spec, which sets it to 64 on page 162
-#define MINVALUE_GL_MAX_CUBE_MAP_TEXTURE_SIZE         512   // Different from the spec, which sets it to 16 on page 162
-#define MINVALUE_GL_MAX_VERTEX_ATTRIBS                8     // Page 164
-#define MINVALUE_GL_MAX_FRAGMENT_UNIFORM_VECTORS      16    // Page 164
-#define MINVALUE_GL_MAX_VERTEX_UNIFORM_VECTORS        128   // Page 164
-#define MINVALUE_GL_MAX_VARYING_VECTORS               8     // Page 164
-#define MINVALUE_GL_MAX_TEXTURE_IMAGE_UNITS           8     // Page 164
-#define MINVALUE_GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS    0     // Page 164
-#define MINVALUE_GL_MAX_RENDERBUFFER_SIZE             1024  // Different from the spec, which sets it to 1 on page 164
-#define MINVALUE_GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS  8     // Page 164
-
-/*
- * Minimum value constants define in 6.2 State Tables of OpenGL ES - 3.0.4
- */
-#define MINVALUE_GL_MAX_3D_TEXTURE_SIZE             256
-#define MINVALUE_GL_MAX_ARRAY_TEXTURE_LAYERS        256
-
-/*
  * WebGL-only GLenums
  */
 #define LOCAL_GL_BROWSER_DEFAULT_WEBGL                       0x9244
@@ -310,6 +286,7 @@ class WebGLContext
     friend class WebGLExtensionCompressedTextureETC1;
     friend class WebGLExtensionCompressedTexturePVRTC;
     friend class WebGLExtensionCompressedTextureS3TC;
+    friend class WebGLExtensionCompressedTextureS3TC_SRGB;
     friend class WebGLExtensionDepthTexture;
     friend class WebGLExtensionDisjointTimerQuery;
     friend class WebGLExtensionDrawBuffers;
@@ -321,15 +298,15 @@ class WebGLContext
     enum {
         UNPACK_FLIP_Y_WEBGL = 0x9240,
         UNPACK_PREMULTIPLY_ALPHA_WEBGL = 0x9241,
+        // We throw InvalidOperation in TexImage if we fail to use GPU fast-path
+        // for texture copy when it is set to true, only for debug purpose.
+        UNPACK_REQUIRE_FASTPATH = 0x10001,
         CONTEXT_LOST_WEBGL = 0x9242,
         UNPACK_COLORSPACE_CONVERSION_WEBGL = 0x9243,
         BROWSER_DEFAULT_WEBGL = 0x9244,
         UNMASKED_VENDOR_WEBGL = 0x9245,
         UNMASKED_RENDERER_WEBGL = 0x9246
     };
-
-    static const uint32_t kMinMaxColorAttachments;
-    static const uint32_t kMinMaxDrawBuffers;
 
     const uint32_t mMaxPerfWarnings;
     mutable uint64_t mNumPerfWarnings;
@@ -375,10 +352,10 @@ public:
                               const char16_t* encoderOptions,
                               nsIInputStream** out_stream) override;
 
-    already_AddRefed<mozilla::gfx::SourceSurface>
-    GetSurfaceSnapshot(bool* out_premultAlpha) override;
+    virtual already_AddRefed<mozilla::gfx::SourceSurface>
+    GetSurfaceSnapshot(gfxAlphaType* out_alphaType) override;
 
-    NS_IMETHOD SetIsOpaque(bool) override { return NS_OK; };
+    virtual void SetIsOpaque(bool) override {};
     bool GetIsOpaque() override { return false; }
     NS_IMETHOD SetContextOptions(JSContext* cx,
                                  JS::Handle<JS::Value> options,
@@ -458,6 +435,10 @@ public:
     GetCanvasLayer(nsDisplayListBuilder* builder, Layer* oldLayer,
                    LayerManager* manager,
                    bool aMirror = false) override;
+    bool
+    InitializeCanvasRenderer(nsDisplayListBuilder* aBuilder,
+                             CanvasRenderer* aRenderer,
+                             bool aMirror = false) override;
 
     // Note that 'clean' here refers to its invalidation state, not the
     // contents of the buffer.
@@ -494,8 +475,6 @@ public:
     void ClearScreen();
     void ClearBackbufferIfNeeded();
 
-    bool MinCapabilityMode() const { return mMinCapability; }
-
     void RunContextLossTimer();
     void UpdateContextLossStatus();
     void EnqueueUpdateContextLossStatus();
@@ -506,6 +485,7 @@ public:
     void AssertCachedGlobalState();
 
     dom::HTMLCanvasElement* GetCanvas() const { return mCanvasElement; }
+    nsIDocument* GetOwnerDoc() const;
 
     // WebIDL WebGLRenderingContext API
     void Commit();
@@ -1025,6 +1005,19 @@ private:
     bool ValidateCapabilityEnum(GLenum cap, const char* info);
     realGLboolean* GetStateTrackingSlot(GLenum cap);
 
+    // Allocation debugging variables
+    mutable uint64_t mDataAllocGLCallCount;
+
+    void OnDataAllocCall() const {
+       mDataAllocGLCallCount++;
+    }
+
+    uint64_t GetNumGLDataAllocCalls() const {
+       return mDataAllocGLCallCount;
+    }
+
+    void OnEndOfFrame() const;
+
 // -----------------------------------------------------------------------------
 // Texture funcions (WebGLContextTextures.cpp)
 public:
@@ -1423,7 +1416,6 @@ protected:
     bool mResetLayer;
     bool mLayerIsMirror;
     bool mOptionsFrozen;
-    bool mMinCapability;
     bool mDisableExtensions;
     bool mIsMesa;
     bool mLoseContextOnMemoryPressure;
@@ -1450,28 +1442,28 @@ protected:
     webgl::ShaderValidator* CreateShaderValidator(GLenum shaderType) const;
 
     // some GL constants
-    uint32_t mGLMaxVertexAttribs;
-    int32_t mGLMaxTextureUnits;
-    int32_t mGLMaxTextureImageUnits;
-    int32_t mGLMaxVertexTextureImageUnits;
-    int32_t mGLMaxVaryingVectors;
-    int32_t mGLMaxFragmentUniformVectors;
-    int32_t mGLMaxVertexUniformVectors;
-    uint32_t  mGLMaxTransformFeedbackSeparateAttribs;
-    GLuint  mGLMaxUniformBufferBindings;
+    uint32_t mGLMaxTextureUnits;
 
-    // What is supported:
+    uint32_t mGLMaxVertexAttribs;
+    uint32_t mGLMaxFragmentUniformVectors;
+    uint32_t mGLMaxVertexUniformVectors;
+    uint32_t mGLMaxVaryingVectors;
+
+    uint32_t mGLMaxTransformFeedbackSeparateAttribs;
+    uint32_t mGLMaxUniformBufferBindings;
+
+    uint32_t mGLMaxVertexTextureImageUnits;
+    uint32_t mGLMaxFragmentTextureImageUnits;
+    uint32_t mGLMaxCombinedTextureImageUnits;
+
     uint32_t mGLMaxColorAttachments;
     uint32_t mGLMaxDrawBuffers;
-    // What we're allowing:
-    uint32_t mImplMaxColorAttachments;
-    uint32_t mImplMaxDrawBuffers;
 
-    uint32_t mImplMaxViewportDims[2];
+    uint32_t mGLMaxViewportDims[2];
 
 public:
     GLenum LastColorAttachmentEnum() const {
-        return LOCAL_GL_COLOR_ATTACHMENT0 + mImplMaxColorAttachments - 1;
+        return LOCAL_GL_COLOR_ATTACHMENT0 + mGLMaxColorAttachments - 1;
     }
 
     const decltype(mOptions)& Options() const { return mOptions; }
@@ -1480,11 +1472,11 @@ protected:
 
     // Texture sizes are often not actually the GL values. Let's be explicit that these
     // are implementation limits.
-    uint32_t mImplMaxTextureSize;
-    uint32_t mImplMaxCubeMapTextureSize;
-    uint32_t mImplMax3DTextureSize;
-    uint32_t mImplMaxArrayTextureLayers;
-    uint32_t mImplMaxRenderbufferSize;
+    uint32_t mGLMaxTextureSize;
+    uint32_t mGLMaxCubeMapTextureSize;
+    uint32_t mGLMax3DTextureSize;
+    uint32_t mGLMaxArrayTextureLayers;
+    uint32_t mGLMaxRenderbufferSize;
 
 public:
     GLuint MaxVertexAttribs() const {
@@ -1494,6 +1486,9 @@ public:
     GLuint GLMaxTextureUnits() const {
         return mGLMaxTextureUnits;
     }
+
+    float mGLAliasedLineWidthRange[2];
+    float mGLAliasedPointSizeRange[2];
 
     bool IsFormatValidForFB(TexInternalFormat format) const;
 
@@ -1587,8 +1582,6 @@ protected:
     bool InitAndValidateGL(FailureReason* const out_failReason);
 
     bool ValidateBlendEquationEnum(GLenum cap, const char* info);
-    bool ValidateBlendFuncDstEnum(GLenum mode, const char* info);
-    bool ValidateBlendFuncSrcEnum(GLenum mode, const char* info);
     bool ValidateBlendFuncEnumsCompatibility(GLenum sfactor, GLenum dfactor,
                                              const char* info);
     bool ValidateComparisonEnum(GLenum target, const char* info);
@@ -1871,6 +1864,7 @@ protected:
     GLenum mPixelStore_ColorspaceConversion;
     bool mPixelStore_FlipY;
     bool mPixelStore_PremultiplyAlpha;
+    bool mPixelStore_RequireFastPath;
 
     ////////////////////////////////////
     class FakeBlackTexture {
@@ -2050,7 +2044,7 @@ protected:
 public:
     // console logging helpers
     void GenerateWarning(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
-    void GenerateWarning(const char* fmt, va_list ap);
+    void GenerateWarning(const char* fmt, va_list ap) MOZ_FORMAT_PRINTF(2, 0);
 
     void GeneratePerfWarning(const char* fmt, ...) const MOZ_FORMAT_PRINTF(2, 3);
 
@@ -2062,6 +2056,8 @@ public:
 
 
     const decltype(mBound2DTextures)* TexListForElemType(GLenum elemType) const;
+
+    void UpdateMaxDrawBuffers();
 
     // Friend list
     friend class ScopedCopyTexImageSource;

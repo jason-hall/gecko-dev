@@ -17,7 +17,7 @@ const {LegacyExtensionContext} = Cu.import("resource://gre/modules/LegacyExtensi
  *  - the received Port receive a disconnect event when the webextension is
  *    shutting down
  */
-add_task(function* test_legacy_extension_context() {
+add_task(async function test_legacy_extension_context() {
   function background() {
     let bgURL = window.location.href;
 
@@ -57,6 +57,7 @@ add_task(function* test_legacy_extension_context() {
   };
 
   let extension = Extension.generate(extensionData);
+  extension.isEmbedded = true;
 
   let waitForExtensionInfo = new Promise((resolve, reject) => {
     extension.on("test-message", function testMessageListener(kind, msg, ...args) {
@@ -81,9 +82,9 @@ add_task(function* test_legacy_extension_context() {
     });
   });
 
-  yield extension.startup();
+  await extension.startup();
 
-  let extensionInfo = yield waitForExtensionInfo;
+  let extensionInfo = await waitForExtensionInfo;
 
   equal(legacyContext.envType, "legacy_extension",
      "LegacyExtensionContext instance has the expected type");
@@ -103,7 +104,7 @@ add_task(function* test_legacy_extension_context() {
 
   extension.testMessage("do-send-message");
 
-  let {singleMsg, msgSender} = yield waitMessage;
+  let {singleMsg, msgSender} = await waitMessage;
   equal(singleMsg, "webextension -> legacy_extension message",
      "Got the expected message");
   ok(msgSender, "Got a message sender object");
@@ -112,7 +113,7 @@ add_task(function* test_legacy_extension_context() {
   equal(msgSender.url, extensionInfo.bgURL, "The sender has the expected url property");
 
   // Wait confirmation that the reply has been received.
-  yield new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     extension.on("test-message", function testMessageListener(kind, msg, ...args) {
       if (msg != "got-reply-message") {
         reject(new Error(`Got an unexpected test-message: ${msg}`));
@@ -132,7 +133,7 @@ add_task(function* test_legacy_extension_context() {
 
   extension.testMessage("do-connect");
 
-  let port = yield waitConnectPort;
+  let port = await waitConnectPort;
 
   ok(port, "Got the Port API object");
   ok(port.sender, "The port has a sender property");
@@ -149,7 +150,7 @@ add_task(function* test_legacy_extension_context() {
 
   port.postMessage("legacy_extension -> webextension port message");
 
-  let msg = yield waitPortMessage;
+  let msg = await waitPortMessage;
 
   equal(msg, "webextension -> legacy_extension port message",
      "LegacyExtensionContext received the expected message from the webextension");
@@ -160,9 +161,9 @@ add_task(function* test_legacy_extension_context() {
 
   extension.testMessage("do-disconnect");
 
-  yield waitForDisconnect;
+  await waitForDisconnect;
 
   do_print("Got the disconnect event on unload");
 
-  yield extension.shutdown();
+  await extension.shutdown();
 });

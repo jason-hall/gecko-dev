@@ -8,7 +8,7 @@
 
 "use strict";
 
-const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu  } = Components;
+const { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
 
 Cu.import("resource://gre/modules/Messaging.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -45,7 +45,7 @@ function TestDescription(aType, aTcpAddress, aTcpPort) {
     let wrapper = Cc["@mozilla.org/supports-cstring;1"]
       .createInstance(Ci.nsISupportsCString);
     wrapper.data = address;
-    this.tcpAddress.appendElement(wrapper, false);
+    this.tcpAddress.appendElement(wrapper);
   }
   this.tcpPort = aTcpPort;
 }

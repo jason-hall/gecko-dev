@@ -56,8 +56,9 @@ const protocol = require("devtools/shared/protocol");
 const {LayoutActor} = require("devtools/server/actors/layout");
 const {LongStringActor} = require("devtools/server/actors/string");
 const promise = require("promise");
+const defer = require("devtools/shared/defer");
 const {Task} = require("devtools/shared/task");
-const events = require("sdk/event/core");
+const EventEmitter = require("devtools/shared/event-emitter");
 const {WalkerSearch} = require("devtools/server/actors/utils/walker-search");
 const {PageStyleActor, getFontPreviewData} = require("devtools/server/actors/styles");
 const {
@@ -72,7 +73,8 @@ const {
   isNativeAnonymous,
   isXBLAnonymous,
   isShadowAnonymous,
-  getFrameElement
+  getFrameElement,
+  loadSheet
 } = require("devtools/shared/layout/utils");
 const {getLayoutChangesObserver, releaseLayoutChangesObserver} = require("devtools/server/actors/reflow");
 const nodeFilterConstants = require("devtools/shared/dom-node-filter-constants");
@@ -127,7 +129,7 @@ const PSEUDO_SELECTORS = [
   ["::selection", 0]
 ];
 
-var HELPER_SHEET = `
+var HELPER_SHEET = "data:text/css;charset=utf-8," + encodeURIComponent(`
   .__fx-devtools-hide-shortcut__ {
     visibility: hidden !important;
   }
@@ -136,7 +138,7 @@ var HELPER_SHEET = `
     outline: 2px dashed #F06!important;
     outline-offset: -2px !important;
   }
-`;
+`);
 
 const flags = require("devtools/shared/flags");
 
@@ -158,6 +160,7 @@ loader.lazyGetter(this, "eventListenerService", function () {
 loader.lazyRequireGetter(this, "CssLogic", "devtools/server/css-logic", true);
 loader.lazyRequireGetter(this, "findCssSelector", "devtools/shared/inspector/css-logic", true);
 loader.lazyRequireGetter(this, "getCssPath", "devtools/shared/inspector/css-logic", true);
+loader.lazyRequireGetter(this, "getXPath", "devtools/shared/inspector/css-logic", true);
 
 /**
  * We only send nodeValue up to a certain size by default.  This stuff
@@ -295,7 +298,7 @@ var NodeActor = exports.NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
 
     // Fire an event so, other modules can create its own properties
     // that should be passed to the client (within the form.props field).
-    events.emit(NodeActor, "form", {
+    EventEmitter.emit(NodeActor, "form", {
       target: this,
       data: form
     });
@@ -665,6 +668,18 @@ var NodeActor = exports.NodeActor = protocol.ActorClassWithSpec(nodeSpec, {
   },
 
   /**
+   * Get the XPath for this node.
+   *
+   * @return {String} The XPath for finding this node on the page.
+   */
+  getXPath: function () {
+    if (Cu.isDeadWrapper(this.rawNode)) {
+      return "";
+    }
+    return getXPath(this.rawNode);
+  },
+
+  /**
    * Scroll the selected node into view.
    */
   scrollIntoView: function () {
@@ -875,8 +890,8 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     this.onFrameLoad = this.onFrameLoad.bind(this);
     this.onFrameUnload = this.onFrameUnload.bind(this);
 
-    events.on(tabActor, "will-navigate", this.onFrameUnload);
-    events.on(tabActor, "window-ready", this.onFrameLoad);
+    tabActor.on("will-navigate", this.onFrameUnload);
+    tabActor.on("window-ready", this.onFrameLoad);
 
     // Ensure that the root document node actor is ready and
     // managed.
@@ -966,8 +981,8 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       this._retainedOrphans = null;
       this._refMap = null;
 
-      events.off(this.tabActor, "will-navigate", this.onFrameUnload);
-      events.off(this.tabActor, "window-ready", this.onFrameLoad);
+      this.tabActor.off("will-navigate", this.onFrameUnload);
+      this.tabActor.off("window-ready", this.onFrameLoad);
 
       this.onFrameLoad = null;
       this.onFrameUnload = null;
@@ -987,7 +1002,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       this.layoutActor = null;
       this.tabActor = null;
 
-      events.emit(this, "destroyed");
+      this.emit("destroyed");
     } catch (e) {
       console.error(e);
     }
@@ -1062,7 +1077,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     }
 
     if (changes.length) {
-      events.emit(this, "display-change", changes);
+      this.emit("display-change", changes);
     }
   },
 
@@ -1070,7 +1085,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
    * When the browser window gets resized, relay the event to the front.
    */
   _onResize: function () {
-    events.emit(this, "resize");
+    this.emit("resize");
   },
 
   /**
@@ -1863,26 +1878,12 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     return true;
   },
 
-  _installHelperSheet: function (node) {
-    if (!this.installedHelpers) {
-      this.installedHelpers = new WeakMap();
-    }
-    let win = node.rawNode.ownerGlobal;
-    if (!this.installedHelpers.has(win)) {
-      let { Style } = require("sdk/stylesheet/style");
-      let { attach } = require("sdk/content/mod");
-      let style = Style({source: HELPER_SHEET, type: "agent" });
-      attach(style, win);
-      this.installedHelpers.set(win, style);
-    }
-  },
-
   hideNode: function (node) {
     if (isNodeDead(node)) {
       return;
     }
 
-    this._installHelperSheet(node);
+    loadSheet(node.rawNode.ownerGlobal, HELPER_SHEET);
     node.rawNode.classList.add(HIDDEN_CLASS);
   },
 
@@ -1997,6 +1998,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     if (rawNode.nodeType !== rawNode.ownerDocument.ELEMENT_NODE) {
       throw new Error("Can only change innerHTML to element nodes");
     }
+    // eslint-disable-next-line no-unsanitized/property
     rawNode.innerHTML = value;
   },
 
@@ -2036,12 +2038,14 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       if (parsedDOM.head.innerHTML === "") {
         parentNode.replaceChild(parsedDOM.body, rawNode);
       } else {
+      // eslint-disable-next-line no-unsanitized/property
         rawNode.outerHTML = value;
       }
     } else if (rawNode.tagName === "HEAD") {
       if (parsedDOM.body.innerHTML === "") {
         parentNode.replaceChild(parsedDOM.head, rawNode);
       } else {
+        // eslint-disable-next-line no-unsanitized/property
         rawNode.outerHTML = value;
       }
     } else if (node.isDocumentElement()) {
@@ -2065,6 +2069,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       rawNode.replaceChild(parsedDOM.head, rawNode.querySelector("head"));
       rawNode.replaceChild(parsedDOM.body, rawNode.querySelector("body"));
     } else {
+      // eslint-disable-next-line no-unsanitized/property
       rawNode.outerHTML = value;
     }
   },
@@ -2328,7 +2333,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     this._pendingMutations.push(mutation);
 
     if (needEvent) {
-      events.emit(this, "new-mutations");
+      this.emit("new-mutations");
     }
   },
 
@@ -2342,7 +2347,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     // Notify any observers that want *all* mutations (even on nodes that aren't
     // referenced).  This is not sent over the protocol so can only be used by
     // scripts running in the server process.
-    events.emit(this, "any-mutation");
+    this.emit("any-mutation");
 
     for (let change of mutations) {
       let targetActor = this.getNode(change.target);
@@ -2459,6 +2464,8 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
           this.rootDoc.defaultView) {
         this.onFrameUnload({ window: this.rootDoc.defaultView });
       }
+      // Update all DOM objects references to target the new document.
+      this.rootWin = window;
       this.rootDoc = window.document;
       this.rootNode = this.document();
       this.queueMutation({
@@ -2744,7 +2751,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
       return this._walkerPromise;
     }
 
-    let deferred = promise.defer();
+    let deferred = defer();
     this._walkerPromise = deferred.promise;
 
     let window = this.window;
@@ -2753,7 +2760,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
       window.removeEventListener("DOMContentLoaded", domReady, true);
       this.walker = WalkerActor(this.conn, tabActor, options);
       this.manage(this.walker);
-      events.once(this.walker, "destroyed", () => {
+      this.walker.once("destroyed", () => {
         this._walkerPromise = null;
         this._pageStylePromise = null;
       });
@@ -2906,7 +2913,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
     this._eyeDropper.show(this.window.document.documentElement, options);
     this._eyeDropper.once("selected", this._onColorPicked);
     this._eyeDropper.once("canceled", this._onColorPickCanceled);
-    events.once(this.tabActor, "will-navigate", this.destroyEyeDropper);
+    this.tabActor.once("will-navigate", this.destroyEyeDropper);
   },
 
   /**
@@ -2919,7 +2926,7 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
       this._eyeDropper.hide();
       this._eyeDropper.off("selected", this._onColorPicked);
       this._eyeDropper.off("canceled", this._onColorPickCanceled);
-      events.off(this.tabActor, "will-navigate", this.destroyEyeDropper);
+      this.tabActor.off("will-navigate", this.destroyEyeDropper);
     }
   },
 
@@ -2947,11 +2954,11 @@ exports.InspectorActor = protocol.ActorClassWithSpec(inspectorSpec, {
   },
 
   _onColorPicked: function (e, color) {
-    events.emit(this, "color-picked", color);
+    this.emit("color-picked", color);
   },
 
   _onColorPickCanceled: function () {
-    events.emit(this, "color-pick-canceled");
+    this.emit("color-pick-canceled");
   }
 });
 
@@ -3000,7 +3007,7 @@ function DocumentWalker(node, rootWin,
     whatToShow = nodeFilterConstants.SHOW_ALL,
     filter = standardTreeWalkerFilter,
     skipTo = SKIP_TO_PARENT) {
-  if (!rootWin.location) {
+  if (Cu.isDeadWrapper(rootWin) || !rootWin.location) {
     throw new Error("Got an invalid root window in DocumentWalker");
   }
 
@@ -3123,12 +3130,12 @@ DocumentWalker.prototype = {
       previous = previous && previous.previousSibling;
       next = next && next.nextSibling;
 
-      if (this.filter(previous) === nodeFilterConstants.FILTER_ACCEPT) {
+      if (previous && this.filter(previous) === nodeFilterConstants.FILTER_ACCEPT) {
         // A valid node was found in the previous siblings of the node.
         return previous;
       }
 
-      if (this.filter(next) === nodeFilterConstants.FILTER_ACCEPT) {
+      if (next && this.filter(next) === nodeFilterConstants.FILTER_ACCEPT) {
         // A valid node was found in the next siblings of the node.
         return next;
       }

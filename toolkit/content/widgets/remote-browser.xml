@@ -37,24 +37,6 @@
         ]]></getter>
       </property>
 
-      <!-- increases or decreases the browser's network priority -->
-      <method name="adjustPriority">
-        <parameter name="adjustment"/>
-        <body><![CDATA[
-          this.messageManager.sendAsyncMessage("NetworkPrioritizer:AdjustPriority",
-                                               {adjustment});
-        ]]></body>
-      </method>
-
-      <!-- sets the browser's network priority to a discrete value -->
-      <method name="setPriority">
-        <parameter name="priority"/>
-        <body><![CDATA[
-          this.messageManager.sendAsyncMessage("NetworkPrioritizer:SetPriority",
-                                               {priority});
-        ]]></body>
-      </method>
-
       <field name="_controller">null</field>
 
       <field name="_selectParentHelper">null</field>
@@ -230,8 +212,7 @@
 
       <property name="hasContentOpener">
         <getter><![CDATA[
-          let {frameLoader} = this.QueryInterface(Components.interfaces.nsIFrameLoaderOwner);
-          return frameLoader.tabParent.hasContentOpener;
+          return this.frameLoader.tabParent.hasContentOpener;
         ]]></getter>
       </property>
 
@@ -250,14 +231,12 @@
       <property name="docShellIsActive">
         <getter>
           <![CDATA[
-            let {frameLoader} = this.QueryInterface(Components.interfaces.nsIFrameLoaderOwner);
-            return frameLoader.tabParent.docShellIsActive;
+            return this.frameLoader.tabParent.docShellIsActive;
           ]]>
         </getter>
         <setter>
           <![CDATA[
-            let {frameLoader} = this.QueryInterface(Components.interfaces.nsIFrameLoaderOwner);
-            frameLoader.tabParent.docShellIsActive = val;
+            this.frameLoader.tabParent.docShellIsActive = val;
             return val;
           ]]>
         </setter>
@@ -266,7 +245,7 @@
       <method name="preserveLayers">
         <parameter name="preserve"/>
         <body><![CDATA[
-          let {frameLoader} = this.QueryInterface(Components.interfaces.nsIFrameLoaderOwner);
+          let {frameLoader} = this;
           if (frameLoader.tabParent) {
             frameLoader.tabParent.preserveLayers(preserve);
           }
@@ -302,7 +281,13 @@
       <method name="permitUnload">
         <body>
         <![CDATA[
-          const kTimeout = 5000;
+          let {tabParent} = this.frameLoader;
+
+          if (!tabParent.hasBeforeUnload) {
+            return { permitUnload: true, timedOut: false };
+          }
+
+          const kTimeout = 1000;
 
           let finished = false;
           let responded = false;
@@ -337,7 +322,7 @@
 
           mm.sendAsyncMessage("PermitUnload", {id});
           mm.addMessageListener("PermitUnload", msgListener);
-          Services.obs.addObserver(observer, "message-manager-close", false);
+          Services.obs.addObserver(observer, "message-manager-close");
 
           let timedOut = false;
           function timeout() {
@@ -346,7 +331,7 @@
             }
 
             // Dispatch something to ensure that the main thread wakes up.
-            Services.tm.mainThread.dispatch(function() {}, Components.interfaces.nsIThread.DISPATCH_NORMAL);
+            Services.tm.dispatchToMainThread(function() {});
           }
 
           let timer = Components.classes["@mozilla.org/timer;1"].createInstance(Components.interfaces.nsITimer);
@@ -399,8 +384,10 @@
             Services.obs.addObserver(this, "browser:purge-session-history", true);
           }
 
-          let jsm = "resource://gre/modules/RemoteController.jsm";
-          let RemoteController = Components.utils.import(jsm, {}).RemoteController;
+          let rc_js = "resource://gre/modules/RemoteController.js";
+          let scope = {};
+          Services.scriptloader.loadSubScript(rc_js, scope);
+          let RemoteController = scope.RemoteController;
           this._controller = new RemoteController(this);
           this.controllers.appendController(this._controller);
         ]]>
@@ -478,7 +465,7 @@
               this._selectParentHelper.populate(menulist, data.options, data.selectedIndex,
                                                 zoom, data.uaBackgroundColor, data.uaColor,
                                                 data.uaSelectBackgroundColor, data.uaSelectColor,
-                                                data.selectBackgroundColor, data.selectColor);
+                                                data.selectBackgroundColor, data.selectColor, data.selectTextShadow);
               this._selectParentHelper.open(this, menulist, data.rect, data.isOpenedViaTouch);
               break;
             }
@@ -572,8 +559,7 @@
             // needed to create a document with the given principal.
             let permissionPrincipal =
               BrowserUtils.principalWithMatchingOA(aPrincipal, this.contentPrincipal);
-            let {frameLoader} = this.QueryInterface(Components.interfaces.nsIFrameLoaderOwner);
-            frameLoader.tabParent.transmitPermissionsForPrincipal(permissionPrincipal);
+            this.frameLoader.tabParent.transmitPermissionsForPrincipal(permissionPrincipal);
 
             // Create the about blank content viewer in the content process
             this.messageManager.sendAsyncMessage("Browser:CreateAboutBlank", aPrincipal);

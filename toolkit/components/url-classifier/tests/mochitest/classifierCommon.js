@@ -1,6 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
+/* eslint-env mozilla/frame-script */
+
 const { classes: Cc, interfaces: Ci, results: Cr } = Components;
 
 var dbService = Cc["@mozilla.org/url-classifier/dbservice;1"]
@@ -16,26 +18,22 @@ function setTimeout(callback, delay) {
 
 function doUpdate(update) {
   let listener = {
-    QueryInterface: function(iid)
-    {
+    QueryInterface(iid) {
       if (iid.equals(Ci.nsISupports) ||
           iid.equals(Ci.nsIUrlClassifierUpdateObserver))
         return this;
 
       throw Cr.NS_ERROR_NO_INTERFACE;
     },
-    updateUrlRequested: function(url) { },
-    streamFinished: function(status) { },
-    updateError: function(errorCode) {
+    updateUrlRequested(url) { },
+    streamFinished(status) { },
+    updateError(errorCode) {
       sendAsyncMessage("updateError", errorCode);
     },
-    updateSuccess: function(requestedTimeout) {
+    updateSuccess(requestedTimeout) {
       sendAsyncMessage("updateSuccess");
     }
   };
-
-  let dbService = Cc["@mozilla.org/url-classifier/dbservice;1"]
-                  .getService(Ci.nsIUrlClassifierDBService);
 
   try {
     dbService.beginUpdate(listener, "test-malware-simple,test-unwanted-simple", "");
@@ -43,7 +41,7 @@ function doUpdate(update) {
     dbService.updateStream(update);
     dbService.finishStream();
     dbService.finishUpdate();
-  } catch(e) {
+  } catch (e) {
     // beginUpdate may fail if there's an existing update in progress
     // retry until success or testcase timeout.
     setTimeout(() => { doUpdate(update); }, 1000);
@@ -51,9 +49,12 @@ function doUpdate(update) {
 }
 
 function doReload() {
-  dbService.reloadDatabase();
-
-  sendAsyncMessage("reloadSuccess");
+  try {
+    dbService.reloadDatabase();
+    sendAsyncMessage("reloadSuccess");
+  } catch (e) {
+    setTimeout(() => { doReload(); }, 1000);
+  }
 }
 
 // SafeBrowsing.jsm is initialized after mozEntries are added. Add observer
@@ -66,7 +67,7 @@ function waitForInit() {
 
   observerService.addObserver(function() {
     sendAsyncMessage("safeBrowsingInited");
-  }, "mozentries-update-finished", false);
+  }, "mozentries-update-finished");
 
   // This url must sync with the table, url in SafeBrowsing.jsm addMozEntries
   const table = "test-phish-simple";
@@ -81,16 +82,14 @@ function waitForInit() {
     iosvc.newURI(url), {});
 
   let listener = {
-    QueryInterface: function(iid)
-    {
+    QueryInterface(iid) {
       if (iid.equals(Ci.nsISupports) ||
         iid.equals(Ci.nsIUrlClassifierUpdateObserver))
         return this;
       throw Cr.NS_ERROR_NO_INTERFACE;
     },
 
-    handleEvent: function(value)
-    {
+    handleEvent(value) {
       if (value === table) {
         sendAsyncMessage("safeBrowsingInited");
       }

@@ -9,6 +9,8 @@
 #include "nsPoint.h"
 #include "nsRect.h"
 #include "nsStringGlue.h"
+#include "nsXULAppAPI.h"
+#include "Units.h"
 
 class nsIWidget;
 
@@ -16,7 +18,7 @@ namespace mozilla {
 
 class WritingMode;
 
-} // namespace mozilla
+namespace widget {
 
 /**
  * Preference for receiving IME updates
@@ -32,7 +34,7 @@ class WritingMode;
  * If the IME implementation needs notifications even while our process is
  * deactive, it should also set NOTIFY_DURING_DEACTIVE.
  */
-struct nsIMEUpdatePreference final
+struct IMENotificationRequests final
 {
   typedef uint8_t Notifications;
 
@@ -49,22 +51,35 @@ struct nsIMEUpdatePreference final
     NOTIFY_MOUSE_BUTTON_EVENT_ON_CHAR    = 1 << 3,
     // NOTE: NOTIFY_DURING_DEACTIVE isn't supported in environments where two
     //       or more compositions are possible.  E.g., Mac and Linux (GTK).
-    NOTIFY_DURING_DEACTIVE               = 1 << 7
+    NOTIFY_DURING_DEACTIVE               = 1 << 7,
+
+    NOTIFY_ALL = NOTIFY_TEXT_CHANGE |
+                 NOTIFY_POSITION_CHANGE |
+                 NOTIFY_MOUSE_BUTTON_EVENT_ON_CHAR,
   };
 
-  nsIMEUpdatePreference()
+  IMENotificationRequests()
     : mWantUpdates(NOTIFY_NOTHING)
   {
   }
 
-  explicit nsIMEUpdatePreference(Notifications aWantUpdates)
+  explicit IMENotificationRequests(Notifications aWantUpdates)
     : mWantUpdates(aWantUpdates)
   {
   }
 
-  nsIMEUpdatePreference operator|(const nsIMEUpdatePreference& aOther) const
+  IMENotificationRequests operator|(const IMENotificationRequests& aOther) const
   {
-    return nsIMEUpdatePreference(aOther.mWantUpdates | mWantUpdates);
+    return IMENotificationRequests(aOther.mWantUpdates | mWantUpdates);
+  }
+  IMENotificationRequests& operator|=(const IMENotificationRequests& aOther)
+  {
+    mWantUpdates |= aOther.mWantUpdates;
+    return *this;
+  }
+  bool operator==(const IMENotificationRequests& aOther) const
+  {
+    return mWantUpdates == aOther.mWantUpdates;
   }
 
   bool WantTextChange() const
@@ -96,12 +111,9 @@ struct nsIMEUpdatePreference final
 };
 
 /**
- * Contains IMEStatus plus information about the current 
+ * Contains IMEStatus plus information about the current
  * input context that the IME can use as hints if desired.
  */
-
-namespace mozilla {
-namespace widget {
 
 struct IMEState final
 {
@@ -263,6 +275,7 @@ struct InputContext final
   InputContext()
     : mOrigin(XRE_IsParentProcess() ? ORIGIN_MAIN : ORIGIN_CONTENT)
     , mMayBeIMEUnaware(false)
+    , mInPrivateBrowsing(false)
   {
   }
 
@@ -300,6 +313,10 @@ struct InputContext final
    * compatibility with webapps relying on key listeners. */
   bool mMayBeIMEUnaware;
 
+  /* Whether the owning document of the input element has been loaded
+   * in private browsing mode. */
+  bool mInPrivateBrowsing;
+
   bool IsOriginMainProcess() const
   {
     return mOrigin == ORIGIN_MAIN;
@@ -318,6 +335,9 @@ struct InputContext final
     return IsOriginContentProcess();
   }
 };
+
+// FYI: Implemented in nsBaseWidget.cpp
+const char* ToChar(InputContext::Origin aOrigin);
 
 struct InputContextAction final
 {
@@ -357,7 +377,11 @@ struct InputContextAction final
     MENU_GOT_PSEUDO_FOCUS,
     // Menu lost pseudo focus that means focused content will handle keyboard
     // events.
-    MENU_LOST_PSEUDO_FOCUS
+    MENU_LOST_PSEUDO_FOCUS,
+    // The widget is created.  When a widget is crated, it may need to notify
+    // IME module to initialize its native IME context.  In such case, this is
+    // used.  I.e., this isn't used by IMEStateManager.
+    WIDGET_CREATED
   };
   FocusChange mFocusChange;
 
@@ -586,8 +610,8 @@ struct IMENotification final
     {
       mX = aRect.x;
       mY = aRect.y;
-      mWidth = aRect.width;
-      mHeight = aRect.height;
+      mWidth = aRect.Width();
+      mHeight = aRect.Height();
     }
     nsIntRect AsIntRect() const
     {
@@ -757,7 +781,7 @@ struct IMENotification final
     }
 
     // Positive if text is added. Negative if text is removed.
-    int64_t Difference() const 
+    int64_t Difference() const
     {
       return mAddedEndOffset - mRemovedEndOffset;
     }

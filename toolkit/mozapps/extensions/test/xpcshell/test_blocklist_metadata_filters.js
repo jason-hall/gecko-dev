@@ -36,7 +36,7 @@ var WindowWatcher = {
     });
 
     // run the code after the blocklist is closed
-    Services.obs.notifyObservers(null, "addon-blocklist-closed", null);
+    Services.obs.notifyObservers(null, "addon-blocklist-closed");
 
   },
 
@@ -52,11 +52,11 @@ var WindowWatcher = {
 MockRegistrar.register("@mozilla.org/embedcomp/window-watcher;1", WindowWatcher);
 
 function load_blocklist(aFile, aCallback) {
-  Services.obs.addObserver(function() {
-    Services.obs.removeObserver(arguments.callee, "blocklist-updated");
+  Services.obs.addObserver(function observer() {
+    Services.obs.removeObserver(observer, "blocklist-updated");
 
     do_execute_soon(aCallback);
-  }, "blocklist-updated", false);
+  }, "blocklist-updated");
 
   Services.prefs.setCharPref("extensions.blocklist.url", "http://localhost:" +
                              gPort + "/data/" + aFile);

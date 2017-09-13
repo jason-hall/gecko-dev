@@ -22,6 +22,7 @@
 #define ROUND(x) floor((x) + 0.5)
 
 using namespace mozilla;
+using namespace mozilla::gfx;
 using namespace mozilla::unicode;
 
 static inline cairo_antialias_t
@@ -90,6 +91,7 @@ gfxGDIFont::ShapeText(DrawTarget     *aDrawTarget,
                       uint32_t        aLength,
                       Script          aScript,
                       bool            aVertical,
+                      RoundingFlags   aRounding,
                       gfxShapedText  *aShapedText)
 {
     if (!mIsValid) {
@@ -106,7 +108,7 @@ gfxGDIFont::ShapeText(DrawTarget     *aDrawTarget,
     }
 
     return gfxFont::ShapeText(aDrawTarget, aText, aOffset, aLength, aScript,
-                              aVertical, aShapedText);
+                              aVertical, aRounding, aShapedText);
 }
 
 const gfxFont::Metrics&
@@ -134,13 +136,34 @@ gfxGDIFont::SetupCairoFont(DrawTarget* aDrawTarget)
     return true;
 }
 
+already_AddRefed<ScaledFont>
+gfxGDIFont::GetScaledFont(DrawTarget *aTarget)
+{
+    if (!mAzureScaledFont) {
+        NativeFont nativeFont;
+        nativeFont.mType = NativeFontType::GDI_FONT_FACE;
+        LOGFONT lf;
+        GetObject(GetHFONT(), sizeof(LOGFONT), &lf);
+        nativeFont.mFont = &lf;
+
+        mAzureScaledFont =
+          Factory::CreateScaledFontWithCairo(nativeFont,
+                                             GetUnscaledFont(),
+                                             GetAdjustedSize(),
+                                             GetCairoScaledFont());
+    }
+
+    RefPtr<ScaledFont> scaledFont(mAzureScaledFont);
+    return scaledFont.forget();
+}
+
 gfxFont::RunMetrics
 gfxGDIFont::Measure(const gfxTextRun *aTextRun,
                     uint32_t aStart, uint32_t aEnd,
                     BoundingBoxType aBoundingBoxType,
                     DrawTarget *aRefDrawTarget,
                     Spacing *aSpacing,
-                    uint16_t aOrientation)
+                    gfx::ShapedTextFlags aOrientation)
 {
     gfxFont::RunMetrics metrics =
         gfxFont::Measure(aTextRun, aStart, aEnd, aBoundingBoxType,

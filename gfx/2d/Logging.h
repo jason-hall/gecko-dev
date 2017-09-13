@@ -131,6 +131,8 @@ enum class LogReason : int {
   ProcessingError,
   InvalidDrawTarget,
   NativeFontResourceNotFound,
+  UnscaledFontNotFound,
+  InvalidLayerType,
   // End
   MustBeLessThanThis = 101,
 };
@@ -691,7 +693,7 @@ public:
   }
 
   TreeAutoIndent(const TreeAutoIndent& aTreeAutoIndent) :
-      TreeAutoIndent(aTreeAutoIndent.mTreeLog) {
+      mTreeLog(aTreeAutoIndent.mTreeLog) {
     mTreeLog.IncreaseIndent();
   }
 

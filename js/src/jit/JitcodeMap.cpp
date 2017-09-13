@@ -9,7 +9,6 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/SizePrintfMacros.h"
 #include "mozilla/Sprintf.h"
 
 #include "jsprf.h"
@@ -332,7 +331,7 @@ JitcodeGlobalEntry::createScriptString(JSContext* cx, JSScript* script, size_t* 
     size_t linenoLength = 0;
     char linenoStr[15];
     if (hasName || (script->functionNonDelazifying() || script->isForEval())) {
-        linenoLength = SprintfLiteral(linenoStr, "%" PRIuSIZE, script->lineno());
+        linenoLength = SprintfLiteral(linenoStr, "%zu", script->lineno());
         hasLineno = true;
     }
 
@@ -452,7 +451,7 @@ JitcodeGlobalTable::lookupForSamplerInfallible(void* ptr, JSRuntime* rt, uint32_
     // barrier is not needed. Any JS frames sampled during the sweep phase of
     // the GC must be on stack, and on-stack frames must already be marked at
     // the beginning of the sweep phase. It's not possible to assert this here
-    // as we may not be off thread when called from the gecko profiler.
+    // as we may be off main thread when called from the gecko profiler.
 
     return *entry;
 }
@@ -528,6 +527,12 @@ JitcodeGlobalTable::addEntry(const JitcodeGlobalEntry& entry, JSRuntime* rt)
     }
     skiplistSize_++;
     // verifySkiplist(); - disabled for release.
+
+    // Any entries that may directly contain nursery pointers must be marked
+    // during a minor GC to update those pointers.
+    if (entry.canHoldNurseryPointers())
+        addToNurseryList(&newEntry->ionEntry());
+
     return true;
 }
 
@@ -536,6 +541,9 @@ JitcodeGlobalTable::removeEntry(JitcodeGlobalEntry& entry, JitcodeGlobalEntry** 
                                 JSRuntime* rt)
 {
     MOZ_ASSERT(!TlsContext.get()->isProfilerSamplingEnabled());
+
+    if (entry.canHoldNurseryPointers())
+        removeFromNurseryList(&entry.ionEntry());
 
     // Unlink query entry.
     for (int level = entry.tower_->height() - 1; level >= 0; level--) {
@@ -715,8 +723,12 @@ void
 JitcodeGlobalTable::setAllEntriesAsExpired(JSRuntime* rt)
 {
     AutoSuppressProfilerSampling suppressSampling(TlsContext.get());
-    for (Range r(*this); !r.empty(); r.popFront())
-        r.front()->setAsExpired();
+    for (Range r(*this); !r.empty(); r.popFront()) {
+        auto entry = r.front();
+        if (entry->canHoldNurseryPointers())
+            removeFromNurseryList(&entry->ionEntry());
+        entry->setAsExpired();
+    }
 }
 
 struct Unconditionally
@@ -726,16 +738,21 @@ struct Unconditionally
 };
 
 void
-JitcodeGlobalTable::trace(JSTracer* trc)
+JitcodeGlobalTable::traceForMinorGC(JSTracer* trc)
 {
-    // Trace all entries unconditionally. This is done during minor collection
-    // to tenure and update object pointers.
+    // Trace only entries that can directly contain nursery pointers.
 
     MOZ_ASSERT(trc->runtime()->geckoProfiler().enabled());
+    MOZ_ASSERT(JS::CurrentThreadIsHeapMinorCollecting());
 
     AutoSuppressProfilerSampling suppressSampling(TlsContext.get());
-    for (Range r(*this); !r.empty(); r.popFront())
-        r.front()->trace<Unconditionally>(trc);
+    JitcodeGlobalEntry::IonEntry* entry = nurseryEntries_;
+    while (entry) {
+        entry->trace<Unconditionally>(trc);
+        JitcodeGlobalEntry::IonEntry* prev = entry;
+        entry = entry->nextNursery_;
+        removeFromNurseryList(prev);
+    }
 }
 
 struct IfUnmarked
@@ -797,6 +814,8 @@ JitcodeGlobalTable::markIteratively(GCMarker* marker)
         // types used by optimizations and scripts used for pc to line number
         // mapping, alive as well.
         if (!entry->isSampled(gen, lapCount)) {
+            if (entry->canHoldNurseryPointers())
+                removeFromNurseryList(&entry->ionEntry());
             entry->setAsExpired();
             if (!entry->baseEntry().isJitcodeMarkedFromAnyThread(marker->runtime()))
                 continue;
@@ -844,10 +863,7 @@ JitcodeGlobalEntry::BaseEntry::traceJitcode(JSTracer* trc)
 bool
 JitcodeGlobalEntry::BaseEntry::isJitcodeMarkedFromAnyThread(JSRuntime* rt)
 {
-	// OMRTODO: Arena stuff
-    //return IsMarkedUnbarriered(rt, &jitcode_) ||
-    //       jitcode_->arena()->allocatedDuringIncremental;
-	return false;
+    return IsMarkedUnbarriered(rt, &jitcode_);
 }
 
 bool
@@ -876,10 +892,7 @@ JitcodeGlobalEntry::BaselineEntry::sweepChildren()
 bool
 JitcodeGlobalEntry::BaselineEntry::isMarkedFromAnyThread(JSRuntime* rt)
 {
-    // OMRTODO: Arena stuff
-    //return IsMarkedUnbarriered(rt, &script_) ||
-    //       script_->arena()->allocatedDuringIncremental;
-	return false;
+    return IsMarkedUnbarriered(rt, &script_);
 }
 
 template <class ShouldTraceProvider>
@@ -947,12 +960,8 @@ bool
 JitcodeGlobalEntry::IonEntry::isMarkedFromAnyThread(JSRuntime* rt)
 {
     for (unsigned i = 0; i < numScripts(); i++) {
-        // OMRTODO: Arena stuff
-        /*if (!IsMarkedUnbarriered(rt, &sizedScriptList()->pairs[i].script) &&
-            !sizedScriptList()->pairs[i].script->arena()->allocatedDuringIncremental)
-        {
+        if (!IsMarkedUnbarriered(rt, &sizedScriptList()->pairs[i].script))
             return false;
-        }*/
     }
 
     if (!optsAllTypes_)
@@ -961,11 +970,8 @@ JitcodeGlobalEntry::IonEntry::isMarkedFromAnyThread(JSRuntime* rt)
     for (IonTrackedTypeWithAddendum* iter = optsAllTypes_->begin();
          iter != optsAllTypes_->end(); iter++)
     {
-        if (!TypeSet::IsTypeMarked(rt, &iter->type) &&
-            !TypeSet::IsTypeAllocatedDuringIncremental(iter->type))
-        {
+        if (!TypeSet::IsTypeMarked(rt, &iter->type))
             return false;
-        }
     }
 
     return true;
@@ -1545,13 +1551,13 @@ JitcodeIonTable::WriteIonTable(CompactBufferWriter& writer,
     MOZ_ASSERT(writer.length() == 0);
     MOZ_ASSERT(scriptListSize > 0);
 
-    JitSpew(JitSpew_Profiling, "Writing native to bytecode map for %s:%" PRIuSIZE " (%" PRIuSIZE " entries)",
+    JitSpew(JitSpew_Profiling, "Writing native to bytecode map for %s:%zu (%zu entries)",
             scriptList[0]->filename(), scriptList[0]->lineno(),
             mozilla::PointerRangeSize(start, end));
 
     JitSpew(JitSpew_Profiling, "  ScriptList of size %d", int(scriptListSize));
     for (uint32_t i = 0; i < scriptListSize; i++) {
-        JitSpew(JitSpew_Profiling, "  Script %d - %s:%" PRIuSIZE,
+        JitSpew(JitSpew_Profiling, "  Script %d - %s:%zu",
                 int(i), scriptList[i]->filename(), scriptList[i]->lineno());
     }
 

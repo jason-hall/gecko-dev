@@ -7,6 +7,7 @@
 #ifndef COMPATIBILITY_MANAGER_H
 #define COMPATIBILITY_MANAGER_H
 
+#include "nsString.h"
 #include <stdint.h>
 
 namespace mozilla {
@@ -20,14 +21,14 @@ class Compatibility
 {
 public:
   /**
-   * Return true if IAccessible2 disabled.
-   */
-  static bool IsIA2Off() { return !!(sConsumers & OLDJAWS); }
-
-  /**
    * Return true if JAWS mode is enabled.
    */
   static bool IsJAWS() { return !!(sConsumers & (JAWS | OLDJAWS)); }
+
+  /**
+   * Return true if using an e10s incompatible Jaws.
+   */
+  static bool IsOldJAWS() { return !!(sConsumers & OLDJAWS); }
 
   /**
    * Return true if WE mode is enabled.
@@ -38,6 +39,18 @@ public:
    * Return true if Dolphin mode is enabled.
    */
   static bool IsDolphin() { return !!(sConsumers & DOLPHIN); }
+
+  /**
+   * @return ID of a11y manifest resource to be passed to
+   * mscom::ActivationContext
+   */
+  static uint16_t GetActCtxResourceId();
+
+  /**
+   * Return a string describing sConsumers suitable for about:support.
+   * Exposed through nsIXULRuntime.accessibilityInstantiator.
+   */
+  static void GetHumanReadableConsumersStr(nsAString &aResult);
 
 private:
   Compatibility();
@@ -68,6 +81,7 @@ private:
     UNKNOWN = 1 << 10,
     UIAUTOMATION = 1 << 11
   };
+  #define CONSUMERS_ENUM_LEN 12
 
 private:
   static uint32_t sConsumers;

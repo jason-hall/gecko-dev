@@ -5,12 +5,12 @@
 #ifndef WAV_DEMUXER_H_
 #define WAV_DEMUXER_H_
 
-#include "mozilla/Attributes.h"
-#include "mozilla/Maybe.h"
 #include "MediaDataDemuxer.h"
 #include "MediaResource.h"
-#include "mp4_demuxer/ByteReader.h"
 
+namespace mp4_demuxer {
+class ByteReader;
+}
 using mp4_demuxer::ByteReader;
 
 namespace mozilla {
@@ -184,7 +184,7 @@ private:
 class WAVTrackDemuxer : public MediaTrackDemuxer
 {
 public:
-  explicit WAVTrackDemuxer(MediaResourceIndex aSource);
+  explicit WAVTrackDemuxer(MediaResource* aSource);
 
   bool Init();
 

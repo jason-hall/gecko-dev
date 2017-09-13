@@ -12,10 +12,11 @@ const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/ExtensionChild.jsm");
 Cu.import("resource://gre/modules/ExtensionCommon.jsm");
 Cu.import("resource://gre/modules/ExtensionUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "ExtensionChild",
+                                  "resource://gre/modules/ExtensionChild.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Schemas",
                                   "resource://gre/modules/Schemas.jsm");
 XPCOMUtils.defineLazyServiceGetter(this, "ProxyService",
@@ -38,15 +39,13 @@ const {
   SchemaAPIManager,
 } = ExtensionCommon;
 
-const {
-  Messenger,
-} = ExtensionChild;
-
 const PROXY_TYPES = Object.freeze({
   DIRECT: "direct",
   HTTPS: "https",
   PROXY: "proxy",
-  SOCKS: "socks",
+  HTTP: "http", // Synonym for PROXY_TYPES.PROXY
+  SOCKS: "socks",  // SOCKS5
+  SOCKS4: "socks4",
 });
 
 class ProxyScriptContext extends BaseContext {
@@ -161,27 +160,42 @@ class ProxyScriptContext extends BaseContext {
 
     if (!rule) {
       this.extension.emit("proxy-error", {
-        message: "FindProxyForURL: Expected Proxy Rule",
+        message: "FindProxyForURL: Missing Proxy Rule",
       });
       return null;
     }
 
     let parts = rule.split(/\s+/);
-    if (!parts[0] || parts.length !== 2) {
+    if (!parts[0]) {
       this.extension.emit("proxy-error", {
-        message: `FindProxyForURL: Invalid Proxy Rule: ${rule}`,
+        message: `FindProxyForURL: Too many arguments passed for proxy rule: "${rule}"`,
       });
       return null;
     }
 
-    parts[0] = parts[0].toLowerCase();
+    if (parts.length > 2) {
+      this.extension.emit("proxy-error", {
+        message: `FindProxyForURL: Too many arguments passed for proxy rule: "${rule}"`,
+      });
+      return null;
+    }
 
-    switch (parts[0]) {
+    switch (parts[0].toLowerCase()) {
       case PROXY_TYPES.PROXY:
+      case PROXY_TYPES.HTTP:
+      case PROXY_TYPES.HTTPS:
       case PROXY_TYPES.SOCKS:
+      case PROXY_TYPES.SOCKS4:
         if (!parts[1]) {
           this.extension.emit("proxy-error", {
-            message: `FindProxyForURL: Missing argument for "${parts[0]}"`,
+            message: `FindProxyForURL: Missing argument for proxy type: "${parts[0]}"`,
+          });
+          return null;
+        }
+
+        if (parts.length != 2) {
+          this.extension.emit("proxy-error", {
+            message: `FindProxyForURL: Too many arguments for proxy rule: "${rule}"`,
           });
           return null;
         }
@@ -189,20 +203,26 @@ class ProxyScriptContext extends BaseContext {
         let [host, port] = parts[1].split(":");
         if (!host || !port) {
           this.extension.emit("proxy-error", {
-            message: `FindProxyForURL: Unable to parse argument for ${rule}`,
+            message: `FindProxyForURL: Unable to parse host and port from proxy rule: "${rule}"`,
           });
           return null;
         }
 
-        let type = PROXY_TYPES.SOCKS;
-        if (parts[0] == PROXY_TYPES.PROXY) {
-          type = PROXY_TYPES.HTTPS;
+        let type = parts[0];
+        if (parts[0].toLowerCase() == PROXY_TYPES.PROXY) {
+          // PROXY_TYPES.HTTP and PROXY_TYPES.PROXY are synonyms
+          type = PROXY_TYPES.HTTP;
         }
 
         let failoverProxy = this.createProxyInfo(rules.slice(1));
         return ProxyService.newProxyInfo(type, host, port, 0,
           PROXY_TIMEOUT_SEC, failoverProxy);
       case PROXY_TYPES.DIRECT:
+        if (parts.length != 1) {
+          this.extension.emit("proxy-error", {
+            message: `FindProxyForURL: Invalid argument for proxy type: "${parts[0]}"`,
+          });
+        }
         return null;
       default:
         this.extension.emit("proxy-error", {
@@ -277,7 +297,7 @@ class ProxyScriptInjectionContext {
 defineLazyGetter(ProxyScriptContext.prototype, "messenger", function() {
   let sender = {id: this.extension.id, frameId: this.frameId, url: this.url};
   let filter = {extensionId: this.extension.id, toProxyScript: true};
-  return new Messenger(this, [this.messageManager], sender, filter);
+  return new ExtensionChild.Messenger(this, [this.messageManager], sender, filter);
 });
 
 let proxyScriptAPIManager = new ProxyScriptAPIManager();

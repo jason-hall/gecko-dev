@@ -10,12 +10,12 @@
 #include "nsMathMLContainerFrame.h"
 
 //
-// <mpadded> -- adjust space around content  
+// <mpadded> -- adjust space around content
 //
 
 class nsMathMLmpaddedFrame : public nsMathMLContainerFrame {
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsMathMLmpaddedFrame)
 
   friend nsIFrame* NS_NewMathMLmpaddedFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
@@ -32,7 +32,7 @@ public:
          ReflowOutput&     aDesiredSize,
          const ReflowInput& aReflowInput,
          nsReflowStatus&          aStatus) override;
-  
+
   virtual nsresult
   Place(DrawTarget*          aDrawTarget,
         bool                 aPlaceOrigin,
@@ -46,7 +46,7 @@ public:
 
 protected:
   explicit nsMathMLmpaddedFrame(nsStyleContext* aContext)
-    : nsMathMLContainerFrame(aContext)
+    : nsMathMLContainerFrame(aContext, kClassID)
     , mWidthSign(0)
     , mHeightSign(0)
     , mDepthSign(0)

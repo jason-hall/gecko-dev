@@ -76,9 +76,9 @@ ConsoleAPIStorageService.prototype = {
   /** @private */
   init: function CS_init()
   {
-    Services.obs.addObserver(this, "xpcom-shutdown", false);
-    Services.obs.addObserver(this, "inner-window-destroyed", false);
-    Services.obs.addObserver(this, "memory-pressure", false);
+    Services.obs.addObserver(this, "xpcom-shutdown");
+    Services.obs.addObserver(this, "inner-window-destroyed");
+    Services.obs.addObserver(this, "memory-pressure");
   },
 
   /**
@@ -129,11 +129,6 @@ ConsoleAPIStorageService.prototype = {
 
     let storage = _consoleStorage.get(aId);
 
-    // Clone originAttributes to prevent "TypeError: can't access dead object"
-    // exceptions when cached console messages are retrieved/filtered
-    // by the devtools webconsole actor.
-    aEvent.originAttributes = Cu.cloneInto(aEvent.originAttributes, {});
-
     storage.push(aEvent);
 
     // truncate
@@ -160,7 +155,7 @@ ConsoleAPIStorageService.prototype = {
     }
     else {
       _consoleStorage.clear();
-      Services.obs.notifyObservers(null, "console-storage-reset", null);
+      Services.obs.notifyObservers(null, "console-storage-reset");
     }
   },
 };

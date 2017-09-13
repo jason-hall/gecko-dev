@@ -81,7 +81,9 @@ public:
 public:
   nsresult ClearRuleCascades();
 
+  static bool VisitedLinksEnabled();
   static void Startup();
+  static void InitSystemMetrics();
   static void Shutdown();
   static void FreeSystemMetrics();
   static bool HasSystemMetric(nsIAtom* aMetric);
@@ -102,15 +104,19 @@ public:
    * slightly adjusted from IntrinsicState().
    */
   static mozilla::EventStates GetContentState(
-                                mozilla::dom::Element* aElement,
+                                const mozilla::dom::Element* aElement,
+                                bool aUsingPrivateBrowsing);
+  static mozilla::EventStates GetContentState(
+                                const mozilla::dom::Element* aElement,
                                 const TreeMatchContext& aTreeMatchContext);
+  static mozilla::EventStates GetContentState(
+                                const mozilla::dom::Element* aElement);
 
   /*
    * Helper to get the content state for :visited handling for an element
    */
   static mozilla::EventStates GetContentStateForVisitedHandling(
-             mozilla::dom::Element* aElement,
-             const TreeMatchContext& aTreeMatchContext,
+             const mozilla::dom::Element* aElement,
              nsRuleWalker::VisitedHandlingType aVisitedHandling,
              bool aIsRelevantLink);
 
@@ -152,7 +158,6 @@ public:
    *                    (For setting the slow selector flag)
    * @param aStateMask Mask containing states which we should exclude.
    *                   Ignored if aDependence is null
-   * @param aIsGecko Set if Gecko.
    * @param aSetSlowSelectorFlag Outparam, set if the caller is
    *                             supposed to set the slow selector flag.
    * @param aDependence Pointer to be set to true if we ignored a state due to
@@ -164,9 +169,14 @@ public:
                                   const nsIDocument* aDocument,
                                   bool aForStyling,
                                   mozilla::EventStates aStateMask,
-                                  bool aIsGecko,
                                   bool* aSetSlowSelectorFlag,
                                   bool* const aDependence = nullptr);
+
+  static bool LangPseudoMatches(const mozilla::dom::Element* aElement,
+                                const nsIAtom* aOverrideLang,
+                                bool aHasOverrideLang,
+                                const char16_t* aString,
+                                const nsIDocument* aDocument);
 
   // nsIStyleRuleProcessor
   virtual void RulesMatching(ElementRuleProcessorData* aData) override;
@@ -211,7 +221,7 @@ public:
                                            const nsString& aName);
 
   nsCSSCounterStyleRule* CounterStyleRuleForName(nsPresContext* aPresContext,
-                                                 const nsAString& aName);
+                                                 nsIAtom* aName);
 
   bool AppendPageRules(nsPresContext* aPresContext,
                        nsTArray<nsCSSPageRule*>& aArray);
@@ -246,7 +256,7 @@ public:
 #ifdef XP_WIN
   // Cached theme identifier for the moz-windows-theme media query.
   static uint8_t GetWindowsThemeIdentifier();
-  static void SetWindowsThemeIdentifier(uint8_t aId) { 
+  static void SetWindowsThemeIdentifier(uint8_t aId) {
     sWinThemeId = aId;
   }
 #endif

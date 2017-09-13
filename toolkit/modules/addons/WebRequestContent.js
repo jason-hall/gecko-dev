@@ -2,6 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// Managed via the message managers.
+/* global initialProcessData */
+
 "use strict";
 
 var Ci = Components.interfaces;
@@ -99,14 +102,10 @@ var ContentPolicy = {
       return Ci.nsIContentPolicy.ACCEPT;
     }
 
-    let block = false;
     let ids = [];
-    for (let [id, {blocking, filter}] of this.contentPolicies.entries()) {
+    for (let [id, {filter}] of this.contentPolicies.entries()) {
       if (WebRequestCommon.typeMatches(policyType, filter.types) &&
           WebRequestCommon.urlMatches(contentLocation, filter.urls)) {
-        if (blocking) {
-          block = true;
-        }
         ids.push(id);
       }
     }
@@ -174,14 +173,7 @@ var ContentPolicy = {
     if (requestOrigin) {
       data.originUrl = requestOrigin.spec;
     }
-    if (block) {
-      let rval = mm.sendSyncMessage("WebRequest:ShouldLoad", data);
-      if (rval.length == 1 && rval[0].cancel) {
-        return Ci.nsIContentPolicy.REJECT;
-      }
-    } else {
-      mm.sendAsyncMessage("WebRequest:ShouldLoad", data);
-    }
+    mm.sendAsyncMessage("WebRequest:ShouldLoad", data);
 
     return Ci.nsIContentPolicy.ACCEPT;
   },

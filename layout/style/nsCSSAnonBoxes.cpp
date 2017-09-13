@@ -14,8 +14,8 @@
 using namespace mozilla;
 
 // define storage for all atoms
-#define CSS_ANON_BOX(_name, _value) \
-  nsICSSAnonBoxPseudo* nsCSSAnonBoxes::_name;
+#define CSS_ANON_BOX(name_, value_) \
+  nsICSSAnonBoxPseudo* nsCSSAnonBoxes::name_;
 #include "nsCSSAnonBoxList.h"
 #undef CSS_ANON_BOX
 
@@ -33,7 +33,7 @@ static const nsStaticAtom CSSAnonBoxes_info[] = {
 #undef CSS_NON_INHERITING_ANON_BOX
 #undef CSS_ANON_BOX
 
-#define CSS_ANON_BOX(name_, value_)                                   \
+#define CSS_ANON_BOX(name_, value_) \
   NS_STATIC_ATOM(name_##_buffer, (nsIAtom**)&nsCSSAnonBoxes::name_),
 #define CSS_NON_INHERITING_ANON_BOX(name_, value_) /* nothing */
 #include "nsCSSAnonBoxList.h"
@@ -56,6 +56,7 @@ bool nsCSSAnonBoxes::IsAnonBox(nsIAtom *aAtom)
 /* static */ bool
 nsCSSAnonBoxes::IsTreePseudoElement(nsIAtom* aPseudo)
 {
+  MOZ_ASSERT(nsCSSAnonBoxes::IsAnonBox(aPseudo));
   return StringBeginsWith(nsDependentAtomString(aPseudo),
                           NS_LITERAL_STRING(":-moz-tree-"));
 }

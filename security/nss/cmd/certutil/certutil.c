@@ -591,6 +591,10 @@ ListCerts(CERTCertDBHandle *handle, char *nickname, char *email,
 {
     SECStatus rv;
 
+    if (slot && PK11_NeedUserInit(slot)) {
+        printf("\nDatabase needs user init\n");
+    }
+
     if (!ascii && !raw && !nickname && !email) {
         PR_fprintf(outfile, "\n%-60s %-5s\n%-60s %-5s\n\n",
                    "Certificate Nickname", "Trust Attributes", "",
@@ -1002,9 +1006,12 @@ ListModules(void)
 
     /* look at each slot*/
     for (le = list->head; le; le = le->next) {
+        char *token_uri = PK11_GetTokenURI(le->slot);
         printf("\n");
         printf("    slot: %s\n", PK11_GetSlotName(le->slot));
         printf("   token: %s\n", PK11_GetTokenName(le->slot));
+        printf("     uri: %s\n", token_uri);
+        PORT_Free(token_uri);
     }
     PK11_FreeSlotList(list);
 
@@ -3029,11 +3036,16 @@ certutil_main(int argc, char **argv, PRBool initialize)
 
     /*  If creating new database, initialize the password.  */
     if (certutil.commands[cmd_NewDBs].activated) {
-        if (certutil.options[opt_EmptyPassword].activated && (PK11_NeedUserInit(slot)))
-            PK11_InitPin(slot, (char *)NULL, "");
-        else
-            SECU_ChangePW2(slot, 0, 0, certutil.options[opt_PasswordFile].arg,
-                           certutil.options[opt_NewPasswordFile].arg);
+        if (certutil.options[opt_EmptyPassword].activated && (PK11_NeedUserInit(slot))) {
+            rv = PK11_InitPin(slot, (char *)NULL, "");
+        } else {
+            rv = SECU_ChangePW2(slot, 0, 0, certutil.options[opt_PasswordFile].arg,
+                                certutil.options[opt_NewPasswordFile].arg);
+        }
+        if (rv != SECSuccess) {
+            SECU_PrintError(progName, "Could not set password for the slot");
+            goto shutdown;
+        }
     }
 
     /* walk through the upgrade merge if necessary.
@@ -3234,7 +3246,10 @@ certutil_main(int argc, char **argv, PRBool initialize)
     if (certutil.commands[cmd_ChangePassword].activated) {
         rv = SECU_ChangePW2(slot, 0, 0, certutil.options[opt_PasswordFile].arg,
                             certutil.options[opt_NewPasswordFile].arg);
-        goto shutdown;
+        if (rv != SECSuccess) {
+            SECU_PrintError(progName, "Could not set password for the slot");
+            goto shutdown;
+        }
     }
     /*  Reset the a token */
     if (certutil.commands[cmd_TokenReset].activated) {

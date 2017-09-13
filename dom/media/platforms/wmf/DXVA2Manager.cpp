@@ -23,6 +23,8 @@
 #include "mozilla/layers/TextureD3D11.h"
 #include "nsPrintfCString.h"
 #include "nsThreadUtils.h"
+#include "VideoUtils.h"
+#include "mozilla/mscom/EnsureMTA.h"
 
 const CLSID CLSID_VideoProcessorMFT =
 {
@@ -102,7 +104,7 @@ public:
   // Copies a region (aRegion) of the video frame stored in aVideoSample
   // into an image which is returned by aOutImage.
   HRESULT CopyToImage(IMFSample* aVideoSample,
-                      const nsIntRect& aRegion,
+                      const gfx::IntRect& aRegion,
                       Image** aOutImage) override;
 
   bool SupportsConfig(IMFMediaType* aType, float aFramerate) override;
@@ -170,6 +172,8 @@ HRESULT ConvertMFTypeToDXVAType(IMFMediaType *pType, DXVA2_VideoDesc *pDesc)
   UINT32 height = 0;
   hr = MFGetAttributeSize(pType, MF_MT_FRAME_SIZE, &width, &height);
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
+  NS_ENSURE_TRUE(width <= MAX_VIDEO_WIDTH, E_FAIL);
+  NS_ENSURE_TRUE(height <= MAX_VIDEO_HEIGHT, E_FAIL);
   pDesc->SampleWidth = width;
   pDesc->SampleHeight = height;
 
@@ -435,7 +439,7 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
 
 HRESULT
 D3D9DXVA2Manager::CopyToImage(IMFSample* aSample,
-                              const nsIntRect& aRegion,
+                              const gfx::IntRect& aRegion,
                               Image** aOutImage)
 {
   RefPtr<IMFMediaBuffer> buffer;
@@ -515,7 +519,7 @@ D3D9DXVA2Manager::CreateDXVA2Decoder(const VideoInfo& aVideoInfo,
   desc.Format = (D3DFORMAT)MAKEFOURCC('N','V','1','2');
 
   // Assume the current duration is representative for the entire video.
-  float framerate = 1000000.0 / aVideoInfo.mDuration;
+  float framerate = 1000000.0 / aVideoInfo.mDuration.ToMicroseconds();
   if (IsUnsupportedResolution(desc.SampleWidth, desc.SampleHeight, framerate)) {
     return false;
   }
@@ -607,7 +611,7 @@ public:
   // Copies a region (aRegion) of the video frame stored in aVideoSample
   // into an image which is returned by aOutImage.
   HRESULT CopyToImage(IMFSample* aVideoSample,
-                      const nsIntRect& aRegion,
+                      const gfx::IntRect& aRegion,
                       Image** aOutImage) override;
 
   virtual HRESULT CopyToBGRATexture(ID3D11Texture2D *aInTexture,
@@ -640,11 +644,12 @@ private:
   RefPtr<MFTDecoder> mTransform;
   RefPtr<D3D11RecycleAllocator> mTextureClientAllocator;
   RefPtr<ID3D11VideoDecoder> mDecoder;
-  RefPtr<layers::SyncObject> mSyncObject;
+  RefPtr<layers::SyncObjectClient> mSyncObject;
   GUID mDecoderGUID;
   uint32_t mWidth = 0;
   uint32_t mHeight = 0;
   UINT mDeviceManagerToken = 0;
+  bool mConfiuredForSize = false;
 };
 
 bool
@@ -655,7 +660,10 @@ D3D11DXVA2Manager::SupportsConfig(IMFMediaType* aType, float aFramerate)
   desc.Guid = mDecoderGUID;
   desc.OutputFormat = DXGI_FORMAT_NV12;
   HRESULT hr = MFGetAttributeSize(aType, MF_MT_FRAME_SIZE, &desc.SampleWidth, &desc.SampleHeight);
-  NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
+  NS_ENSURE_TRUE(SUCCEEDED(hr), false);
+  NS_ENSURE_TRUE(desc.SampleWidth <= MAX_VIDEO_WIDTH, false);
+  NS_ENSURE_TRUE(desc.SampleHeight <= MAX_VIDEO_HEIGHT, false);
+
   return CanCreateDecoder(desc, aFramerate);
 }
 
@@ -705,9 +713,10 @@ D3D11DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
       // and because it allows color conversion ocurring directly from this texture
       // DXVA does not seem to accept IDXGIKeyedMutex textures as input.
       mSyncObject =
-        layers::SyncObject::CreateSyncObject(layers::ImageBridgeChild::GetSingleton()->
-                                               GetTextureFactoryIdentifier().mSyncHandle,
-                                             mDevice);
+        layers::SyncObjectClient::CreateSyncObjectClient(
+            layers::ImageBridgeChild::GetSingleton()->
+              GetTextureFactoryIdentifier().mSyncHandle,
+            mDevice);
     }
   } else {
     mTextureClientAllocator =
@@ -717,8 +726,9 @@ D3D11DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
       // and because it allows color conversion ocurring directly from this texture
       // DXVA does not seem to accept IDXGIKeyedMutex textures as input.
       mSyncObject =
-        layers::SyncObject::CreateSyncObject(aKnowsCompositor->GetTextureFactoryIdentifier().mSyncHandle,
-                                             mDevice);
+        layers::SyncObjectClient::CreateSyncObjectClient(
+            aKnowsCompositor->GetTextureFactoryIdentifier().mSyncHandle,
+            mDevice);
     }
   }
   mTextureClientAllocator->SetMaxPoolSize(5);
@@ -739,7 +749,7 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
   HRESULT hr;
 
   mDevice = aDevice;
-  
+
   if (!mDevice) {
     mDevice = gfx::DeviceManagerDx::Get()->CreateDecoderDevice();
     if (!mDevice) {
@@ -747,6 +757,11 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
       return E_FAIL;
     }
   }
+
+  RefPtr<ID3D10Multithread> mt;
+  hr = mDevice->QueryInterface((ID3D10Multithread**)getter_AddRefs(mt));
+  NS_ENSURE_TRUE(SUCCEEDED(hr) && mt, hr);
+  mt->SetMultithreadProtected(TRUE);
 
   mDevice->GetImmediateContext(getter_AddRefs(mContext));
 
@@ -765,22 +780,35 @@ D3D11DXVA2Manager::InitInternal(layers::KnowsCompositor* aKnowsCompositor,
     return hr;
   }
 
-  mTransform = new MFTDecoder();
-  hr = mTransform->Create(CLSID_VideoProcessorMFT);
-  if (!SUCCEEDED(hr)) {
-    aFailureReason = nsPrintfCString(
-      "MFTDecoder::Create(CLSID_VideoProcessorMFT) failed with code %X", hr);
-    return hr;
-  }
+  // The IMFTransform interface used by MFTDecoder is documented to require to
+  // run on an MTA thread.
+  // https://msdn.microsoft.com/en-us/library/windows/desktop/ee892371(v=vs.85).aspx#components
+  // The main thread (where this function is called) is STA, not MTA.
+  RefPtr<MFTDecoder> mft;
+  mozilla::mscom::EnsureMTA([&]() -> void {
+    mft = new MFTDecoder();
+    hr = mft->Create(CLSID_VideoProcessorMFT);
 
-  hr = mTransform->SendMFTMessage(MFT_MESSAGE_SET_D3D_MANAGER,
-                                  ULONG_PTR(mDXGIDeviceManager.get()));
+    if (!SUCCEEDED(hr)) {
+      aFailureReason = nsPrintfCString(
+        "MFTDecoder::Create(CLSID_VideoProcessorMFT) failed with code %X", hr);
+      return;
+    }
+
+    hr = mft->SendMFTMessage(MFT_MESSAGE_SET_D3D_MANAGER,
+                             ULONG_PTR(mDXGIDeviceManager.get()));
+    if (!SUCCEEDED(hr)) {
+      aFailureReason = nsPrintfCString("MFTDecoder::SendMFTMessage(MFT_MESSAGE_"
+                                       "SET_D3D_MANAGER) failed with code %X",
+                                       hr);
+      return;
+    }
+  });
+
   if (!SUCCEEDED(hr)) {
-    aFailureReason = nsPrintfCString("MFTDecoder::SendMFTMessage(MFT_MESSAGE_"
-                                     "SET_D3D_MANAGER) failed with code %X",
-                                     hr);
     return hr;
   }
+  mTransform = mft;
 
   RefPtr<ID3D11VideoDevice> videoDevice;
   hr = mDevice->QueryInterface(
@@ -871,7 +899,8 @@ D3D11DXVA2Manager::CreateOutputSample(RefPtr<IMFSample>& aSample,
     __uuidof(ID3D11Texture2D), aTexture, 0, FALSE, getter_AddRefs(buffer));
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
-  sample->AddBuffer(buffer);
+  hr = sample->AddBuffer(buffer);
+  NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
   aSample = sample;
   return S_OK;
@@ -879,7 +908,7 @@ D3D11DXVA2Manager::CreateOutputSample(RefPtr<IMFSample>& aSample,
 
 HRESULT
 D3D11DXVA2Manager::CopyToImage(IMFSample* aVideoSample,
-                               const nsIntRect& aRegion,
+                               const gfx::IntRect& aRegion,
                                Image** aOutImage)
 {
   NS_ENSURE_TRUE(aVideoSample, E_POINTER);
@@ -933,19 +962,27 @@ D3D11DXVA2Manager::CopyToImage(IMFSample* aVideoSample,
     } else {
       // Our video sample is in NV12 format but our output texture is in BGRA.
       // Use MFT to do color conversion.
-      hr = mTransform->Input(aVideoSample);
+      hr = E_FAIL;
+      mozilla::mscom::EnsureMTA(
+        [&]() -> void { hr = mTransform->Input(aVideoSample); });
       NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
       RefPtr<IMFSample> sample;
       hr = CreateOutputSample(sample, texture);
       NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
-      hr = mTransform->Output(&sample);
+      hr = E_FAIL;
+      mozilla::mscom::EnsureMTA(
+        [&]() -> void { hr = mTransform->Output(&sample); });
+      NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
     }
   }
-  if (!mutex && mDevice != DeviceManagerDx::Get()->GetCompositorDevice()) {
+
+  if (!mutex && mDevice != DeviceManagerDx::Get()->GetCompositorDevice() && mSyncObject) {
+    // It appears some race-condition may allow us to arrive here even when mSyncObject
+    // is null. It's better to avoid that crash.
     client->SyncWithObject(mSyncObject);
-    mSyncObject->FinalizeFrame();
+    mSyncObject->Synchronize();
   }
 
   image.forget(aOutImage);
@@ -967,7 +1004,8 @@ D3D11DXVA2Manager::CopyToBGRATexture(ID3D11Texture2D *aInTexture,
 
   CD3D11_TEXTURE2D_DESC desc;
   aInTexture->GetDesc(&desc);
-  ConfigureForSize(desc.Width, desc.Height);
+  hr = ConfigureForSize(desc.Width, desc.Height);
+  NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
   RefPtr<IDXGIKeyedMutex> mutex;
   inTexture->QueryInterface((IDXGIKeyedMutex**)getter_AddRefs(mutex));
@@ -1010,14 +1048,19 @@ D3D11DXVA2Manager::CopyToBGRATexture(ID3D11Texture2D *aInTexture,
 
   inputSample->AddBuffer(inputBuffer);
 
-  hr = mTransform->Input(inputSample);
+  hr = E_FAIL;
+  mozilla::mscom::EnsureMTA(
+    [&]() -> void { hr = mTransform->Input(inputSample); });
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
   RefPtr<IMFSample> outputSample;
   hr = CreateOutputSample(outputSample, texture);
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
-  hr = mTransform->Output(&outputSample);
+  hr = E_FAIL;
+  mozilla::mscom::EnsureMTA(
+    [&]() -> void { hr = mTransform->Output(&outputSample); });
+  NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
   texture.forget(aOutTexture);
 
@@ -1043,6 +1086,11 @@ HRESULT ConfigureOutput(IMFMediaType* aOutput, void* aData)
 HRESULT
 D3D11DXVA2Manager::ConfigureForSize(uint32_t aWidth, uint32_t aHeight)
 {
+  if (mConfiuredForSize && aWidth == mWidth && aHeight == mHeight) {
+    // If the size hasn't changed, don't reconfigure.
+    return S_OK;
+  }
+
   mWidth = aWidth;
   mHeight = aHeight;
 
@@ -1062,7 +1110,10 @@ D3D11DXVA2Manager::ConfigureForSize(uint32_t aWidth, uint32_t aHeight)
   hr = inputType->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
-  RefPtr<IMFAttributes> attr = mTransform->GetAttributes();
+  RefPtr<IMFAttributes> attr;
+  mozilla::mscom::EnsureMTA(
+    [&]() -> void { attr = mTransform->GetAttributes(); });
+  NS_ENSURE_TRUE(attr != nullptr, E_FAIL);
 
   hr = attr->SetUINT32(MF_XVP_PLAYBACK_MODE, TRUE);
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
@@ -1080,12 +1131,18 @@ D3D11DXVA2Manager::ConfigureForSize(uint32_t aWidth, uint32_t aHeight)
   hr = outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
-  hr = outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+  hr = outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_ARGB32);
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
 
   gfx::IntSize size(mWidth, mHeight);
-  hr = mTransform->SetMediaTypes(inputType, outputType, ConfigureOutput, &size);
+  hr = E_FAIL;
+  mozilla::mscom::EnsureMTA([&]() -> void {
+    hr =
+      mTransform->SetMediaTypes(inputType, outputType, ConfigureOutput, &size);
+  });
   NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
+
+  mConfiuredForSize = true;
 
   return S_OK;
 }
@@ -1102,7 +1159,7 @@ D3D11DXVA2Manager::CreateDXVA2Decoder(const VideoInfo& aVideoInfo,
   desc.SampleHeight = aVideoInfo.mImage.height;
 
   // Assume the current duration is representative for the entire video.
-  float framerate = 1000000.0 / aVideoInfo.mDuration;
+  float framerate = 1000000.0 / aVideoInfo.mDuration.ToMicroseconds();
   if (IsUnsupportedResolution(desc.SampleWidth, desc.SampleHeight, framerate)) {
     return false;
   }

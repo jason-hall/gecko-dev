@@ -1,4 +1,3 @@
-Cu.import("resource://gre/modules/Promise.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesTestUtils",
                                   "resource://testing-common/PlacesTestUtils.jsm");
@@ -7,27 +6,27 @@ const SINGLE_TRY_TIMEOUT = 100;
 const NUMBER_OF_TRIES = 30;
 
 function waitForConditionPromise(condition, timeoutMsg, tryCount = NUMBER_OF_TRIES) {
-  let defer = Promise.defer();
-  let tries = 0;
-  function checkCondition() {
-    if (tries >= tryCount) {
-      defer.reject(timeoutMsg);
+  return new Promise((resolve, reject) => {
+    let tries = 0;
+    function checkCondition() {
+      if (tries >= tryCount) {
+        reject(timeoutMsg);
+      }
+      var conditionPassed;
+      try {
+        conditionPassed = condition();
+      } catch (e) {
+        return reject(e);
+      }
+      if (conditionPassed) {
+        return resolve();
+      }
+      tries++;
+      setTimeout(checkCondition, SINGLE_TRY_TIMEOUT);
+      return undefined;
     }
-    var conditionPassed;
-    try {
-      conditionPassed = condition();
-    } catch (e) {
-      return defer.reject(e);
-    }
-    if (conditionPassed) {
-      return defer.resolve();
-    }
-    tries++;
     setTimeout(checkCondition, SINGLE_TRY_TIMEOUT);
-    return undefined;
-  }
-  setTimeout(checkCondition, SINGLE_TRY_TIMEOUT);
-  return defer.promise;
+  });
 }
 
 function waitForCondition(condition, nextTest, errorMsg) {
@@ -68,23 +67,39 @@ function checkKeyedScalar(scalars, scalarName, key, expectedValue) {
  * @param {String} fieldName
  *        The name of the field to write to.
  */
-let typeInSearchField = Task.async(function* (browser, text, fieldName) {
-  yield ContentTask.spawn(browser, [fieldName, text], function* ([contentFieldName, contentText]) {
+let typeInSearchField = async function(browser, text, fieldName) {
+  await ContentTask.spawn(browser, [fieldName, text], async function([contentFieldName, contentText]) {
     // Put the focus on the search box.
     let searchInput = content.document.getElementById(contentFieldName);
     searchInput.focus();
     searchInput.value = contentText;
   });
-});
+};
+
 
 /**
- * Clear and get the SEARCH_COUNTS histogram.
+ * Clear and get the named histogram
+ * @param {String} name
+ *        The name of the histogram
  */
-function getSearchCountsHistogram() {
-  let search_hist = Services.telemetry.getKeyedHistogramById("SEARCH_COUNTS");
-  search_hist.clear();
-  return search_hist;
+function getAndClearHistogram(name) {
+  let histogram = Services.telemetry.getHistogramById(name);
+  histogram.clear();
+  return histogram;
 }
+
+
+/**
+ * Clear and get the named keyed histogram
+ * @param {String} name
+ *        The name of the keyed histogram
+ */
+function getAndClearKeyedHistogram(name) {
+  let histogram = Services.telemetry.getKeyedHistogramById(name);
+  histogram.clear();
+  return histogram;
+}
+
 
 /**
  * Check that the keyed histogram contains the right value.
@@ -100,8 +115,8 @@ function checkKeyedHistogram(h, key, expectedValue) {
  */
 function getParentProcessScalars(aChannel, aKeyed = false, aClear = false) {
   const scalars = aKeyed ?
-    Services.telemetry.snapshotKeyedScalars(aChannel, aClear)["default"] :
-    Services.telemetry.snapshotScalars(aChannel, aClear)["default"];
+    Services.telemetry.snapshotKeyedScalars(aChannel, aClear).parent :
+    Services.telemetry.snapshotScalars(aChannel, aClear).parent;
   return scalars || {};
 }
 
@@ -196,21 +211,21 @@ function clickSecondaryAction(actionIndex) {
     return removePromise;
   }
 
-  return Task.spawn(function* () {
+  return (async function() {
     // Click the dropmarker arrow and wait for the menu to show up.
     let dropdownPromise =
       BrowserTestUtils.waitForEvent(popupNotification.menupopup, "popupshown");
-    yield EventUtils.synthesizeMouseAtCenter(popupNotification.menubutton, {});
-    yield dropdownPromise;
+    await EventUtils.synthesizeMouseAtCenter(popupNotification.menubutton, {});
+    await dropdownPromise;
 
     // The menuitems in the dropdown are accessible as direct children of the panel,
     // because they are injected into a <children> node in the XBL binding.
     // The target action is the menuitem at index actionIndex - 1, because the first
     // secondary action (index 0) is the button shown directly in the panel.
     let actionMenuItem = popupNotification.querySelectorAll("menuitem")[actionIndex - 1];
-    yield EventUtils.synthesizeMouseAtCenter(actionMenuItem, {});
-    yield removePromise;
-  });
+    await EventUtils.synthesizeMouseAtCenter(actionMenuItem, {});
+    await removePromise;
+  })();
 }
 
 /**
@@ -229,3 +244,14 @@ function getPopupNotificationNode() {
   return popupNotifications[0];
 }
 
+
+/**
+ * Disable non-release page actions (that are tested elsewhere).
+ *
+ * @return void
+ */
+async function disableNonReleaseActions() {
+  if (AppConstants.MOZ_DEV_EDITION || AppConstants.NIGHTLY_BUILD) {
+    await SpecialPowers.pushPrefEnv({set: [["extensions.webcompat-reporter.enabled", false]]});
+  }
+}

@@ -7,7 +7,6 @@
 #include "jit/IonIC.h"
 
 #include "mozilla/Maybe.h"
-#include "mozilla/SizePrintfMacros.h"
 
 #include "jit/CacheIRCompiler.h"
 #include "jit/Linker.h"
@@ -46,8 +45,20 @@ IonIC::scratchRegisterForEntryJump()
         return asSetPropertyIC()->temp();
       case CacheKind::GetName:
         return asGetNameIC()->temp();
+      case CacheKind::BindName:
+        return asBindNameIC()->temp();
       case CacheKind::In:
-        MOZ_CRASH("Baseline-specific for now");
+        return asInIC()->temp();
+      case CacheKind::HasOwn:
+        return asHasOwnIC()->output();
+      case CacheKind::GetIterator:
+        return asGetIteratorIC()->temp1();
+      case CacheKind::Call:
+      case CacheKind::Compare:
+      case CacheKind::TypeOf:
+      case CacheKind::GetPropSuper:
+      case CacheKind::GetElemSuper:
+        MOZ_CRASH("Unsupported IC");
     }
 
     MOZ_CRASH("Invalid kind");
@@ -102,19 +113,6 @@ IonIC::trace(JSTracer* trc)
     MOZ_ASSERT(nextCodeRaw == fallbackLabel_.raw());
 }
 
-void
-IonIC::togglePreBarriers(bool enabled, ReprotectCode reprotect)
-{
-    uint8_t* nextCodeRaw = codeRaw_;
-    for (IonICStub* stub = firstStub_; stub; stub = stub->next()) {
-        JitCode* code = JitCode::FromExecutable(nextCodeRaw);
-        code->togglePreBarriers(enabled, reprotect);
-        nextCodeRaw = stub->nextCodeRaw();
-    }
-
-    MOZ_ASSERT(nextCodeRaw == fallbackLabel_.raw());
-}
-
 /* static */ bool
 IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript, IonGetPropertyIC* ic,
 			 HandleValue val, HandleValue idVal, MutableHandleValue res)
@@ -136,12 +134,11 @@ IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript, IonGetProperty
         // needs a type barrier. Unfortunately, PropertyReadNeedsTypeBarrier
         // does not account for getters, so we should only attach a getter
         // stub if we inserted a type barrier.
-        CanAttachGetter canAttachGetter =
-            ic->monitoredResult() ? CanAttachGetter::Yes : CanAttachGetter::No;
         jsbytecode* pc = ic->idempotent() ? nullptr : ic->pc();
         bool isTemporarilyUnoptimizable = false;
         GetPropIRGenerator gen(cx, outerScript, pc, ic->kind(), ic->state().mode(),
-                               &isTemporarilyUnoptimizable, val, idVal, canAttachGetter);
+                               &isTemporarilyUnoptimizable, val, idVal, val,
+                               ic->resultFlags());
         if (ic->idempotent() ? gen.tryAttachIdempotentStub() : gen.tryAttachStub())
             ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript, &attached);
 
@@ -156,7 +153,7 @@ IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript, IonGetProperty
         // 2) There's no need to dynamically monitor the return type. This would
         //    be complicated since (due to GVN) there can be multiple pc's
         //    associated with a single idempotent cache.
-        JitSpew(JitSpew_IonIC, "Invalidating from idempotent cache %s:%" PRIuSIZE,
+        JitSpew(JitSpew_IonIC, "Invalidating from idempotent cache %s:%zu",
                 outerScript->filename(), outerScript->lineno());
 
         outerScript->setInvalidatedIdempotentCache();
@@ -190,7 +187,7 @@ IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript, IonGetProperty
 
 /* static */ bool
 IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript, IonSetPropertyIC* ic,
-			 HandleObject obj, HandleValue idVal, HandleValue rhs)
+                         HandleObject obj, HandleValue idVal, HandleValue rhs)
 {
     RootedShape oldShape(cx);
     RootedObjectGroup oldGroup(cx);
@@ -227,7 +224,10 @@ IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript, IonSetProperty
 
     jsbytecode* pc = ic->pc();
     if (ic->kind() == CacheKind::SetElem) {
-        if (IsPropertyInitOp(JSOp(*pc))) {
+        if (*pc == JSOP_INITELEM_INC) {
+            if (!InitArrayElemOperation(cx, pc, obj, idVal.toInt32(), rhs))
+                return false;
+        } else if (IsPropertyInitOp(JSOp(*pc))) {
             if (!InitElemOperation(cx, pc, obj, idVal, rhs))
                 return false;
         } else {
@@ -242,7 +242,12 @@ IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript, IonSetProperty
             RootedScript script(cx, ic->script());
             MOZ_ASSERT(!script->hasNonSyntacticScope());
             InitGlobalLexicalOperation(cx, &cx->global()->lexicalEnvironment(), script, pc, rhs);
+        } else if (IsPropertyInitOp(JSOp(*pc))) {
+            RootedId id(cx, AtomToId(&idVal.toString()->asAtom()));
+            if (!InitPropertyOperation(cx, JSOp(*pc), obj, id, rhs))
+                return false;
         } else {
+            MOZ_ASSERT(IsPropertySetOp(JSOp(*pc)));
             RootedPropertyName name(cx, idVal.toString()->asAtom().asPropertyName());
             if (!SetProperty(cx, obj, name, rhs, ic->strict(), pc))
                 return false;
@@ -283,12 +288,11 @@ IonGetNameIC::update(JSContext* cx, HandleScript outerScript, IonGetNameIC* ic,
                      HandleObject envChain, MutableHandleValue res)
 {
     IonScript* ionScript = outerScript->ionScript();
+    jsbytecode* pc = ic->pc();
+    RootedPropertyName name(cx, ic->script()->getName(pc));
 
     if (ic->state().maybeTransition())
         ic->discardStubs(cx->zone());
-
-    jsbytecode* pc = ic->pc();
-    RootedPropertyName name(cx, ic->script()->getName(pc));
 
     if (ic->state().canAttachStub()) {
         bool attached = false;
@@ -319,6 +323,115 @@ IonGetNameIC::update(JSContext* cx, HandleScript outerScript, IonGetNameIC* ic,
     // barrier after GetName ICs.
 
     return true;
+}
+
+/* static */ JSObject*
+IonBindNameIC::update(JSContext* cx, HandleScript outerScript, IonBindNameIC* ic,
+                      HandleObject envChain)
+{
+    IonScript* ionScript = outerScript->ionScript();
+    jsbytecode* pc = ic->pc();
+    RootedPropertyName name(cx, ic->script()->getName(pc));
+
+    if (ic->state().maybeTransition())
+        ic->discardStubs(cx->zone());
+
+    if (ic->state().canAttachStub()) {
+        bool attached = false;
+        RootedScript script(cx, ic->script());
+        BindNameIRGenerator gen(cx, script, pc, ic->state().mode(), envChain, name);
+        if (gen.tryAttachStub())
+            ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript, &attached);
+
+        if (!attached)
+            ic->state().trackNotAttached();
+    }
+
+    RootedObject holder(cx);
+    if (!LookupNameUnqualified(cx, name, envChain, &holder))
+        return nullptr;
+
+    return holder;
+}
+
+/* static */ JSObject*
+IonGetIteratorIC::update(JSContext* cx, HandleScript outerScript, IonGetIteratorIC* ic,
+                         HandleValue value)
+{
+    IonScript* ionScript = outerScript->ionScript();
+    jsbytecode* pc = ic->pc();
+
+    if (ic->state().maybeTransition())
+        ic->discardStubs(cx->zone());
+
+    if (ic->state().canAttachStub()) {
+        bool attached = false;
+        RootedScript script(cx, ic->script());
+        GetIteratorIRGenerator gen(cx, script, pc, ic->state().mode(), value);
+        if (gen.tryAttachStub())
+            ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript, &attached);
+
+        if (!attached)
+            ic->state().trackNotAttached();
+    }
+
+    uint8_t flags = GET_UINT8(pc);
+    return ValueToIterator(cx, flags, value);
+}
+
+/* static */ bool
+IonHasOwnIC::update(JSContext* cx, HandleScript outerScript, IonHasOwnIC* ic,
+                    HandleValue val, HandleValue idVal, int32_t* res)
+{
+    IonScript* ionScript = outerScript->ionScript();
+
+    if (ic->state().maybeTransition())
+        ic->discardStubs(cx->zone());
+
+    jsbytecode* pc = ic->pc();
+
+    if (ic->state().canAttachStub()) {
+        bool attached = false;
+        RootedScript script(cx, ic->script());
+        HasPropIRGenerator gen(cx, script, pc, CacheKind::HasOwn, ic->state().mode(), idVal, val);
+        if (gen.tryAttachStub())
+            ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript, &attached);
+
+        if (!attached)
+            ic->state().trackNotAttached();
+    }
+
+    bool found;
+    if (!HasOwnProperty(cx, val, idVal, &found))
+        return false;
+
+    *res = found;
+    return true;
+}
+
+/* static */ bool
+IonInIC::update(JSContext* cx, HandleScript outerScript, IonInIC* ic,
+                HandleValue key, HandleObject obj, bool* res)
+{
+    IonScript* ionScript = outerScript->ionScript();
+
+    if (ic->state().maybeTransition())
+        ic->discardStubs(cx->zone());
+
+    if (ic->state().canAttachStub()) {
+        bool attached = false;
+        RootedScript script(cx, ic->script());
+        RootedValue objV(cx, ObjectValue(*obj));
+        jsbytecode* pc = ic->pc();
+        HasPropIRGenerator gen(cx, script, pc, CacheKind::In, ic->state().mode(), key, objV);
+        if (gen.tryAttachStub())
+            ic->attachCacheIRStub(cx, gen.writerRef(), gen.cacheKind(), ionScript, &attached);
+
+        if (!attached)
+            ic->state().trackNotAttached();
+    }
+
+    return OperatorIn(cx, key, obj, res);
 }
 
 uint8_t*

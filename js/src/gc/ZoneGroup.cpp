@@ -8,7 +8,10 @@
 
 #include "jscntxt.h"
 
+#include "jit/IonBuilder.h"
 #include "jit/JitCompartment.h"
+
+using namespace js;
 
 namespace js {
 
@@ -22,7 +25,6 @@ ZoneGroup::ZoneGroup(JSRuntime* runtime)
     ionBailAfter_(this, 0),
 #endif
     jitZoneGroup(this, nullptr),
-    debuggerList_(this)
 {}
 
 bool
@@ -46,17 +48,26 @@ ZoneGroup::~ZoneGroup()
 }
 
 void
-ZoneGroup::enter()
+ZoneGroup::enter(JSContext* cx)
 {
-    JSContext* cx = TlsContext.get();
     if (ownerContext().context() == cx) {
         MOZ_ASSERT(enterCount);
     } else {
-        MOZ_ASSERT(ownerContext().context() == nullptr);
+        if (useExclusiveLocking) {
+            MOZ_ASSERT(!usedByHelperThread);
+            while (ownerContext().context() != nullptr) {
+                cx->yieldToEmbedding();
+            }
+        }
+        MOZ_RELEASE_ASSERT(ownerContext().context() == nullptr);
         MOZ_ASSERT(enterCount == 0);
         ownerContext_ = CooperatingContext(cx);
         if (cx->generationalDisabled)
             nursery().disable();
+        // Finish any Ion compilations in this zone group, in case compilation
+        // finished for some script in this group while no thread was in this
+        // group.
+        jit::AttachFinishedCompilations(this, nullptr);
     }
     enterCount++;
 }
@@ -78,3 +89,4 @@ ZoneGroup::ownedByCurrentThread()
 }
 
 } // namespace js
+

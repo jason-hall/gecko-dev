@@ -48,7 +48,10 @@ module.exports = createClass({
         getStr("layout.overlayGrid")
       ),
       dom.ul(
-        {},
+        {
+          id: "grid-list",
+          className: "devtools-monospace",
+        },
         grids.map(grid => GridItem({
           key: grid.id,
           getSwatchColorPickerTooltip,

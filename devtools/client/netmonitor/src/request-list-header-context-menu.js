@@ -4,14 +4,21 @@
 
 "use strict";
 
-const Menu = require("devtools/client/framework/menu");
-const MenuItem = require("devtools/client/framework/menu-item");
 const { HEADERS } = require("./constants");
 const { L10N } = require("./utils/l10n");
+const { showMenu } = require("devtools/client/netmonitor/src/utils/menu");
 
 const stringMap = HEADERS
   .filter((header) => header.hasOwnProperty("label"))
   .reduce((acc, { name, label }) => Object.assign(acc, { [name]: label }), {});
+
+const subMenuMap = HEADERS
+  .filter((header) => header.hasOwnProperty("subMenu"))
+  .reduce((acc, { name, subMenu }) => Object.assign(acc, { [name]: subMenu }), {});
+
+const nonLocalizedHeaders = HEADERS
+  .filter((header) => header.hasOwnProperty("noLocalization"))
+  .map((header) => header.name);
 
 class RequestListHeaderContextMenu {
   constructor({ toggleColumn, resetColumns }) {
@@ -20,7 +27,9 @@ class RequestListHeaderContextMenu {
   }
 
   get columns() {
-    return window.gStore.getState().ui.columns;
+    // FIXME: Bug 1362059 - Implement RequestListHeaderContextMenu React component
+    // Remove window.store
+    return window.store.getState().ui.columns;
   }
 
   get visibleColumns() {
@@ -30,32 +39,47 @@ class RequestListHeaderContextMenu {
   /**
    * Handle the context menu opening.
    */
-  open({ screenX = 0, screenY = 0 } = {}) {
-    let menu = new Menu();
+  open(event = {}) {
+    let menu = [];
+    let subMenu = { timings: [], responseHeaders: [] };
     let onlyOneColumn = this.visibleColumns.length === 1;
 
     for (let [column, shown] of this.columns) {
-      menu.append(new MenuItem({
+      let label = nonLocalizedHeaders.includes(column)
+          ? stringMap[column] || column
+          : L10N.getStr(`netmonitor.toolbar.${stringMap[column] || column}`);
+      let entry = {
         id: `request-list-header-${column}-toggle`,
-        label: L10N.getStr(`netmonitor.toolbar.${stringMap[column] || column}`),
+        label,
         type: "checkbox",
         checked: shown,
         click: () => this.toggleColumn(column),
         // We don't want to allow hiding the last visible column
         disabled: onlyOneColumn && shown,
-      }));
+      };
+      subMenuMap.hasOwnProperty(column) ?
+        subMenu[subMenuMap[column]].push(entry) :
+        menu.push(entry);
     }
 
-    menu.append(new MenuItem({ type: "separator" }));
+    menu.push({ type: "separator" });
+    menu.push({
+      label: L10N.getStr("netmonitor.toolbar.timings"),
+      submenu: subMenu.timings,
+    });
+    menu.push({
+      label: L10N.getStr("netmonitor.toolbar.responseHeaders"),
+      submenu: subMenu.responseHeaders,
+    });
 
-    menu.append(new MenuItem({
+    menu.push({ type: "separator" });
+    menu.push({
       id: "request-list-header-reset-columns",
       label: L10N.getStr("netmonitor.toolbar.resetColumns"),
       click: () => this.resetColumns(),
-    }));
+    });
 
-    menu.popup(screenX, screenY, { doc: window.parent.document });
-    return menu;
+    return showMenu(event, menu);
   }
 }
 

@@ -4,11 +4,10 @@
 
 "use strict";
 
-const promise = require("promise");
 const {AddonManager} = require("resource://gre/modules/AddonManager.jsm");
 const Services = require("Services");
 const {getJSON} = require("devtools/client/shared/getjson");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/shared/old-event-emitter");
 
 const ADDONS_URL = "devtools.webide.addonsURL";
 
@@ -51,24 +50,24 @@ AddonManager.addAddonListener(addonsListener);
 var GetAvailableAddons_promise = null;
 var GetAvailableAddons = exports.GetAvailableAddons = function () {
   if (!GetAvailableAddons_promise) {
-    let deferred = promise.defer();
-    GetAvailableAddons_promise = deferred.promise;
-    let addons = {
-      simulators: [],
-      adb: null
-    };
-    getJSON(ADDONS_URL).then(json => {
-      for (let stability in json) {
-        for (let version of json[stability]) {
-          addons.simulators.push(new SimulatorAddon(stability, version));
+    GetAvailableAddons_promise = new Promise((resolve, reject) => {
+      let addons = {
+        simulators: [],
+        adb: null
+      };
+      getJSON(ADDONS_URL).then(json => {
+        for (let stability in json) {
+          for (let version of json[stability]) {
+            addons.simulators.push(new SimulatorAddon(stability, version));
+          }
         }
-      }
-      addons.adb = new ADBAddon();
-      addons.adapters = new AdaptersAddon();
-      deferred.resolve(addons);
-    }, e => {
-      GetAvailableAddons_promise = null;
-      deferred.reject(e);
+        addons.adb = new ADBAddon();
+        addons.adapters = new AdaptersAddon();
+        resolve(addons);
+      }, e => {
+        GetAvailableAddons_promise = null;
+        reject(e);
+      });
     });
   }
   return GetAvailableAddons_promise;

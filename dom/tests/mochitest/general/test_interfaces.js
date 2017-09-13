@@ -29,6 +29,8 @@ var ecmaGlobals =
     "ArrayBuffer",
     "Atomics",
     "Boolean",
+    {name: "ByteLengthQueuingStrategy", disabled: !SpecialPowers.Cu.getJSTestingFunctions().streamsAreEnabled()},
+    {name: "CountQueuingStrategy", disabled: !SpecialPowers.Cu.getJSTestingFunctions().streamsAreEnabled()},
     "DataView",
     "Date",
     "Error",
@@ -44,8 +46,7 @@ var ecmaGlobals =
     "Int32Array",
     "Int8Array",
     "InternalError",
-    {name: "Intl", nonReleaseAndroid: true, android: false},
-    "Iterator",
+    "Intl",
     "JSON",
     "Map",
     "Math",
@@ -55,6 +56,7 @@ var ecmaGlobals =
     "Promise",
     "Proxy",
     "RangeError",
+    {name: "ReadableStream", disabled: !SpecialPowers.Cu.getJSTestingFunctions().streamsAreEnabled()},
     "ReferenceError",
     "Reflect",
     "RegExp",
@@ -99,6 +101,10 @@ var legacyMozPrefixedInterfaces =
 // IMPORTANT: Do not change the list below without review from a DOM peer!
 var interfaceNamesInGlobalScope =
   [
+// IMPORTANT: Do not change this list without review from a DOM peer!
+    {name: "AbortController", nightly: true},
+// IMPORTANT: Do not change this list without review from a DOM peer!
+    {name: "AbortSignal", nightly: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "AnalyserNode",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -188,15 +194,13 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "CloseEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    "CommandEvent",
+    {name: "CommandEvent", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "Comment",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "CompositionEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "ConstantSourceNode",
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    "Controllers",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "ConvolverNode",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -382,9 +386,9 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "GamepadEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "GamepadHapticActuator", release: false},
+    "GamepadHapticActuator",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "GamepadPose", release: false},
+    "GamepadPose",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "HashChangeEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -395,8 +399,6 @@ var interfaceNamesInGlobalScope =
     "HTMLAllCollection",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "HTMLAnchorElement",
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    "HTMLAppletElement",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "HTMLAreaElement",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -414,7 +416,7 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "HTMLCollection",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    "HTMLContentElement",
+    {name: "HTMLContentElement", stylo: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "HTMLDataElement",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -512,7 +514,7 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "HTMLSelectElement",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    "HTMLShadowElement",
+    {name: "HTMLShadowElement", stylo: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "HTMLSourceElement",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -596,9 +598,9 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "InstallTrigger",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "IntersectionObserver", disabled: true},
+    "IntersectionObserver",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "IntersectionObserverEntry", disabled: true},
+    "IntersectionObserverEntry",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "KeyEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -641,6 +643,8 @@ var interfaceNamesInGlobalScope =
     "MediaQueryListEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "MediaRecorder",
+// IMPORTANT: Do not change this list without review from a DOM peer!
+    "MediaRecorderErrorEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "MediaSource",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -750,16 +754,13 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "PluginArray",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "PointerEvent", nightly: true, desktop: true, windows: true},
+    {name: "PointerEvent", nightly: true, desktop: true, android: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "PopStateEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "PopupBlockedEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "PopupBoxObject", xbl: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "PresentationDeviceInfoManager",
-     disabled: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "Presentation", desktop: false, release: false },
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -790,8 +791,6 @@ var interfaceNamesInGlobalScope =
     "RadioNodeList",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "Range",
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    "RecordErrorEvent",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "Rect",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -845,11 +844,11 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "ScopedCredentialInfo", disabled: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    "ShadowRoot", // Bogus, but the test harness forces it on.  See bug 1159768.
+    {name: "ShadowRoot", stylo: false}, // Bogus, but the test harness forces it on.  See bug 1159768.
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "SharedWorker",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    "SimpleGestureEvent",
+    {name: "SimpleGestureEvent", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "SimpleTest", xbl: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -1157,8 +1156,6 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "TreeContentView", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "TreeSelection", xbl: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
     "TreeWalker",
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "U2F", disabled: true},
@@ -1177,21 +1174,21 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "VideoStreamTrack",
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "VRDisplay", release: false},
+    {name: "VRDisplay", releaseNonWindows: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "VRDisplayCapabilities", release: false},
+    {name: "VRDisplayCapabilities", releaseNonWindows: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "VRDisplayEvent", release: false},
+    {name: "VRDisplayEvent", releaseNonWindows: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "VREyeParameters", release: false},
+    {name: "VREyeParameters", releaseNonWindows: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "VRFieldOfView", release: false},
+    {name: "VRFieldOfView", releaseNonWindows: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "VRFrameData", release: false},
+    {name: "VRFrameData", releaseNonWindows: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "VRPose", release: false},
+    {name: "VRPose", releaseNonWindows: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "VRStageParameters", release: false},
+    {name: "VRStageParameters", releaseNonWindows: false},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     "VTTCue",
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -1273,13 +1270,9 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "XULCheckboxElement", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "XULCommandDispatcher", xbl: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "XULCommandEvent", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "XULControlElement", xbl: true},
-// IMPORTANT: Do not change this list without review from a DOM peer!
-    {name: "XULControllers", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "XULDocument", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -1293,6 +1286,8 @@ var interfaceNamesInGlobalScope =
 // IMPORTANT: Do not change this list without review from a DOM peer!
     {name: "XULTreeBuilder", xbl: true},
 // IMPORTANT: Do not change this list without review from a DOM peer!
+    {name: "XULTreeBuilderObserver", xbl: true},
+// IMPORTANT: Do not change this list without review from a DOM peer!
   ];
 // IMPORTANT: Do not change the list above without review from a DOM peer!
 
@@ -1305,6 +1300,7 @@ function createInterfaceMap(isXBLScope) {
   var isWindows = /Windows/.test(navigator.oscpu);
   var isAndroid = navigator.userAgent.includes("Android");
   var isLinux = /Linux/.test(navigator.oscpu) && !isAndroid;
+  var isStylo = SpecialPowers.DOMWindowUtils.isStyledByServo;
   var isSecureContext = window.isSecureContext;
 
   var interfaceMap = {};
@@ -1318,13 +1314,14 @@ function createInterfaceMap(isXBLScope) {
         ok(!("pref" in entry), "Bogus pref annotation for " + entry.name);
         if ((entry.nightly === !isNightly) ||
             (entry.nightlyAndroid === !(isAndroid && isNightly) && isAndroid) ||
-            (entry.nonReleaseAndroid === !(isAndroid && !isRelease) && isAndroid) ||
             (entry.xbl === !isXBLScope) ||
             (entry.desktop === !isDesktop) ||
             (entry.windows === !isWindows) ||
+            (entry.releaseNonWindows === !isRelease && !isWindows) ||
             (entry.mac === !isMac) ||
             (entry.linux === !isLinux) ||
-            (entry.android === !isAndroid && !entry.nonReleaseAndroid && !entry.nightlyAndroid) ||
+            (entry.android === !isAndroid && !entry.nightlyAndroid) ||
+            (entry.stylo === !isStylo) ||
             (entry.release === !isRelease) ||
             (entry.isSecureContext === !isSecureContext) ||
             entry.disabled) {

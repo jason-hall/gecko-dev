@@ -2,22 +2,22 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
+// The ext-* files are imported into the same scopes.
+/* import-globals-from ext-browser.js */
+
 XPCOMUtils.defineLazyServiceGetter(this, "aboutNewTabService",
                                    "@mozilla.org/browser/aboutnewtab-service;1",
                                    "nsIAboutNewTabService");
-XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
-                                  "resource://gre/modules/AppConstants.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
                                   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 var {
-  SingletonEventManager,
   promiseObserved,
 } = ExtensionUtils;
 
-function onXULFrameLoaderCreated({target}) {
+const onXULFrameLoaderCreated = ({target}) => {
   target.messageManager.sendAsyncMessage("AllowScriptsToClose", {});
-}
+};
 
 this.windows = class extends ExtensionAPI {
   getAPI(context) {
@@ -37,7 +37,7 @@ this.windows = class extends ExtensionAPI {
           fire.async(windowTracker.getId(window));
         }).api(),
 
-        onFocusChanged: new SingletonEventManager(context, "windows.onFocusChanged", fire => {
+        onFocusChanged: new EventManager(context, "windows.onFocusChanged", fire => {
           // Keep track of the last windowId used to fire an onFocusChanged event
           let lastOnFocusChangedWindowId;
 
@@ -123,19 +123,19 @@ this.windows = class extends ExtensionAPI {
             }
             createData.incognito = incognito;
 
-            args.appendElement(tab, /* weak = */ false);
+            args.appendElement(tab);
           } else if (createData.url !== null) {
             if (Array.isArray(createData.url)) {
               let array = Cc["@mozilla.org/array;1"].createInstance(Ci.nsIMutableArray);
               for (let url of createData.url) {
-                array.appendElement(mkstr(url), /* weak = */ false);
+                array.appendElement(mkstr(url));
               }
-              args.appendElement(array, /* weak = */ false);
+              args.appendElement(array);
             } else {
-              args.appendElement(mkstr(createData.url), /* weak = */ false);
+              args.appendElement(mkstr(createData.url));
             }
           } else {
-            args.appendElement(mkstr(aboutNewTabService.newTabURL), /* weak = */ false);
+            args.appendElement(mkstr(aboutNewTabService.newTabURL));
           }
 
           let features = ["chrome"];
@@ -187,6 +187,9 @@ this.windows = class extends ExtensionAPI {
                                                "XULFrameLoaderCreated", onXULFrameLoaderCreated);
               }
             }
+            if (createData.titlePreface) {
+              win.setTitlePreface(createData.titlePreface);
+            }
             return win.convert({populate: true});
           });
         },
@@ -214,6 +217,11 @@ this.windows = class extends ExtensionAPI {
           }
 
           win.updateGeometry(updateInfo);
+
+          if (updateInfo.titlePreface) {
+            win.setTitlePreface(updateInfo.titlePreface);
+            win.window.gBrowser.updateTitlebar();
+          }
 
           // TODO: All the other properties, focused=false...
 

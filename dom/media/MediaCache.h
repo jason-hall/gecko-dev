@@ -7,12 +7,12 @@
 #ifndef MediaCache_h_
 #define MediaCache_h_
 
-#include "nsTArray.h"
-#include "nsCOMPtr.h"
-#include "nsHashKeys.h"
-#include "nsTHashtable.h"
 #include "Intervals.h"
 #include "mozilla/UniquePtr.h"
+#include "nsCOMPtr.h"
+#include "nsHashKeys.h"
+#include "nsTArray.h"
+#include "nsTHashtable.h"
 
 class nsIPrincipal;
 
@@ -198,15 +198,16 @@ public:
   MediaCacheStream(ChannelMediaResource* aClient, bool aIsPrivateBrowsing);
   ~MediaCacheStream();
 
-  // Set up this stream with the cache. Can fail on OOM. One
-  // of InitAsClone or Init must be called before any other method on
-  // this class. Does nothing if already initialized.
-  nsresult Init();
+  // Set up this stream with the cache. Can fail on OOM.
+  // aContentLength is the content length if known, otherwise -1.
+  // Exactly one of InitAsClone or Init must be called before any other method
+  // on this class. Does nothing if already initialized.
+  nsresult Init(int64_t aContentLength);
 
   // Set up this stream with the cache, assuming it's for the same data
-  // as the aOriginal stream. Can fail on OOM. Exactly one
-  // of InitAsClone or Init must be called before any other method on
-  // this class. Does nothing if already initialized.
+  // as the aOriginal stream. Can fail on OOM.
+  // Exactly one of InitAsClone or Init must be called before any other method
+  // on this class. Does nothing if already initialized.
   nsresult InitAsClone(MediaCacheStream* aOriginal);
 
   // These are called on the main thread.
@@ -231,11 +232,6 @@ public:
   // Get the principal for this stream. Anything accessing the contents of
   // this stream must have a principal that subsumes this principal.
   nsIPrincipal* GetCurrentPrincipal() { return mPrincipal; }
-  // Ensure a global media cache update has run with this stream present.
-  // This ensures the cache has had a chance to suspend or unsuspend this stream.
-  // Called only on main thread. This can change the state of streams, fire
-  // notifications, etc.
-  void EnsureCacheUpdate();
 
   // These callbacks are called on the main thread by the client
   // when data has been received via the channel.
@@ -348,6 +344,8 @@ public:
   nsresult ReadAt(int64_t aOffset, char* aBuffer,
                   uint32_t aCount, uint32_t* aBytes);
 
+  void ThrottleReadahead(bool bThrottle);
+
   size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const;
 
 private:
@@ -427,20 +425,15 @@ private:
   // If |aNotifyAll| is true, this function will wake up readers who may be
   // waiting on the media cache monitor. Called on the main thread only.
   void FlushPartialBlockInternal(bool aNotify, ReentrantMonitorAutoEnter& aReentrantMonitor);
-  // A helper function to do the work of closing the stream. Assumes
-  // that the cache monitor is held. Main thread only.
-  // aReentrantMonitor is the nsAutoReentrantMonitor wrapper holding the cache monitor.
-  // This is used to NotifyAll to wake up threads that might be
-  // blocked on reading from this stream.
-  void CloseInternal(ReentrantMonitorAutoEnter& aReentrantMonitor);
   // Update mPrincipal given that data has been received from aPrincipal
   bool UpdatePrincipal(nsIPrincipal* aPrincipal);
+
+  // Instance of MediaCache to use with this MediaCacheStream.
+  RefPtr<MediaCache> mMediaCache;
 
   // These fields are main-thread-only.
   ChannelMediaResource*  mClient;
   nsCOMPtr<nsIPrincipal> mPrincipal;
-  // Set to true when Init or InitAsClone has been called
-  bool                   mInitialized;
   // Set to true when MediaCache::Update() has finished while this stream
   // was present.
   bool                   mHasHadUpdate;
@@ -508,13 +501,14 @@ private:
   // to wait here so we can write back a complete block. The first
   // mChannelOffset%BLOCK_SIZE bytes have been filled in with good data,
   // the rest are garbage.
-  // Use int64_t so that the data is well-aligned.
   // Heap allocate this buffer since the exact power-of-2 will cause allocation
   // slop when combined with the rest of the object members.
-  UniquePtr<int64_t[]> mPartialBlockBuffer;
+  UniquePtr<uint8_t[]> mPartialBlockBuffer = MakeUnique<uint8_t[]>(BLOCK_SIZE);
 
   // True if associated with a private browsing window.
   const bool mIsPrivateBrowsing;
+
+  bool mThrottleReadahead = false;
 };
 
 } // namespace mozilla

@@ -21,6 +21,8 @@
   locale/@AB_CD@/global/aboutSupport.properties         (%chrome/global/aboutSupport.properties)
   locale/@AB_CD@/global/aboutTelemetry.dtd              (%chrome/global/aboutTelemetry.dtd)
   locale/@AB_CD@/global/aboutTelemetry.properties       (%chrome/global/aboutTelemetry.properties)
+  locale/@AB_CD@/global/aboutUrlClassifier.dtd          (%chrome/global/aboutUrlClassifier.dtd)
+  locale/@AB_CD@/global/aboutUrlClassifier.properties   (%chrome/global/aboutUrlClassifier.properties)
   locale/@AB_CD@/global/aboutWebrtc.properties          (%chrome/global/aboutWebrtc.properties)
   locale/@AB_CD@/global/autocomplete.properties         (%chrome/global/autocomplete.properties)
   locale/@AB_CD@/global/appPicker.dtd                   (%chrome/global/appPicker.dtd)
@@ -57,7 +59,6 @@
   locale/@AB_CD@/global/finddialog.properties           (%chrome/global/finddialog.properties)
 #endif
   locale/@AB_CD@/global/globalKeys.dtd                  (%chrome/global/globalKeys.dtd)
-  locale/@AB_CD@/global/headsUpDisplay.properties       (%chrome/global/headsUpDisplay.properties)
   locale/@AB_CD@/global/intl.css                        (%chrome/global/intl.css)
   locale/@AB_CD@/global/intl.properties                 (%chrome/global/intl.properties)
   locale/@AB_CD@/global/keys.properties                 (%chrome/global/keys.properties)
@@ -90,7 +91,9 @@
   locale/@AB_CD@/global/wizard.properties               (%chrome/global/wizard.properties)
   locale/@AB_CD@/global/crashes.dtd                     (%crashreporter/crashes.dtd)
   locale/@AB_CD@/global/crashes.properties              (%crashreporter/crashes.properties)
-% locale global-platform @AB_CD@ %locale/@AB_CD@/global-platform/
+% locale global-platform @AB_CD@ %locale/@AB_CD@/global-platform/unix/ os=LikeUnix os=Android
+% locale global-platform @AB_CD@ %locale/@AB_CD@/global-platform/mac/ os=Darwin
+% locale global-platform @AB_CD@ %locale/@AB_CD@/global-platform/win/ os=WINNT
   locale/@AB_CD@/global-platform/mac/platformKeys.properties  (%chrome/global-platform/mac/platformKeys.properties)
   locale/@AB_CD@/global-platform/unix/platformKeys.properties (%chrome/global-platform/unix/platformKeys.properties)
   locale/@AB_CD@/global-platform/win/platformKeys.properties  (%chrome/global-platform/win/platformKeys.properties)

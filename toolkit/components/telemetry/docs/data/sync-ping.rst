@@ -18,10 +18,12 @@ Structure:
       ... common ping data
       payload: {
         version: 1,
+        os : { ... }, // os data from the current telemetry environment. OS specific, but typically includes name, version and locale.
         discarded: <integer count> // Number of syncs discarded -- left out if zero.
         why: <string>, // Why did we submit the ping? Either "shutdown", "schedule", or "idchanged".
         uid: <string>, // Hashed FxA unique ID, or string of 32 zeros. If this changes between syncs, the payload is submitted.
         deviceID: <string>, // Hashed FxA Device ID, hex string of 64 characters, not included if the user is not logged in. If this changes between syncs, the payload is submitted.
+        sessionStartDate: <ISO date>, // hourly precision, ISO date in local time
         // Array of recorded syncs. The ping is not submitted if this would be empty
         syncs: [{
           when: <integer milliseconds since epoch>,
@@ -191,6 +193,14 @@ Events in the "sync" ping
 The sync ping includes events in the same format as they are included in the
 main ping, see :ref:`eventtelemetry`.
 
+All events submitted as part of the sync ping which already include the "extra"
+object (the 6th parameter of the event array described in the event telemetry
+documentation) may also include a "serverTime" parameter, which the most recent
+unix timestamp sent from the sync server (as a string). This arrives in the
+``X-Weave-Timestamp`` HTTP header, and may be omitted in cases where the client
+has not yet made a request to the server, or doesn't have it for any other
+reason. It is included to improve flow analysis across multiple clients.
+
 Every event recorded in this ping will have a category of ``sync``. The following
 events are defined, categorized by the event method.
 
@@ -207,6 +217,7 @@ client, or opening a new URL.
 
   - deviceID: A GUID which identifies the device the command is being sent to.
   - flowID: A GUID which uniquely identifies this command invocation.
+  - serverTime: (optional) Most recent server timestamp, as described above.
 
 processcommand
 ~~~~~~~~~~~~~~
@@ -222,3 +233,4 @@ client. This is logically the "other end" of ``sendcommand``.
   - flowID: A GUID which uniquely identifies this command invocation. The value
             for this GUID will be the same as the flowID sent to the client via
             ``sendcommand``.
+  - serverTime: (optional) Most recent server timestamp, as described above.

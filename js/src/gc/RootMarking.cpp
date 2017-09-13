@@ -252,6 +252,7 @@ PropertyDescriptor::trace(JSTracer* trc)
 }
 
 void
+
 js::gc::GCRuntime::traceRuntimeForMinorGC(JSTracer* trc, AutoLockForExclusiveAccess& lock)
 {
     // Note that we *must* trace the runtime during the SHUTDOWN_GC's minor GC
@@ -261,10 +262,9 @@ js::gc::GCRuntime::traceRuntimeForMinorGC(JSTracer* trc, AutoLockForExclusiveAcc
     // the map. And we can reach its trace function despite having finished the
     // roots via the edges stored by the pre-barrier verifier when we finish
     // the verifier for the last time.
-    gcstats::AutoPhase ap(stats(), gcstats::PHASE_MARK_ROOTS);
+    gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_ROOTS);
 
-    // FIXME: As per bug 1298816 comment 12, we should be able to remove this.
-    jit::JitRuntime::TraceJitcodeGlobalTable(trc);
+    jit::JitRuntime::TraceJitcodeGlobalTableForMinorGC(trc);
 
     traceRuntimeCommon(trc, TraceRuntime, lock);
 }
@@ -277,7 +277,7 @@ js::TraceRuntime(JSTracer* trc)
     JSRuntime* rt = trc->runtime();
     EvictAllNurseries(rt);
     AutoPrepareForTracing prep(TlsContext.get(), WithAtoms);
-    gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PHASE_TRACE_HEAP);
+    gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
     rt->gc.traceRuntime(trc, prep.session().lock);
 }
 
@@ -286,7 +286,7 @@ js::gc::GCRuntime::traceRuntime(JSTracer* trc, AutoLockForExclusiveAccess& lock)
 {
     MOZ_ASSERT(!rt->isBeingDestroyed());
 
-    gcstats::AutoPhase ap(stats(), gcstats::PHASE_MARK_ROOTS);
+    gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_ROOTS);
     traceRuntimeAtoms(trc, lock);
     traceRuntimeCommon(trc, TraceRuntime, lock);
 }
@@ -294,7 +294,7 @@ js::gc::GCRuntime::traceRuntime(JSTracer* trc, AutoLockForExclusiveAccess& lock)
 void
 js::gc::GCRuntime::traceRuntimeAtoms(JSTracer* trc, AutoLockForExclusiveAccess& lock)
 {
-    gcstats::AutoPhase ap(stats(), gcstats::PHASE_MARK_RUNTIME_DATA);
+    gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_RUNTIME_DATA);
     TracePermanentAtoms(trc);
     TraceAtoms(trc, lock);
     TraceWellKnownSymbols(trc);
@@ -308,14 +308,13 @@ js::gc::GCRuntime::traceRuntimeCommon(JSTracer* trc, TraceOrMarkRuntime traceOrM
     MOZ_ASSERT(!TlsContext.get()->suppressGC);
 
     {
-        gcstats::AutoPhase ap(stats(), gcstats::PHASE_MARK_STACK);
+        gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_STACK);
 
         JSContext* cx = TlsContext.get();
         for (const CooperatingContext& target : rt->cooperatingContexts()) {
             // Trace active interpreter and JIT stack roots.
             TraceInterpreterActivations(cx, target, trc);
             jit::TraceJitActivations(cx, target, trc);
-            wasm::TraceActivations(cx, target, trc);
 
             // Trace legacy C stack roots.
             AutoGCRooter::traceAll(target, trc);
@@ -348,15 +347,12 @@ js::gc::GCRuntime::traceRuntimeCommon(JSTracer* trc, TraceOrMarkRuntime traceOrM
     for (CompartmentsIter c(rt, SkipAtoms); !c.done(); c.next())
         c->traceRoots(trc, traceOrMark);
 
-    // Trace the Gecko Profiler.
-    rt->geckoProfiler().trace(trc);
-
     // Trace helper thread roots.
     HelperThreadState().trace(trc);
 
     // Trace the embedding's black and gray roots.
     if (!JS::CurrentThreadIsHeapMinorCollecting()) {
-        gcstats::AutoPhase ap(stats(), gcstats::PHASE_MARK_EMBEDDING);
+        gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::MARK_EMBEDDING);
 
         /*
          * The embedding can register additional roots here.
@@ -417,7 +413,7 @@ js::gc::GCRuntime::finishRoots()
 
     AssertNoRootsTracer trc(rt, TraceWeakMapKeysValues);
     AutoPrepareForTracing prep(TlsContext.get(), WithAtoms);
-    gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PHASE_TRACE_HEAP);
+    gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::TRACE_HEAP);
     traceRuntime(&trc, prep.session().lock);
 
     // Restore the wrapper tracing so that we leak instead of leaving dangling
@@ -426,12 +422,14 @@ js::gc::GCRuntime::finishRoots()
 #endif // DEBUG
 }
 
-struct SetMaybeAliveFunctor {
-    template <typename T> void operator()(T* t) { SetMaybeAliveFlag(t); }
-};
-
 JS_PUBLIC_API(void)
 JS::AddPersistentRoot(JS::RootingContext* cx, RootKind kind, PersistentRooted<void*>* root)
 {
     static_cast<JSContext*>(cx)->runtime()->heapRoots.ref()[kind].insertBack(root);
+}
+
+JS_PUBLIC_API(void)
+JS::AddPersistentRoot(JSRuntime* rt, RootKind kind, PersistentRooted<void*>* root)
+{
+    rt->heapRoots.ref()[kind].insertBack(root);
 }

@@ -26,7 +26,7 @@ use dom::virtualmethods::VirtualMethods;
 use dom_struct::dom_struct;
 use encoding::label::encoding_from_whatwg_label;
 use encoding::types::{DecoderTrap, EncodingRef};
-use html5ever_atoms::LocalName;
+use html5ever::{LocalName, Prefix};
 use ipc_channel::ipc;
 use ipc_channel::router::ROUTER;
 use js::jsval::UndefinedValue;
@@ -34,11 +34,17 @@ use net_traits::{FetchMetadata, FetchResponseListener, Metadata, NetworkError};
 use net_traits::request::{CorsSettings, CredentialsMode, Destination, RequestInit, RequestMode, Type as RequestType};
 use network_listener::{NetworkListener, PreInvoke};
 use servo_atoms::Atom;
+use servo_config::opts;
 use servo_url::ServoUrl;
 use std::ascii::AsciiExt;
 use std::cell::Cell;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use style::str::{HTML_SPACE_CHARACTERS, StaticStringVec};
+use uuid::Uuid;
 
 #[dom_struct]
 pub struct HTMLScriptElement {
@@ -63,7 +69,7 @@ pub struct HTMLScriptElement {
 }
 
 impl HTMLScriptElement {
-    fn new_inherited(local_name: LocalName, prefix: Option<DOMString>, document: &Document,
+    fn new_inherited(local_name: LocalName, prefix: Option<Prefix>, document: &Document,
                      creator: ElementCreator) -> HTMLScriptElement {
         HTMLScriptElement {
             htmlelement:
@@ -77,7 +83,7 @@ impl HTMLScriptElement {
     }
 
     #[allow(unrooted_must_root)]
-    pub fn new(local_name: LocalName, prefix: Option<DOMString>, document: &Document,
+    pub fn new(local_name: LocalName, prefix: Option<Prefix>, document: &Document,
                creator: ElementCreator) -> Root<HTMLScriptElement> {
         Node::reflect_node(box HTMLScriptElement::new_inherited(local_name, prefix, document, creator),
                            document,
@@ -247,7 +253,7 @@ fn fetch_a_classic_script(script: &HTMLScriptElement,
             Some(CorsSettings::Anonymous) => CredentialsMode::CredentialsSameOrigin,
             _ => CredentialsMode::Include,
         },
-        origin: doc.url(),
+        origin: doc.origin().immutable().clone(),
         pipeline_id: Some(script.global().pipeline_id()),
         referrer_url: Some(doc.url()),
         referrer_policy: doc.get_referrer_policy(),
@@ -336,9 +342,11 @@ impl HTMLScriptElement {
             return;
         }
 
-        // TODO(#4577): Step 11: CSP.
+        // TODO: Step 11: nomodule content attribute
 
-        // Step 12.
+        // TODO(#4577): Step 12: CSP.
+
+        // Step 13.
         let for_attribute = element.get_attribute(&ns!(), &local_name!("for"));
         let event_attribute = element.get_attribute(&ns!(), &local_name!("event"));
         match (for_attribute.r(), event_attribute.r()) {
@@ -358,19 +366,19 @@ impl HTMLScriptElement {
             (_, _) => (),
         }
 
-        // Step 13.
+        // Step 14.
         let encoding = element.get_attribute(&ns!(), &local_name!("charset"))
                               .and_then(|charset| encoding_from_whatwg_label(&charset.value()))
                               .unwrap_or_else(|| doc.encoding());
 
-        // Step 14.
+        // Step 15.
         let cors_setting = cors_setting_for_element(element);
 
-        // TODO: Step 15: Module script credentials mode.
+        // TODO: Step 16: Module script credentials mode.
 
-        // TODO: Step 16: Nonce.
+        // TODO: Step 17: Nonce.
 
-        // Step 17: Integrity metadata.
+        // Step 18: Integrity metadata.
         let im_attribute = element.get_attribute(&ns!(), &local_name!("integrity"));
         let integrity_val = im_attribute.r().map(|a| a.value());
         let integrity_metadata = match integrity_val {
@@ -378,26 +386,26 @@ impl HTMLScriptElement {
             None => "",
         };
 
-        // TODO: Step 18: parser state.
+        // TODO: Step 19: parser state.
 
-        // TODO: Step 19: environment settings object.
+        // TODO: Step 20: environment settings object.
 
         let base_url = doc.base_url();
         if let Some(src) = element.get_attribute(&ns!(), &local_name!("src")) {
-            // Step 20.
+            // Step 21.
 
-            // Step 20.1.
+            // Step 21.1.
             let src = src.value();
 
-            // Step 20.2.
+            // Step 21.2.
             if src.is_empty() {
                 self.queue_error_event();
                 return;
             }
 
-            // Step 20.3: The "from an external file"" flag is stored in ClassicScript.
+            // Step 21.3: The "from an external file"" flag is stored in ClassicScript.
 
-            // Step 20.4-20.5.
+            // Step 21.4-21.5.
             let url = match base_url.join(&src) {
                 Ok(url) => url,
                 Err(_) => {
@@ -407,25 +415,25 @@ impl HTMLScriptElement {
                 },
             };
 
-            // Preparation for step 22.
+            // Preparation for step 23.
             let kind = if element.has_attribute(&local_name!("defer")) && was_parser_inserted && !async {
-                // Step 22.a: classic, has src, has defer, was parser-inserted, is not async.
+                // Step 23.a: classic, has src, has defer, was parser-inserted, is not async.
                 ExternalScriptKind::Deferred
             } else if was_parser_inserted && !async {
-                // Step 22.b: classic, has src, was parser-inserted, is not async.
+                // Step 23.c: classic, has src, was parser-inserted, is not async.
                 ExternalScriptKind::ParsingBlocking
             } else if !async && !self.non_blocking.get() {
-                // Step 22.c: classic, has src, is not async, is not non-blocking.
+                // Step 23.d: classic, has src, is not async, is not non-blocking.
                 ExternalScriptKind::AsapInOrder
             } else {
-                // Step 22.d: classic, has src.
+                // Step 23.f: classic, has src.
                 ExternalScriptKind::Asap
             };
 
-            // Step 20.6.
+            // Step 21.6.
             fetch_a_classic_script(self, kind, url, cors_setting, integrity_metadata.to_owned(), encoding);
 
-            // Step 22.
+            // Step 23.
             match kind {
                 ExternalScriptKind::Deferred => doc.add_deferred_script(self),
                 ExternalScriptKind::ParsingBlocking => doc.set_pending_parsing_blocking_script(self, None),
@@ -433,20 +441,63 @@ impl HTMLScriptElement {
                 ExternalScriptKind::Asap => doc.add_asap_script(self),
             }
         } else {
-            // Step 21.
+            // Step 22.
             assert!(!text.is_empty());
             let result = Ok(ClassicScript::internal(text, base_url));
 
-            // Step 22.
+            // Step 23.
             if was_parser_inserted &&
                doc.get_current_parser().map_or(false, |parser| parser.script_nesting_level() <= 1) &&
                doc.get_script_blocking_stylesheets_count() > 0 {
-                // Step 22.e: classic, has no src, was parser-inserted, is blocked on stylesheet.
+                // Step 23.h: classic, has no src, was parser-inserted, is blocked on stylesheet.
                 doc.set_pending_parsing_blocking_script(self, Some(result));
             } else {
-                // Step 22.f: otherwise.
+                // Step 23.i: otherwise.
                 self.execute(result);
             }
+        }
+    }
+
+    fn unminify_js(&self, script: &mut ClassicScript) {
+        if !opts::get().unminify_js {
+            return;
+        }
+
+        match Command::new("js-beautify")
+                      .stdin(Stdio::piped())
+                      .stdout(Stdio::piped())
+                      .spawn() {
+            Err(_) => {
+                warn!("Failed to execute js-beautify. Will store unmodified script");
+            },
+            Ok(process) => {
+                let mut script_content = String::from(script.text.clone());
+                let _ = process.stdin.unwrap().write_all(script_content.as_bytes());
+                script_content.clear();
+                let _ = process.stdout.unwrap().read_to_string(&mut script_content);
+
+                script.text = DOMString::from(script_content);
+            },
+        }
+
+        let path = PathBuf::from(window_from_node(self).unminified_js_dir().unwrap());
+        let path = if script.external {
+            // External script.
+            let path_parts = script.url.path_segments().unwrap();
+            match path_parts.last() {
+                Some(script_name) => path.join(script_name),
+                None => path.join(Uuid::new_v4().to_string()),
+            }
+        } else {
+            // Inline script.
+            path.join(Uuid::new_v4().to_string())
+        };
+
+        debug!("script will be stored in {:?}", path);
+
+        match File::create(&path) {
+            Ok(mut file) => file.write_all(script.text.as_bytes()).unwrap(),
+            Err(why) => warn!("Could not store script {:?}", why),
         }
     }
 
@@ -458,7 +509,7 @@ impl HTMLScriptElement {
             return;
         }
 
-        let script = match result {
+        let mut script = match result {
             // Step 2.
             Err(e) => {
                 warn!("error loading script {:?}", e);
@@ -468,6 +519,8 @@ impl HTMLScriptElement {
 
             Ok(script) => script,
         };
+
+        self.unminify_js(&mut script);
 
         // Step 3.
         let neutralized_doc = if script.external {

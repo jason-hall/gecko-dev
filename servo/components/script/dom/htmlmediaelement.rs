@@ -19,7 +19,7 @@ use dom::bindings::reflector::DomObject;
 use dom::bindings::str::DOMString;
 use dom::document::Document;
 use dom::element::{Element, AttributeMutation};
-use dom::event::{Event, EventBubbles, EventCancelable};
+use dom::eventtarget::EventTarget;
 use dom::htmlaudioelement::HTMLAudioElement;
 use dom::htmlelement::HTMLElement;
 use dom::htmlsourceelement::HTMLSourceElement;
@@ -28,14 +28,14 @@ use dom::mediaerror::MediaError;
 use dom::node::{window_from_node, document_from_node, Node, UnbindContext};
 use dom::virtualmethods::VirtualMethods;
 use dom_struct::dom_struct;
-use html5ever_atoms::LocalName;
+use html5ever::{LocalName, Prefix};
 use ipc_channel::ipc;
 use ipc_channel::router::ROUTER;
+use microtask::{Microtask, MicrotaskRunnable};
 use net_traits::{FetchResponseListener, FetchMetadata, Metadata, NetworkError};
 use net_traits::request::{CredentialsMode, Destination, RequestInit, Type as RequestType};
 use network_listener::{NetworkListener, PreInvoke};
 use script_thread::{Runnable, ScriptThread};
-use servo_atoms::Atom;
 use servo_url::ServoUrl;
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
@@ -110,7 +110,12 @@ impl FetchResponseListener for HTMLMediaElementContext {
         // https://html.spec.whatwg.org/multipage/#concept-media-load-resource step 4,
         // => "If mode is remote" step 2
         if time::get_time() > self.next_progress_event {
-            elem.queue_fire_simple_event("progress");
+            let window = window_from_node(&*elem);
+            window.dom_manipulation_task_source().queue_simple_event(
+                elem.upcast(),
+                atom!("progress"),
+                &window,
+            );
             self.next_progress_event = time::get_time() + Duration::milliseconds(350);
         }
     }
@@ -128,11 +133,11 @@ impl FetchResponseListener for HTMLMediaElementContext {
         else if status.is_ok() {
             elem.change_ready_state(HAVE_ENOUGH_DATA);
 
-            elem.fire_simple_event("progress");
+            elem.upcast::<EventTarget>().fire_event(atom!("progress"));
 
             elem.network_state.set(NETWORK_IDLE);
 
-            elem.fire_simple_event("suspend");
+            elem.upcast::<EventTarget>().fire_event(atom!("suspend"));
         }
         // => "If the connection is interrupted after some media data has been received..."
         else if elem.ready_state.get() != HAVE_NOTHING {
@@ -146,7 +151,7 @@ impl FetchResponseListener for HTMLMediaElementContext {
             // TODO: Step 4 - update delay load flag
 
             // Step 5
-            elem.fire_simple_event("error");
+            elem.upcast::<EventTarget>().fire_event(atom!("error"));
         } else {
             // => "If the media data cannot be fetched at all..."
             elem.queue_dedicated_media_source_failure_steps();
@@ -200,7 +205,7 @@ impl HTMLMediaElementContext {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 pub struct VideoMedia {
     format: String,
     #[ignore_heap_size_of = "defined in time"]
@@ -227,7 +232,7 @@ pub struct HTMLMediaElement {
 
 impl HTMLMediaElement {
     pub fn new_inherited(tag_name: LocalName,
-                         prefix: Option<DOMString>, document: &Document)
+                         prefix: Option<Prefix>, document: &Document)
                          -> HTMLMediaElement {
         HTMLMediaElement {
             htmlelement:
@@ -266,7 +271,7 @@ impl HTMLMediaElement {
     // https://html.spec.whatwg.org/multipage/#notify-about-playing
     fn notify_about_playing(&self) {
         // Step 1
-        self.fire_simple_event("playing");
+        self.upcast::<EventTarget>().fire_event(atom!("playing"));
         // TODO Step 2
     }
 
@@ -296,11 +301,11 @@ impl HTMLMediaElement {
 
         impl Runnable for Task {
             fn handler(self: Box<Task>) {
-                let elem = self.elem.root();
+                let target = Root::upcast::<EventTarget>(self.elem.root());
                 // 2.2.1
-                elem.fire_simple_event("timeupdate");
+                target.fire_event(atom!("timeupdate"));
                 // 2.2.2
-                elem.fire_simple_event("pause");
+                target.fire_event(atom!("pause"));
                 // TODO 2.2.3
             }
         }
@@ -312,21 +317,6 @@ impl HTMLMediaElement {
         let _ = win.dom_manipulation_task_source().queue(task, win.upcast());
     }
 
-    fn queue_fire_simple_event(&self, type_: &'static str) {
-        let win = window_from_node(self);
-        let task = box FireSimpleEventTask::new(self, type_);
-        let _ = win.dom_manipulation_task_source().queue(task, win.upcast());
-    }
-
-    fn fire_simple_event(&self, type_: &str) {
-        let window = window_from_node(self);
-        let event = Event::new(window.upcast(),
-                               Atom::from(type_),
-                               EventBubbles::DoesNotBubble,
-                               EventCancelable::NotCancelable);
-        event.fire(self.upcast());
-    }
-
     // https://html.spec.whatwg.org/multipage/#ready-states
     fn change_ready_state(&self, ready_state: u16) {
         let old_ready_state = self.ready_state.get();
@@ -336,12 +326,19 @@ impl HTMLMediaElement {
             return;
         }
 
+        let window = window_from_node(self);
+        let task_source = window.dom_manipulation_task_source();
+
         // Step 1
         match (old_ready_state, ready_state) {
             // previous ready state was HAVE_NOTHING, and the new ready state is
             // HAVE_METADATA
             (HAVE_NOTHING, HAVE_METADATA) => {
-                self.queue_fire_simple_event("loadedmetadata");
+                task_source.queue_simple_event(
+                    self.upcast(),
+                    atom!("loadedmetadata"),
+                    &window,
+                );
             }
 
             // previous ready state was HAVE_METADATA and the new ready state is
@@ -351,7 +348,11 @@ impl HTMLMediaElement {
             (HAVE_METADATA, HAVE_ENOUGH_DATA) => {
                 if self.first_data_load.get() {
                     self.first_data_load.set(false);
-                    self.queue_fire_simple_event("loadeddata");
+                    task_source.queue_simple_event(
+                        self.upcast(),
+                        atom!("loadeddata"),
+                        &window,
+                    );
                 }
             }
 
@@ -378,7 +379,11 @@ impl HTMLMediaElement {
             (HAVE_CURRENT_DATA, HAVE_FUTURE_DATA) |
             (HAVE_METADATA, HAVE_FUTURE_DATA) |
             (HAVE_NOTHING, HAVE_FUTURE_DATA) => {
-                self.queue_fire_simple_event("canplay");
+                task_source.queue_simple_event(
+                    self.upcast(),
+                    atom!("canplay"),
+                    &window,
+                );
 
                 if !self.Paused() {
                     self.queue_notify_about_playing();
@@ -388,7 +393,11 @@ impl HTMLMediaElement {
             // new ready state is HAVE_ENOUGH_DATA
             (_, HAVE_ENOUGH_DATA) => {
                 if old_ready_state <= HAVE_CURRENT_DATA {
-                    self.queue_fire_simple_event("canplay");
+                    task_source.queue_simple_event(
+                        self.upcast(),
+                        atom!("canplay"),
+                        &window,
+                    );
 
                     if !self.Paused() {
                         self.queue_notify_about_playing();
@@ -403,14 +412,22 @@ impl HTMLMediaElement {
                     self.paused.set(false);
                     // TODO step 2: show poster
                     // Step 3
-                    self.queue_fire_simple_event("play");
+                    task_source.queue_simple_event(
+                        self.upcast(),
+                        atom!("play"),
+                        &window,
+                    );
                     // Step 4
                     self.queue_notify_about_playing();
                     // Step 5
                     self.autoplaying.set(false);
                 }
 
-                self.queue_fire_simple_event("canplaythrough");
+                task_source.queue_simple_event(
+                    self.upcast(),
+                    atom!("canplaythrough"),
+                    &window,
+                );
             }
 
             _ => (),
@@ -429,7 +446,11 @@ impl HTMLMediaElement {
 
         // Step 4
         let doc = document_from_node(self);
-        ScriptThread::await_stable_state(ResourceSelectionTask::new(self, doc.base_url()));
+        let task = MediaElementMicrotask::ResourceSelectionTask {
+            elem: Root::from_ref(self),
+            base_url: doc.base_url()
+        };
+        ScriptThread::await_stable_state(Microtask::MediaElement(task));
     }
 
     // https://html.spec.whatwg.org/multipage/#concept-media-load-algorithm
@@ -455,7 +476,12 @@ impl HTMLMediaElement {
         self.network_state.set(NETWORK_LOADING);
 
         // Step 8
-        self.queue_fire_simple_event("loadstart");
+        let window = window_from_node(self);
+        window.dom_manipulation_task_source().queue_simple_event(
+            self.upcast(),
+            atom!("loadstart"),
+            &window,
+        );
 
         // Step 9
         match mode {
@@ -506,7 +532,12 @@ impl HTMLMediaElement {
                 self.network_state.set(NETWORK_IDLE);
 
                 // 4.1.2
-                self.queue_fire_simple_event("suspend");
+                let window = window_from_node(self);
+                window.dom_manipulation_task_source().queue_simple_event(
+                    self.upcast(),
+                    atom!("suspend"),
+                    &window,
+                );
 
                 // TODO 4.1.3 (delay load flag)
 
@@ -545,7 +576,7 @@ impl HTMLMediaElement {
                 destination: Destination::Media,
                 credentials_mode: CredentialsMode::Include,
                 use_url_credentials: true,
-                origin: document.url(),
+                origin: document.origin().immutable().clone(),
                 pipeline_id: Some(self.global().pipeline_id()),
                 referrer_url: Some(document.url()),
                 referrer_policy: document.get_referrer_policy(),
@@ -579,7 +610,7 @@ impl HTMLMediaElement {
         // TODO step 4 (show poster)
 
         // Step 5
-        self.fire_simple_event("error");
+        self.upcast::<EventTarget>().fire_event(atom!("error"));
 
         // TODO step 6 (resolve pending play promises)
         // TODO step 7 (delay load event)
@@ -595,16 +626,23 @@ impl HTMLMediaElement {
         self.generation_id.set(self.generation_id.get() + 1);
         // TODO reject pending play promises
 
+        let window = window_from_node(self);
+        let task_source = window.dom_manipulation_task_source();
+
         // Step 3
         let network_state = self.NetworkState();
         if network_state == NETWORK_LOADING || network_state == NETWORK_IDLE {
-            self.queue_fire_simple_event("abort");
+            task_source.queue_simple_event(
+                self.upcast(),
+                atom!("abort"),
+                &window,
+            );
         }
 
         // Step 4
         if network_state != NETWORK_EMPTY {
             // 4.1
-            self.queue_fire_simple_event("emptied");
+            task_source.queue_simple_event(self.upcast(), atom!("emptied"), &window);
 
             // TODO 4.2 (abort in-progress fetch)
 
@@ -716,14 +754,21 @@ impl HTMLMediaElementMethods for HTMLMediaElement {
 
             // TODO 7.2 (show poster)
 
+            let window = window_from_node(self);
+            let task_source = window.dom_manipulation_task_source();
+
             // 7.3
-            self.queue_fire_simple_event("play");
+            task_source.queue_simple_event(self.upcast(), atom!("play"), &window);
 
             // 7.4
             if state == HAVE_NOTHING ||
                state == HAVE_METADATA ||
                state == HAVE_CURRENT_DATA {
-                self.queue_fire_simple_event("waiting");
+                task_source.queue_simple_event(
+                    self.upcast(),
+                    atom!("waiting"),
+                    &window,
+                );
             } else {
                 self.queue_notify_about_playing();
             }
@@ -781,53 +826,37 @@ impl VirtualMethods for HTMLMediaElement {
         self.super_type().unwrap().unbind_from_tree(context);
 
         if context.tree_in_doc {
-            ScriptThread::await_stable_state(PauseIfNotInDocumentTask::new(self));
+            let task = MediaElementMicrotask::PauseIfNotInDocumentTask {
+                elem: Root::from_ref(self)
+            };
+            ScriptThread::await_stable_state(Microtask::MediaElement(task));
         }
     }
 }
 
-struct FireSimpleEventTask {
-    elem: Trusted<HTMLMediaElement>,
-    type_: &'static str,
+#[derive(HeapSizeOf, JSTraceable)]
+pub enum MediaElementMicrotask {
+    ResourceSelectionTask {
+        elem: Root<HTMLMediaElement>,
+        base_url: ServoUrl
+    },
+    PauseIfNotInDocumentTask {
+        elem: Root<HTMLMediaElement>,
+    }
 }
 
-impl FireSimpleEventTask {
-    fn new(target: &HTMLMediaElement, type_: &'static str) -> FireSimpleEventTask {
-        FireSimpleEventTask {
-            elem: Trusted::new(target),
-            type_: type_,
+impl MicrotaskRunnable for MediaElementMicrotask {
+    fn handler(&self) {
+        match self {
+            &MediaElementMicrotask::ResourceSelectionTask { ref elem, ref base_url } => {
+                elem.resource_selection_algorithm_sync(base_url.clone());
+            },
+            &MediaElementMicrotask::PauseIfNotInDocumentTask { ref elem } => {
+                if !elem.upcast::<Node>().is_in_doc() {
+                    elem.internal_pause_steps();
+                }
+            },
         }
-    }
-}
-
-impl Runnable for FireSimpleEventTask {
-    fn name(&self) -> &'static str { "FireSimpleEventTask" }
-
-    fn handler(self: Box<FireSimpleEventTask>) {
-        let elem = self.elem.root();
-        elem.fire_simple_event(self.type_);
-    }
-}
-
-struct ResourceSelectionTask {
-    elem: Trusted<HTMLMediaElement>,
-    base_url: ServoUrl,
-}
-
-impl ResourceSelectionTask {
-    fn new(elem: &HTMLMediaElement, url: ServoUrl) -> ResourceSelectionTask {
-        ResourceSelectionTask {
-            elem: Trusted::new(elem),
-            base_url: url,
-        }
-    }
-}
-
-impl Runnable for ResourceSelectionTask {
-    fn name(&self) -> &'static str { "ResourceSelectionTask" }
-
-    fn handler(self: Box<ResourceSelectionTask>) {
-        self.elem.root().resource_selection_algorithm_sync(self.base_url);
     }
 }
 
@@ -844,33 +873,8 @@ impl DedicatedMediaSourceFailureTask {
 }
 
 impl Runnable for DedicatedMediaSourceFailureTask {
-    fn name(&self) -> &'static str { "DedicatedMediaSourceFailureTask" }
-
     fn handler(self: Box<DedicatedMediaSourceFailureTask>) {
         self.elem.root().dedicated_media_source_failure();
-    }
-}
-
-struct PauseIfNotInDocumentTask {
-    elem: Trusted<HTMLMediaElement>,
-}
-
-impl PauseIfNotInDocumentTask {
-    fn new(elem: &HTMLMediaElement) -> PauseIfNotInDocumentTask {
-        PauseIfNotInDocumentTask {
-            elem: Trusted::new(elem),
-        }
-    }
-}
-
-impl Runnable for PauseIfNotInDocumentTask {
-    fn name(&self) -> &'static str { "PauseIfNotInDocumentTask" }
-
-    fn handler(self: Box<PauseIfNotInDocumentTask>) {
-        let elem = self.elem.root();
-        if !elem.upcast::<Node>().is_in_doc() {
-            elem.internal_pause_steps();
-        }
     }
 }
 

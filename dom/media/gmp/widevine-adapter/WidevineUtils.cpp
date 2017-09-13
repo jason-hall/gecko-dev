@@ -4,8 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "WidevineUtils.h"
-#include "WidevineDecryptor.h"
-#include <mozilla/SizePrintfMacros.h>
 
 #include "gmp-api/gmp-errors.h"
 #include <stdarg.h>
@@ -29,7 +27,7 @@ ToGMPErr(cdm::Status aStatus)
     case cdm::kSuccess: return GMPNoErr;
     case cdm::kNeedMoreData: return GMPGenericErr;
     case cdm::kNoKey: return GMPNoKeyErr;
-    case cdm::kSessionError: return GMPGenericErr;
+    case cdm::kInitializationError: return GMPGenericErr;
     case cdm::kDecryptError: return GMPCryptoErr;
     case cdm::kDecodeError: return GMPDecodeErr;
     case cdm::kDeferredInitialization: return GMPGenericErr;
@@ -63,24 +61,9 @@ void InitInputBuffer(const GMPEncryptedBufferMetadata* aCrypto,
   aInputBuffer.timestamp = aTimestamp;
 }
 
-CDMWrapper::CDMWrapper(cdm::ContentDecryptionModule_8* aCDM,
-                       WidevineDecryptor* aDecryptor)
-  : mCDM(aCDM)
-  , mDecryptor(aDecryptor)
-{
-  MOZ_ASSERT(mCDM);
-}
-
-CDMWrapper::~CDMWrapper()
-{
-  CDM_LOG("CDMWrapper destroying CDM=%p", mCDM);
-  mCDM->Destroy();
-  mCDM = nullptr;
-}
-
 WidevineBuffer::WidevineBuffer(size_t aSize)
 {
-  CDM_LOG("WidevineBuffer(size=%" PRIuSIZE ") created", aSize);
+  CDM_LOG("WidevineBuffer(size=%zu) created", aSize);
   mBuffer.SetLength(aSize);
 }
 

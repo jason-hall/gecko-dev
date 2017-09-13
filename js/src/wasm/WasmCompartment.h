@@ -28,6 +28,7 @@ class WasmActivation;
 namespace wasm {
 
 class Code;
+class CodeSegment;
 typedef Vector<Instance*, 0, SystemAllocPolicy> InstanceVector;
 
 // wasm::Compartment lives in JSCompartment and contains the wasm-related
@@ -39,7 +40,6 @@ class Compartment
 {
     InstanceVector instances_;
     volatile bool  mutatingInstances_;
-    size_t         interruptedCount_;
 
     friend class js::WasmActivation;
 
@@ -58,7 +58,6 @@ class Compartment
   public:
     explicit Compartment(Zone* zone);
     ~Compartment();
-    void trace(JSTracer* trc);
 
     // Before a WasmInstanceObject can be considered fully constructed and
     // valid, it must be registered with the Compartment. If this method fails,
@@ -77,14 +76,10 @@ class Compartment
     const InstanceVector& instances() const { return instances_; }
 
     // This methods returns the wasm::Code containing the given pc, if any
-    // exists in the compartment.
+    // exists in the compartment, and the segment for the tier in which the
+    // pc was found.
 
-    Code* lookupCode(const void* pc) const;
-
-    // The wasm::Compartment must be notified when execution is interrupted
-    // while executing in wasm code in this compartment.
-
-    void setInterrupted(bool interrupted);
+    const Code* lookupCode(const void* pc, const CodeSegment** segment = nullptr) const;
 
     // Ensure all Instances in this JSCompartment have profiling labels created.
 

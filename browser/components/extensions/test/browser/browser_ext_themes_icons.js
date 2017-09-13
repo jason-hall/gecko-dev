@@ -14,25 +14,10 @@ const ENCODED_IMAGE_DATA = "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmci
    */
 function verifyButtonProperties(selector, shouldHaveCustomStyling, message) {
   try {
-    let element;
-    // This selector is different than the others because it's the only
-    // toolbarbutton that we ship by default that has type="menu-button",
-    // which don't place a unique ID on the associated dropmarker-icon.
-    if (selector == "#bookmarks-menu-button > .toolbarbutton-menubutton-dropmarker > .dropmarker-icon") {
-      if (message.includes("panel")) {
-        // The dropmarker isn't shown in the menupanel.
-        return;
-      }
-      element = document.querySelector("#bookmarks-menu-button");
-      element = document.getAnonymousElementByAttribute(element, "class", "toolbarbutton-menubutton-dropmarker");
-      element = document.getAnonymousElementByAttribute(element, "class", "dropmarker-icon");
-    } else {
-      element = document.querySelector(selector);
-    }
-
+    let element = document.querySelector(selector);
     let listStyleImage = getComputedStyle(element).listStyleImage;
     info(`listStyleImage for fox.svg is ${listStyleImage}`);
-    is(listStyleImage.includes("fox.svg"), shouldHaveCustomStyling, message);
+    is(listStyleImage.includes("moz-extension:"), shouldHaveCustomStyling, message);
   } catch (ex) {
     ok(false, `Unable to verify ${selector}: ${ex}`);
   }
@@ -77,15 +62,15 @@ function checkButtons(icons, iconInfo, area) {
     let iconInfo = icons.find(arr => arr[0] == button[0]);
     if (iconInfo[1]) {
       verifyButtonWithCustomStyling(button[1],
-        `The ${button[1]} should have it's icon customized in the ${area}`);
+        `The ${button[1]} should have its icon customized in the ${area}`);
     } else {
       verifyButtonWithoutCustomStyling(button[1],
-        `The ${button[1]} should not have it's icon customized in the ${area}`);
+        `The ${button[1]} should not have its icon customized in the ${area}`);
     }
   }
 }
 
-function* runTestWithIcons(icons) {
+async function runTestWithIcons(icons) {
   const FRAME_COLOR = [71, 105, 91];
   const TAB_TEXT_COLOR = [207, 221, 192, .9];
   let manifest = {
@@ -112,10 +97,8 @@ function* runTestWithIcons(icons) {
   const ICON_INFO = [
     ["back", "#back-button"],
     ["forward", "#forward-button"],
-    ["reload", "#urlbar-reload-button"],
-    ["stop", "#urlbar-stop-button"],
-    ["bookmark_star", "#bookmarks-menu-button", "bookmarks-menu-button"],
-    ["bookmark_menu", "#bookmarks-menu-button > .toolbarbutton-menubutton-dropmarker > .dropmarker-icon"],
+    ["reload", "#reload-button"],
+    ["stop", "#stop-button"],
     ["downloads", "#downloads-button", "downloads-button"],
     ["home", "#home-button", "home-button"],
     ["app_menu", "#PanelUI-menu-button"],
@@ -135,13 +118,15 @@ function* runTestWithIcons(icons) {
     ["synced_tabs", "#sync-button", "sync-button"],
     ["open_file", "#open-file-button", "open-file-button"],
     ["sidebars", "#sidebar-button", "sidebar-button"],
-    ["share_page", "#social-share-button", "social-share-button"],
     ["subscribe", "#feed-button", "feed-button"],
     ["text_encoding", "#characterencoding-button", "characterencoding-button"],
     ["email_link", "#email-link-button", "email-link-button"],
     ["forget", "#panic-button", "panic-button"],
-    ["pocket", "#pocket-button", "pocket-button"],
   ];
+  // We add these at the beginning because adding them at the end can end up
+  // putting them in the overflow panel, where they aren't displayed the same way.
+  ICON_INFO.unshift(["bookmark_star", "#star-button"]);
+  ICON_INFO.unshift(["bookmark_menu", "#bookmarks-menu-button", "bookmarks-menu-button"]);
 
   window.maximize();
 
@@ -151,7 +136,7 @@ function* runTestWithIcons(icons) {
     }
 
     verifyButtonWithoutCustomStyling(button[1],
-      `The ${button[1]} should not have it's icon customized when the test starts`);
+      `The ${button[1]} should not have its icon customized when the test starts`);
 
     let iconInfo = icons.find(arr => arr[0] == button[0]);
     manifest.theme.icons[button[0]] = iconInfo[1];
@@ -159,38 +144,26 @@ function* runTestWithIcons(icons) {
 
   let extension = ExtensionTestUtils.loadExtension({manifest, files});
 
-  yield extension.startup();
+  await extension.startup();
 
   checkButtons(icons, ICON_INFO, "toolbar");
 
-  for (let button of ICON_INFO) {
-    if (button[2]) {
-      CustomizableUI.addWidgetToArea(button[2], CustomizableUI.AREA_PANEL);
-    }
-  }
-
-  yield PanelUI.show();
-
-  checkButtons(icons, ICON_INFO, "panel");
-
-  yield PanelUI.hide();
-
-  yield extension.unload();
+  await extension.unload();
 
   for (let button of ICON_INFO) {
     verifyButtonWithoutCustomStyling(button[1],
-      `The ${button[1]} should not have it's icon customized when the theme is unloaded`);
+      `The ${button[1]} should not have its icon customized when the theme is unloaded`);
   }
 }
 
-add_task(function* setup() {
-  yield SpecialPowers.pushPrefEnv({
+add_task(async function setup() {
+  await SpecialPowers.pushPrefEnv({
     set: [["extensions.webextensions.themes.enabled", true],
           ["extensions.webextensions.themes.icons.enabled", true]],
   });
 });
 
-add_task(function* test_all_icons() {
+add_task(async function test_all_icons() {
   let icons = [
     ["back", "fox.svg"],
     ["forward", "fox.svg"],
@@ -217,22 +190,20 @@ add_task(function* test_all_icons() {
     ["synced_tabs", "fox.svg"],
     ["open_file", "fox.svg"],
     ["sidebars", "fox.svg"],
-    ["share_page", "fox.svg"],
     ["subscribe", "fox.svg"],
     ["text_encoding", "fox.svg"],
     ["email_link", "fox.svg"],
     ["forget", "fox.svg"],
-    ["pocket", "fox.svg"],
   ];
-  yield runTestWithIcons(icons);
+  await runTestWithIcons(icons);
 });
 
-add_task(function* teardown() {
+add_task(async function teardown() {
   CustomizableUI.reset();
   window.restore();
 });
 
-add_task(function* test_some_icons() {
+add_task(async function test_some_icons() {
   let icons = [
     ["back", ""],
     ["forward", ""],
@@ -259,17 +230,15 @@ add_task(function* test_some_icons() {
     ["synced_tabs", ""],
     ["open_file", ""],
     ["sidebars", ""],
-    ["share_page", ""],
     ["subscribe", ""],
     ["text_encoding", ""],
     ["email_link", ""],
     ["forget", ""],
-    ["pocket", "fox.svg"],
   ];
-  yield runTestWithIcons(icons);
+  await runTestWithIcons(icons);
 });
 
-add_task(function* teardown() {
+add_task(async function teardown() {
   CustomizableUI.reset();
   window.restore();
 });

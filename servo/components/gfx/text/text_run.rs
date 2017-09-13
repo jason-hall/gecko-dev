@@ -13,7 +13,8 @@ use std::slice::Iter;
 use std::sync::Arc;
 use style::str::char_is_whitespace;
 use text::glyph::{ByteIndex, GlyphStore};
-use webrender_traits;
+use unicode_bidi as bidi;
+use webrender_api;
 use xi_unicode::LineBreakIterator;
 
 thread_local! {
@@ -29,10 +30,10 @@ pub struct TextRun {
     pub font_template: Arc<FontTemplateData>,
     pub actual_pt_size: Au,
     pub font_metrics: FontMetrics,
-    pub font_key: webrender_traits::FontKey,
+    pub font_key: webrender_api::FontInstanceKey,
     /// The glyph runs that make up this text run.
     pub glyphs: Arc<Vec<GlyphRun>>,
-    pub bidi_level: u8,
+    pub bidi_level: bidi::Level,
     pub extra_word_spacing: Au,
 }
 
@@ -179,7 +180,7 @@ impl<'a> Iterator for CharacterSliceIterator<'a> {
 }
 
 impl<'a> TextRun {
-    pub fn new(font: &mut Font, text: String, options: &ShapingOptions, bidi_level: u8) -> TextRun {
+    pub fn new(font: &mut Font, text: String, options: &ShapingOptions, bidi_level: bidi::Level) -> TextRun {
         let glyphs = TextRun::break_and_shape(font, &text, options);
         TextRun {
             text: Arc::new(text),
@@ -340,7 +341,7 @@ impl<'a> TextRun {
     pub fn natural_word_slices_in_visual_order(&'a self, range: &Range<ByteIndex>)
                                         -> NaturalWordSliceIterator<'a> {
         // Iterate in reverse order if bidi level is RTL.
-        let reverse = self.bidi_level % 2 == 1;
+        let reverse = self.bidi_level.is_rtl();
 
         let index = if reverse {
             match self.index_of_first_glyph_run_containing(range.end() - ByteIndex(1)) {

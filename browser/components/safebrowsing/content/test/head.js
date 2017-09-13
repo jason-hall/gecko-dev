@@ -1,9 +1,5 @@
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-  "resource://gre/modules/Promise.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Task",
-  "resource://gre/modules/Task.jsm");
 
 // This url must sync with the table, url in SafeBrowsing.jsm addMozEntries
 const PHISH_TABLE = "test-phish-simple";
@@ -72,7 +68,7 @@ function waitForDBInit(callback) {
     ok(true, "Received internal event!");
     callbackOnce();
   }
-  Services.obs.addObserver(obsFunc, "mozentries-update-finished", false);
+  Services.obs.addObserver(obsFunc, "mozentries-update-finished");
 
   // The second part: we might have missed the event. Just do
   // an internal database lookup to confirm if the url has been
@@ -90,7 +86,7 @@ function waitForDBInit(callback) {
   });
 }
 
-Services.prefs.setCharPref("urlclassifier.malwareTable", "test-malware-simple,test-unwanted-simple");
+Services.prefs.setCharPref("urlclassifier.malwareTable", "test-malware-simple,test-unwanted-simple,test-harmful.simple");
 Services.prefs.setCharPref("urlclassifier.phishTable", "test-phish-simple");
 Services.prefs.setCharPref("urlclassifier.blockedTable", "test-block-simple");
 SafeBrowsing.init();

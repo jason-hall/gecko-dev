@@ -1,4 +1,3 @@
-#line 1
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,14 +12,15 @@
 
 in int aClipRenderTaskIndex;
 in int aClipLayerIndex;
-in int aClipDataIndex;
-in int aClipSegmentIndex;
+in int aClipSegment;
+in ivec4 aClipDataResourceAddress;
 
 struct CacheClipInstance {
     int render_task_index;
     int layer_index;
-    int data_index;
-    int segment_index;
+    int segment;
+    ivec2 clip_data_address;
+    ivec2 resource_address;
 };
 
 CacheClipInstance fetch_clip_item(int index) {
@@ -28,24 +28,28 @@ CacheClipInstance fetch_clip_item(int index) {
 
     cci.render_task_index = aClipRenderTaskIndex;
     cci.layer_index = aClipLayerIndex;
-    cci.data_index = aClipDataIndex;
-    cci.segment_index = aClipSegmentIndex;
+    cci.segment = aClipSegment;
+    cci.clip_data_address = aClipDataResourceAddress.xy;
+    cci.resource_address = aClipDataResourceAddress.zw;
 
     return cci;
 }
 
+struct ClipVertexInfo {
+    vec3 local_pos;
+    vec2 screen_pos;
+    RectWithSize clipped_local_rect;
+};
+
 // The transformed vertex function that always covers the whole clip area,
 // which is the intersection of all clip instances of a given primitive
-TransformVertexInfo write_clip_tile_vertex(vec4 local_clip_rect,
-                                           Layer layer,
-                                           ClipArea area,
-                                           int segment_index) {
-    vec2 lp0_base = local_clip_rect.xy;
-    vec2 lp1_base = local_clip_rect.xy + local_clip_rect.zw;
+ClipVertexInfo write_clip_tile_vertex(RectWithSize local_clip_rect,
+                                      Layer layer,
+                                      ClipArea area,
+                                      int segment) {
 
-    vec2 lp0 = clamp_rect(lp0_base, layer.local_clip_rect);
-    vec2 lp1 = clamp_rect(lp1_base, layer.local_clip_rect);
-    vec4 clipped_local_rect = vec4(lp0, lp1 - lp0);
+    RectWithSize clipped_local_rect = intersect_rect(local_clip_rect,
+                                                     layer.local_clip_rect);
 
     vec2 outer_p0 = area.screen_origin_target_index.xy;
     vec2 outer_p1 = outer_p0 + area.task_bounds.zw - area.task_bounds.xy;
@@ -53,7 +57,7 @@ TransformVertexInfo write_clip_tile_vertex(vec4 local_clip_rect,
     vec2 inner_p1 = area.inner_rect.zw;
 
     vec2 p0, p1;
-    switch (segment_index) {
+    switch (segment) {
         case SEGMENT_ALL:
             p0 = outer_p0;
             p1 = outer_p1;
@@ -85,7 +89,9 @@ TransformVertexInfo write_clip_tile_vertex(vec4 local_clip_rect,
 
     gl_Position = uTransform * vec4(vertex_pos, 0.0, 1);
 
-    return TransformVertexInfo(layer_pos.xyw, actual_pos, clipped_local_rect);
+    vLocalBounds = vec4(clipped_local_rect.p0, clipped_local_rect.p0 + clipped_local_rect.size);
+
+    return ClipVertexInfo(layer_pos.xyw, actual_pos, clipped_local_rect);
 }
 
 #endif //WR_VERTEX_SHADER

@@ -14,15 +14,14 @@ const Cu = Components.utils;
 const {require} = Cu.import("resource://devtools/shared/Loader.jsm", {});
 const Editor = require("devtools/client/sourceeditor/editor");
 const promise = require("promise");
-const defer = require("devtools/shared/defer");
 const {shortSource, prettifyCSS} = require("devtools/shared/inspector/css-logic");
 const {console} = require("resource://gre/modules/Console.jsm");
 const Services = require("Services");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/shared/old-event-emitter");
 const {Task} = require("devtools/shared/task");
 const {FileUtils} = require("resource://gre/modules/FileUtils.jsm");
 const {NetUtil} = require("resource://gre/modules/NetUtil.jsm");
-const {TextDecoder, OS} = Cu.import("resource://gre/modules/osfile.jsm", {});
+const {OS} = Cu.import("resource://gre/modules/osfile.jsm", {});
 const {
   getString,
   showFilePicker,
@@ -128,7 +127,7 @@ function StyleSheetEditor(styleSheet, win, file, isNew, walker, highlighter) {
   this.mediaRules = [];
   if (this.cssSheet.getMediaRules) {
     this.cssSheet.getMediaRules().then(this._onMediaRulesChanged,
-                                       e => console.error(e));
+                                       console.error);
   }
   this.cssSheet.on("media-rules-changed", this._onMediaRulesChanged);
   this.cssSheet.on("style-applied", this._onStyleApplied);
@@ -291,7 +290,7 @@ StyleSheetEditor.prototype = {
     return this._getSourceTextAndPrettify().then((source) => {
       this.sourceLoaded = true;
       return source;
-    }).then(null, e => {
+    }).catch(e => {
       if (this._isDestroyed) {
         console.warn("Could not fetch the source for " +
                      this.styleSheet.href +
@@ -479,15 +478,17 @@ StyleSheetEditor.prototype = {
    *         Promise that will resolve with the editor.
    */
   getSourceEditor: function () {
-    let deferred = defer();
+    let self = this;
 
     if (this.sourceEditor) {
-      return promise.resolve(this);
+      return Promise.resolve(this);
     }
-    this.on("source-editor-load", () => {
-      deferred.resolve(this);
+
+    return new Promise(resolve => {
+      this.on("source-editor-load", () => {
+        resolve(self);
+      });
     });
-    return deferred.promise;
   },
 
   /**
@@ -517,7 +518,7 @@ StyleSheetEditor.prototype = {
    * Toggled the disabled state of the underlying stylesheet.
    */
   toggleDisabled: function () {
-    this.styleSheet.toggleDisabled().then(null, e => console.error(e));
+    this.styleSheet.toggleDisabled().catch(console.error);
   },
 
   /**
@@ -559,7 +560,7 @@ StyleSheetEditor.prototype = {
 
     this._isUpdating = true;
     this.styleSheet.update(this._state.text, this.transitionsEnabled)
-      .then(null, e => console.error(e));
+      .catch(console.error);
   },
 
   /**
@@ -856,8 +857,8 @@ function findProjectPath(file, branch) {
  *         object with 'branch' and 'origBranch' array of path parts for branch
  */
 function findUnsharedBranches(origUri, uri) {
-  origUri = OS.Path.split(origUri.path).components;
-  uri = OS.Path.split(uri.path).components;
+  origUri = OS.Path.split(origUri.pathQueryRef).components;
+  uri = OS.Path.split(uri.pathQueryRef).components;
 
   for (let i = 0; i < uri.length - 1; i++) {
     if (uri[i] != origUri[i]) {

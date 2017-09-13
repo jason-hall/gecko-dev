@@ -165,7 +165,9 @@ HarBuilder.prototype = {
 
     request.queryString = parseQueryString(getUrlQuery(file.url)) || [];
 
-    request.postData = this.buildPostData(file);
+    if (file.requestPostData) {
+      request.postData = this.buildPostData(file);
+    }
 
     request.headersSize = file.requestHeaders.headersSize;
 
@@ -269,6 +271,7 @@ HarBuilder.prototype = {
           file.requestHeaders,
           file.requestHeadersFromUploadStream,
           file.requestPostData,
+          this._options.getString,
         ).then(formDataSections => {
           formDataSections.forEach(section => {
             let paramsArray = parseQueryString(section);

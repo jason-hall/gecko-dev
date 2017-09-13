@@ -16,7 +16,6 @@ const {PushCrypto} = Cu.import("resource://gre/modules/PushCrypto.jsm");
 Cu.import("resource://gre/modules/Messaging.jsm"); /*global: EventDispatcher */
 Cu.import("resource://gre/modules/Services.jsm"); /*global: Services */
 Cu.import("resource://gre/modules/Preferences.jsm"); /*global: Preferences */
-Cu.import("resource://gre/modules/Promise.jsm"); /*global: Promise */
 Cu.import("resource://gre/modules/XPCOMUtils.jsm"); /*global: XPCOMUtils */
 
 const Log = Cu.import("resource://gre/modules/AndroidLog.jsm", {}).AndroidLog.bind("Push");
@@ -149,7 +148,7 @@ this.PushServiceAndroidGCM = {
     this._serverURI = serverURL;
 
     prefs.observe("debug", this);
-    Services.obs.addObserver(this, "PushServiceAndroidGCM:ReceivedPushMessage", false);
+    Services.obs.addObserver(this, "PushServiceAndroidGCM:ReceivedPushMessage");
 
     return this._configure(serverURL, !!prefs.get("debug")).then(() => {
       EventDispatcher.instance.sendRequestForResult({

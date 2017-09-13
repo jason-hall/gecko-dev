@@ -35,7 +35,9 @@ struct StyleSheetInfo
   StyleSheetInfo(StyleSheetInfo& aCopy,
                  StyleSheet* aPrimarySheet);
 
-  virtual ~StyleSheetInfo() {}
+  virtual ~StyleSheetInfo();
+
+  virtual StyleSheetInfo* CloneFor(StyleSheet* aPrimarySheet) = 0;
 
   virtual void AddSheet(StyleSheet* aSheet);
   virtual void RemoveSheet(StyleSheet* aSheet);
@@ -58,6 +60,11 @@ struct StyleSheetInfo
   // throughout its parent chain and things are good.
   RefPtr<StyleSheet>     mFirstChild;
   AutoTArray<StyleSheet*, 8> mSheets;
+
+  // If a SourceMap or X-SourceMap response header is seen, this is
+  // the value.  If both are seen, SourceMap is preferred.  If neither
+  // is seen, this will be an empty string.
+  nsString mSourceMapURL;
 
 #ifdef DEBUG
   bool                   mPrincipalSet;

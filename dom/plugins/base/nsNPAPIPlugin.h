@@ -233,12 +233,6 @@ NPError
 _setvalueforurl(NPP instance, NPNURLVariable variable, const char *url,
                 const char *value, uint32_t len);
 
-NPError
-_getauthenticationinfo(NPP instance, const char *protocol, const char *host,
-                       int32_t port, const char *scheme, const char *realm,
-                       char **username, uint32_t *ulen, char **password,
-                       uint32_t *plen);
-
 typedef void(*PluginTimerFunc)(NPP npp, uint32_t timerID);
 
 uint32_t
@@ -276,15 +270,6 @@ _posturlnotify(NPP npp, const char* relativeURL, const char *target,
 NPError
 _posturl(NPP npp, const char* relativeURL, const char *target, uint32_t len,
             const char *buf, NPBool file);
-
-NPError
-_newstream(NPP npp, NPMIMEType type, const char* window, NPStream** pstream);
-
-int32_t
-_write(NPP npp, NPStream *pstream, int32_t len, void *buffer);
-
-NPError
-_destroystream(NPP npp, NPStream *pstream, NPError reason);
 
 void
 _status(NPP npp, const char *message);

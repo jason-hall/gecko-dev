@@ -71,7 +71,7 @@ nsDefaultURIFixup::CreateExposableURI(nsIURI* aURI, nsIURI** aReturn)
   nsCOMPtr<nsIURI> uri;
   if (isWyciwyg) {
     nsAutoCString path;
-    nsresult rv = aURI->GetPath(path);
+    nsresult rv = aURI->GetPathQueryRef(path);
     NS_ENSURE_SUCCESS(rv, rv);
 
     uint32_t pathLength = path.Length();
@@ -87,14 +87,8 @@ nsDefaultURIFixup::CreateExposableURI(nsIURI* aURI, nsIURI** aReturn)
       return NS_ERROR_FAILURE;
     }
 
-    // Get the charset of the original URI so we can pass it to our fixed up
-    // URI.
-    nsAutoCString charset;
-    aURI->GetOriginCharset(charset);
-
     rv = NS_NewURI(getter_AddRefs(uri),
-                   Substring(path, slashIndex + 1, pathLength - slashIndex - 1),
-                   charset.get());
+                   Substring(path, slashIndex + 1, pathLength - slashIndex - 1));
     NS_ENSURE_SUCCESS(rv, rv);
   } else {
     // clone the URI so zapping user:pass doesn't change the original
@@ -167,7 +161,7 @@ nsDefaultURIFixup::GetFixupURIInfo(const nsACString& aStringURI,
   nsAutoCString uriString(aStringURI);
 
   // Eliminate embedded newlines, which single-line text fields now allow:
-  uriString.StripChars("\r\n");
+  uriString.StripCRLF();
   // Cleanup the empty spaces that might be on each end:
   uriString.Trim(" ");
 
@@ -545,11 +539,22 @@ nsDefaultURIFixup::MakeAlternateURI(nsIURI* aURI)
   if (!userpass.IsEmpty()) {
     return false;
   }
+  // Don't fix up hosts with ports
+  int32_t port;
+  aURI->GetPort(&port);
+  if (port != -1) {
+    return false;
+  }
 
   nsAutoCString oldHost;
-  nsAutoCString newHost;
   aURI->GetHost(oldHost);
 
+  // Don't fix up 'localhost' because that's confusing:
+  if (oldHost.EqualsLiteral("localhost")) {
+    return false;
+  }
+
+  nsAutoCString newHost;
   // Count the dots
   int32_t numDots = 0;
   nsReadingIterator<char> iter;
@@ -567,16 +572,17 @@ nsDefaultURIFixup::MakeAlternateURI(nsIURI* aURI)
   // are www. & .com but they could be any other value, e.g. www. & .org
 
   nsAutoCString prefix("www.");
-  nsAdoptingCString prefPrefix =
-    Preferences::GetCString("browser.fixup.alternate.prefix");
-  if (prefPrefix) {
+  nsAutoCString prefPrefix;
+  nsresult rv =
+    Preferences::GetCString("browser.fixup.alternate.prefix", prefPrefix);
+  if (NS_SUCCEEDED(rv)) {
     prefix.Assign(prefPrefix);
   }
 
   nsAutoCString suffix(".com");
-  nsAdoptingCString prefSuffix =
-    Preferences::GetCString("browser.fixup.alternate.suffix");
-  if (prefSuffix) {
+  nsAutoCString prefSuffix;
+  rv = Preferences::GetCString("browser.fixup.alternate.suffix", prefSuffix);
+  if (NS_SUCCEEDED(rv)) {
     suffix.Assign(prefSuffix);
   }
 
@@ -681,7 +687,7 @@ nsDefaultURIFixup::FixupURIProtocol(const nsACString& aURIString,
   //   no-scheme.com/query?foo=http://www.foo.com
   //   user:pass@no-scheme.com
   //
-  int32_t schemeDelim = uriString.Find("://", 0);
+  int32_t schemeDelim = uriString.Find("://");
   int32_t firstDelim = uriString.FindCharInSet("/:");
   if (schemeDelim <= 0 ||
       (firstDelim != -1 && schemeDelim > firstDelim)) {

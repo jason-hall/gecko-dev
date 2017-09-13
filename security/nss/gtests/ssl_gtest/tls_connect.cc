@@ -5,6 +5,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "tls_connect.h"
+#include "sslexp.h"
 extern "C" {
 #include "libssl_internals.h"
 }
@@ -20,17 +21,20 @@ extern std::string g_working_dir_path;
 
 namespace nss_test {
 
-static const std::string kTlsModesStreamArr[] = {"TLS"};
-::testing::internal::ParamGenerator<std::string>
-    TlsConnectTestBase::kTlsModesStream =
-        ::testing::ValuesIn(kTlsModesStreamArr);
-static const std::string kTlsModesDatagramArr[] = {"DTLS"};
-::testing::internal::ParamGenerator<std::string>
-    TlsConnectTestBase::kTlsModesDatagram =
-        ::testing::ValuesIn(kTlsModesDatagramArr);
-static const std::string kTlsModesAllArr[] = {"TLS", "DTLS"};
-::testing::internal::ParamGenerator<std::string>
-    TlsConnectTestBase::kTlsModesAll = ::testing::ValuesIn(kTlsModesAllArr);
+static const SSLProtocolVariant kTlsVariantsStreamArr[] = {ssl_variant_stream};
+::testing::internal::ParamGenerator<SSLProtocolVariant>
+    TlsConnectTestBase::kTlsVariantsStream =
+        ::testing::ValuesIn(kTlsVariantsStreamArr);
+static const SSLProtocolVariant kTlsVariantsDatagramArr[] = {
+    ssl_variant_datagram};
+::testing::internal::ParamGenerator<SSLProtocolVariant>
+    TlsConnectTestBase::kTlsVariantsDatagram =
+        ::testing::ValuesIn(kTlsVariantsDatagramArr);
+static const SSLProtocolVariant kTlsVariantsAllArr[] = {ssl_variant_stream,
+                                                        ssl_variant_datagram};
+::testing::internal::ParamGenerator<SSLProtocolVariant>
+    TlsConnectTestBase::kTlsVariantsAll =
+        ::testing::ValuesIn(kTlsVariantsAllArr);
 
 static const uint16_t kTlsV10Arr[] = {SSL_LIBRARY_VERSION_TLS_1_0};
 ::testing::internal::ParamGenerator<uint16_t> TlsConnectTestBase::kTlsV10 =
@@ -100,29 +104,28 @@ std::string VersionString(uint16_t version) {
   }
 }
 
-TlsConnectTestBase::TlsConnectTestBase(Mode mode, uint16_t version)
-    : mode_(mode),
-      client_(new TlsAgent(TlsAgent::kClient, TlsAgent::CLIENT, mode_)),
-      server_(new TlsAgent(TlsAgent::kServerRsa, TlsAgent::SERVER, mode_)),
+TlsConnectTestBase::TlsConnectTestBase(SSLProtocolVariant variant,
+                                       uint16_t version)
+    : variant_(variant),
+      client_(new TlsAgent(TlsAgent::kClient, TlsAgent::CLIENT, variant_)),
+      server_(new TlsAgent(TlsAgent::kServerRsa, TlsAgent::SERVER, variant_)),
       client_model_(nullptr),
       server_model_(nullptr),
       version_(version),
       expected_resumption_mode_(RESUME_NONE),
       session_ids_(),
       expect_extended_master_secret_(false),
-      expect_early_data_accepted_(false) {
+      expect_early_data_accepted_(false),
+      skip_version_checks_(false) {
   std::string v;
-  if (mode_ == DGRAM && version_ == SSL_LIBRARY_VERSION_TLS_1_1) {
+  if (variant_ == ssl_variant_datagram &&
+      version_ == SSL_LIBRARY_VERSION_TLS_1_1) {
     v = "1.0";
   } else {
     v = VersionString(version_);
   }
-  std::cerr << "Version: " << mode_ << " " << v << std::endl;
+  std::cerr << "Version: " << variant_ << " " << v << std::endl;
 }
-
-TlsConnectTestBase::TlsConnectTestBase(const std::string& mode,
-                                       uint16_t version)
-    : TlsConnectTestBase(TlsConnectTestBase::ToMode(mode), version) {}
 
 TlsConnectTestBase::~TlsConnectTestBase() {}
 
@@ -167,13 +170,13 @@ void TlsConnectTestBase::ClearStats() {
 
 void TlsConnectTestBase::ClearServerCache() {
   SSL_ShutdownServerSessionIDCache();
-  SSLInt_ClearSessionTicketKey();
+  SSLInt_ClearSelfEncryptKey();
   SSL_ConfigServerSessionIDCache(1024, 0, 0, g_working_dir_path.c_str());
 }
 
 void TlsConnectTestBase::SetUp() {
   SSL_ConfigServerSessionIDCache(1024, 0, 0, g_working_dir_path.c_str());
-  SSLInt_ClearSessionTicketKey();
+  SSLInt_ClearSelfEncryptKey();
   SSLInt_SetTicketLifetime(30);
   SSLInt_SetMaxEarlyDataSize(1024);
   ClearStats();
@@ -185,7 +188,7 @@ void TlsConnectTestBase::TearDown() {
   server_ = nullptr;
 
   SSL_ClearSessionCache();
-  SSLInt_ClearSessionTicketKey();
+  SSLInt_ClearSelfEncryptKey();
   SSL_ShutdownServerSessionIDCache();
 }
 
@@ -207,8 +210,12 @@ void TlsConnectTestBase::Reset() {
 
 void TlsConnectTestBase::Reset(const std::string& server_name,
                                const std::string& client_name) {
-  client_.reset(new TlsAgent(client_name, TlsAgent::CLIENT, mode_));
-  server_.reset(new TlsAgent(server_name, TlsAgent::SERVER, mode_));
+  client_.reset(new TlsAgent(client_name, TlsAgent::CLIENT, variant_));
+  server_.reset(new TlsAgent(server_name, TlsAgent::SERVER, variant_));
+  if (skip_version_checks_) {
+    client_->SkipVersionChecks();
+    server_->SkipVersionChecks();
+  }
 
   Init();
 }
@@ -268,10 +275,12 @@ void TlsConnectTestBase::ConnectWithCipherSuite(uint16_t cipher_suite) {
 }
 
 void TlsConnectTestBase::CheckConnected() {
-  // Check the version is as expected
   EXPECT_EQ(client_->version(), server_->version());
-  EXPECT_EQ(std::min(client_->max_version(), server_->max_version()),
-            client_->version());
+  if (!skip_version_checks_) {
+    // Check the version is as expected
+    EXPECT_EQ(std::min(client_->max_version(), server_->max_version()),
+              client_->version());
+  }
 
   EXPECT_EQ(TlsAgent::STATE_CONNECTED, client_->state());
   EXPECT_EQ(TlsAgent::STATE_CONNECTED, server_->state());
@@ -507,9 +516,13 @@ void TlsConnectTestBase::EnsureModelSockets() {
   if (!client_model_) {
     ASSERT_EQ(server_model_, nullptr);
     client_model_.reset(
-        new TlsAgent(TlsAgent::kClient, TlsAgent::CLIENT, mode_));
+        new TlsAgent(TlsAgent::kClient, TlsAgent::CLIENT, variant_));
     server_model_.reset(
-        new TlsAgent(TlsAgent::kServerRsa, TlsAgent::SERVER, mode_));
+        new TlsAgent(TlsAgent::kServerRsa, TlsAgent::SERVER, variant_));
+    if (skip_version_checks_) {
+      client_model_->SkipVersionChecks();
+      server_model_->SkipVersionChecks();
+    }
   }
 }
 
@@ -633,6 +646,12 @@ void TlsConnectTestBase::CheckEarlyDataAccepted() {
 
 void TlsConnectTestBase::DisableECDHEServerKeyReuse() {
   server_->DisableECDHEServerKeyReuse();
+}
+
+void TlsConnectTestBase::SkipVersionChecks() {
+  skip_version_checks_ = true;
+  client_->SkipVersionChecks();
+  server_->SkipVersionChecks();
 }
 
 TlsConnectGeneric::TlsConnectGeneric()

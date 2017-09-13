@@ -26,8 +26,9 @@ NS_NewHTMLButtonControlFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 
 NS_IMPL_FRAMEARENA_HELPERS(nsHTMLButtonControlFrame)
 
-nsHTMLButtonControlFrame::nsHTMLButtonControlFrame(nsStyleContext* aContext)
-  : nsContainerFrame(aContext)
+nsHTMLButtonControlFrame::nsHTMLButtonControlFrame(nsStyleContext* aContext,
+                                                   nsIFrame::ClassID aID)
+  : nsContainerFrame(aContext, aID)
 {
 }
 
@@ -63,19 +64,13 @@ nsHTMLButtonControlFrame::AccessibleType()
 }
 #endif
 
-nsIAtom*
-nsHTMLButtonControlFrame::GetType() const
-{
-  return nsGkAtoms::HTMLButtonControlFrame;
-}
-
-void 
+void
 nsHTMLButtonControlFrame::SetFocus(bool aOn, bool aRepaint)
 {
 }
 
 nsresult
-nsHTMLButtonControlFrame::HandleEvent(nsPresContext* aPresContext, 
+nsHTMLButtonControlFrame::HandleEvent(nsPresContext* aPresContext,
                                       WidgetGUIEvent* aEvent,
                                       nsEventStatus* aEventStatus)
 {
@@ -97,7 +92,6 @@ nsHTMLButtonControlFrame::ShouldClipPaintingToBorderBox()
 
 void
 nsHTMLButtonControlFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                           const nsRect&           aDirtyRect,
                                            const nsDisplayListSet& aLists)
 {
   // Clip to our border area for event hit testing.
@@ -131,15 +125,15 @@ nsHTMLButtonControlFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       clipState.ClipContainingBlockDescendants(rect, hasRadii ? radii : nullptr);
     }
 
-    BuildDisplayListForChild(aBuilder, mFrames.FirstChild(), aDirtyRect, set,
+    BuildDisplayListForChild(aBuilder, mFrames.FirstChild(), set,
                              DISPLAY_CHILD_FORCE_PSEUDO_STACKING_CONTEXT);
     // That should put the display items in set.Content()
   }
-  
+
   // Put the foreground outline and focus rects on top of the children
   set.Content()->AppendToTop(&onTop);
   set.MoveTo(aLists);
-  
+
   DisplayOutline(aBuilder, aLists);
 
   // to draw border when selected in editor
@@ -147,7 +141,7 @@ nsHTMLButtonControlFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 }
 
 nscoord
-nsHTMLButtonControlFrame::GetMinISize(nsRenderingContext* aRenderingContext)
+nsHTMLButtonControlFrame::GetMinISize(gfxContext* aRenderingContext)
 {
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
@@ -161,11 +155,11 @@ nsHTMLButtonControlFrame::GetMinISize(nsRenderingContext* aRenderingContext)
 }
 
 nscoord
-nsHTMLButtonControlFrame::GetPrefISize(nsRenderingContext* aRenderingContext)
+nsHTMLButtonControlFrame::GetPrefISize(gfxContext* aRenderingContext)
 {
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
-  
+
   nsIFrame* kid = mFrames.FirstChild();
   result = nsLayoutUtils::IntrinsicForContainer(aRenderingContext,
                                                 kid,
@@ -394,23 +388,19 @@ nsHTMLButtonControlFrame::GetAdditionalStyleContext(int32_t aIndex) const
 }
 
 void
-nsHTMLButtonControlFrame::SetAdditionalStyleContext(int32_t aIndex, 
+nsHTMLButtonControlFrame::SetAdditionalStyleContext(int32_t aIndex,
                                                     nsStyleContext* aStyleContext)
 {
   mRenderer.SetStyleContext(aIndex, aStyleContext);
 }
 
 void
-nsHTMLButtonControlFrame::DoUpdateStyleOfOwnedAnonBoxes(
-  ServoStyleSet& aStyleSet,
-  nsStyleChangeList& aChangeList,
-  nsChangeHint aHintForThisFrame)
+nsHTMLButtonControlFrame::AppendDirectlyOwnedAnonBoxes(nsTArray<OwnedAnonBox>& aResult)
 {
   MOZ_ASSERT(mFrames.FirstChild(), "Must have our button-content anon box");
   MOZ_ASSERT(!mFrames.FirstChild()->GetNextSibling(),
              "Must only have our button-content anon box");
-  UpdateStyleOfChildAnonBox(mFrames.FirstChild(),
-                            aStyleSet, aChangeList, aHintForThisFrame);
+  aResult.AppendElement(OwnedAnonBox(mFrames.FirstChild()));
 }
 
 #ifdef DEBUG

@@ -122,8 +122,16 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
         final int keyPressMetaState = (unicodeChar >= ' ' &&
                 unicodeChar != unmodifiedUnicodeChar) ? unmodifiedMetaState : metaState;
 
+        // For synthesized keys, ignore modifier metastates from the synthesized event,
+        // because the synthesized modifier metastates don't reflect the actual state of
+        // the meta keys (bug 1387889). For example, the Latin sharp S (U+00DF) is
+        // synthesized as Alt+S, but we don't want the Alt metastate because the Alt key
+        // is not actually pressed in this case.
+        final int keyUpDownMetaState =
+                isSynthesizedImeKey ? (unmodifiedMetaState | savedMetaState) : metaState;
+
         child.onKeyEvent(action, event.getKeyCode(), event.getScanCode(),
-                   metaState, keyPressMetaState, event.getEventTime(),
+                   keyUpDownMetaState, keyPressMetaState, event.getEventTime(),
                    domPrintableKeyValue, event.getRepeatCount(), event.getFlags(),
                    isSynthesizedImeKey, event);
     }
@@ -293,11 +301,21 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
             final int shadowEnd = mShadowNewEnd + Math.max(0, mCurrentOldEnd - mShadowOldEnd);
             final int currentEnd = mCurrentNewEnd + Math.max(0, mShadowOldEnd - mCurrentOldEnd);
 
-            // Perform replacement in two steps (delete and insert) so that old spans are
-            // properly deleted before identical new spans are inserted. Otherwise the new
-            // spans won't be inserted due to the text already having the old spans.
-            mShadowText.delete(start, shadowEnd);
-            mShadowText.insert(start, mCurrentText, start, currentEnd);
+            // Remove identical spans that are in the new text from the old text.
+            // Otherwise the new spans won't be inserted due to the text already having
+            // the old spans.
+            Object[] spans = mCurrentText.getSpans(start, currentEnd, Object.class);
+            for (final Object span : spans) {
+                mShadowText.removeSpan(span);
+            }
+
+            // Also remove existing spans that are no longer in the new text.
+            spans = mShadowText.getSpans(start, shadowEnd, Object.class);
+            for (final Object span : spans) {
+                mShadowText.removeSpan(span);
+            }
+
+            mShadowText.replace(start, shadowEnd, mCurrentText, start, currentEnd);
 
             // SpannableStringBuilder has some internal logic to fix up selections, but we
             // don't want that, so we always fix up the selection a second time.
@@ -456,30 +474,41 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
             mFocusedChild.onImeSynchronize();
             break;
 
-        case Action.TYPE_SET_SPAN:
+        case Action.TYPE_SET_SPAN: {
+            final boolean needUpdate = (action.mSpanFlags & Spanned.SPAN_INTERMEDIATE) == 0 &&
+                                       ((action.mSpanFlags & Spanned.SPAN_COMPOSING) != 0 ||
+                                        action.mSpanObject == Selection.SELECTION_START ||
+                                        action.mSpanObject == Selection.SELECTION_END);
+
             mText.shadowSetSpan(action.mSpanObject, action.mStart,
                                 action.mEnd, action.mSpanFlags);
             action.mSequence = TextUtils.substring(
                     mText.getShadowText(), action.mStart, action.mEnd);
 
-            mNeedUpdateComposition |= (action.mSpanFlags & Spanned.SPAN_INTERMEDIATE) == 0 &&
-                    ((action.mSpanFlags & Spanned.SPAN_COMPOSING) != 0 ||
-                     action.mSpanObject == Selection.SELECTION_START ||
-                     action.mSpanObject == Selection.SELECTION_END);
+            mNeedUpdateComposition |= needUpdate;
+            if (needUpdate) {
+                icMaybeSendComposition(mText.getShadowText(), SEND_COMPOSITION_NOTIFY_GECKO |
+                                                              SEND_COMPOSITION_KEEP_CURRENT);
+            }
 
             mFocusedChild.onImeSynchronize();
             break;
-
-        case Action.TYPE_REMOVE_SPAN:
+        }
+        case Action.TYPE_REMOVE_SPAN: {
             final int flags = mText.getShadowText().getSpanFlags(action.mSpanObject);
+            final boolean needUpdate = (flags & Spanned.SPAN_INTERMEDIATE) == 0 &&
+                                       (flags & Spanned.SPAN_COMPOSING) != 0;
             mText.shadowRemoveSpan(action.mSpanObject);
 
-            mNeedUpdateComposition |= (flags & Spanned.SPAN_INTERMEDIATE) == 0 &&
-                    (flags & Spanned.SPAN_COMPOSING) != 0;
+            mNeedUpdateComposition |= needUpdate;
+            if (needUpdate) {
+                icMaybeSendComposition(mText.getShadowText(), SEND_COMPOSITION_NOTIFY_GECKO |
+                                                              SEND_COMPOSITION_KEEP_CURRENT);
+            }
 
             mFocusedChild.onImeSynchronize();
             break;
-
+        }
         case Action.TYPE_REPLACE_TEXT:
             // Always sync text after a replace action, so that if the Gecko
             // text is not changed, we will revert the shadow text to before.
@@ -488,7 +517,7 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
             // Because we get composition styling here essentially for free,
             // we don't need to check if we're in batch mode.
             if (!icMaybeSendComposition(
-                    action.mSequence, /* useEntireText */ true, /* notifyGecko */ false)) {
+                    action.mSequence, SEND_COMPOSITION_USE_ENTIRE_TEXT)) {
                 // Since we don't have a composition, we can try sending key events.
                 sendCharKeyEvents(action);
             }
@@ -637,32 +666,37 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
         }
     }
 
-    /**
-     * Send composition ranges to Gecko for the entire shadow text.
-     */
-    private void icMaybeSendComposition() throws RemoteException {
-        if (!mNeedUpdateComposition) {
-            return;
-        }
-
-        icMaybeSendComposition(mText.getShadowText(),
-                               /* useEntireText */ false, /* notifyGecko */ true);
-    }
+    // Flags for icMaybeSendComposition
+    // If text has composing spans, treat the entire text as a Gecko composition,
+    // instead of just the spanned part.
+    private static final int SEND_COMPOSITION_USE_ENTIRE_TEXT = 1;
+    // Notify Gecko of the new composition ranges;
+    // otherwise, the caller is responsible for notifying Gecko.
+    private static final int SEND_COMPOSITION_NOTIFY_GECKO = 2;
+    // Keep the current composition when updating;
+    // composition is not updated if there is no current composition.
+    private static final int SEND_COMPOSITION_KEEP_CURRENT = 4;
 
     /**
      * Send composition ranges to Gecko if the text has composing spans.
      *
      * @param sequence Text with possible composing spans
-     * @param useEntireText If text has composing spans, treat the entire text as
-     *                      a Gecko composition, instead of just the spanned part.
-     * @param notifyGecko Notify Gecko of the new composition ranges;
-     *                    otherwise, the caller is responsible for notifying Gecko.
+     * @param flags Bitmask of SEND_COMPOSITION_* flags for updating composition.
      * @return Whether there was a composition
      */
     private boolean icMaybeSendComposition(final CharSequence sequence,
-                                           final boolean useEntireText,
-                                           final boolean notifyGecko) throws RemoteException {
-        mNeedUpdateComposition = false;
+                                           final int flags) throws RemoteException {
+        final boolean useEntireText = (flags & SEND_COMPOSITION_USE_ENTIRE_TEXT) != 0;
+        final boolean notifyGecko = (flags & SEND_COMPOSITION_NOTIFY_GECKO) != 0;
+        final boolean keepCurrent = (flags & SEND_COMPOSITION_KEEP_CURRENT) != 0;
+        final int updateFlags = keepCurrent ?
+                GeckoEditableChild.FLAG_KEEP_CURRENT_COMPOSITION : 0;
+
+        if (!keepCurrent) {
+            // If keepCurrent is true, the composition may not actually be updated;
+            // so we may still need to update the composition in the future.
+            mNeedUpdateComposition = false;
+        }
 
         int selStart = Selection.getSelectionStart(sequence);
         int selEnd = Selection.getSelectionEnd(sequence);
@@ -696,7 +730,8 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
             if (found) {
                 icSendComposition(text, selStart, selEnd, composingStart, composingEnd);
                 if (notifyGecko) {
-                    mFocusedChild.onImeUpdateComposition(composingStart, composingEnd);
+                    mFocusedChild.onImeUpdateComposition(
+                            composingStart, composingEnd, updateFlags);
                 }
                 return true;
             }
@@ -704,7 +739,7 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
 
         if (notifyGecko) {
             // Set the selection by using a composition without ranges
-            mFocusedChild.onImeUpdateComposition(selStart, selEnd);
+            mFocusedChild.onImeUpdateComposition(selStart, selEnd, updateFlags);
         }
 
         if (DEBUG) {
@@ -841,7 +876,9 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
             }
 
             // Focused; key event may go to chrome window or to content window.
-            icMaybeSendComposition();
+            if (mNeedUpdateComposition) {
+                icMaybeSendComposition(mText.getShadowText(), SEND_COMPOSITION_NOTIFY_GECKO);
+            }
             onKeyEvent(mFocusedChild, event, action, metaState,
                        /* isSynthesizedImeKey */ false);
             icOfferAction(new Action(Action.TYPE_EVENT));
@@ -1098,12 +1135,14 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
 
     @Override // IGeckoEditableParent
     public void notifyIMEContext(final int state, final String typeHint,
-                                 final String modeHint, final String actionHint) {
+                                 final String modeHint, final String actionHint,
+                                 final boolean inPrivateBrowsing) {
         // On Gecko or binder thread.
         if (DEBUG) {
             Log.d(LOGTAG, "notifyIMEContext(" +
                           getConstantName(GeckoEditableListener.class, "IME_STATE_", state) +
-                          ", \"" + typeHint + "\", \"" + modeHint + "\", \"" + actionHint + "\")");
+                          ", \"" + typeHint + "\", \"" + modeHint + "\", \"" + actionHint + "\", " +
+                          "inPrivateBrowsing=" + inPrivateBrowsing + ")");
         }
 
         // Don't check token for notifyIMEContext, because the calls all come
@@ -1116,7 +1155,7 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
                 if (mListener == null) {
                     return;
                 }
-                mListener.notifyIMEContext(state, typeHint, modeHint, actionHint);
+                mListener.notifyIMEContext(state, typeHint, modeHint, actionHint, inPrivateBrowsing);
             }
         });
     }
@@ -1252,8 +1291,10 @@ final class GeckoEditable extends IGeckoEditableParent.Stub
             // Nothing to do because the text is the same. This could happen when
             // the composition is updated for example, in which case we want to keep the
             // Java selection.
-            mIgnoreSelectionChange = mIgnoreSelectionChange ||
-                    (action != null && action.mType == Action.TYPE_REPLACE_TEXT);
+            mIgnoreSelectionChange = mIgnoreSelectionChange || (action != null &&
+                    (action.mType == Action.TYPE_REPLACE_TEXT ||
+                     action.mType == Action.TYPE_SET_SPAN ||
+                     action.mType == Action.TYPE_REMOVE_SPAN));
             return;
 
         } else {

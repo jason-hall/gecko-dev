@@ -17,8 +17,8 @@
 class nsISelectionController;
 class EditorInitializerEntryTracker;
 class nsTextEditorState;
-class nsIEditor;
 namespace mozilla {
+class TextEditor;
 enum class CSSPseudoElementType : uint8_t;
 namespace dom {
 class Element;
@@ -31,7 +31,7 @@ class nsTextControlFrame final : public nsContainerFrame,
                                  public nsIStatefulFrame
 {
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsTextControlFrame)
 
   NS_DECLARE_FRAME_PROPERTY_DELETABLE(ContentScrollPos, nsPoint)
 
@@ -44,11 +44,11 @@ public:
     return do_QueryFrame(PrincipalChildList().FirstChild());
   }
 
-  virtual nscoord GetMinISize(nsRenderingContext* aRenderingContext) override;
-  virtual nscoord GetPrefISize(nsRenderingContext* aRenderingContext) override;
+  virtual nscoord GetMinISize(gfxContext* aRenderingContext) override;
+  virtual nscoord GetPrefISize(gfxContext* aRenderingContext) override;
 
   virtual mozilla::LogicalSize
-  ComputeAutoSize(nsRenderingContext*         aRenderingContext,
+  ComputeAutoSize(gfxContext*                 aRenderingContext,
                   mozilla::WritingMode        aWM,
                   const mozilla::LogicalSize& aCBSize,
                   nscoord                     aAvailableISize,
@@ -88,8 +88,6 @@ public:
   virtual nsSize GetXULMinSize(nsBoxLayoutState& aBoxLayoutState) override;
   virtual bool IsXULCollapsed() override;
 
-  virtual bool IsLeaf() const override;
-  
 #ifdef ACCESSIBILITY
   virtual mozilla::a11y::AccType AccessibleType() override;
 #endif
@@ -127,7 +125,6 @@ public:
                                    nsFrameList&    aChildList) override;
 
   virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists) override;
 
   virtual mozilla::dom::Element*
@@ -141,14 +138,12 @@ public:
 
 //==== NSITEXTCONTROLFRAME
 
-  NS_IMETHOD    GetEditor(nsIEditor **aEditor) override;
+  NS_IMETHOD_(already_AddRefed<mozilla::TextEditor>) GetTextEditor() override;
   NS_IMETHOD    SetSelectionRange(uint32_t aSelectionStart,
                                   uint32_t aSelectionEnd,
                                   SelectionDirection aDirection = eNone) override;
   NS_IMETHOD    GetOwnedSelectionController(nsISelectionController** aSelCon) override;
   virtual nsFrameSelection* GetOwnedFrameSelection() override;
-
-  nsresult GetPhonetic(nsAString& aPhonetic) override;
 
   /**
    * Ensure mEditor is initialized with the proper flags and the default value.
@@ -167,7 +162,6 @@ public:
 //=== END NSISTATEFULFRAME
 
 //==== OVERLOAD of nsIFrame
-  virtual nsIAtom* GetType() const override;
 
   /** handler for attribute changes to mContent */
   virtual nsresult AttributeChanged(int32_t         aNameSpaceID,
@@ -192,7 +186,7 @@ protected:
 
 public: //for methods who access nsTextControlFrame directly
   void SetValueChanged(bool aValueChanged);
-  
+
   // called by the focus listener
   nsresult MaybeBeginSecureKeyboardInput();
   void MaybeEndSecureKeyboardInput();
@@ -212,7 +206,6 @@ public: //for methods who access nsTextControlFrame directly
 
   DEFINE_TEXTCTRL_CONST_FORWARDER(bool, IsSingleLineTextControl)
   DEFINE_TEXTCTRL_CONST_FORWARDER(bool, IsTextArea)
-  DEFINE_TEXTCTRL_CONST_FORWARDER(bool, IsPlainTextControl)
   DEFINE_TEXTCTRL_CONST_FORWARDER(bool, IsPasswordTextControl)
   DEFINE_TEXTCTRL_CONST_FORWARDER(int32_t, GetCols)
   DEFINE_TEXTCTRL_CONST_FORWARDER(int32_t, GetWrapCols)
@@ -227,14 +220,22 @@ protected:
   friend class nsTextEditorState; // needs access to UpdateValueDisplay
 
   // Temp reference to scriptrunner
-  // We could make these auto-Revoking via the "delete" entry for safety
-  NS_DECLARE_FRAME_PROPERTY_WITHOUT_DTOR(TextControlInitializer,
-                                         EditorInitializer)
+  NS_DECLARE_FRAME_PROPERTY_WITH_DTOR(TextControlInitializer,
+                                      EditorInitializer,
+                                      nsTextControlFrame::RevokeInitializer)
+
+  static void
+  RevokeInitializer(EditorInitializer* aInitializer) {
+    aInitializer->Revoke();
+  };
 
   class EditorInitializer : public mozilla::Runnable {
   public:
-    explicit EditorInitializer(nsTextControlFrame* aFrame) :
-      mFrame(aFrame) {}
+    explicit EditorInitializer(nsTextControlFrame* aFrame)
+      : mozilla::Runnable("nsTextControlFrame::EditorInitializer")
+      , mFrame(aFrame)
+    {
+    }
 
     NS_IMETHOD Run() override;
 
@@ -252,8 +253,11 @@ protected:
 
   class ScrollOnFocusEvent : public mozilla::Runnable {
   public:
-    explicit ScrollOnFocusEvent(nsTextControlFrame* aFrame) :
-      mFrame(aFrame) {}
+    explicit ScrollOnFocusEvent(nsTextControlFrame* aFrame)
+      : mozilla::Runnable("nsTextControlFrame::ScrollOnFocusEvent")
+      , mFrame(aFrame)
+    {
+    }
 
     NS_DECL_NSIRUNNABLE
 
@@ -300,7 +304,7 @@ protected:
   // Compute our intrinsic size.  This does not include any borders, paddings,
   // etc.  Just the size of our actual area for the text (and the scrollbars,
   // for <textarea>).
-  mozilla::LogicalSize CalcIntrinsicSize(nsRenderingContext* aRenderingContext,
+  mozilla::LogicalSize CalcIntrinsicSize(gfxContext* aRenderingContext,
                                          mozilla::WritingMode aWM,
                                          float aFontSizeInflation) const;
 
@@ -326,7 +330,7 @@ private:
   nsresult GetRootNodeAndInitializeEditor(nsIDOMElement **aRootElement);
 
   void FinishedInitializer() {
-    Properties().Delete(TextControlInitializer());
+    DeleteProperty(TextControlInitializer());
   }
 
 private:
@@ -334,11 +338,13 @@ private:
   // Reflow.
   nscoord mFirstBaseline;
 
-  // these packed bools could instead use the high order bits on mState, saving 4 bytes 
+  // these packed bools could instead use the high order bits on mState, saving 4 bytes
   bool mEditorHasBeenInitialized;
   bool mIsProcessing;
   // Keep track if we have asked a placeholder node creation.
   bool mUsePlaceholder;
+  // Similarly for preview node creation.
+  bool mUsePreview;
 
 #ifdef DEBUG
   bool mInEditorInitialization;

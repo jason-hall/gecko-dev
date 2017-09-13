@@ -64,9 +64,10 @@ private:
 
   Atomic<uint32_t>                  mRefCnt;
   Mutex                             mMutex; // Protects mSerializer
-  REFIID                            mTargetUnkIid;
+  const IID                         mTargetUnkIid;
   mscom::InterceptorTargetPtr<IUnknown> mTargetUnk; // Constant, main thread only
   UniquePtr<mscom::StructToStream>  mSerializer;
+  RefPtr<IUnknown>                  mFastMarshalUnk;
 };
 
 } // namespace a11y

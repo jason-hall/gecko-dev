@@ -73,6 +73,7 @@ nsresult
 nsDOMCSSAttributeDeclaration::SetCSSDeclaration(DeclarationBlock* aDecl)
 {
   NS_ASSERTION(mElement, "Must have Element to set the declaration!");
+  aDecl->SetDirty();
   return mIsSMILOverride
     ? mElement->SetSMILOverrideStyleDeclaration(aDecl, true)
     : mElement->SetInlineStyleDeclaration(aDecl, nullptr, true);
@@ -173,10 +174,14 @@ nsDOMCSSAttributeDeclaration::GetCSSParsingEnvironment(CSSParsingEnvironment& aC
   aCSSParseEnv.mCSSLoader = doc->CSSLoader();
 }
 
-URLExtraData*
-nsDOMCSSAttributeDeclaration::GetURLData() const
+nsDOMCSSDeclaration::ServoCSSParsingEnvironment
+nsDOMCSSAttributeDeclaration::GetServoCSSParsingEnvironment() const
 {
-  return mElement->GetURLDataForStyleAttr();
+  return {
+    mElement->GetURLDataForStyleAttr(),
+    mElement->OwnerDoc()->GetCompatibilityMode(),
+    mElement->OwnerDoc()->CSSLoader(),
+  };
 }
 
 NS_IMETHODIMP
@@ -206,8 +211,6 @@ nsDOMCSSAttributeDeclaration::SetPropertyValue(const nsCSSPropertyID aPropID,
   if (aPropID == eCSSProperty_opacity || aPropID == eCSSProperty_transform ||
       aPropID == eCSSProperty_left || aPropID == eCSSProperty_top ||
       aPropID == eCSSProperty_right || aPropID == eCSSProperty_bottom ||
-      aPropID == eCSSProperty_margin_left || aPropID == eCSSProperty_margin_top ||
-      aPropID == eCSSProperty_margin_right || aPropID == eCSSProperty_margin_bottom ||
       aPropID == eCSSProperty_background_position_x ||
       aPropID == eCSSProperty_background_position_y ||
       aPropID == eCSSProperty_background_position) {

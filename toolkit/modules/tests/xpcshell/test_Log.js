@@ -8,7 +8,6 @@ var {utils: Cu} = Components;
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
 
-Cu.import("resource://gre/modules/Promise.jsm")
 Cu.import("resource://gre/modules/Log.jsm");
 
 var testFormatter = {
@@ -30,10 +29,6 @@ MockAppender.prototype = {
     this.messages.push(message);
   }
 };
-
-function run_test() {
-  run_next_test();
-}
 
 add_task(function test_Logger() {
   let log = Log.repository.getLogger("test.logger");
@@ -233,53 +228,53 @@ function fileContents(path) {
   });
 }
 
-add_task(function* test_FileAppender() {
+add_task(async function test_FileAppender() {
   // This directory does not exist yet
   let dir = OS.Path.join(do_get_profile().path, "test_Log");
-  do_check_false(yield OS.File.exists(dir));
+  do_check_false(await OS.File.exists(dir));
   let path = OS.Path.join(dir, "test_FileAppender");
   let appender = new Log.FileAppender(path, testFormatter);
   let logger = Log.repository.getLogger("test.FileAppender");
   logger.addAppender(appender);
 
   // Logging to a file that can't be created won't do harm.
-  do_check_false(yield OS.File.exists(path));
+  do_check_false(await OS.File.exists(path));
   logger.info("OHAI!");
 
-  yield OS.File.makeDir(dir);
+  await OS.File.makeDir(dir);
   logger.info("OHAI");
-  yield appender._lastWritePromise;
+  await appender._lastWritePromise;
 
-  do_check_eq((yield fileContents(path)),
+  do_check_eq((await fileContents(path)),
               "test.FileAppender\tINFO\tOHAI\n");
 
   logger.info("OHAI");
-  yield appender._lastWritePromise;
+  await appender._lastWritePromise;
 
-  do_check_eq((yield fileContents(path)),
+  do_check_eq((await fileContents(path)),
               "test.FileAppender\tINFO\tOHAI\n" +
               "test.FileAppender\tINFO\tOHAI\n");
 
   // Reset the appender and log some more.
-  yield appender.reset();
-  do_check_false(yield OS.File.exists(path));
+  await appender.reset();
+  do_check_false(await OS.File.exists(path));
 
   logger.debug("O RLY?!?");
-  yield appender._lastWritePromise;
-  do_check_eq((yield fileContents(path)),
+  await appender._lastWritePromise;
+  do_check_eq((await fileContents(path)),
               "test.FileAppender\tDEBUG\tO RLY?!?\n");
 
-  yield appender.reset();
+  await appender.reset();
   logger.debug("1");
   logger.info("2");
   logger.info("3");
   logger.info("4");
   logger.info("5");
   // Waiting on only the last promise should account for all of these.
-  yield appender._lastWritePromise;
+  await appender._lastWritePromise;
 
   // Messages ought to be logged in order.
-  do_check_eq((yield fileContents(path)),
+  do_check_eq((await fileContents(path)),
               "test.FileAppender\tDEBUG\t1\n" +
               "test.FileAppender\tINFO\t2\n" +
               "test.FileAppender\tINFO\t3\n" +
@@ -287,11 +282,11 @@ add_task(function* test_FileAppender() {
               "test.FileAppender\tINFO\t5\n");
 });
 
-add_task(function* test_BoundedFileAppender() {
+add_task(async function test_BoundedFileAppender() {
   let dir = OS.Path.join(do_get_profile().path, "test_Log");
 
-  if (!(yield OS.File.exists(dir))) {
-    yield OS.File.makeDir(dir);
+  if (!(await OS.File.exists(dir))) {
+    await OS.File.makeDir(dir);
   }
 
   let path = OS.Path.join(dir, "test_BoundedFileAppender");
@@ -302,9 +297,9 @@ add_task(function* test_BoundedFileAppender() {
 
   logger.info("ONE");
   logger.info("TWO");
-  yield appender._lastWritePromise;
+  await appender._lastWritePromise;
 
-  do_check_eq((yield fileContents(path)),
+  do_check_eq((await fileContents(path)),
               "test.BoundedFileAppender\tINFO\tONE\n" +
               "test.BoundedFileAppender\tINFO\tTWO\n");
 
@@ -312,24 +307,24 @@ add_task(function* test_BoundedFileAppender() {
   logger.info("FOUR");
 
   do_check_neq(appender._removeFilePromise, undefined);
-  yield appender._removeFilePromise;
-  yield appender._lastWritePromise;
+  await appender._removeFilePromise;
+  await appender._lastWritePromise;
 
-  do_check_eq((yield fileContents(path)),
+  do_check_eq((await fileContents(path)),
               "test.BoundedFileAppender\tINFO\tTHREE\n" +
               "test.BoundedFileAppender\tINFO\tFOUR\n");
 
-  yield appender.reset();
+  await appender.reset();
   logger.info("ONE");
   logger.info("TWO");
   logger.info("THREE");
   logger.info("FOUR");
 
   do_check_neq(appender._removeFilePromise, undefined);
-  yield appender._removeFilePromise;
-  yield appender._lastWritePromise;
+  await appender._removeFilePromise;
+  await appender._lastWritePromise;
 
-  do_check_eq((yield fileContents(path)),
+  do_check_eq((await fileContents(path)),
               "test.BoundedFileAppender\tINFO\tTHREE\n" +
               "test.BoundedFileAppender\tINFO\tFOUR\n");
 
@@ -338,7 +333,7 @@ add_task(function* test_BoundedFileAppender() {
 /*
  * Test parameter formatting.
  */
-add_task(function* log_message_with_params() {
+add_task(async function log_message_with_params() {
   let formatter = new Log.BasicFormatter();
 
   function formatMessage(text, params) {
@@ -417,9 +412,9 @@ add_task(function* log_message_with_params() {
   do_check_eq(formatMessage("Null ${n} undefined ${u}", {n: null, u: undefined}),
               "Null null undefined undefined");
 
-  // Format params with number, bool, and Object/String type.
+  // Format params with number, bool, and String type.
   do_check_eq(formatMessage("number ${n} boolean ${b} boxed Boolean ${bx} String ${s}",
-                            {n: 45, b: false, bx: new Boolean(true), s: new String("whatevs")}),
+                            {n: 45, b: false, bx: Boolean(true), s: String("whatevs")}),
               "number 45 boolean false boxed Boolean true String whatevs");
 
   /*
@@ -442,8 +437,8 @@ add_task(function* log_message_with_params() {
   // If the message text is null, the message contains only the formatted params object.
   str = formatMessage(null, err);
   do_check_true(str.startsWith('[Exception... "test exception"'));
-  // If the text is null and 'params' is a String object, the message is exactly that string.
-  str = formatMessage(null, new String("String in place of params"));
+  // If the text is null and 'params' is a string, the message is exactly that string.
+  str = formatMessage(null, "String in place of params");
   do_check_eq(str, "String in place of params");
 
   // We use object.valueOf() internally; make sure a broken valueOf() method
@@ -489,7 +484,7 @@ add_task(function* log_message_with_params() {
  * with the object argument as parameters. This makes the log useful when the
  * caller does "catch(err) {logger.error(err)}"
  */
-add_task(function* test_log_err_only() {
+add_task(async function test_log_err_only() {
   let log = Log.repository.getLogger("error.only");
   let mockFormatter = { format: msg => msg };
   let appender = new MockAppender(mockFormatter);
@@ -502,6 +497,7 @@ add_task(function* test_log_err_only() {
    * is formatted correctly.
    */
   try {
+    // eslint-disable-next-line no-eval
     eval("javascript syntax error");
   } catch (e) {
     log.error(e);
@@ -514,7 +510,7 @@ add_task(function* test_log_err_only() {
 /*
  * Test logStructured() messages through basic formatter.
  */
-add_task(function* test_structured_basic() {
+add_task(async function test_structured_basic() {
   let log = Log.repository.getLogger("test.logger");
   let appender = new MockAppender(new Log.BasicFormatter());
 
@@ -539,7 +535,7 @@ add_task(function* test_structured_basic() {
 /*
  * Test that all the basic logger methods pass the message and params through to the appender.
  */
-add_task(function* log_message_with_params() {
+add_task(async function log_message_with_params() {
   let log = Log.repository.getLogger("error.logger");
   let mockFormatter = { format: msg => msg };
   let appender = new MockAppender(mockFormatter);
@@ -562,8 +558,9 @@ add_task(function* log_message_with_params() {
 
 /*
  * Check that we format JS Errors reasonably.
+ * This needs to stay a generator to exercise Task.jsm's stack rewriting.
  */
-add_task(function* format_errors() {
+add_task(function *format_errors() {
   let pFormat = new Log.ParameterFormatter();
 
   // Test that subclasses of Error are recognized as errors.
@@ -576,6 +573,7 @@ add_task(function* format_errors() {
   // Test that JS-generated Errors are recognized and formatted.
   try {
     yield Promise.resolve();  // Scrambles the stack
+    // eslint-disable-next-line no-eval
     eval("javascript syntax error");
   } catch (e) {
     str = pFormat.format(e);

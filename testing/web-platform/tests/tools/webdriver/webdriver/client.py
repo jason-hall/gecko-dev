@@ -1,7 +1,3 @@
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 import urlparse
 
 import error
@@ -20,7 +16,7 @@ def command(func):
 
         if session.session_id is None:
             session.start()
-        assert session.session_id != None
+        assert session.session_id is not None
 
         return func(self, *args, **kwargs)
 
@@ -151,18 +147,20 @@ class ActionSequence(object):
         self._actions.append(action)
         return self
 
-    def pointer_up(self, button):
+    def pointer_up(self, button=0):
         """Queue a pointerUp action for `button`.
 
         :param button: Pointer button to perform action with.
+                       Default: 0, which represents main device button.
         """
         self._pointer_action("pointerUp", button)
         return self
 
-    def pointer_down(self, button):
+    def pointer_down(self, button=0):
         """Queue a pointerDown action for `button`.
 
         :param button: Pointer button to perform action with.
+                       Default: 0, which represents main device button.
         """
         self._pointer_action("pointerDown", button)
         return self
@@ -234,38 +232,62 @@ class Actions(object):
         """
         return ActionSequence(self.session, *args, **kwargs)
 
+
 class Window(object):
     def __init__(self, session):
         self.session = session
 
     @property
     @command
+    def rect(self):
+        return self.session.send_session_command("GET", "window/rect")
+
+    @property
+    @command
     def size(self):
-        resp = self.session.send_session_command("GET", "window/rect")
-        return (resp["width"], resp["height"])
+        """Gets the window size as a tuple of `(width, height)`."""
+        rect = self.rect
+        return (rect["width"], rect["height"])
 
     @size.setter
     @command
-    def size(self, (width, height)):
+    def size(self, new_size):
+        """Set window size by passing a tuple of `(width, height)`."""
+        width, height = new_size
         body = {"width": width, "height": height}
         self.session.send_session_command("POST", "window/rect", body)
 
     @property
     @command
     def position(self):
-        resp = self.session.send_session_command("GET", "window/rect")
-        return (resp["x"], resp["y"])
+        """Gets the window position as a tuple of `(x, y)`."""
+        rect = self.rect
+        return (rect["x"], rect["y"])
 
     @position.setter
     @command
-    def position(self, (x, y)):
+    def position(self, new_position):
+        """Set window position by passing a tuple of `(x, y)`."""
+        x, y = new_position
         body = {"x": x, "y": y}
         self.session.send_session_command("POST", "window/rect", body)
 
     @property
     @command
+    def state(self):
+        return self.rect["state"]
+
+    @command
     def maximize(self):
         return self.session.send_session_command("POST", "window/maximize")
+
+    @command
+    def minimize(self):
+        return self.session.send_session_command("POST", "window/minimize")
+
+    @command
+    def fullscreen(self):
+        return self.session.send_session_command("POST", "window/fullscreen")
 
 
 class Find(object):
@@ -335,12 +357,11 @@ class UserPrompt(object):
 
 
 class Session(object):
-    def __init__(self, host, port, url_prefix="/", desired_capabilities=None,
-                 required_capabilities=None, extension=None, timeout=None):
+    def __init__(self, host, port, url_prefix="/", capabilities=None,
+                 timeout=None, extension=None):
         self.transport = transport.HTTPWireProtocol(
             host, port, url_prefix, timeout=timeout)
-        self.desired_capabilities = desired_capabilities
-        self.required_capabilities = required_capabilities
+        self.capabilities = capabilities
         self.session_id = None
         self.timeouts = None
         self.window = None
@@ -371,16 +392,12 @@ class Session(object):
 
         body = {}
 
-        caps = {}
-        if self.desired_capabilities is not None:
-            caps["desiredCapabilities"] = self.desired_capabilities
-        if self.required_capabilities is not None:
-            caps["requiredCapabilities"] = self.required_capabilities
-        #body["capabilities"] = caps
-        body = caps
+        if self.capabilities is not None:
+            body["capabilities"] = self.capabilities
 
         value = self.send_command("POST", "session", body=body)
         self.session_id = value["sessionId"]
+        self.capabilities = value["capabilities"]
 
         if self.extension_cls:
             self.extension = self.extension_cls(self)
@@ -395,10 +412,6 @@ class Session(object):
         self.send_command("DELETE", url)
 
         self.session_id = None
-        self.timeouts = None
-        self.window = None
-        self.find = None
-        self.extension = None
 
     def send_command(self, method, url, body=None):
         """
@@ -605,7 +618,7 @@ class Element(object):
                 "value": selector}
 
         elem = self.send_element_command("POST", "element", body)
-        return self.session.element(elem)
+        return self.session._element(elem)
 
     @command
     def click(self):
@@ -620,12 +633,8 @@ class Element(object):
         self.send_element_command("POST", self.url("clear"), {})
 
     @command
-    def send_keys(self, keys):
-        if isinstance(keys, (str, unicode)):
-            keys = [char for char in keys]
-
-        body = {"value": keys}
-        return self.send_element_command("POST", "value", body)
+    def send_keys(self, text):
+        return self.send_element_command("POST", "value", {"text": text})
 
     @property
     @command
@@ -646,10 +655,17 @@ class Element(object):
     def rect(self):
         return self.send_element_command("GET", "rect")
 
+    @property
     @command
-    def property(self, name):
-        return self.send_element_command("GET", "property/%s" % name)
+    def selected(self):
+        return self.send_element_command("GET", "selected")
 
     @command
     def attribute(self, name):
         return self.send_element_command("GET", "attribute/%s" % name)
+
+    # This MUST come last because otherwise @property decorators above
+    # will be overridden by this.
+    @command
+    def property(self, name):
+        return self.send_element_command("GET", "property/%s" % name)

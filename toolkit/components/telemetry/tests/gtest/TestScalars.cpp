@@ -127,7 +127,7 @@ GetScalarsSnapshot(bool aKeyed, JSContext* aCx, JS::MutableHandle<JS::Value> aRe
   JS::RootedObject scalarObj(aCx, &scalarsSnapshot.toObject());
   // Don't complain if no scalars for the parent process can be found. Just
   // return an empty object.
-  Unused << JS_GetProperty(aCx, scalarObj, "default", &parentScalars);
+  Unused << JS_GetProperty(aCx, scalarObj, "parent", &parentScalars);
 
   aResult.set(parentScalars);
 }
@@ -301,9 +301,11 @@ TEST_F(TelemetryTestFixture, NonMainThreadAdd) {
   Unused << mTelemetry->ClearScalars();
 
   // Define the function that will be called on the testing thread.
-  nsCOMPtr<nsIRunnable> runnable = NS_NewRunnableFunction([]() -> void {
-    Telemetry::ScalarAdd(Telemetry::ScalarID::TELEMETRY_TEST_UNSIGNED_INT_KIND, 37);
-  });
+  nsCOMPtr<nsIRunnable> runnable = NS_NewRunnableFunction(
+    "TelemetryTestFixture_NonMainThreadAdd_Test::TestBody", []() -> void {
+      Telemetry::ScalarAdd(
+        Telemetry::ScalarID::TELEMETRY_TEST_UNSIGNED_INT_KIND, 37);
+    });
 
   // Spawn the testing thread and run the function.
   nsCOMPtr<nsIThread> testingThread;

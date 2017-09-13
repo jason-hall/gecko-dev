@@ -80,10 +80,14 @@ def create_parser(mach_interface=False):
                  " an environment variable")
     add_arg("--mozAfterPaint", action='store_true', dest="tpmozafterpaint",
             help="wait for MozAfterPaint event before recording the time")
+    add_arg("--firstPaint", action='store_true', dest="firstpaint",
+            help="Also report the first paint value in supported tests")
+    add_arg("--userReady", action='store_true', dest="userready",
+            help="Also report the user ready value in supported tests")
     add_arg('--spsProfile', action="store_true", dest="gecko_profile",
             help="(Deprecated - Use --geckoProfile instead.) Profile the "
                  "run and output the results in $MOZ_UPLOAD_DIR.")
-    add_arg('--spsProfileInterval', dest='gecko_profile_interval', type=int,
+    add_arg('--spsProfileInterval', dest='gecko_profile_interval', type=float,
             help="(Deprecated - Use --geckoProfileInterval instead.) How "
                  "frequently to take samples (ms)")
     add_arg('--spsProfileEntries', dest="gecko_profile_entries", type=int,
@@ -91,7 +95,7 @@ def create_parser(mach_interface=False):
                  "many samples to take with the profiler")
     add_arg('--geckoProfile', action="store_true", dest="gecko_profile",
             help="Profile the run and output the results in $MOZ_UPLOAD_DIR.")
-    add_arg('--geckoProfileInterval', dest='gecko_profile_interval', type=int,
+    add_arg('--geckoProfileInterval', dest='gecko_profile_interval', type=float,
             help="How frequently to take samples (ms)")
     add_arg('--geckoProfileEntries', dest="gecko_profile_entries", type=int,
             help="How many samples to take with the profiler")
@@ -116,6 +120,13 @@ def create_parser(mach_interface=False):
     add_arg('--setpref', action='append', default=[], dest="extraPrefs",
             metavar="PREF=VALUE",
             help="defines an extra user preference")
+    add_arg('--mitmproxy',
+            help='Test uses mitmproxy to serve the pages, specify the '
+                 'path and name of the mitmdump file to playback')
+    add_arg('--mitmdumpPath',
+            help="Path to mitmproxy's mitmdump playback tool")
+    add_arg("--firstNonBlankPaint", action='store_true', dest="fnbpaint",
+            help="Wait for firstNonBlankPaint event before recording the time")
     add_arg('--webServer', dest='webserver',
             help="DEPRECATED")
     if not mach_interface:
@@ -154,6 +165,19 @@ def create_parser(mach_interface=False):
             help="print available tests")
     add_arg('--print-suites', action=_ListSuite,
             help="list available suites")
+    add_arg('--no-upload-results', action="store_true",
+            dest='no_upload_results',
+            help="If given, it disables uploading of talos results.")
+    add_arg('--enable-stylo', action="store_true",
+            dest='enable_stylo',
+            help='If given, enable Stylo via Environment variables and '
+                 'upload results with Stylo options.')
+    add_arg('--disable-stylo', action="store_true",
+            dest='disable_stylo',
+            help='If given, disable Stylo via Environment variables.')
+    add_arg('--stylo-threads', type=int,
+            dest='stylothreads',
+            help='If given, run Stylo with a certain number of threads')
 
     add_logging_group(parser)
     return parser

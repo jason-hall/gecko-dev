@@ -6,8 +6,10 @@
 #ifndef GFX_WEBRENDERCONTAINERLAYER_H
 #define GFX_WEBRENDERCONTAINERLAYER_H
 
+#include "gfxPrefs.h"
 #include "Layers.h"
-#include "WebRenderLayerManager.h"
+#include "mozilla/layers/WebRenderLayer.h"
+#include "mozilla/layers/WebRenderLayerManager.h"
 
 namespace mozilla {
 namespace layers {
@@ -25,13 +27,21 @@ public:
 protected:
   virtual ~WebRenderContainerLayer()
   {
+    if (!GetAnimations().IsEmpty()) {
+      mManager->AsWebRenderLayerManager()->
+        AddCompositorAnimationsIdForDiscard(GetCompositorAnimationsId());
+    }
+
     ContainerLayer::RemoveAllChildren();
     MOZ_COUNT_DTOR(WebRenderContainerLayer);
   }
 
+  void UpdateTransformDataForAnimation();
+
 public:
   Layer* GetLayer() override { return this; }
-  void RenderLayer(wr::DisplayListBuilder& aBuilder) override;
+  void RenderLayer(wr::DisplayListBuilder& aBuilder,
+                   const StackingContextHelper& aSc) override;
 
   virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) override
   {
@@ -56,7 +66,8 @@ protected:
 
 public:
   Layer* GetLayer() override { return this; }
-  void RenderLayer(wr::DisplayListBuilder& aBuilder) override;
+  void RenderLayer(wr::DisplayListBuilder& aBuilder,
+                   const StackingContextHelper& aSc) override;
 
   virtual void ComputeEffectiveTransforms(const gfx::Matrix4x4& aTransformToSurface) override
   {

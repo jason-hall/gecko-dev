@@ -37,9 +37,10 @@ public:
   void NotifyVsync(const TimeStamp& aVsyncTimestamp);
   void NotifyVRVsync(const uint32_t& aDisplayID);
   void RefreshVRDisplays(bool aMustDispatch = false);
+  void RefreshVRControllers();
   void ScanForControllers();
   void RemoveControllers();
-  template<class T> void NotifyGamepadChange(const T& aInfo);
+  template<class T> void NotifyGamepadChange(uint32_t aIndex, const T& aInfo);
   RefPtr<gfx::VRDisplayHost> GetDisplay(const uint32_t& aDisplayID);
   void GetVRDisplayInfo(nsTArray<VRDisplayInfo>& aDisplayInfo);
 
@@ -53,6 +54,7 @@ public:
                      double aIntensity, double aDuration, uint32_t aPromiseID);
   void StopVibrateHaptic(uint32_t aControllerIdx);
   void NotifyVibrateHapticCompleted(uint32_t aPromiseID);
+  void DispatchSubmitFrameResult(uint32_t aDisplayID, const VRSubmitFrameResultInfo& aResult);
 
 protected:
   VRManager();
@@ -66,7 +68,6 @@ private:
   void Shutdown();
 
   void DispatchVRDisplayInfoUpdate();
-  void RefreshVRControllers();
 
   typedef nsTHashtable<nsRefPtrHashKey<VRManagerParent>> VRManagerParentSet;
   VRManagerParentSet mVRManagerParents;
@@ -83,6 +84,7 @@ private:
   Atomic<bool> mInitialized;
 
   TimeStamp mLastRefreshTime;
+  TimeStamp mLastActiveTime;
   bool mVRTestSystemCreated;
 };
 

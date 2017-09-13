@@ -89,8 +89,8 @@ ESE.JET_COLTYP = ctypes.unsigned_long;
 ESE.JET_DBID = ctypes.unsigned_long;
 
 ESE.JET_COLUMNDEF = new ctypes.StructType("JET_COLUMNDEF", [
-  {"cbStruct": ctypes.unsigned_long},
-  {"columnid": ESE.JET_COLUMNID	},
+  {"cbStruct": ctypes.unsigned_long },
+  {"columnid": ESE.JET_COLUMNID },
   {"coltyp": ESE.JET_COLTYP },
   {"wCountry": ctypes.unsigned_short }, // sepcifies the country/region for the column definition
   {"langid": ctypes.unsigned_short },
@@ -231,11 +231,11 @@ function unloadLibraries() {
 }
 
 function loadLibraries() {
-  Services.obs.addObserver(unloadLibraries, "xpcom-shutdown", false);
+  Services.obs.addObserver(unloadLibraries, "xpcom-shutdown");
   gLibs.ese = ctypes.open("esent.dll");
   gLibs.kernel = ctypes.open("kernel32.dll");
   KERNEL.FileTimeToSystemTime = gLibs.kernel.declare("FileTimeToSystemTime",
-    ctypes.default_abi, ctypes.int, KERNEL.FILETIME.ptr, KERNEL.SYSTEMTIME.ptr);
+    ctypes.winapi_abi, ctypes.int, KERNEL.FILETIME.ptr, KERNEL.SYSTEMTIME.ptr);
 
   declareESEFunctions();
 }

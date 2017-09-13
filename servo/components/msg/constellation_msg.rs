@@ -7,9 +7,9 @@
 
 use std::cell::Cell;
 use std::fmt;
-use webrender_traits;
+use webrender_api;
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum KeyState {
     Pressed,
     Released,
@@ -17,7 +17,7 @@ pub enum KeyState {
 }
 
 //N.B. Based on the glutin key enum
-#[derive(Debug, PartialEq, Eq, Copy, Clone, Deserialize, Serialize, HeapSizeOf)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, HeapSizeOf, PartialEq, Serialize)]
 pub enum Key {
     Space,
     Apostrophe,
@@ -156,7 +156,7 @@ bitflags! {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum TraversalDirection {
     Forward(usize),
     Back(usize),
@@ -207,23 +207,23 @@ impl PipelineNamespace {
         }
     }
 
-    fn next_frame_id(&mut self) -> FrameId {
-        FrameId {
+    fn next_browsing_context_id(&mut self) -> BrowsingContextId {
+        BrowsingContextId {
             namespace_id: self.id,
-            index: FrameIndex(self.next_index()),
+            index: BrowsingContextIndex(self.next_index()),
         }
     }
 }
 
 thread_local!(pub static PIPELINE_NAMESPACE: Cell<Option<PipelineNamespace>> = Cell::new(None));
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Copy, Hash, Debug, Deserialize, Serialize, HeapSizeOf)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, HeapSizeOf, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct PipelineNamespaceId(pub u32);
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Copy, Hash, Debug, Deserialize, Serialize, HeapSizeOf)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, HeapSizeOf, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct PipelineIndex(pub u32);
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Copy, Hash, Debug, Deserialize, Serialize, HeapSizeOf)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, HeapSizeOf, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct PipelineId {
     pub namespace_id: PipelineNamespaceId,
     pub index: PipelineIndex
@@ -239,10 +239,18 @@ impl PipelineId {
         })
     }
 
-    pub fn to_webrender(&self) -> webrender_traits::PipelineId {
+    pub fn to_webrender(&self) -> webrender_api::PipelineId {
         let PipelineNamespaceId(namespace_id) = self.namespace_id;
         let PipelineIndex(index) = self.index;
-        webrender_traits::PipelineId(namespace_id, index)
+        webrender_api::PipelineId(namespace_id, index)
+    }
+
+    pub fn root_scroll_node(&self) -> webrender_api::ClipId {
+        webrender_api::ClipId::root_scroll_node(self.to_webrender())
+    }
+
+    pub fn root_clip_and_scroll_info(&self) -> webrender_api::ClipAndScrollInfo {
+        webrender_api::ClipAndScrollInfo::simple(self.root_scroll_node())
     }
 }
 
@@ -254,43 +262,75 @@ impl fmt::Display for PipelineId {
     }
 }
 
-thread_local!(pub static TOP_LEVEL_FRAME_ID: Cell<Option<FrameId>> = Cell::new(None));
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, HeapSizeOf, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct BrowsingContextIndex(pub u32);
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Copy, Hash, Debug, Deserialize, Serialize, HeapSizeOf)]
-pub struct FrameIndex(pub u32);
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Copy, Hash, Debug, Deserialize, Serialize, HeapSizeOf)]
-pub struct FrameId {
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, HeapSizeOf, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct BrowsingContextId {
     pub namespace_id: PipelineNamespaceId,
-    pub index: FrameIndex
+    pub index: BrowsingContextIndex
 }
 
-impl FrameId {
-    pub fn new() -> FrameId {
+impl BrowsingContextId {
+    pub fn new() -> BrowsingContextId {
         PIPELINE_NAMESPACE.with(|tls| {
             let mut namespace = tls.get().expect("No namespace set for this thread!");
-            let new_frame_id = namespace.next_frame_id();
+            let new_browsing_context_id = namespace.next_browsing_context_id();
             tls.set(Some(namespace));
-            new_frame_id
+            new_browsing_context_id
         })
-    }
-
-    /// Each script and layout thread should have the top-level frame id installed,
-    /// since it is used by crash reporting.
-    pub fn install(id: FrameId) {
-        TOP_LEVEL_FRAME_ID.with(|tls| tls.set(Some(id)))
-    }
-
-    pub fn installed() -> Option<FrameId> {
-        TOP_LEVEL_FRAME_ID.with(|tls| tls.get())
     }
 }
 
-impl fmt::Display for FrameId {
+impl fmt::Display for BrowsingContextId {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let PipelineNamespaceId(namespace_id) = self.namespace_id;
-        let FrameIndex(index) = self.index;
+        let BrowsingContextIndex(index) = self.index;
         write!(fmt, "({},{})", namespace_id, index)
+    }
+}
+
+thread_local!(pub static TOP_LEVEL_BROWSING_CONTEXT_ID: Cell<Option<TopLevelBrowsingContextId>> = Cell::new(None));
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, HeapSizeOf, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct TopLevelBrowsingContextId(BrowsingContextId);
+
+impl TopLevelBrowsingContextId {
+    pub fn new() -> TopLevelBrowsingContextId {
+        TopLevelBrowsingContextId(BrowsingContextId::new())
+    }
+    /// Each script and layout thread should have the top-level browsing context id installed,
+    /// since it is used by crash reporting.
+    pub fn install(id: TopLevelBrowsingContextId) {
+        TOP_LEVEL_BROWSING_CONTEXT_ID.with(|tls| tls.set(Some(id)))
+    }
+
+    pub fn installed() -> Option<TopLevelBrowsingContextId> {
+        TOP_LEVEL_BROWSING_CONTEXT_ID.with(|tls| tls.get())
+    }
+}
+
+impl fmt::Display for TopLevelBrowsingContextId {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(fmt)
+    }
+}
+
+impl From<TopLevelBrowsingContextId> for BrowsingContextId {
+    fn from(id: TopLevelBrowsingContextId) -> BrowsingContextId {
+        id.0
+    }
+}
+
+impl PartialEq<TopLevelBrowsingContextId> for BrowsingContextId {
+    fn eq(&self, rhs: &TopLevelBrowsingContextId) -> bool {
+        self.eq(&rhs.0)
+    }
+}
+
+impl PartialEq<BrowsingContextId> for TopLevelBrowsingContextId {
+    fn eq(&self, rhs: &BrowsingContextId) -> bool {
+        self.0.eq(rhs)
     }
 }
 
@@ -298,11 +338,13 @@ impl fmt::Display for FrameId {
 pub const TEST_NAMESPACE: PipelineNamespaceId = PipelineNamespaceId(1234);
 pub const TEST_PIPELINE_INDEX: PipelineIndex = PipelineIndex(5678);
 pub const TEST_PIPELINE_ID: PipelineId = PipelineId { namespace_id: TEST_NAMESPACE, index: TEST_PIPELINE_INDEX };
-pub const TEST_FRAME_INDEX: FrameIndex = FrameIndex(8765);
-pub const TEST_FRAME_ID: FrameId = FrameId { namespace_id: TEST_NAMESPACE, index: TEST_FRAME_INDEX };
+pub const TEST_BROWSING_CONTEXT_INDEX: BrowsingContextIndex = BrowsingContextIndex(8765);
+pub const TEST_BROWSING_CONTEXT_ID: BrowsingContextId =
+    BrowsingContextId { namespace_id: TEST_NAMESPACE, index: TEST_BROWSING_CONTEXT_INDEX };
 
-#[derive(Clone, PartialEq, Eq, Copy, Hash, Debug, Deserialize, Serialize, HeapSizeOf)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, HeapSizeOf, PartialEq, Serialize)]
 pub enum FrameType {
     IFrame,
     MozBrowserIFrame,
 }
+

@@ -4,7 +4,6 @@
 
 import cStringIO
 import hashlib
-import json
 import os
 import platform
 import subprocess
@@ -127,7 +126,6 @@ class ProfileSymbolicator:
         self.options = options
         self.sym_file_manager = SymFileManager(self.options)
         self.symbol_dumper = self.get_symbol_dumper()
-        self.main_start_time = None
 
     def get_symbol_dumper(self):
         try:
@@ -139,8 +137,10 @@ class ProfileSymbolicator:
             return None
 
     def integrate_symbol_zip_from_url(self, symbol_zip_url):
-        if self.have_integrated(symbol_zip_url):
+        if platform.system() not in self.options['platformsRequiringSymbols']\
+                or self.have_integrated(symbol_zip_url):
             return
+
         LogMessage("Retrieving symbol zip from {symbol_zip_url}...".format(
             symbol_zip_url=symbol_zip_url))
         try:
@@ -262,30 +262,8 @@ class ProfileSymbolicator:
         symbolication_table = self._resolve_symbols(symbols_to_resolve)
         self._substitute_symbols(profile_json, symbolication_table)
 
-        profile_start_time = profile_json["meta"].get("startTime", 0)
-        delta_time = 0
-
-        # The profile in the main process will have the startTime that
-        # we'll offset our markers by, and also happens to be the one
-        # we'll see first when recursively symbolicating, so we'll stash
-        # it in main_start_time.
-        if self.main_start_time is None:
-            self.main_start_time = profile_start_time
-        else:
-            # We're a subprocess, so our markers will need to be offset
-            # by the difference between the parent process start time
-            # and this process's start time.
-            delta_time = profile_start_time - self.main_start_time
-
-        for i, thread in enumerate(profile_json["threads"]):
-            if isinstance(thread, basestring):
-                thread_json = json.loads(thread)
-                self.symbolicate_profile(thread_json)
-                profile_json["threads"][i] = json.dumps(thread_json)
-            else:
-                for marker in thread["markers"]["data"]:
-                    if marker[1]:
-                        marker[1] += delta_time
+        for process in profile_json["processes"]:
+            self.symbolicate_profile(process)
 
     def _find_addresses(self, profile_json):
         addresses = set()

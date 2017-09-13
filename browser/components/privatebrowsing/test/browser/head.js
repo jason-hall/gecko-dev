@@ -2,8 +2,13 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 var {PromiseUtils} = Cu.import("resource://gre/modules/PromiseUtils.jsm", {});
+Cu.import("resource://gre/modules/Services.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
+  "resource://gre/modules/PlacesUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesTestUtils",
   "resource://testing-common/PlacesTestUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "TestUtils",
+  "resource://testing-common/TestUtils.jsm");
 
 function whenNewWindowLoaded(aOptions, aCallback) {
   let win = OpenBrowserWindow(aOptions);
@@ -43,7 +48,7 @@ function newFileInDirectory(aDir) {
 
 function clearHistory() {
   // simulate clearing the private data
-  Services.obs.notifyObservers(null, "browser:purge-session-history", "");
+  Services.obs.notifyObservers(null, "browser:purge-session-history");
 }
 
 function _initTest() {

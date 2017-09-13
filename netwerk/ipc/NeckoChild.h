@@ -69,12 +69,10 @@ protected:
   virtual bool DeallocPDNSRequestChild(PDNSRequestChild*) override;
   virtual PDataChannelChild* AllocPDataChannelChild(const uint32_t& channelId) override;
   virtual bool DeallocPDataChannelChild(PDataChannelChild* child) override;
-  virtual PRtspControllerChild* AllocPRtspControllerChild() override;
-  virtual bool DeallocPRtspControllerChild(PRtspControllerChild*) override;
-  virtual PRtspChannelChild*
-    AllocPRtspChannelChild(const RtspChannelConnectArgs& aArgs)
-                           override;
-  virtual bool DeallocPRtspChannelChild(PRtspChannelChild*) override;
+  virtual PFileChannelChild* AllocPFileChannelChild(const uint32_t& channelId) override;
+  virtual bool DeallocPFileChannelChild(PFileChannelChild* child) override;
+  virtual PSimpleChannelChild* AllocPSimpleChannelChild(const uint32_t& channelId) override;
+  virtual bool DeallocPSimpleChannelChild(PSimpleChannelChild* child) override;
   virtual PChannelDiverterChild*
   AllocPChannelDiverterChild(const ChannelDiverterArgs& channel) override;
   virtual bool

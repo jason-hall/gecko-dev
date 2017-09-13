@@ -40,8 +40,8 @@ class SourceSurface;
 } // namespace gl
 
 namespace dom {
-class HTMLImageElementOrHTMLCanvasElementOrHTMLVideoElementOrImageBitmap;
-typedef HTMLImageElementOrHTMLCanvasElementOrHTMLVideoElementOrImageBitmap CanvasImageSource;
+class HTMLImageElementOrSVGImageElementOrHTMLCanvasElementOrHTMLVideoElementOrImageBitmap;
+typedef HTMLImageElementOrSVGImageElementOrHTMLCanvasElementOrHTMLVideoElementOrImageBitmap CanvasImageSource;
 class ImageData;
 class StringOrCanvasGradientOrCanvasPattern;
 class OwningStringOrCanvasGradientOrCanvasPattern;
@@ -409,7 +409,7 @@ public:
   }
 
   void DrawWindow(nsGlobalWindow& aWindow, double aX, double aY,
-		  double aW, double aH,
+                  double aW, double aH,
                   const nsAString& aBgColor, uint32_t aFlags,
                   mozilla::ErrorResult& aError);
 
@@ -451,22 +451,26 @@ public:
                             const char16_t* aEncoderOptions,
                             nsIInputStream** aStream) override;
 
-  already_AddRefed<mozilla::gfx::SourceSurface> GetSurfaceSnapshot(bool* aPremultAlpha = nullptr) override
+  already_AddRefed<mozilla::gfx::SourceSurface>
+  GetSurfaceSnapshot(gfxAlphaType* aOutAlphaType = nullptr) override
   {
     EnsureTarget();
-    if (aPremultAlpha) {
-      *aPremultAlpha = true;
+    if (aOutAlphaType) {
+      *aOutAlphaType = (mOpaque ? gfxAlphaType::Opaque : gfxAlphaType::Premult);
     }
     return mTarget->Snapshot();
   }
 
-  NS_IMETHOD SetIsOpaque(bool aIsOpaque) override;
+  virtual void SetIsOpaque(bool aIsOpaque) override;
   bool GetIsOpaque() override { return mOpaque; }
   NS_IMETHOD Reset() override;
   already_AddRefed<Layer> GetCanvasLayer(nsDisplayListBuilder* aBuilder,
                                          Layer* aOldLayer,
                                          LayerManager* aManager,
                                          bool aMirror = false) override;
+  bool InitializeCanvasRenderer(nsDisplayListBuilder* aBuilder,
+                                CanvasRenderer* aRenderer,
+                                bool aMirror = false) override;
   virtual bool ShouldForceInactiveLayer(LayerManager* aManager) override;
   void MarkContextClean() override;
   void MarkContextCleanForFrameCapture() override;
@@ -577,7 +581,7 @@ protected:
     * The number of living nsCanvasRenderingContexts.  When this goes down to
     * 0, we free the premultiply and unpremultiply tables, if they exist.
     */
-  static uint32_t sNumLivingContexts;
+  static uintptr_t sNumLivingContexts;
 
   static mozilla::gfx::DrawTarget* sErrorTarget;
 

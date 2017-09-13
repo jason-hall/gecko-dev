@@ -34,20 +34,20 @@ this.ContentWebRTC = {
   observe(aSubject, aTopic, aData) {
     switch (aTopic) {
       case "getUserMedia:request":
-	handleGUMRequest(aSubject, aTopic, aData);
-	break;
+        handleGUMRequest(aSubject, aTopic, aData);
+        break;
       case "recording-device-stopped":
-	handleGUMStop(aSubject, aTopic, aData);
-	break;
+        handleGUMStop(aSubject, aTopic, aData);
+        break;
       case "PeerConnection:request":
-	handlePCRequest(aSubject, aTopic, aData);
-	break;
+        handlePCRequest(aSubject, aTopic, aData);
+        break;
       case "recording-device-events":
-	updateIndicators(aSubject, aTopic, aData);
-	break;
+        updateIndicators(aSubject, aTopic, aData);
+        break;
       case "recording-window-ended":
-	removeBrowserSpecificIndicator(aSubject, aTopic, aData);
-	break;
+        removeBrowserSpecificIndicator(aSubject, aTopic, aData);
+        break;
     }
   },
 
@@ -72,7 +72,7 @@ this.ContentWebRTC = {
         let allowedDevices = Cc["@mozilla.org/array;1"]
                                .createInstance(Ci.nsIMutableArray);
         for (let deviceIndex of aMessage.data.devices)
-           allowedDevices.appendElement(devices[deviceIndex], /* weak =*/ false);
+           allowedDevices.appendElement(devices[deviceIndex]);
 
         Services.obs.notifyObservers(allowedDevices, "getUserMedia:response:allow", callID);
         break;

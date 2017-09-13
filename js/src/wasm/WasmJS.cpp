@@ -385,12 +385,12 @@ wasm::Eval(JSContext* cx, Handle<TypedArrayObject*> code, HandleObject importObj
     if (!DescribeScriptedCaller(cx, &scriptedCaller))
         return false;
 
-    CompileArgs compileArgs;
-    if (!compileArgs.initFromContext(cx, Move(scriptedCaller)))
+    MutableCompileArgs compileArgs = cx->new_<CompileArgs>();
+    if (!compileArgs || !compileArgs->initFromContext(cx, Move(scriptedCaller)))
         return false;
 
     UniqueChars error;
-    SharedModule module = Compile(*bytecode, compileArgs, &error);
+    SharedModule module = CompileInitialTier(*bytecode, *compileArgs, &error);
     if (!module) {
         if (error) {
             JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_COMPILE_ERROR,
@@ -423,8 +423,7 @@ ToNonWrappingUint32(JSContext* cx, HandleValue v, uint32_t max, const char* kind
         return false;
 
     if (dbl < 0 || dbl > max) {
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_UINT32,
-                                  kind, noun);
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_BAD_UINT32, kind, noun);
         return false;
     }
 
@@ -434,8 +433,8 @@ ToNonWrappingUint32(JSContext* cx, HandleValue v, uint32_t max, const char* kind
 }
 
 static bool
-GetLimits(JSContext* cx, HandleObject obj, uint32_t max, const char* kind,
-          Limits* limits)
+GetLimits(JSContext* cx, HandleObject obj, uint32_t maxInitial, uint32_t maxMaximum,
+          const char* kind, Limits* limits)
 {
     JSAtom* initialAtom = Atomize(cx, "initial", strlen("initial"));
     if (!initialAtom)
@@ -446,7 +445,7 @@ GetLimits(JSContext* cx, HandleObject obj, uint32_t max, const char* kind,
     if (!GetProperty(cx, obj, obj, initialId, &initialVal))
         return false;
 
-    if (!ToNonWrappingUint32(cx, initialVal, max, kind, "initial size", &limits->initial))
+    if (!ToNonWrappingUint32(cx, initialVal, maxInitial, kind, "initial size", &limits->initial))
         return false;
 
     JSAtom* maximumAtom = Atomize(cx, "maximum", strlen("maximum"));
@@ -461,7 +460,7 @@ GetLimits(JSContext* cx, HandleObject obj, uint32_t max, const char* kind,
             return false;
 
         limits->maximum.emplace();
-        if (!ToNonWrappingUint32(cx, maxVal, max, kind, "maximum size", limits->maximum.ptr()))
+        if (!ToNonWrappingUint32(cx, maxVal, maxMaximum, kind, "maximum size", limits->maximum.ptr()))
             return false;
 
         if (limits->initial > *limits->maximum) {
@@ -481,9 +480,8 @@ const ClassOps WasmModuleObject::classOps_ =
 {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     WasmModuleObject::finalize
@@ -653,6 +651,8 @@ WasmModuleObject::imports(JSContext* cx, unsigned argc, Value* vp)
     if (!elems.reserve(module->imports().length()))
         return false;
 
+    const FuncImportVector& funcImports = module->metadata(module->code().stableTier()).funcImports;
+
     size_t numFuncImport = 0;
     for (const Import& import : module->imports()) {
         Rooted<IdValueVector> props(cx, IdValueVector(cx));
@@ -675,7 +675,7 @@ WasmModuleObject::imports(JSContext* cx, unsigned argc, Value* vp)
         props.infallibleAppend(IdValuePair(NameToId(names.kind), StringValue(kindStr)));
 
         if (JitOptions.wasmTestMode && import.kind == DefinitionKind::Function) {
-            JSString* sigStr = SigToString(cx, module->metadata().funcImports[numFuncImport++].sig());
+            JSString* sigStr = SigToString(cx, funcImports[numFuncImport++].sig());
             if (!sigStr)
                 return false;
             if (!props.append(IdValuePair(NameToId(names.signature), StringValue(sigStr))))
@@ -714,6 +714,8 @@ WasmModuleObject::exports(JSContext* cx, unsigned argc, Value* vp)
     if (!elems.reserve(module->exports().length()))
         return false;
 
+    const FuncExportVector& funcExports = module->metadata(module->code().stableTier()).funcExports;
+
     size_t numFuncExport = 0;
     for (const Export& exp : module->exports()) {
         Rooted<IdValueVector> props(cx, IdValueVector(cx));
@@ -731,7 +733,7 @@ WasmModuleObject::exports(JSContext* cx, unsigned argc, Value* vp)
         props.infallibleAppend(IdValuePair(NameToId(names.kind), StringValue(kindStr)));
 
         if (JitOptions.wasmTestMode && exp.kind() == DefinitionKind::Function) {
-            JSString* sigStr = SigToString(cx, module->metadata().funcExports[numFuncExport++].sig());
+            JSString* sigStr = SigToString(cx, funcExports[numFuncExport++].sig());
             if (!sigStr)
                 return false;
             if (!props.append(IdValuePair(NameToId(names.signature), StringValue(sigStr))))
@@ -815,6 +817,9 @@ WasmModuleObject::create(JSContext* cx, Module& module, HandleObject proto)
 
     obj->initReservedSlot(MODULE_SLOT, PrivateValue(&module));
     module.AddRef();
+    // We account for the first tier here; the second tier, if different, will be
+    // accounted for separately when it's been compiled.
+    cx->zone()->updateJitCodeMallocBytes(module.codeLength(module.code().stableTier()));
     return obj;
 }
 
@@ -880,12 +885,12 @@ WasmModuleObject::construct(JSContext* cx, unsigned argc, Value* vp)
     if (!GetBufferSource(cx, &callArgs[0].toObject(), JSMSG_WASM_BAD_BUF_ARG, &bytecode))
         return false;
 
-    CompileArgs compileArgs;
-    if (!InitCompileArgs(cx, &compileArgs))
+    MutableCompileArgs compileArgs = cx->new_<CompileArgs>();
+    if (!compileArgs || !InitCompileArgs(cx, compileArgs.get()))
         return false;
 
     UniqueChars error;
-    SharedModule module = Compile(*bytecode, compileArgs, &error);
+    SharedModule module = CompileInitialTier(*bytecode, *compileArgs, &error);
     if (!module) {
         if (error) {
             JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_WASM_COMPILE_ERROR,
@@ -919,9 +924,8 @@ const ClassOps WasmInstanceObject::classOps_ =
 {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     WasmInstanceObject::finalize,
@@ -940,8 +944,31 @@ const Class WasmInstanceObject::class_ =
     &WasmInstanceObject::classOps_,
 };
 
+static bool
+IsInstance(HandleValue v)
+{
+    return v.isObject() && v.toObject().is<WasmInstanceObject>();
+}
+
+/* static */ bool
+WasmInstanceObject::exportsGetterImpl(JSContext* cx, const CallArgs& args)
+{
+    args.rval().setObject(args.thisv().toObject().as<WasmInstanceObject>().exportsObj());
+    return true;
+}
+
+/* static */ bool
+WasmInstanceObject::exportsGetter(JSContext* cx, unsigned argc, Value* vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    return CallNonGenericMethod<IsInstance, exportsGetterImpl>(cx, args);
+}
+
 const JSPropertySpec WasmInstanceObject::properties[] =
-{ JS_PS_END };
+{
+    JS_PSG("exports", WasmInstanceObject::exportsGetter, 0),
+    JS_PS_END
+};
 
 const JSFunctionSpec WasmInstanceObject::methods[] =
 { JS_FS_END };
@@ -976,7 +1003,8 @@ WasmInstanceObject::trace(JSTracer* trc, JSObject* obj)
 
 /* static */ WasmInstanceObject*
 WasmInstanceObject::create(JSContext* cx,
-                           UniqueCode code,
+                           SharedCode code,
+                           UniqueDebugState debug,
                            UniqueGlobalSegment globals,
                            HandleWasmMemoryObject memory,
                            SharedTableVector&& tables,
@@ -990,7 +1018,7 @@ WasmInstanceObject::create(JSContext* cx,
         return nullptr;
     }
 
-    UniquePtr<WeakScopeMap> scopes = js::MakeUnique<WeakScopeMap>(cx->zone(), ScopeMap());
+    UniquePtr<ScopeMap> scopes = js::MakeUnique<ScopeMap>(cx->zone());
     if (!scopes || !scopes->init()) {
         ReportOutOfMemory(cx);
         return nullptr;
@@ -1003,6 +1031,7 @@ WasmInstanceObject::create(JSContext* cx,
 
     obj->setReservedSlot(EXPORTS_SLOT, PrivateValue(exports.release()));
     obj->setReservedSlot(SCOPES_SLOT, PrivateValue(scopes.release()));
+    obj->setReservedSlot(INSTANCE_SCOPE_SLOT, UndefinedValue());
     MOZ_ASSERT(obj->isNewborn());
 
     MOZ_ASSERT(obj->isTenured(), "assumed by WasmTableObject write barriers");
@@ -1010,7 +1039,8 @@ WasmInstanceObject::create(JSContext* cx,
     // Root the Instance via WasmInstanceObject before any possible GC.
     auto* instance = cx->new_<Instance>(cx,
                                         obj,
-                                        Move(code),
+                                        code,
+                                        Move(debug),
                                         Move(globals),
                                         memory,
                                         Move(tables),
@@ -1026,6 +1056,13 @@ WasmInstanceObject::create(JSContext* cx,
         return nullptr;
 
     return obj;
+}
+
+void
+WasmInstanceObject::initExportsObj(JSObject& exportsObj)
+{
+    MOZ_ASSERT(getReservedSlot(EXPORTS_OBJ_SLOT).isUndefined());
+    setReservedSlot(EXPORTS_OBJ_SLOT, ObjectValue(exportsObj));
 }
 
 static bool
@@ -1091,16 +1128,22 @@ WasmInstanceObject::instance() const
     return *(Instance*)getReservedSlot(INSTANCE_SLOT).toPrivate();
 }
 
+JSObject&
+WasmInstanceObject::exportsObj() const
+{
+    return getReservedSlot(EXPORTS_OBJ_SLOT).toObject();
+}
+
 WasmInstanceObject::ExportMap&
 WasmInstanceObject::exports() const
 {
     return *(ExportMap*)getReservedSlot(EXPORTS_SLOT).toPrivate();
 }
 
-WasmInstanceObject::WeakScopeMap&
+WasmInstanceObject::ScopeMap&
 WasmInstanceObject::scopes() const
 {
-    return *(WeakScopeMap*)getReservedSlot(SCOPES_SLOT).toPrivate();
+    return *(ScopeMap*)getReservedSlot(SCOPES_SLOT).toPrivate();
 }
 
 static bool
@@ -1124,12 +1167,12 @@ WasmInstanceObject::getExportedFunction(JSContext* cx, HandleWasmInstanceObject 
     }
 
     const Instance& instance = instanceObj->instance();
-    unsigned numArgs = instance.metadata().lookupFuncExport(funcIndex).sig().args().length();
+    unsigned numArgs = instance.metadata(instance.code().stableTier()).lookupFuncExport(funcIndex).sig().args().length();
 
     // asm.js needs to act like a normal JS function which means having the name
     // from the original source and being callable as a constructor.
     if (instance.isAsmJS()) {
-        RootedAtom name(cx, instance.code().getFuncAtom(cx, funcIndex));
+        RootedAtom name(cx, instance.getFuncAtom(cx, funcIndex));
         if (!name)
             return false;
 
@@ -1159,12 +1202,27 @@ WasmInstanceObject::getExportedFunction(JSContext* cx, HandleWasmInstanceObject 
 }
 
 const CodeRange&
-WasmInstanceObject::getExportedFunctionCodeRange(HandleFunction fun)
+WasmInstanceObject::getExportedFunctionCodeRange(HandleFunction fun, Tier tier)
 {
     uint32_t funcIndex = ExportedFunctionToFuncIndex(fun);
     MOZ_ASSERT(exports().lookup(funcIndex)->value() == fun);
-    const Metadata& metadata = instance().metadata();
-    return metadata.codeRanges[metadata.lookupFuncExport(funcIndex).codeRangeIndex()];
+    const FuncExport& funcExport = instance().metadata(tier).lookupFuncExport(funcIndex);
+    return instance().metadata(tier).codeRanges[funcExport.codeRangeIndex()];
+}
+
+/* static */ WasmInstanceScope*
+WasmInstanceObject::getScope(JSContext* cx, HandleWasmInstanceObject instanceObj)
+{
+    if (!instanceObj->getReservedSlot(INSTANCE_SCOPE_SLOT).isUndefined())
+        return (WasmInstanceScope*)instanceObj->getReservedSlot(INSTANCE_SCOPE_SLOT).toGCThing();
+
+    Rooted<WasmInstanceScope*> instanceScope(cx, WasmInstanceScope::create(cx, instanceObj));
+    if (!instanceScope)
+        return nullptr;
+
+    instanceObj->setReservedSlot(INSTANCE_SCOPE_SLOT, PrivateGCThingValue(instanceScope));
+
+    return instanceScope;
 }
 
 /* static */ WasmFunctionScope*
@@ -1174,7 +1232,11 @@ WasmInstanceObject::getFunctionScope(JSContext* cx, HandleWasmInstanceObject ins
     if (ScopeMap::Ptr p = instanceObj->scopes().lookup(funcIndex))
         return p->value();
 
-    Rooted<WasmFunctionScope*> funcScope(cx, WasmFunctionScope::create(cx, instanceObj, funcIndex));
+    Rooted<WasmInstanceScope*> instanceScope(cx, WasmInstanceObject::getScope(cx, instanceObj));
+    if (!instanceScope)
+        return nullptr;
+
+    Rooted<WasmFunctionScope*> funcScope(cx, WasmFunctionScope::create(cx, instanceScope, funcIndex));
     if (!funcScope)
         return nullptr;
 
@@ -1241,9 +1303,8 @@ const ClassOps WasmMemoryObject::classOps_ =
 {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     WasmMemoryObject::finalize
@@ -1298,7 +1359,7 @@ WasmMemoryObject::construct(JSContext* cx, unsigned argc, Value* vp)
 
     RootedObject obj(cx, &args[0].toObject());
     Limits limits;
-    if (!GetLimits(cx, obj, UINT32_MAX / PageSize, "Memory", &limits))
+    if (!GetLimits(cx, obj, MaxMemoryInitialPages, MaxMemoryMaximumPages, "Memory", &limits))
         return false;
 
     limits.initial *= PageSize;
@@ -1393,18 +1454,18 @@ WasmMemoryObject::hasObservers() const
     return !getReservedSlot(OBSERVERS_SLOT).isUndefined();
 }
 
-WasmMemoryObject::WeakInstanceSet&
+WasmMemoryObject::InstanceSet&
 WasmMemoryObject::observers() const
 {
     MOZ_ASSERT(hasObservers());
-    return *reinterpret_cast<WeakInstanceSet*>(getReservedSlot(OBSERVERS_SLOT).toPrivate());
+    return *reinterpret_cast<InstanceSet*>(getReservedSlot(OBSERVERS_SLOT).toPrivate());
 }
 
-WasmMemoryObject::WeakInstanceSet*
+WasmMemoryObject::InstanceSet*
 WasmMemoryObject::getOrCreateObservers(JSContext* cx)
 {
     if (!hasObservers()) {
-        auto observers = MakeUnique<WeakInstanceSet>(cx->zone(), InstanceSet());
+        auto observers = MakeUnique<InstanceSet>(cx->zone());
         if (!observers || !observers->init()) {
             ReportOutOfMemory(cx);
             return nullptr;
@@ -1431,7 +1492,7 @@ WasmMemoryObject::addMovingGrowObserver(JSContext* cx, WasmInstanceObject* insta
 {
     MOZ_ASSERT(movingGrowable());
 
-    WeakInstanceSet* observers = getOrCreateObservers(cx);
+    InstanceSet* observers = getOrCreateObservers(cx);
     if (!observers)
         return false;
 
@@ -1498,9 +1559,8 @@ const ClassOps WasmTableObject::classOps_ =
 {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     WasmTableObject::finalize,
@@ -1609,7 +1669,7 @@ WasmTableObject::construct(JSContext* cx, unsigned argc, Value* vp)
     }
 
     Limits limits;
-    if (!GetLimits(cx, obj, UINT32_MAX, "Table", &limits))
+    if (!GetLimits(cx, obj, MaxTableInitialLength, UINT32_MAX, "Table", &limits))
         return false;
 
     RootedWasmTableObject table(cx, WasmTableObject::create(cx, limits));
@@ -1712,9 +1772,10 @@ WasmTableObject::setImpl(JSContext* cx, const CallArgs& args)
 #endif
 
         Instance& instance = instanceObj->instance();
-        const FuncExport& funcExport = instance.metadata().lookupFuncExport(funcIndex);
-        const CodeRange& codeRange = instance.metadata().codeRanges[funcExport.codeRangeIndex()];
-        void* code = instance.codeSegment().base() + codeRange.funcTableEntry();
+        Tier tier = instance.code().bestTier();
+        const FuncExport& funcExport = instance.metadata(tier).lookupFuncExport(funcIndex);
+        const CodeRange& codeRange = instance.metadata(tier).codeRanges[funcExport.codeRangeIndex()];
+        void* code = instance.codeBase(tier) + codeRange.funcTableEntry();
         table.set(index, code, instance);
     } else {
         table.setNull(index);
@@ -1789,14 +1850,6 @@ WebAssembly_toSource(JSContext* cx, unsigned argc, Value* vp)
 #endif
 
 static bool
-Nop(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    args.rval().setUndefined();
-    return true;
-}
-
-static bool
 Reject(JSContext* cx, const CompileArgs& args, UniqueChars error, Handle<PromiseObject*> promise)
 {
     if (!error) {
@@ -1838,7 +1891,8 @@ Reject(JSContext* cx, const CompileArgs& args, UniqueChars error, Handle<Promise
 }
 
 static bool
-ResolveCompilation(JSContext* cx, Module& module, Handle<PromiseObject*> promise)
+ResolveCompilation(JSContext* cx, Module& module, const CompileArgs& compileArgs,
+                   Handle<PromiseObject*> promise)
 {
     RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmModule).toObject());
     RootedObject moduleObj(cx, WasmModuleObject::create(cx, module, proto));
@@ -1849,25 +1903,25 @@ ResolveCompilation(JSContext* cx, Module& module, Handle<PromiseObject*> promise
     return PromiseObject::resolve(cx, promise, resolutionValue);
 }
 
-struct CompilePromiseTask : PromiseTask
+struct CompilePromiseTask : PromiseHelperTask
 {
-    MutableBytes bytecode;
-    CompileArgs  compileArgs;
-    UniqueChars  error;
-    SharedModule module;
+    MutableBytes      bytecode;
+    SharedCompileArgs compileArgs;
+    UniqueChars       error;
+    SharedModule      module;
 
     CompilePromiseTask(JSContext* cx, Handle<PromiseObject*> promise)
-      : PromiseTask(cx, promise)
+      : PromiseHelperTask(cx, promise)
     {}
 
     void execute() override {
-        module = Compile(*bytecode, compileArgs, &error);
+        module = CompileInitialTier(*bytecode, *compileArgs, &error);
     }
 
-    bool finishPromise(JSContext* cx, Handle<PromiseObject*> promise) override {
+    bool resolve(JSContext* cx, Handle<PromiseObject*> promise) override {
         return module
-               ? ResolveCompilation(cx, *module, promise)
-               : Reject(cx, compileArgs, Move(error), promise);
+               ? ResolveCompilation(cx, *module, *compileArgs, promise)
+               : Reject(cx, *compileArgs, Move(error), promise);
     }
 };
 
@@ -1895,6 +1949,16 @@ RejectWithPendingException(JSContext* cx, Handle<PromiseObject*> promise, CallAr
 }
 
 static bool
+EnsurePromiseSupport(JSContext* cx)
+{
+    if (!cx->runtime()->offThreadPromiseState.ref().initialized()) {
+        JS_ReportErrorASCII(cx, "WebAssembly Promise APIs not supported in this runtime.");
+        return false;
+    }
+    return true;
+}
+
+static bool
 GetBufferSource(JSContext* cx, CallArgs callArgs, const char* name, MutableBytes* bytecode)
 {
     if (!callArgs.requireAtLeast(cx, name, 1))
@@ -1911,21 +1975,15 @@ GetBufferSource(JSContext* cx, CallArgs callArgs, const char* name, MutableBytes
 static bool
 WebAssembly_compile(JSContext* cx, unsigned argc, Value* vp)
 {
-    if (!cx->runtime()->startAsyncTaskCallback || !cx->runtime()->finishAsyncTaskCallback) {
-        JS_ReportErrorASCII(cx, "WebAssembly.compile not supported in this runtime.");
-        return false;
-    }
-
-    RootedFunction nopFun(cx, NewNativeFunction(cx, Nop, 0, nullptr));
-    if (!nopFun)
+    if (!EnsurePromiseSupport(cx))
         return false;
 
-    Rooted<PromiseObject*> promise(cx, PromiseObject::create(cx, nopFun));
+    Rooted<PromiseObject*> promise(cx, PromiseObject::createSkippingExecutor(cx));
     if (!promise)
         return false;
 
     auto task = cx->make_unique<CompilePromiseTask>(cx, promise);
-    if (!task)
+    if (!task || !task->init(cx))
         return false;
 
     CallArgs callArgs = CallArgsFromVp(argc, vp);
@@ -1933,10 +1991,12 @@ WebAssembly_compile(JSContext* cx, unsigned argc, Value* vp)
     if (!GetBufferSource(cx, callArgs, "WebAssembly.compile", &task->bytecode))
         return RejectWithPendingException(cx, promise, callArgs);
 
-    if (!InitCompileArgs(cx, &task->compileArgs))
+    MutableCompileArgs compileArgs = cx->new_<CompileArgs>();
+    if (!compileArgs || !InitCompileArgs(cx, compileArgs))
         return false;
+    task->compileArgs = compileArgs;
 
-    if (!StartPromiseTask(cx, Move(task)))
+    if (!StartOffThreadPromiseHelperTask(cx, Move(task)))
         return false;
 
     callArgs.rval().setObject(*promise);
@@ -1944,8 +2004,8 @@ WebAssembly_compile(JSContext* cx, unsigned argc, Value* vp)
 }
 
 static bool
-ResolveInstantiation(JSContext* cx, Module& module, HandleObject importObj,
-                     Handle<PromiseObject*> promise)
+ResolveInstantiation(JSContext* cx, Module& module, const CompileArgs& compileArgs,
+                     HandleObject importObj, Handle<PromiseObject*> promise)
 {
     RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmModule).toObject());
     RootedObject moduleObj(cx, WasmModuleObject::create(cx, module, proto));
@@ -1972,19 +2032,29 @@ ResolveInstantiation(JSContext* cx, Module& module, HandleObject importObj,
     return PromiseObject::resolve(cx, promise, val);
 }
 
-struct InstantiatePromiseTask : CompilePromiseTask
+struct InstantiatePromiseTask : PromiseHelperTask
 {
+    MutableBytes           bytecode;
+    SharedCompileArgs      compileArgs;
+    UniqueChars            error;
+    SharedModule           module;
     PersistentRootedObject importObj;
 
-    InstantiatePromiseTask(JSContext* cx, Handle<PromiseObject*> promise, HandleObject importObj)
-      : CompilePromiseTask(cx, promise),
+    InstantiatePromiseTask(JSContext* cx, Handle<PromiseObject*> promise,
+                           const CompileArgs& compileArgs, HandleObject importObj)
+      : PromiseHelperTask(cx, promise),
+        compileArgs(&compileArgs),
         importObj(cx, importObj)
     {}
 
-    bool finishPromise(JSContext* cx, Handle<PromiseObject*> promise) override {
+    void execute() override {
+        module = CompileInitialTier(*bytecode, *compileArgs, &error);
+    }
+
+    bool resolve(JSContext* cx, Handle<PromiseObject*> promise) override {
         return module
-               ? ResolveInstantiation(cx, *module, importObj, promise)
-               : Reject(cx, compileArgs, Move(error), promise);
+               ? ResolveInstantiation(cx, *module, *compileArgs, importObj, promise)
+               : Reject(cx, *compileArgs, Move(error), promise);
     }
 };
 
@@ -2008,16 +2078,10 @@ GetInstantiateArgs(JSContext* cx, CallArgs callArgs, MutableHandleObject firstAr
 static bool
 WebAssembly_instantiate(JSContext* cx, unsigned argc, Value* vp)
 {
-    if (!cx->runtime()->startAsyncTaskCallback || !cx->runtime()->finishAsyncTaskCallback) {
-        JS_ReportErrorASCII(cx, "WebAssembly.instantiate not supported in this runtime.");
-        return false;
-    }
-
-    RootedFunction nopFun(cx, NewNativeFunction(cx, Nop, 0, nullptr));
-    if (!nopFun)
+    if (!EnsurePromiseSupport(cx))
         return false;
 
-    Rooted<PromiseObject*> promise(cx, PromiseObject::create(cx, nopFun));
+    Rooted<PromiseObject*> promise(cx, PromiseObject::createSkippingExecutor(cx));
     if (!promise)
         return false;
 
@@ -2038,17 +2102,18 @@ WebAssembly_instantiate(JSContext* cx, unsigned argc, Value* vp)
         if (!PromiseObject::resolve(cx, promise, resolutionValue))
             return false;
     } else {
-        auto task = cx->make_unique<InstantiatePromiseTask>(cx, promise, importObj);
-        if (!task)
+        MutableCompileArgs compileArgs = cx->new_<CompileArgs>();
+        if (!compileArgs || !InitCompileArgs(cx, compileArgs.get()))
+            return false;
+
+        auto task = cx->make_unique<InstantiatePromiseTask>(cx, promise, *compileArgs, importObj);
+        if (!task || !task->init(cx))
             return false;
 
         if (!GetBufferSource(cx, firstArg, JSMSG_WASM_BAD_BUF_MOD_ARG, &task->bytecode))
             return RejectWithPendingException(cx, promise, callArgs);
 
-        if (!InitCompileArgs(cx, &task->compileArgs))
-            return false;
-
-        if (!StartPromiseTask(cx, Move(task)))
+        if (!StartOffThreadPromiseHelperTask(cx, Move(task)))
             return false;
     }
 

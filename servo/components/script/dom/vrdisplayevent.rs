@@ -59,14 +59,19 @@ impl VRDisplayEvent {
                           event: &WebVRDisplayEvent)
                           -> Root<VRDisplayEvent> {
         let (name, reason) = match *event {
-            WebVRDisplayEvent::Connect(_) => ("displayconnect", None),
-            WebVRDisplayEvent::Disconnect(_) => ("displaydisconnect", None),
-            WebVRDisplayEvent::Activate(_, reason) => ("activate", Some(reason)),
-            WebVRDisplayEvent::Deactivate(_, reason) => ("deactivate", Some(reason)),
-            WebVRDisplayEvent::Blur(_) => ("blur", None),
-            WebVRDisplayEvent::Focus(_) => ("focus", None),
-            WebVRDisplayEvent::PresentChange(_, _) => ("presentchange", None),
-            WebVRDisplayEvent::Change(_) => panic!("VRDisplayEvent:Change event not available in WebVR")
+            WebVRDisplayEvent::Connect(_) => ("vrdisplayconnect", None),
+            WebVRDisplayEvent::Disconnect(_) => ("vrdisplaydisconnect", None),
+            WebVRDisplayEvent::Activate(_, reason) => ("vrdisplayactivate", Some(reason)),
+            WebVRDisplayEvent::Deactivate(_, reason) => ("vrdisplaydeactivate", Some(reason)),
+            WebVRDisplayEvent::Blur(_) => ("vrdisplayblur", None),
+            WebVRDisplayEvent::Focus(_) => ("vrdisplayfocus", None),
+            WebVRDisplayEvent::PresentChange(_, _) => ("vrdisplaypresentchange", None),
+            WebVRDisplayEvent::Change(_) |
+            WebVRDisplayEvent::Pause(_) |
+            WebVRDisplayEvent::Resume(_) |
+            WebVRDisplayEvent::Exit(_) => {
+                panic!("{:?} event not available in WebVR", event)
+            }
         };
 
         // map to JS enum values

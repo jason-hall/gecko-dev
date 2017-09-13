@@ -2,22 +2,20 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-XPCOMUtils.defineLazyServiceGetter(this, "aboutNewTabService",
-                                   "@mozilla.org/browser/aboutnewtab-service;1",
-                                   "nsIAboutNewTabService");
+// The ext-* files are imported into the same scopes.
+/* import-globals-from ext-browser.js */
 
-XPCOMUtils.defineLazyModuleGetter(this, "MatchPattern",
-                                  "resource://gre/modules/MatchPattern.jsm");
+XPCOMUtils.defineLazyGetter(this, "strBundle", function() {
+  const stringSvc = Cc["@mozilla.org/intl/stringbundle;1"].getService(Ci.nsIStringBundleService);
+  return stringSvc.createBundle("chrome://global/locale/extensions.properties");
+});
+
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
                                   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PromiseUtils",
                                   "resource://gre/modules/PromiseUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
                                   "resource://gre/modules/Services.jsm");
-
-var {
-  SingletonEventManager,
-} = ExtensionUtils;
 
 let tabListener = {
   tabReadyInitialized: false,
@@ -103,16 +101,20 @@ this.tabs = class extends ExtensionAPI {
 
     let self = {
       tabs: {
-        onActivated: new WindowEventManager(context, "tabs.onActivated", "TabSelect", (fire, event) => {
-          let nativeTab = event.originalTarget;
-          let tabId = tabTracker.getId(nativeTab);
-          let windowId = windowTracker.getId(nativeTab.ownerGlobal);
-          fire.async({tabId, windowId});
+        onActivated: new EventManager(context, "tabs.onActivated", fire => {
+          let listener = (eventName, event) => {
+            fire.async(event);
+          };
+
+          tabTracker.on("tab-activated", listener);
+          return () => {
+            tabTracker.off("tab-activated", listener);
+          };
         }).api(),
 
-        onCreated: new SingletonEventManager(context, "tabs.onCreated", fire => {
+        onCreated: new EventManager(context, "tabs.onCreated", fire => {
           let listener = (eventName, event) => {
-            fire.async(tabManager.convert(event.nativeTab));
+            fire.async(tabManager.convert(event.nativeTab, event.currentTab));
           };
 
           tabTracker.on("tab-created", listener);
@@ -127,14 +129,18 @@ this.tabs = class extends ExtensionAPI {
          * the tabId in an array to match the API.
          * @see  https://developer.mozilla.org/en-US/Add-ons/WebExtensions/API/Tabs/onHighlighted
         */
-        onHighlighted: new WindowEventManager(context, "tabs.onHighlighted", "TabSelect", (fire, event) => {
-          let nativeTab = event.originalTarget;
-          let tabIds = [tabTracker.getId(nativeTab)];
-          let windowId = windowTracker.getId(nativeTab.ownerGlobal);
-          fire.async({tabIds, windowId});
+        onHighlighted: new EventManager(context, "tabs.onHighlighted", fire => {
+          let listener = (eventName, event) => {
+            fire.async({tabIds: [event.tabId], windowId: event.windowId});
+          };
+
+          tabTracker.on("tab-activated", listener);
+          return () => {
+            tabTracker.off("tab-activated", listener);
+          };
         }).api(),
 
-        onAttached: new SingletonEventManager(context, "tabs.onAttached", fire => {
+        onAttached: new EventManager(context, "tabs.onAttached", fire => {
           let listener = (eventName, event) => {
             fire.async(event.tabId, {newWindowId: event.newWindowId, newPosition: event.newPosition});
           };
@@ -145,7 +151,7 @@ this.tabs = class extends ExtensionAPI {
           };
         }).api(),
 
-        onDetached: new SingletonEventManager(context, "tabs.onDetached", fire => {
+        onDetached: new EventManager(context, "tabs.onDetached", fire => {
           let listener = (eventName, event) => {
             fire.async(event.tabId, {oldWindowId: event.oldWindowId, oldPosition: event.oldPosition});
           };
@@ -156,7 +162,7 @@ this.tabs = class extends ExtensionAPI {
           };
         }).api(),
 
-        onRemoved: new SingletonEventManager(context, "tabs.onRemoved", fire => {
+        onRemoved: new EventManager(context, "tabs.onRemoved", fire => {
           let listener = (eventName, event) => {
             fire.async(event.tabId, {windowId: event.windowId, isWindowClosing: event.isWindowClosing});
           };
@@ -167,11 +173,11 @@ this.tabs = class extends ExtensionAPI {
           };
         }).api(),
 
-        onReplaced: new SingletonEventManager(context, "tabs.onReplaced", fire => {
+        onReplaced: new EventManager(context, "tabs.onReplaced", fire => {
           return () => {};
         }).api(),
 
-        onMoved: new SingletonEventManager(context, "tabs.onMoved", fire => {
+        onMoved: new EventManager(context, "tabs.onMoved", fire => {
           // There are certain circumstances where we need to ignore a move event.
           //
           // Namely, the first time the tab is moved after it's created, we need
@@ -214,7 +220,7 @@ this.tabs = class extends ExtensionAPI {
           };
         }).api(),
 
-        onUpdated: new SingletonEventManager(context, "tabs.onUpdated", fire => {
+        onUpdated: new EventManager(context, "tabs.onUpdated", fire => {
           const restricted = ["url", "favIconUrl", "title"];
 
           function sanitize(extension, changeInfo) {
@@ -256,6 +262,9 @@ this.tabs = class extends ExtensionAPI {
               needed.push("pinned");
             } else if (event.type == "TabUnpinned") {
               needed.push("pinned");
+            } else if (event.type == "TabBrowserInserted" &&
+                       !event.detail.insertedOnTabCreation) {
+              needed.push("discarded");
             }
 
             let tab = tabManager.getWrapper(event.originalTarget);
@@ -284,12 +293,14 @@ this.tabs = class extends ExtensionAPI {
           windowTracker.addListener("TabAttrModified", listener);
           windowTracker.addListener("TabPinned", listener);
           windowTracker.addListener("TabUnpinned", listener);
+          windowTracker.addListener("TabBrowserInserted", listener);
 
           return () => {
             windowTracker.removeListener("status", statusListener);
             windowTracker.removeListener("TabAttrModified", listener);
             windowTracker.removeListener("TabPinned", listener);
             windowTracker.removeListener("TabUnpinned", listener);
+            windowTracker.removeListener("TabBrowserInserted", listener);
           };
         }).api(),
 
@@ -307,7 +318,7 @@ this.tabs = class extends ExtensionAPI {
                 Services.obs.removeObserver(obs, "browser-delayed-startup-finished");
                 resolve(window);
               };
-              Services.obs.addObserver(obs, "browser-delayed-startup-finished", false);
+              Services.obs.addObserver(obs, "browser-delayed-startup-finished");
             } else {
               resolve(window);
             }
@@ -356,6 +367,16 @@ this.tabs = class extends ExtensionAPI {
             options.disallowInheritPrincipal = true;
 
             tabListener.initTabReady();
+            let currentTab = window.gBrowser.selectedTab;
+
+            if (createProperties.openerTabId !== null) {
+              options.ownerTab = tabTracker.getTab(createProperties.openerTabId);
+              options.openerBrowser = options.ownerTab.linkedBrowser;
+              if (options.ownerTab.ownerGlobal !== window) {
+                return Promise.reject({message: "Opener tab must be in the same window as the tab being created"});
+              }
+            }
+
             let nativeTab = window.gBrowser.addTab(url || window.BROWSER_NEW_TAB_URL, options);
 
             let active = true;
@@ -390,7 +411,7 @@ this.tabs = class extends ExtensionAPI {
               tabListener.initializingTabs.add(nativeTab);
             }
 
-            return tabManager.convert(nativeTab);
+            return tabManager.convert(nativeTab, currentTab);
           });
         },
 
@@ -429,7 +450,7 @@ this.tabs = class extends ExtensionAPI {
           }
           if (updateProperties.muted !== null) {
             if (nativeTab.muted != updateProperties.muted) {
-              nativeTab.toggleMuteAudio(extension.uuid);
+              nativeTab.toggleMuteAudio(extension.id);
             }
           }
           if (updateProperties.pinned !== null) {
@@ -439,7 +460,13 @@ this.tabs = class extends ExtensionAPI {
               tabbrowser.unpinTab(nativeTab);
             }
           }
-          // FIXME: highlighted/selected, openerTabId
+          if (updateProperties.openerTabId !== null) {
+            let opener = tabTracker.getTab(updateProperties.openerTabId);
+            if (opener.ownerDocument !== nativeTab.ownerDocument) {
+              return Promise.reject({message: "Opener tab must be in the same window as the tab being updated"});
+            }
+            tabTracker.setOpener(nativeTab, opener);
+          }
 
           return tabManager.convert(nativeTab);
         },
@@ -473,7 +500,7 @@ this.tabs = class extends ExtensionAPI {
             }
 
             queryInfo = Object.assign({}, queryInfo);
-            queryInfo.url = new MatchPattern(queryInfo.url);
+            queryInfo.url = new MatchPatternSet([].concat(queryInfo.url));
           }
 
           return Array.from(tabManager.query(queryInfo, context),
@@ -673,7 +700,7 @@ this.tabs = class extends ExtensionAPI {
           return Promise.resolve();
         },
 
-        onZoomChange: new SingletonEventManager(context, "tabs.onZoomChange", fire => {
+        onZoomChange: new EventManager(context, "tabs.onZoomChange", fire => {
           let getZoomLevel = browser => {
             let {ZoomManager} = browser.ownerGlobal;
 
@@ -745,6 +772,146 @@ this.tabs = class extends ExtensionAPI {
             windowTracker.removeListener("TextZoomChange", zoomListener);
           };
         }).api(),
+
+        print() {
+          let activeTab = getTabOrActive(null);
+          let {PrintUtils} = activeTab.ownerGlobal;
+
+          PrintUtils.printWindow(activeTab.linkedBrowser.outerWindowID, activeTab.linkedBrowser);
+        },
+
+        printPreview() {
+          let activeTab = getTabOrActive(null);
+          let {
+            PrintUtils,
+            PrintPreviewListener,
+          } = activeTab.ownerGlobal;
+
+          return new Promise((resolve, reject) => {
+            let ppBrowser = PrintUtils._shouldSimplify ?
+              PrintPreviewListener.getSimplifiedPrintPreviewBrowser() :
+              PrintPreviewListener.getPrintPreviewBrowser();
+
+            let mm = ppBrowser.messageManager;
+
+            let onEntered = (message) => {
+              mm.removeMessageListener("Printing:Preview:Entered", onEntered);
+              if (message.data.failed) {
+                reject({message: "Print preview failed"});
+              }
+              resolve();
+            };
+
+            mm.addMessageListener("Printing:Preview:Entered", onEntered);
+
+            PrintUtils.printPreview(PrintPreviewListener);
+          });
+        },
+
+        saveAsPDF(pageSettings) {
+          let activeTab = getTabOrActive(null);
+          let picker = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+          let title = strBundle.GetStringFromName("saveaspdf.saveasdialog.title");
+
+          if (AppConstants.platform === "macosx") {
+            return Promise.reject({message: "Not supported on Mac OS X"});
+          }
+
+          picker.init(activeTab.ownerGlobal, title, Ci.nsIFilePicker.modeSave);
+          picker.appendFilter("PDF", "*.pdf");
+          picker.defaultExtension = "pdf";
+          picker.defaultString = activeTab.linkedBrowser.contentTitle + ".pdf";
+
+          return new Promise(resolve => {
+            picker.open(function(retval) {
+              if (retval == 0 || retval == 2) {
+                // OK clicked (retval == 0) or replace confirmed (retval == 2)
+                try {
+                  let fstream = Cc["@mozilla.org/network/file-output-stream;1"].createInstance(Ci.nsIFileOutputStream);
+                  fstream.init(picker.file, 0x2A, 0x1B6, 0);  // write|create|truncate, file permissions rw-rw-rw- = 0666 = 0x1B6
+                  fstream.close();  // unlock file
+                } catch (e) {
+                  resolve(retval == 0 ? "not_saved" : "not_replaced");
+                  return;
+                }
+
+                let psService = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(Ci.nsIPrintSettingsService);
+                let printSettings = psService.newPrintSettings;
+
+                printSettings.printToFile = true;
+                printSettings.toFileName = picker.file.path;
+
+                printSettings.printSilent = true;
+                printSettings.showPrintProgress = false;
+
+                printSettings.printFrameType = Ci.nsIPrintSettings.kFramesAsIs;
+                printSettings.outputFormat = Ci.nsIPrintSettings.kOutputFormatPDF;
+
+                if (pageSettings.orientation !== null) {
+                  printSettings.orientation = pageSettings.orientation;
+                }
+                if (pageSettings.scaling !== null) {
+                  printSettings.scaling = pageSettings.scaling;
+                }
+                if (pageSettings.shrinkToFit !== null) {
+                  printSettings.shrinkToFit = pageSettings.shrinkToFit;
+                }
+                if (pageSettings.showBackgroundColors !== null) {
+                  printSettings.printBGColors = pageSettings.showBackgroundColors;
+                }
+                if (pageSettings.showBackgroundImages !== null) {
+                  printSettings.printBGImages = pageSettings.showBackgroundImages;
+                }
+                if (pageSettings.paperSizeUnit !== null) {
+                  printSettings.paperSizeUnit = pageSettings.paperSizeUnit;
+                }
+                if (pageSettings.paperWidth !== null) {
+                  printSettings.paperWidth = pageSettings.paperWidth;
+                }
+                if (pageSettings.paperHeight !== null) {
+                  printSettings.paperHeight = pageSettings.paperHeight;
+                }
+                if (pageSettings.headerLeft !== null) {
+                  printSettings.headerStrLeft = pageSettings.headerLeft;
+                }
+                if (pageSettings.headerCenter !== null) {
+                  printSettings.headerStrCenter = pageSettings.headerCenter;
+                }
+                if (pageSettings.headerRight !== null) {
+                  printSettings.headerStrRight = pageSettings.headerRight;
+                }
+                if (pageSettings.footerLeft !== null) {
+                  printSettings.footerStrLeft = pageSettings.footerLeft;
+                }
+                if (pageSettings.footerCenter !== null) {
+                  printSettings.footerStrCenter = pageSettings.footerCenter;
+                }
+                if (pageSettings.footerRight !== null) {
+                  printSettings.footerStrRight = pageSettings.footerRight;
+                }
+                if (pageSettings.marginLeft !== null) {
+                  printSettings.marginLeft = pageSettings.marginLeft;
+                }
+                if (pageSettings.marginRight !== null) {
+                  printSettings.marginRight = pageSettings.marginRight;
+                }
+                if (pageSettings.marginTop !== null) {
+                  printSettings.marginTop = pageSettings.marginTop;
+                }
+                if (pageSettings.marginBottom !== null) {
+                  printSettings.marginBottom = pageSettings.marginBottom;
+                }
+
+                activeTab.linkedBrowser.print(activeTab.linkedBrowser.outerWindowID, printSettings, null);
+
+                resolve(retval == 0 ? "saved" : "replaced");
+              } else {
+                // Cancel clicked (retval == 1)
+                resolve("canceled");
+              }
+            });
+          });
+        },
       },
     };
     return self;

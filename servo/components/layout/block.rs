@@ -29,37 +29,37 @@
 
 use app_units::{Au, MAX_AU};
 use context::LayoutContext;
-use display_list_builder::{BorderPaintingMode, DisplayListBuildState, FragmentDisplayListBuilding};
+use display_list_builder::{BorderPaintingMode, DisplayListBuildState};
 use display_list_builder::BlockFlowDisplayListBuilding;
-use euclid::{Matrix4D, Point2D, Rect, Size2D};
+use euclid::{Point2D, Size2D, Rect};
 use floats::{ClearType, FloatKind, Floats, PlacementInfo};
 use flow::{self, BaseFlow, EarlyAbsolutePositionInfo, Flow, FlowClass, ForceNonfloatedFlag};
 use flow::{BLOCK_POSITION_IS_STATIC, CLEARS_LEFT, CLEARS_RIGHT};
 use flow::{CONTAINS_TEXT_OR_REPLACED_FRAGMENTS, INLINE_POSITION_IS_STATIC};
-use flow::{FragmentationContext, MARGINS_CANNOT_COLLAPSE, PreorderFlowTraversal};
-use flow::{ImmutableFlowUtils, LateAbsolutePositionInfo, MutableFlowUtils, OpaqueFlow};
-use flow::IS_ABSOLUTELY_POSITIONED;
+use flow::{IS_ABSOLUTELY_POSITIONED, FragmentationContext, MARGINS_CANNOT_COLLAPSE};
+use flow::{ImmutableFlowUtils, LateAbsolutePositionInfo, OpaqueFlow};
 use flow_list::FlowList;
 use fragment::{CoordinateSystem, Fragment, FragmentBorderBoxIterator, Overflow};
 use fragment::{IS_INLINE_FLEX_ITEM, IS_BLOCK_FLEX_ITEM};
-use gfx::display_list::ClippingRegion;
 use gfx_traits::print_tree::PrintTree;
+use incremental::RelayoutMode;
 use layout_debug;
 use model::{AdjoiningMargins, CollapsibleMargins, IntrinsicISizes, MarginCollapseInfo, MaybeAuto};
-use model::{specified, specified_or_none};
 use sequential;
 use serde::{Serialize, Serializer};
+use servo_geometry::max_rect;
 use std::cmp::{max, min};
 use std::fmt;
 use std::sync::Arc;
-use style::computed_values::{border_collapse, box_sizing, display, float, overflow_x, overflow_y};
+use style::computed_values::{box_sizing, display, float, overflow_x};
 use style::computed_values::{position, text_align};
 use style::context::SharedStyleContext;
 use style::logical_geometry::{LogicalPoint, LogicalRect, LogicalSize, WritingMode};
-use style::properties::ServoComputedValues;
-use style::servo::restyle_damage::{BUBBLE_ISIZES, REFLOW, REFLOW_OUT_OF_FLOW, REPOSITION};
+use style::properties::ComputedValues;
+use style::servo::restyle_damage::{BUBBLE_ISIZES, REFLOW, REFLOW_OUT_OF_FLOW};
 use style::values::computed::{LengthOrPercentageOrNone, LengthOrPercentage};
 use style::values::computed::LengthOrPercentageOrAuto;
+use traversal::PreorderFlowTraversal;
 
 /// Information specific to floated blocks.
 #[derive(Clone, Serialize)]
@@ -86,7 +86,7 @@ impl FloatedBlockInfo {
 }
 
 /// The solutions for the block-size-and-margins constraint equation.
-#[derive(Copy, Clone)]
+#[derive(Clone, Copy)]
 struct BSizeConstraintSolution {
     block_start: Au,
     block_size: Au,
@@ -322,36 +322,33 @@ impl CandidateBSizeIterator {
 
         let block_size = match (fragment.style.content_block_size(), block_container_block_size) {
             (LengthOrPercentageOrAuto::Percentage(percent), Some(block_container_block_size)) => {
-                MaybeAuto::Specified(block_container_block_size.scale_by(percent))
+                MaybeAuto::Specified(block_container_block_size.scale_by(percent.0))
             }
-            (LengthOrPercentageOrAuto::Calc(calc), Some(block_container_block_size)) => {
-                MaybeAuto::Specified(calc.length() + block_container_block_size.scale_by(calc.percentage()))
+            (LengthOrPercentageOrAuto::Calc(calc), _) => {
+                MaybeAuto::from_option(calc.to_used_value(block_container_block_size))
             }
             (LengthOrPercentageOrAuto::Percentage(_), None) |
-            (LengthOrPercentageOrAuto::Auto, _) |
-            (LengthOrPercentageOrAuto::Calc(_), _) => MaybeAuto::Auto,
+            (LengthOrPercentageOrAuto::Auto, _) => MaybeAuto::Auto,
             (LengthOrPercentageOrAuto::Length(length), _) => MaybeAuto::Specified(length),
         };
         let max_block_size = match (fragment.style.max_block_size(), block_container_block_size) {
             (LengthOrPercentageOrNone::Percentage(percent), Some(block_container_block_size)) => {
-                Some(block_container_block_size.scale_by(percent))
+                Some(block_container_block_size.scale_by(percent.0))
             }
-            (LengthOrPercentageOrNone::Calc(calc), Some(block_container_block_size)) => {
-                Some(block_container_block_size.scale_by(calc.percentage()) + calc.length())
+            (LengthOrPercentageOrNone::Calc(calc), _) => {
+                calc.to_used_value(block_container_block_size)
             }
-            (LengthOrPercentageOrNone::Calc(_), _) |
             (LengthOrPercentageOrNone::Percentage(_), None) |
             (LengthOrPercentageOrNone::None, _) => None,
             (LengthOrPercentageOrNone::Length(length), _) => Some(length),
         };
         let min_block_size = match (fragment.style.min_block_size(), block_container_block_size) {
             (LengthOrPercentage::Percentage(percent), Some(block_container_block_size)) => {
-                block_container_block_size.scale_by(percent)
+                block_container_block_size.scale_by(percent.0)
             }
-            (LengthOrPercentage::Calc(calc), Some(block_container_block_size)) => {
-                calc.length() + block_container_block_size.scale_by(calc.percentage())
+            (LengthOrPercentage::Calc(calc), _) => {
+                calc.to_used_value(block_container_block_size).unwrap_or(Au(0))
             }
-            (LengthOrPercentage::Calc(calc), None) => calc.length(),
             (LengthOrPercentage::Percentage(_), None) => Au(0),
             (LengthOrPercentage::Length(length), _) => length,
         };
@@ -451,20 +448,16 @@ pub struct AbsoluteAssignBSizesTraversal<'a>(pub &'a SharedStyleContext<'a>);
 impl<'a> PreorderFlowTraversal for AbsoluteAssignBSizesTraversal<'a> {
     #[inline]
     fn process(&self, flow: &mut Flow) {
-        {
-            // The root of the absolute flow tree is definitely not absolutely
-            // positioned. Nothing to process here.
-            let flow: &Flow = flow;
-            if flow.contains_roots_of_absolute_flow_tree() {
-                return;
-            }
-            if !flow.is_block_like() {
-                return
-            }
+        if !flow.is_block_like() {
+            return
         }
 
+        // This flow might not be an absolutely positioned flow if it is the root of the tree.
         let block = flow.as_mut_block();
-        debug_assert!(block.base.flags.contains(IS_ABSOLUTELY_POSITIONED));
+        if !block.base.flags.contains(IS_ABSOLUTELY_POSITIONED) {
+            return;
+        }
+
         if !block.base.restyle_damage.intersects(REFLOW_OUT_OF_FLOW | REFLOW) {
             return
         }
@@ -650,6 +643,14 @@ impl BlockFlow {
         &mut self.fragment
     }
 
+    pub fn stacking_relative_position(&self, coor: CoordinateSystem) -> Rect<Au> {
+        return self.fragment.stacking_relative_border_box(
+            &self.base.stacking_relative_position,
+            &self.base.early_absolute_position_info.relative_containing_block_size,
+            self.base.early_absolute_position_info.relative_containing_block_mode,
+            coor);
+    }
+
     /// Return the size of the containing block for the given immediate absolute descendant of this
     /// flow.
     ///
@@ -659,7 +660,7 @@ impl BlockFlow {
     pub fn containing_block_size(&self, viewport_size: &Size2D<Au>, descendant: OpaqueFlow)
                                  -> LogicalSize<Au> {
         debug_assert!(self.base.flags.contains(IS_ABSOLUTELY_POSITIONED));
-        if self.is_fixed() {
+        if self.is_fixed() || self.is_root() {
             // Initial containing block is the CB for the root
             LogicalSize::from_physical(self.base.writing_mode, *viewport_size)
         } else {
@@ -1060,8 +1061,8 @@ impl BlockFlow {
             // Assign block-sizes for all flows in this absolute flow tree.
             // This is preorder because the block-size of an absolute flow may depend on
             // the block-size of its containing block, which may also be an absolute flow.
-            (&mut *self as &mut Flow).traverse_preorder_absolute_flows(
-                &mut AbsoluteAssignBSizesTraversal(layout_context.shared_context()));
+            let assign_abs_b_sizes = AbsoluteAssignBSizesTraversal(layout_context.shared_context());
+            assign_abs_b_sizes.traverse_absolute_flows(&mut *self);
         }
 
         // Don't remove the dirty bits yet if we're absolutely-positioned, since our final size
@@ -1168,15 +1169,14 @@ impl BlockFlow {
         let content_block_size = self.fragment.style().content_block_size();
 
         match (content_block_size, containing_block_size) {
-            (LengthOrPercentageOrAuto::Calc(calc), Some(container_size)) => {
-                Some(container_size.scale_by(calc.percentage()) + calc.length())
+            (LengthOrPercentageOrAuto::Calc(calc), _) => {
+                calc.to_used_value(containing_block_size)
             }
             (LengthOrPercentageOrAuto::Length(length), _) => Some(length),
             (LengthOrPercentageOrAuto::Percentage(percent), Some(container_size)) => {
-                Some(container_size.scale_by(percent))
+                Some(container_size.scale_by(percent.0))
             }
             (LengthOrPercentageOrAuto::Percentage(_), None) |
-            (LengthOrPercentageOrAuto::Calc(_), None) |
             (LengthOrPercentageOrAuto::Auto, None) => {
                 None
             }
@@ -1420,8 +1420,8 @@ impl BlockFlow {
             // we know.
             if kid.is_inline_flow() {
                 kid.as_mut_inline().first_line_indentation =
-                    specified(self.fragment.style().get_inheritedtext().text_indent,
-                              containing_block_size);
+                    self.fragment.style().get_inheritedtext().text_indent
+                        .to_used_value(containing_block_size);
             }
         }
     }
@@ -1429,6 +1429,9 @@ impl BlockFlow {
     /// Determines the type of formatting context this is. See the definition of
     /// `FormattingContextType`.
     pub fn formatting_context_type(&self) -> FormattingContextType {
+        if self.is_inline_flex_item() || self.is_block_flex_item() {
+            return FormattingContextType::Other
+        }
         let style = self.fragment.style();
         if style.get_box().float != float::T::none {
             return FormattingContextType::Other
@@ -1443,7 +1446,7 @@ impl BlockFlow {
                 FormattingContextType::Other
             }
             _ if style.get_box().overflow_x != overflow_x::T::visible ||
-                    style.get_box().overflow_y != overflow_y::T(overflow_x::T::visible) ||
+                    style.get_box().overflow_y != overflow_x::T::visible ||
                     style.is_multicol() => {
                 FormattingContextType::Block
             }
@@ -1515,14 +1518,12 @@ impl BlockFlow {
         } else {
             content_box.size.inline
         } - self.fragment.margin.inline_start_end();
-        let max_inline_size = specified_or_none(
-            self.fragment.style().max_inline_size(),
-            self.base.block_container_inline_size
-        ).unwrap_or(MAX_AU);
-        let min_inline_size = specified(
-            self.fragment.style().min_inline_size(),
-            self.base.block_container_inline_size
-        );
+        let max_inline_size =
+            self.fragment.style().max_inline_size()
+                .to_used_value(self.base.block_container_inline_size)
+                .unwrap_or(MAX_AU);
+        let min_inline_size =
+            self.fragment.style().min_inline_size().to_used_value(self.base.block_container_inline_size);
         let specified_inline_size = self.fragment.style().content_inline_size();
         let container_size = self.base.block_container_inline_size;
         let inline_size =
@@ -1549,7 +1550,7 @@ impl BlockFlow {
             self.assign_inline_sizes(layout_context);
             // Re-run layout on our children.
             for child in flow::mut_base(self).children.iter_mut() {
-                sequential::traverse_flow_tree_preorder(child, layout_context);
+                sequential::reflow(child, layout_context, RelayoutMode::Force);
             }
             // Assign our final-final block size.
             self.assign_block_size(layout_context);
@@ -1678,11 +1679,12 @@ impl BlockFlow {
         }
     }
 
-    pub fn style_permits_scrolling_overflow(&self) -> bool {
+    pub fn overflow_style_may_require_scroll_root(&self) -> bool {
         match (self.fragment.style().get_box().overflow_x,
-               self.fragment.style().get_box().overflow_y.0) {
-            (overflow_x::T::auto, _) | (overflow_x::T::scroll, _) |
-            (_, overflow_x::T::auto) | (_, overflow_x::T::scroll) => true,
+               self.fragment.style().get_box().overflow_y) {
+            (overflow_x::T::auto, _) | (overflow_x::T::scroll, _) | (overflow_x::T::hidden, _) |
+            (_, overflow_x::T::auto) | (_, overflow_x::T::scroll) | (_, overflow_x::T::hidden) =>
+                true,
             (_, _) => false,
         }
     }
@@ -1774,65 +1776,6 @@ impl BlockFlow {
 
     pub fn is_block_flex_item(&self) -> bool {
         self.fragment.flags.contains(IS_BLOCK_FLEX_ITEM)
-    }
-
-    /// Changes this block's clipping region from its parent's coordinate system to its own
-    /// coordinate system if necessary (i.e. if this block is a stacking context).
-    ///
-    /// The clipping region is initially in each block's parent's coordinate system because the
-    /// parent of each block does not have enough information to determine what the child's
-    /// coordinate system is on its own. Specifically, if the child is absolutely positioned, the
-    /// parent does not know where the child's absolute position is at the time it assigns clipping
-    /// regions, because flows compute their own absolute positions.
-    fn switch_coordinate_system_if_necessary(&mut self) {
-        // Avoid overflows!
-        if self.base.clip.is_max() {
-            return
-        }
-
-        if !self.fragment.establishes_stacking_context() {
-            return
-        }
-
-        let stacking_relative_border_box =
-            self.fragment.stacking_relative_border_box(&self.base.stacking_relative_position,
-                                                       &self.base
-                                                            .early_absolute_position_info
-                                                            .relative_containing_block_size,
-                                                       self.base
-                                                           .early_absolute_position_info
-                                                           .relative_containing_block_mode,
-                                                       CoordinateSystem::Parent);
-        self.base.clip = self.base.clip.translate(&-stacking_relative_border_box.origin);
-
-        // Account for `transform`, if applicable.
-        if self.fragment.style.get_box().transform.0.is_none() {
-            return
-        }
-        let transform = match self.fragment
-                                  .transform_matrix(&stacking_relative_border_box)
-                                  .unwrap_or(Matrix4D::identity())
-                                  .inverse() {
-            Some(transform) => transform,
-            None => {
-                // Singular matrix. Ignore it.
-                return
-            }
-        };
-
-        // FIXME(pcwalton): This is inaccurate: not all transforms are 2D, and not all clips are
-        // axis-aligned.
-        let bounding_rect = self.base.clip.bounding_rect();
-        let bounding_rect = Rect::new(Point2D::new(bounding_rect.origin.x.to_f32_px(),
-                                                   bounding_rect.origin.y.to_f32_px()),
-                                      Size2D::new(bounding_rect.size.width.to_f32_px(),
-                                                  bounding_rect.size.height.to_f32_px()));
-        let clip_rect = transform.to_2d().transform_rect(&bounding_rect);
-        let clip_rect = Rect::new(Point2D::new(Au::from_f32_px(clip_rect.origin.x),
-                                               Au::from_f32_px(clip_rect.origin.y)),
-                                  Size2D::new(Au::from_f32_px(clip_rect.size.width),
-                                              Au::from_f32_px(clip_rect.size.height)));
-        self.base.clip = ClippingRegion::from_rect(&clip_rect)
     }
 
     pub fn mark_scrolling_overflow(&mut self, has_scrolling_overflow: bool) {
@@ -2000,13 +1943,13 @@ impl Flow for BlockFlow {
         }
     }
 
-    fn compute_absolute_position(&mut self, _layout_context: &LayoutContext) {
+    fn compute_stacking_relative_position(&mut self, _layout_context: &LayoutContext) {
         // FIXME (mbrubeck): Get the real container size, taking the container writing mode into
         // account.  Must handle vertical writing modes.
         let container_size = Size2D::new(self.base.block_container_inline_size, Au(0));
 
         if self.is_root() {
-            self.base.clip = ClippingRegion::max();
+            self.base.clip = max_rect();
         }
 
         if self.base.flags.contains(IS_ABSOLUTELY_POSITIONED) {
@@ -2023,7 +1966,7 @@ impl Flow for BlockFlow {
                 // flow w.r.t. the containing block.
                 self.base
                     .late_absolute_position_info
-                    .stacking_relative_position_of_absolute_containing_block + position_start
+                    .stacking_relative_position_of_absolute_containing_block + position_start.to_vector()
             };
 
             if !self.base.writing_mode.is_vertical() {
@@ -2045,20 +1988,20 @@ impl Flow for BlockFlow {
 
         // For relatively-positioned descendants, the containing block formed by a block is just
         // the content box. The containing block for absolutely-positioned descendants, on the
-        // other hand, is only established if we are positioned.
+        // other hand, is established in other circumstances (see `is_absolute_containing_block').
         let relative_offset =
             self.fragment.relative_position(&self.base
                                                  .early_absolute_position_info
                                                  .relative_containing_block_size);
-        if self.contains_positioned_fragments() {
+        if self.is_absolute_containing_block() {
             let border_box_origin = (self.fragment.border_box -
                 self.fragment.style.logical_border_width()).start;
             self.base
                 .late_absolute_position_info
                 .stacking_relative_position_of_absolute_containing_block =
-                    self.base.stacking_relative_position +
+                    self.base.stacking_relative_position.to_point() +
                      (border_box_origin + relative_offset).to_physical(self.base.writing_mode,
-                                                                       container_size)
+                                                                       container_size).to_vector()
         }
 
         // Compute absolute position info for children.
@@ -2069,14 +2012,15 @@ impl Flow for BlockFlow {
                                                  logical_border_width.inline_start,
                                                  logical_border_width.block_start);
                 let position = position.to_physical(self.base.writing_mode, container_size);
-                if self.contains_positioned_fragments() {
+
+                // Some blocks establish a stacking context, but not a containing block for
+                // absolutely positioned elements. An example of this might be a block that has
+                // `position: static` and `opacity` set. In these cases, absolutely-positioned
+                // children will not be positioned relative to us but will instead be positioned
+                // relative to our containing block.
+                if self.is_absolute_containing_block() {
                     position
                 } else {
-                    // We establish a stacking context but are not positioned. (This will happen
-                    // if, for example, the element has `position: static` but has `opacity` or
-                    // `transform` set.) In this case, absolutely-positioned children will not be
-                    // positioned relative to us but will instead be positioned relative to our
-                    // containing block.
                     position - self.base.stacking_relative_position
                 }
             } else {
@@ -2092,7 +2036,7 @@ impl Flow for BlockFlow {
             self.base.position.size.to_physical(self.base.writing_mode);
 
         // Compute the origin and clipping rectangle for children.
-        let relative_offset = relative_offset.to_physical(self.base.writing_mode);
+        let relative_offset = relative_offset.to_physical(self.base.writing_mode).to_vector();
         let is_stacking_context = self.fragment.establishes_stacking_context();
         let origin_for_children = if is_stacking_context {
             // We establish a stacking context, so the position of our children is vertically
@@ -2104,30 +2048,8 @@ impl Flow for BlockFlow {
             let margin = self.fragment.margin.to_physical(self.base.writing_mode);
             Point2D::new(-margin.left, Au(0))
         } else {
-            self.base.stacking_relative_position + relative_offset
+            self.base.stacking_relative_position.to_point() + relative_offset
         };
-
-        let stacking_relative_border_box =
-            self.fragment
-                .stacking_relative_border_box(&self.base.stacking_relative_position,
-                                              &self.base
-                                                   .early_absolute_position_info
-                                                   .relative_containing_block_size,
-                                              self.base
-                                                  .early_absolute_position_info
-                                                  .relative_containing_block_mode,
-                                              CoordinateSystem::Own);
-
-        // Our parent set our `clip` field to the clipping region in its coordinate system. Change
-        // it to our coordinate system.
-        self.switch_coordinate_system_if_necessary();
-        self.fragment.adjust_clip_for_style(&mut self.base.clip, &stacking_relative_border_box);
-
-        // Compute the clipping region for children, taking our `overflow` properties and so forth
-        // into account.
-        let mut clip_for_children = self.base.clip.clone();
-        self.fragment.adjust_clipping_region_for_children(&mut clip_for_children,
-                                                          &stacking_relative_border_box);
 
         // Process children.
         for kid in self.base.child_iter_mut() {
@@ -2161,19 +2083,7 @@ impl Flow for BlockFlow {
 
             flow::mut_base(kid).late_absolute_position_info =
                 late_absolute_position_info_for_children;
-
-            // This clipping region is in our coordinate system. The child will fix it up to be in
-            // its own coordinate system by itself if necessary.
-            //
-            // Rationale: If the child is absolutely positioned, it hasn't been positioned at this
-            // point (as absolutely-positioned flows position themselves in
-            // `compute_absolute_position()`). Therefore, we don't always know what the child's
-            // coordinate system is here. So we store the clipping region in our coordinate system
-            // for now; the child will move it later if needed.
-            flow::mut_base(kid).clip = clip_for_children.clone()
         }
-
-        self.base.restyle_damage.remove(REPOSITION)
     }
 
     fn mark_as_root(&mut self) {
@@ -2195,8 +2105,15 @@ impl Flow for BlockFlow {
         (self.fragment.border_box - self.fragment.style().logical_border_width()).size
     }
 
+    /// Returns true if this flow contains fragments that are roots of an absolute flow tree.
+    fn contains_roots_of_absolute_flow_tree(&self) -> bool {
+        self.contains_relatively_positioned_fragments() || self.is_root() ||
+        self.fragment.has_filter_transform_or_perspective()
+    }
+
+    /// Returns true if this is an absolute containing block.
     fn is_absolute_containing_block(&self) -> bool {
-        self.contains_positioned_fragments()
+        self.contains_positioned_fragments() || self.fragment.has_filter_transform_or_perspective()
     }
 
     fn update_late_computed_inline_position_if_necessary(&mut self, inline_position: Au) {
@@ -2227,7 +2144,7 @@ impl Flow for BlockFlow {
         self.build_display_list_for_block(state, BorderPaintingMode::Separate);
     }
 
-    fn repair_style(&mut self, new_style: &Arc<ServoComputedValues>) {
+    fn repair_style(&mut self, new_style: &::ServoArc<ComputedValues>) {
         self.fragment.repair_style(new_style)
     }
 
@@ -2259,7 +2176,7 @@ impl Flow for BlockFlow {
                                                                 .early_absolute_position_info
                                                                 .relative_containing_block_mode,
                                                             CoordinateSystem::Own)
-                              .translate(stacking_context_position));
+                              .translate(&stacking_context_position.to_vector()));
     }
 
     fn mutate_fragments(&mut self, mutator: &mut FnMut(&mut Fragment)) {
@@ -2282,7 +2199,7 @@ impl fmt::Debug for BlockFlow {
 }
 
 /// The inputs for the inline-sizes-and-margins constraint equation.
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug)]
 pub struct ISizeConstraintInput {
     pub computed_inline_size: MaybeAuto,
     pub inline_start_margin: MaybeAuto,
@@ -2315,7 +2232,7 @@ impl ISizeConstraintInput {
 }
 
 /// The solutions for the inline-size-and-margins constraint equation.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ISizeConstraintSolution {
     pub inline_start: Au,
     pub inline_size: Au,
@@ -2354,8 +2271,7 @@ impl ISizeConstraintSolution {
 pub trait ISizeAndMarginsComputer {
     /// Instructs the fragment to compute its border and padding.
     fn compute_border_and_padding(&self, block: &mut BlockFlow, containing_block_inline_size: Au) {
-        block.fragment.compute_border_and_padding(containing_block_inline_size,
-                                                  border_collapse::T::separate);
+        block.fragment.compute_border_and_padding(containing_block_inline_size);
     }
 
     /// Compute the inputs for the ISize constraint equation.
@@ -2506,8 +2422,7 @@ pub trait ISizeAndMarginsComputer {
         // If the tentative used inline-size is greater than 'max-inline-size', inline-size should
         // be recalculated, but this time using the computed value of 'max-inline-size' as the
         // computed value for 'inline-size'.
-        match specified_or_none(block.fragment().style().max_inline_size(),
-                                containing_block_inline_size) {
+        match block.fragment().style().max_inline_size().to_used_value(containing_block_inline_size) {
             Some(max_inline_size) if max_inline_size < solution.inline_size => {
                 input.computed_inline_size = MaybeAuto::Specified(max_inline_size);
                 solution = self.solve_inline_size_constraints(block, &input);
@@ -2518,8 +2433,8 @@ pub trait ISizeAndMarginsComputer {
         // If the resulting inline-size is smaller than 'min-inline-size', inline-size should be
         // recalculated, but this time using the value of 'min-inline-size' as the computed value
         // for 'inline-size'.
-        let computed_min_inline_size = specified(block.fragment().style().min_inline_size(),
-                                                 containing_block_inline_size);
+        let computed_min_inline_size =
+            block.fragment().style().min_inline_size().to_used_value(containing_block_inline_size);
         if computed_min_inline_size > solution.inline_size {
             input.computed_inline_size = MaybeAuto::Specified(computed_min_inline_size);
             solution = self.solve_inline_size_constraints(block, &input);
@@ -3173,7 +3088,7 @@ impl ISizeAndMarginsComputer for InlineFlexItem {
 }
 
 /// A stacking context, a pseudo-stacking context, or a non-stacking context.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum BlockStackingContextType {
     NonstackingContext,
     PseudoStackingContext,

@@ -1,7 +1,6 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource://gre/modules/Promise.jsm");
 
 /**
  * Recursively compare two objects and check that every property of expectedObj has the same value
@@ -21,22 +20,7 @@ function isSubObjectOf(expectedObj, actualObj, name) {
 }
 
 function getLocale() {
-  const localePref = "general.useragent.locale";
-  return getLocalizedPref(localePref, Services.prefs.getCharPref(localePref));
-}
-
-/**
- * Wrapper for nsIPrefBranch::getComplexValue.
- * @param aPrefName
- *        The name of the pref to get.
- * @returns aDefault if the requested pref doesn't exist.
- */
-function getLocalizedPref(aPrefName, aDefault) {
-  try {
-    return Services.prefs.getComplexValue(aPrefName, Ci.nsIPrefLocalizedString).data;
-  } catch (ex) {
-    return aDefault;
-  }
+  return Services.locale.getRequestedLocale() || undefined;
 }
 
 function promiseEvent(aTarget, aEventName, aPreventDefault) {

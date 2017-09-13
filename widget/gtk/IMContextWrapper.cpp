@@ -324,23 +324,22 @@ IMContextWrapper::GetTextEventDispatcher()
   return dispatcher;
 }
 
-NS_IMETHODIMP_(nsIMEUpdatePreference)
-IMContextWrapper::GetIMEUpdatePreference()
+NS_IMETHODIMP_(IMENotificationRequests)
+IMContextWrapper::GetIMENotificationRequests()
 {
     // While a plugin has focus, IMContextWrapper doesn't need any
     // notifications.
     if (mInputContext.mIMEState.mEnabled == IMEState::PLUGIN) {
-      return nsIMEUpdatePreference();
+      return IMENotificationRequests();
     }
 
-    nsIMEUpdatePreference::Notifications notifications =
-        nsIMEUpdatePreference::NOTIFY_NOTHING;
+    IMENotificationRequests::Notifications notifications =
+        IMENotificationRequests::NOTIFY_NOTHING;
     // If it's not enabled, we don't need position change notification.
     if (IsEnabled()) {
-        notifications |= nsIMEUpdatePreference::NOTIFY_POSITION_CHANGE;
+        notifications |= IMENotificationRequests::NOTIFY_POSITION_CHANGE;
     }
-    nsIMEUpdatePreference updatePreference(notifications);
-    return updatePreference;
+    return IMENotificationRequests(notifications);
 }
 
 void
@@ -588,7 +587,7 @@ IMContextWrapper::OnFocusChangeInGecko(bool aFocus)
          ToChar(mIsIMFocused)));
 
     // We shouldn't carry over the removed string to another editor.
-    mSelectedString.Truncate();
+    mSelectedStringRemovedByComposition.Truncate();
     mSelection.Clear();
 }
 
@@ -987,7 +986,8 @@ IMContextWrapper::OnSelectionChange(nsWindow* aCaller,
         } else {
             // Modify the selection start offset with new offset.
             mCompositionStart = mSelection.mOffset;
-            // XXX We should modify mSelectedString? But how?
+            // XXX We should modify mSelectedStringRemovedByComposition?
+            // But how?
             MOZ_LOG(gGtkIMLog, LogLevel::Debug,
                 ("0x%p   OnSelectionChange(), ignored, mCompositionStart "
                  "is updated to %u, the selection change doesn't cause "
@@ -1455,7 +1455,8 @@ IMContextWrapper::DispatchCompositionChangeEvent(
     // Store the selected string which will be removed by following
     // compositionchange event.
     if (mCompositionState == eCompositionState_CompositionStartDispatched) {
-        if (NS_WARN_IF(!EnsureToCacheSelection(&mSelectedString))) {
+        if (NS_WARN_IF(!EnsureToCacheSelection(
+                            &mSelectedStringRemovedByComposition))) {
             // XXX How should we behave in this case??
         } else {
             // XXX We should assume, for now, any web applications don't change
@@ -1558,10 +1559,18 @@ IMContextWrapper::DispatchCompositionCommitEvent(
 
     RefPtr<nsWindow> lastFocusedWindow(mLastFocusedWindow);
 
+    // Emulate selection until receiving actual selection range.
+    mSelection.CollapseTo(
+        mCompositionStart +
+            (aCommitString ? aCommitString->Length() :
+                             mDispatchedCompositionString.Length()),
+        mSelection.mWritingMode);
+
     mCompositionState = eCompositionState_NotComposing;
     mCompositionStart = UINT32_MAX;
     mCompositionTargetRange.Clear();
     mDispatchedCompositionString.Truncate();
+    mSelectedStringRemovedByComposition.Truncate();
 
     nsEventStatus status;
     rv = dispatcher->CommitComposition(status, aCommitString);
@@ -1927,10 +1936,10 @@ IMContextWrapper::SetCursorPosition(GtkIMContext* aContext)
     MOZ_LOG(gGtkIMLog, LogLevel::Info,
         ("0x%p SetCursorPosition(aContext=0x%p), "
          "mCompositionTargetRange={ mOffset=%u, mLength=%u }"
-         "mSelection={ mOffset=%u, mLength=%u, mWritingMode=%s }",
+         "mSelection={ mOffset=%u, Length()=%u, mWritingMode=%s }",
          this, aContext, mCompositionTargetRange.mOffset,
          mCompositionTargetRange.mLength,
-         mSelection.mOffset, mSelection.mLength,
+         mSelection.mOffset, mSelection.Length(),
          GetWritingModeName(mSelection.mWritingMode).get()));
 
     bool useCaret = false;
@@ -2024,7 +2033,7 @@ IMContextWrapper::GetCurrentParagraph(nsAString& aText,
     nsEventStatus status;
 
     uint32_t selOffset = mCompositionStart;
-    uint32_t selLength = mSelectedString.Length();
+    uint32_t selLength = mSelectedStringRemovedByComposition.Length();
 
     // If focused editor doesn't have composition string, we should use
     // current selection.
@@ -2039,7 +2048,7 @@ IMContextWrapper::GetCurrentParagraph(nsAString& aText,
         }
 
         selOffset = mSelection.mOffset;
-        selLength = mSelection.mLength;
+        selLength = mSelection.Length();
     }
 
     MOZ_LOG(gGtkIMLog, LogLevel::Debug,
@@ -2078,9 +2087,10 @@ IMContextWrapper::GetCurrentParagraph(nsAString& aText,
     // GtkEntry doesn't remove selected string until committing, however,
     // our editor does it.  We should emulate the behavior for IME.
     if (EditorHasCompositionString() &&
-        mDispatchedCompositionString != mSelectedString) {
+        mDispatchedCompositionString != mSelectedStringRemovedByComposition) {
         textContent.Replace(mCompositionStart,
-            mDispatchedCompositionString.Length(), mSelectedString);
+            mDispatchedCompositionString.Length(),
+            mSelectedStringRemovedByComposition);
     }
 
     // Get only the focused paragraph, by looking for newlines
@@ -2137,7 +2147,8 @@ IMContextWrapper::DeleteText(GtkIMContext* aContext,
     bool editorHadCompositionString = EditorHasCompositionString();
     if (wasComposing) {
         selOffset = mCompositionStart;
-        if (!DispatchCompositionCommitEvent(aContext, &mSelectedString)) {
+        if (!DispatchCompositionCommitEvent(aContext,
+                 &mSelectedStringRemovedByComposition)) {
             MOZ_LOG(gGtkIMLog, LogLevel::Error,
                 ("0x%p   DeleteText(), FAILED, quitting from DeletText",
                  this));
@@ -2285,8 +2296,10 @@ IMContextWrapper::EnsureToCacheSelection(nsAString* aSelectedString)
         aSelectedString->Truncate();
     }
 
-    if (mSelection.IsValid() &&
-        (!mSelection.Collapsed() || !aSelectedString)) {
+    if (mSelection.IsValid()) {
+       if (aSelectedString) {
+           *aSelectedString = mSelection.mString;
+       }
        return true;
     }
 
@@ -2326,8 +2339,8 @@ IMContextWrapper::EnsureToCacheSelection(nsAString* aSelectedString)
 
     MOZ_LOG(gGtkIMLog, LogLevel::Debug,
         ("0x%p EnsureToCacheSelection(), Succeeded, mSelection="
-         "{ mOffset=%u, mLength=%u, mWritingMode=%s }",
-         this, mSelection.mOffset, mSelection.mLength,
+         "{ mOffset=%u, Length()=%u, mWritingMode=%s }",
+         this, mSelection.mOffset, mSelection.Length(),
          GetWritingModeName(mSelection.mWritingMode).get()));
     return true;
 }
@@ -2340,8 +2353,8 @@ void
 IMContextWrapper::Selection::Assign(const IMENotification& aIMENotification)
 {
     MOZ_ASSERT(aIMENotification.mMessage == NOTIFY_IME_OF_SELECTION_CHANGE);
+    mString = aIMENotification.mSelectionChangeData.String();
     mOffset = aIMENotification.mSelectionChangeData.mOffset;
-    mLength = aIMENotification.mSelectionChangeData.Length();
     mWritingMode = aIMENotification.mSelectionChangeData.GetWritingMode();
 }
 
@@ -2350,8 +2363,8 @@ IMContextWrapper::Selection::Assign(const WidgetQueryContentEvent& aEvent)
 {
     MOZ_ASSERT(aEvent.mMessage == eQuerySelectedText);
     MOZ_ASSERT(aEvent.mSucceeded);
+    mString = aEvent.mReply.mString.Length();
     mOffset = aEvent.mReply.mOffset;
-    mLength = aEvent.mReply.mString.Length();
     mWritingMode = aEvent.GetWritingMode();
 }
 

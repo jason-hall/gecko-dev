@@ -34,7 +34,7 @@ public:
                            bool* aSnap) override
   {
     *aSnap = false;
-    return Frame()->GetVisualOverflowRect() + ToReferenceFrame();
+    return static_cast<nsColumnSetFrame*>(mFrame)->CalculateBounds(ToReferenceFrame());
   }
 
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
@@ -43,13 +43,15 @@ public:
   virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                              LayerManager* aManager,
                                              const ContainerLayerParameters& aContainerParameters) override;
-  virtual void CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
+  virtual bool CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
+                                       const StackingContextHelper& aSc,
                                        nsTArray<WebRenderParentCommand>& aParentCommands,
-                                       mozilla::layers::WebRenderDisplayItemLayer* aLayer) override;
+                                       mozilla::layers::WebRenderLayerManager* aManager,
+                                       nsDisplayListBuilder* aDisplayListBuilder) override;
   virtual void Paint(nsDisplayListBuilder* aBuilder,
-                     nsRenderingContext* aCtx) override;
+                     gfxContext* aCtx) override;
 
-  NS_DISPLAY_DECL_NAME("ColumnRule", nsDisplayItem::TYPE_COLUMN_RULE);
+  NS_DISPLAY_DECL_NAME("ColumnRule", TYPE_COLUMN_RULE);
 
 private:
   nsTArray<nsCSSBorderRenderer> mBorderRenderers;
@@ -57,7 +59,7 @@ private:
 
 void
 nsDisplayColumnRule::Paint(nsDisplayListBuilder* aBuilder,
-                           nsRenderingContext* aCtx)
+                           gfxContext* aCtx)
 {
   static_cast<nsColumnSetFrame*>(mFrame)->
     CreateBorderRenderers(mBorderRenderers, aCtx, mVisibleRect, ToReferenceFrame());
@@ -65,8 +67,6 @@ nsDisplayColumnRule::Paint(nsDisplayListBuilder* aBuilder,
   for (auto iter = mBorderRenderers.begin(); iter != mBorderRenderers.end(); iter++) {
     iter->DrawBorders();
   }
-
-
 }
 LayerState
 nsDisplayColumnRule::GetLayerState(nsDisplayListBuilder* aBuilder,
@@ -76,16 +76,20 @@ nsDisplayColumnRule::GetLayerState(nsDisplayListBuilder* aBuilder,
   if (!gfxPrefs::LayersAllowColumnRuleLayers()) {
     return LAYER_NONE;
   }
-
-  RefPtr<gfxContext> screenRefCtx =
-    gfxContext::CreateOrNull(gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget());
-  nsRenderingContext ctx(screenRefCtx);
+  RefPtr<gfxContext> screenRefCtx = gfxContext::CreateOrNull(
+    gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget().get());
 
   static_cast<nsColumnSetFrame*>(mFrame)->
-    CreateBorderRenderers(mBorderRenderers, &ctx, mVisibleRect, ToReferenceFrame());
+    CreateBorderRenderers(mBorderRenderers, screenRefCtx, mVisibleRect, ToReferenceFrame());
 
   if (mBorderRenderers.IsEmpty()) {
     return LAYER_NONE;
+  }
+
+  for (auto iter = mBorderRenderers.begin(); iter != mBorderRenderers.end(); iter++) {
+    if (!iter->CanCreateWebRenderCommands()) {
+      return LAYER_NONE;
+    }
   }
 
   return LAYER_ACTIVE;
@@ -99,15 +103,36 @@ nsDisplayColumnRule::BuildLayer(nsDisplayListBuilder* aBuilder,
   return BuildDisplayItemLayer(aBuilder, aManager, aContainerParameters);
 }
 
-void
-nsDisplayColumnRule::CreateWebRenderCommands(wr::DisplayListBuilder& aBuilder,
+bool
+nsDisplayColumnRule::CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
+                                             const StackingContextHelper& aSc,
                                              nsTArray<WebRenderParentCommand>& aParentCommands,
-                                             WebRenderDisplayItemLayer* aLayer)
+                                             mozilla::layers::WebRenderLayerManager* aManager,
+                                             nsDisplayListBuilder* aDisplayListBuilder)
 {
-  MOZ_ASSERT(!mBorderRenderers.IsEmpty());
-  for (auto iter = mBorderRenderers.begin(); iter != mBorderRenderers.end(); iter++) {
-      iter->CreateWebRenderCommands(aBuilder, aLayer);
+  if (aManager->IsLayersFreeTransaction()) {
+    RefPtr<gfxContext> screenRefCtx = gfxContext::CreateOrNull(
+      gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget().get());
+
+    static_cast<nsColumnSetFrame*>(mFrame)->
+      CreateBorderRenderers(mBorderRenderers, screenRefCtx, mVisibleRect, ToReferenceFrame());
+
+    if (mBorderRenderers.IsEmpty()) {
+      return false;
+    }
+
+    for (auto iter = mBorderRenderers.begin(); iter != mBorderRenderers.end(); iter++) {
+      if (!iter->CanCreateWebRenderCommands()) {
+        return false;
+      }
+    }
   }
+
+  for (auto iter = mBorderRenderers.begin(); iter != mBorderRenderers.end(); iter++) {
+    iter->CreateWebRenderCommands(aBuilder, aSc);
+  }
+
+  return true;
 }
 
 /**
@@ -129,22 +154,14 @@ NS_NewColumnSetFrame(nsIPresShell* aPresShell, nsStyleContext* aContext, nsFrame
 NS_IMPL_FRAMEARENA_HELPERS(nsColumnSetFrame)
 
 nsColumnSetFrame::nsColumnSetFrame(nsStyleContext* aContext)
-  : nsContainerFrame(aContext)
+  : nsContainerFrame(aContext, kClassID)
   , mLastBalanceBSize(NS_INTRINSICSIZE)
 {
 }
 
-nsIAtom*
-nsColumnSetFrame::GetType() const
-{
-  return nsGkAtoms::columnSetFrame;
-}
-
 void
-nsColumnSetFrame::CreateBorderRenderers(nsTArray<nsCSSBorderRenderer>& aBorderRenderers,
-                                        nsRenderingContext* aCtx,
-                                        const nsRect& aDirtyRect,
-                                        const nsPoint& aPt)
+nsColumnSetFrame::ForEachColumn(const std::function<void(const nsRect& lineRect)>& aSetLineRect,
+                                const nsPoint& aPt)
 {
   nsIFrame* child = mFrames.FirstChild();
   if (!child)
@@ -154,12 +171,74 @@ nsColumnSetFrame::CreateBorderRenderers(nsTArray<nsCSSBorderRenderer>& aBorderRe
   if (!nextSibling)
     return;  // 1 column only - this means no gap to draw on
 
+  const nsStyleColumn* colStyle = StyleColumn();
+  nscoord ruleWidth = colStyle->GetComputedColumnRuleWidth();
+  if (!ruleWidth)
+    return;
+
   WritingMode wm = GetWritingMode();
   bool isVertical = wm.IsVertical();
   bool isRTL = !wm.IsBidiLTR();
-  const nsStyleColumn* colStyle = StyleColumn();
 
+  // Get our content rect as an absolute coordinate, not relative to
+  // our parent (which is what the X and Y normally is)
+  nsRect contentRect = GetContentRect() - GetRect().TopLeft() + aPt;
+  nsSize ruleSize = isVertical ? nsSize(contentRect.width, ruleWidth)
+                               : nsSize(ruleWidth, contentRect.height);
+
+  while (nextSibling) {
+    // The frame tree goes RTL in RTL.
+    // The |prevFrame| and |nextFrame| frames here are the visually preceding
+    // (left/above) and following (right/below) frames, not in logical writing-
+    // mode direction.
+    nsIFrame* prevFrame = isRTL ? nextSibling : child;
+    nsIFrame* nextFrame = isRTL ? child : nextSibling;
+
+    // Each child frame's position coordinates is actually relative to this
+    // nsColumnSetFrame.
+    // linePt will be at the top-left edge to paint the line.
+    nsPoint linePt;
+    if (isVertical) {
+      nscoord edgeOfPrev = prevFrame->GetRect().YMost() + aPt.y;
+      nscoord edgeOfNext = nextFrame->GetRect().Y() + aPt.y;
+      linePt = nsPoint(contentRect.x,
+                       (edgeOfPrev + edgeOfNext - ruleSize.height) / 2);
+    } else {
+      nscoord edgeOfPrev = prevFrame->GetRect().XMost() + aPt.x;
+      nscoord edgeOfNext = nextFrame->GetRect().X() + aPt.x;
+      linePt = nsPoint((edgeOfPrev + edgeOfNext - ruleSize.width) / 2,
+                       contentRect.y);
+    }
+
+    aSetLineRect(nsRect(linePt, ruleSize));
+
+    child = nextSibling;
+    nextSibling = nextSibling->GetNextSibling();
+  }
+}
+
+nsRect
+nsColumnSetFrame::CalculateBounds(const nsPoint& aOffset)
+{
+  nsRect combined;
+  ForEachColumn([&combined](const nsRect& aLineRect)
+                {
+                  combined = combined.Union(aLineRect);
+                }, aOffset);
+  return combined;
+}
+
+void
+nsColumnSetFrame::CreateBorderRenderers(nsTArray<nsCSSBorderRenderer>& aBorderRenderers,
+                                        gfxContext* aCtx,
+                                        const nsRect& aDirtyRect,
+                                        const nsPoint& aPt)
+{
+  WritingMode wm = GetWritingMode();
+  bool isVertical = wm.IsVertical();
+  const nsStyleColumn* colStyle = StyleColumn();
   uint8_t ruleStyle;
+
   // Per spec, inset => ridge and outset => groove
   if (colStyle->mColumnRuleStyle == NS_STYLE_BORDER_STYLE_INSET)
     ruleStyle = NS_STYLE_BORDER_STYLE_RIDGE;
@@ -198,54 +277,23 @@ nsColumnSetFrame::CreateBorderRenderers(nsTArray<nsCSSBorderRenderer>& aBorderRe
     skipSides |= mozilla::eSideBitsRight;
   }
 
-  // Get our content rect as an absolute coordinate, not relative to
-  // our parent (which is what the X and Y normally is)
-  nsRect contentRect = GetContentRect() - GetRect().TopLeft() + aPt;
-  nsSize ruleSize = isVertical ? nsSize(contentRect.width, ruleWidth)
-                               : nsSize(ruleWidth, contentRect.height);
+  ForEachColumn([&]
+                (const nsRect& aLineRect)
+                {
+                  // Assert that we're not drawing a border-image here; if we were, we
+                  // couldn't ignore the DrawResult that PaintBorderWithStyleBorder returns.
+                  MOZ_ASSERT(border.mBorderImageSource.GetType() == eStyleImageType_Null);
 
-  while (nextSibling) {
-    // The frame tree goes RTL in RTL.
-    // The |prevFrame| and |nextFrame| frames here are the visually preceding
-    // (left/above) and following (right/below) frames, not in logical writing-
-    // mode direction.
-    nsIFrame* prevFrame = isRTL ? nextSibling : child;
-    nsIFrame* nextFrame = isRTL ? child : nextSibling;
-
-    // Each child frame's position coordinates is actually relative to this
-    // nsColumnSetFrame.
-    // linePt will be at the top-left edge to paint the line.
-    nsPoint linePt;
-    if (isVertical) {
-      nscoord edgeOfPrev = prevFrame->GetRect().YMost() + aPt.y;
-      nscoord edgeOfNext = nextFrame->GetRect().Y() + aPt.y;
-      linePt = nsPoint(contentRect.x,
-                       (edgeOfPrev + edgeOfNext - ruleSize.height) / 2);
-    } else {
-      nscoord edgeOfPrev = prevFrame->GetRect().XMost() + aPt.x;
-      nscoord edgeOfNext = nextFrame->GetRect().X() + aPt.x;
-      linePt = nsPoint((edgeOfPrev + edgeOfNext - ruleSize.width) / 2,
-                       contentRect.y);
-    }
-
-    nsRect lineRect(linePt, ruleSize);
-
-    // Assert that we're not drawing a border-image here; if we were, we
-    // couldn't ignore the DrawResult that PaintBorderWithStyleBorder returns.
-    MOZ_ASSERT(border.mBorderImageSource.GetType() == eStyleImageType_Null);
-
-    gfx::DrawTarget* dt = aCtx ? aCtx->GetDrawTarget() : nullptr;
-    Maybe<nsCSSBorderRenderer> br =
-      nsCSSRendering::CreateBorderRendererWithStyleBorder(presContext, dt,
-                                                          this, aDirtyRect,
-                                                          lineRect, border,
-                                                          StyleContext(), skipSides);
-    if (br.isSome()) {
-      aBorderRenderers.AppendElement(br.value());
-    }
-    child = nextSibling;
-    nextSibling = nextSibling->GetNextSibling();
-  }
+                  gfx::DrawTarget* dt = aCtx ? aCtx->GetDrawTarget() : nullptr;
+                  Maybe<nsCSSBorderRenderer> br =
+                    nsCSSRendering::CreateBorderRendererWithStyleBorder(presContext, dt,
+                                                                        this, aDirtyRect,
+                                                                        aLineRect, border,
+                                                                        StyleContext(), skipSides);
+                  if (br.isSome()) {
+                    aBorderRenderers.AppendElement(br.value());
+                  }
+                }, aPt);
 }
 
 static nscoord
@@ -436,6 +484,14 @@ nsColumnSetFrame::ChooseColumnStrategy(const ReflowInput& aReflowInput,
   return config;
 }
 
+static void
+MarkPrincipalChildrenDirty(nsIFrame* aFrame)
+{
+  for (nsIFrame* childFrame : aFrame->PrincipalChildList()) {
+    childFrame->AddStateBits(NS_FRAME_IS_DIRTY);
+  }
+}
+
 bool
 nsColumnSetFrame::ReflowColumns(ReflowOutput& aDesiredSize,
                                 const ReflowInput& aReflowInput,
@@ -475,7 +531,7 @@ static void MoveChildTo(nsIFrame* aChild, LogicalPoint aOrigin,
 }
 
 nscoord
-nsColumnSetFrame::GetMinISize(nsRenderingContext *aRenderingContext)
+nsColumnSetFrame::GetMinISize(gfxContext *aRenderingContext)
 {
   nscoord iSize = 0;
   DISPLAY_MIN_WIDTH(this, iSize);
@@ -510,7 +566,7 @@ nsColumnSetFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 }
 
 nscoord
-nsColumnSetFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
+nsColumnSetFrame::GetPrefISize(gfxContext *aRenderingContext)
 {
   // Our preferred width is our desired column width, if specified, otherwise
   // the child's preferred width, times the number of columns, plus the width
@@ -555,10 +611,9 @@ nsColumnSetFrame::ReflowChildren(ReflowOutput&     aDesiredSize,
   aColData.Reset();
   bool allFit = true;
   WritingMode wm = GetWritingMode();
-  bool isVertical = wm.IsVertical();
   bool isRTL = !wm.IsBidiLTR();
-  bool shrinkingBSizeOnly = !NS_SUBTREE_DIRTY(this) &&
-    mLastBalanceBSize > aConfig.mColMaxBSize;
+  bool shrinkingBSize = mLastBalanceBSize > aConfig.mColMaxBSize;
+  bool changingBSize = mLastBalanceBSize != aConfig.mColMaxBSize;
 
 #ifdef DEBUG_roc
   printf("*** Doing column reflow pass: mLastBalanceBSize=%d, mColMaxBSize=%d, RTL=%d\n"
@@ -605,7 +660,7 @@ nsColumnSetFrame::ReflowChildren(ReflowOutput&     aDesiredSize,
   // XXX when all of layout is converted to logical coordinates, we
   //     probably won't need to do this hack any more. For now, we
   //     confine it to the legacy horizontal-rl case
-  if (!isVertical && isRTL) {
+  if (!wm.IsVertical() && isRTL) {
     nscoord availISize = aReflowInput.AvailableISize();
     if (aReflowInput.ComputedISize() != NS_INTRINSICSIZE) {
       availISize = aReflowInput.ComputedISize();
@@ -639,6 +694,12 @@ nsColumnSetFrame::ReflowChildren(ReflowOutput&     aDesiredSize,
       && child->GetNextSibling()
       && !(aUnboundedLastColumn && columnCount == aConfig.mBalanceColCount - 1)
       && !NS_SUBTREE_DIRTY(child->GetNextSibling());
+    // If column-fill is auto (not the default), then we might need to
+    // move content between columns for any change in column block-size.
+    if (skipIncremental && changingBSize &&
+        StyleColumn()->mColumnFill == NS_STYLE_COLUMN_FILL_AUTO) {
+      skipIncremental = false;
+    }
     // If we need to pull up content from the prev-in-flow then this is not just
     // a height shrink. The prev in flow will have set the dirty bit.
     // Check the overflow rect YMost instead of just the child's content height. The child
@@ -647,22 +708,22 @@ nsColumnSetFrame::ReflowChildren(ReflowOutput&     aDesiredSize,
     // boundary, but if so, too bad, this optimization is defeated.)
     // We want scrollable overflow here since this is a calculation that
     // affects layout.
-    bool skipResizeBSizeShrink = false;
-    if (shrinkingBSizeOnly) {
+    if (skipIncremental && shrinkingBSize) {
       switch (wm.GetBlockDir()) {
       case WritingMode::eBlockTB:
-        if (child->GetScrollableOverflowRect().YMost() <= aConfig.mColMaxBSize) {
-          skipResizeBSizeShrink = true;
+        if (child->GetScrollableOverflowRect().YMost() > aConfig.mColMaxBSize) {
+          skipIncremental = false;
         }
         break;
       case WritingMode::eBlockLR:
-        if (child->GetScrollableOverflowRect().XMost() <= aConfig.mColMaxBSize) {
-          skipResizeBSizeShrink = true;
+        if (child->GetScrollableOverflowRect().XMost() > aConfig.mColMaxBSize) {
+          skipIncremental = false;
         }
         break;
       case WritingMode::eBlockRL:
         // XXX not sure how to handle this, so for now just don't attempt
         // the optimization
+        skipIncremental = false;
         break;
       default:
         NS_NOTREACHED("unknown block direction");
@@ -671,7 +732,7 @@ nsColumnSetFrame::ReflowChildren(ReflowOutput&     aDesiredSize,
     }
 
     nscoord childContentBEnd = 0;
-    if (!reflowNext && (skipIncremental || skipResizeBSizeShrink)) {
+    if (!reflowNext && skipIncremental) {
       // This child does not need to be reflowed, but we may need to move it
       MoveChildTo(child, childOrigin, wm, containerSize);
 
@@ -689,8 +750,8 @@ nsColumnSetFrame::ReflowChildren(ReflowOutput&     aDesiredSize,
       }
       childContentBEnd = nsLayoutUtils::CalculateContentBEnd(wm, child);
 #ifdef DEBUG_roc
-      printf("*** Skipping child #%d %p (incremental %d, resize block-size shrink %d): status = %d\n",
-             columnCount, (void*)child, skipIncremental, skipResizeBSizeShrink, aStatus);
+      printf("*** Skipping child #%d %p (incremental %d): status = %d\n",
+             columnCount, (void*)child, skipIncremental, aStatus);
 #endif
     } else {
       LogicalSize availSize(wm, aConfig.mColISize, aConfig.mColMaxBSize);
@@ -947,7 +1008,7 @@ nsColumnSetFrame::DrainOverflowColumns()
       mFrames.InsertFrames(this, nullptr, *overflows);
     }
   }
-  
+
   // Now pull back our own overflows and append them to our children.
   // We don't need to reparent them since we're already their parent.
   AutoFrameListPtr overflows(presContext, StealOverflowFrames());
@@ -1077,7 +1138,7 @@ nsColumnSetFrame::FindBestBalanceBSize(const ReflowInput& aReflowInput,
     aConfig.mColMaxBSize = nextGuess;
 
     aUnboundedLastColumn = false;
-    AddStateBits(NS_FRAME_IS_DIRTY);
+    MarkPrincipalChildrenDirty(this);
     feasible = ReflowColumns(aDesiredSize, aReflowInput, aStatus, aConfig, false,
                              &aOutMargin, aColData);
 
@@ -1106,7 +1167,7 @@ nsColumnSetFrame::FindBestBalanceBSize(const ReflowInput& aReflowInput,
       // allowed to have arbitrary height here, even though we were balancing.
       // Otherwise we'd have to split, and it's not clear what we'd do with
       // that.
-      AddStateBits(NS_FRAME_IS_DIRTY);
+      MarkPrincipalChildrenDirty(this);
       feasible = ReflowColumns(aDesiredSize, aReflowInput, aStatus, aConfig,
                                availableContentBSize == NS_UNCONSTRAINEDSIZE,
                                &aOutMargin, aColData);
@@ -1216,27 +1277,23 @@ nsColumnSetFrame::Reflow(nsPresContext*           aPresContext,
 
 void
 nsColumnSetFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                   const nsRect&           aDirtyRect,
                                    const nsDisplayListSet& aLists)
 {
   DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   if (IsVisibleForPainting(aBuilder)) {
     aLists.BorderBackground()->
-      AppendNewToTop(new (aBuilder)nsDisplayColumnRule(aBuilder, this));
+      AppendNewToTop(new (aBuilder) nsDisplayColumnRule(aBuilder, this));
   }
 
   // Our children won't have backgrounds so it doesn't matter where we put them.
   for (nsFrameList::Enumerator e(mFrames); !e.AtEnd(); e.Next()) {
-    BuildDisplayListForChild(aBuilder, e.get(), aDirtyRect, aLists);
+    BuildDisplayListForChild(aBuilder, e.get(), aLists);
   }
 }
 
 void
-nsColumnSetFrame::DoUpdateStyleOfOwnedAnonBoxes(
-    mozilla::ServoStyleSet& aStyleSet,
-    nsStyleChangeList& aChangeList,
-    nsChangeHint aHintForThisFrame)
+nsColumnSetFrame::AppendDirectlyOwnedAnonBoxes(nsTArray<OwnedAnonBox>& aResult)
 {
   // Everything in mFrames is continuations of the first thing in mFrames.
   nsIFrame* column = mFrames.FirstChild();
@@ -1249,7 +1306,7 @@ nsColumnSetFrame::DoUpdateStyleOfOwnedAnonBoxes(
   MOZ_ASSERT(column->StyleContext()->GetPseudo() ==
                nsCSSAnonBoxes::columnContent,
              "What sort of child is this?");
-  UpdateStyleOfChildAnonBox(column, aStyleSet, aChangeList, aHintForThisFrame);
+  aResult.AppendElement(OwnedAnonBox(column));
 }
 
 #ifdef DEBUG

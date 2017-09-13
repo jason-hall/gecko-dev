@@ -9,21 +9,23 @@ import requests
 import requests.adapters
 import json
 import os
+import sys
 import logging
 
 from slugid import nice as slugid
-from taskgraph.util.time import (
-    current_json_time,
-    json_time_from_now
-)
+from taskgraph.util.parameterization import resolve_timestamps
+from taskgraph.util.time import current_json_time
 
 logger = logging.getLogger(__name__)
 
 # the maximum number of parallel createTask calls to make
 CONCURRENCY = 50
 
+# this is set to true for `mach taskgraph action-callback --test`
+testing = False
 
-def create_tasks(taskgraph, label_to_taskid, params):
+
+def create_tasks(taskgraph, label_to_taskid, params, decision_task_id=None):
     taskid_to_label = {t: l for l, t in label_to_taskid.iteritems()}
 
     session = requests.Session()
@@ -36,7 +38,7 @@ def create_tasks(taskgraph, label_to_taskid, params):
     session.mount('https://', http_adapter)
     session.mount('http://', http_adapter)
 
-    decision_task_id = os.environ.get('TASK_ID')
+    decision_task_id = decision_task_id or os.environ.get('TASK_ID')
 
     # when running as an actual decision task, we use the decision task's
     # taskId as the taskGroupId.  The process that created the decision task
@@ -60,11 +62,15 @@ def create_tasks(taskgraph, label_to_taskid, params):
         for task_id in taskgraph.graph.visit_postorder():
             task_def = taskgraph.tasks[task_id].task
             attributes = taskgraph.tasks[task_id].attributes
-            # if this task has no dependencies, make it depend on this decision
-            # task so that it does not start immediately; and so that if this loop
-            # fails halfway through, none of the already-created tasks run.
-            if decision_task_id and not task_def.get('dependencies'):
-                task_def['dependencies'] = [decision_task_id]
+
+            # if this task has no dependencies *within* this taskgraph, make it
+            # depend on this decision task. If it has another dependency within
+            # the taskgraph, then it already implicitly depends on the decision
+            # task.  The result is that tasks do not start immediately. if this
+            # loop fails halfway through, none of the already-created tasks run.
+            if decision_task_id:
+                if not any(t in taskgraph.tasks for t in task_def.get('dependencies', [])):
+                    task_def.setdefault('dependencies', []).append(decision_task_id)
 
             task_def['taskGroupId'] = task_group_id
             task_def['schedulerId'] = scheduler_id
@@ -97,6 +103,11 @@ def create_task(session, task_id, label, task_def):
     now = current_json_time(datetime_format=True)
     task_def = resolve_timestamps(now, task_def)
 
+    if testing:
+        json.dump([task_id, task_def], sys.stdout,
+                  sort_keys=True, indent=4, separators=(',', ': '))
+        return
+
     logger.debug("Creating task with taskId {} for {}".format(task_id, label))
     res = session.put('http://taskcluster/queue/v1/task/{}'.format(task_id),
                       data=json.dumps(task_def))
@@ -106,17 +117,3 @@ def create_task(session, task_id, label, task_def):
         except:
             logger.error(res.text)
         res.raise_for_status()
-
-
-def resolve_timestamps(now, task_def):
-    def recurse(val):
-        if isinstance(val, list):
-            return [recurse(v) for v in val]
-        elif isinstance(val, dict):
-            if val.keys() == ['relative-datestamp']:
-                return json_time_from_now(val['relative-datestamp'], now)
-            else:
-                return {k: recurse(v) for k, v in val.iteritems()}
-        else:
-            return val
-    return recurse(task_def)

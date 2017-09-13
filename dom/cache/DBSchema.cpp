@@ -300,7 +300,6 @@ typedef int32_t EntryId;
 
 struct IdCount
 {
-  IdCount() : mId(-1), mCount(0) { }
   explicit IdCount(int32_t aId) : mId(aId), mCount(1) { }
   int32_t mId;
   int32_t mCount;
@@ -2556,7 +2555,7 @@ Migrate(mozIStorageConnection* aConn)
       }
     }
 
-#if defined(DEBUG) || !defined(RELEASE_OR_BETA)
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
     int32_t lastVersion = currentVersion;
 #endif
     rv = aConn->GetSchemaVersion(&currentVersion);

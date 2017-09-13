@@ -16,12 +16,6 @@ namespace gc {
 inline size_t
 GetAtomBit(TenuredCell* thing)
 {
-	/* OMRTODO: This is broken.
-    MOZ_ASSERT(thing->zoneFromAnyThread()->isAtomsZone());
-    Arena* arena = thing->arena();
-    size_t arenaBit = (reinterpret_cast<uintptr_t>(thing) - arena->address()) / CellSize;
-    return arena->atomBitmapStart() * JS_BITS_PER_WORD + arenaBit;
-	*/
     return 0;
 }
 
@@ -55,7 +49,6 @@ AtomMarkingRuntime::inlinedMarkAtom(JSContext* cx, T* thing)
         return;
 
     size_t bit = GetAtomBit(thing);
-    //MOZ_ASSERT(bit / JS_BITS_PER_WORD < allocatedWords);
 
     cx->zone()->markedAtoms().setBit(bit);
 

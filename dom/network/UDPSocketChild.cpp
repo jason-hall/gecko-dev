@@ -5,7 +5,6 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "UDPSocketChild.h"
-#include "mozilla/SizePrintfMacros.h"
 #include "mozilla/Unused.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
 #include "mozilla/net/NeckoChild.h"
@@ -122,11 +121,8 @@ UDPSocketChild::CreatePBackgroundSpinUntilDone()
     return NS_ERROR_FAILURE;
   }
 
-  nsIThread* thread = NS_GetCurrentThread();
-  while (!done) {
-    if (NS_WARN_IF(!NS_ProcessNextEvent(thread, true /* aMayWait */))) {
-      return NS_ERROR_FAILURE;
-    }
+  if (!SpinEventLoopUntil([&done]() { return done; })) {
+    return NS_ERROR_FAILURE;
   }
 
   if (NS_WARN_IF(!BackgroundChild::GetForCurrentThread())) {
@@ -168,7 +164,8 @@ UDPSocketChild::Bind(nsIUDPSocketInternal* aSocket,
                      bool aAddressReuse,
                      bool aLoopback,
                      uint32_t recvBufferSize,
-                     uint32_t sendBufferSize)
+                     uint32_t sendBufferSize,
+                     nsIEventTarget* aMainThreadEventTarget)
 {
   UDPSOCKET_LOG(("%s: %s:%u", __FUNCTION__, PromiseFlatCString(aHost).get(), aPort));
 
@@ -183,6 +180,9 @@ UDPSocketChild::Bind(nsIUDPSocketInternal* aSocket,
     MOZ_ASSERT(!aPrincipal);
     mBackgroundManager->SendPUDPSocketConstructor(this, void_t(), mFilterName);
   } else {
+    if (aMainThreadEventTarget) {
+      gNeckoChild->SetEventTargetForActor(this, aMainThreadEventTarget);
+    }
     gNeckoChild->SendPUDPSocketConstructor(this, IPC::Principal(aPrincipal),
                                            mFilterName);
   }
@@ -380,7 +380,7 @@ mozilla::ipc::IPCResult
 UDPSocketChild::RecvCallbackReceivedData(const UDPAddressInfo& aAddressInfo,
                                          InfallibleTArray<uint8_t>&& aData)
 {
-  UDPSOCKET_LOG(("%s: %s:%u length %" PRIuSIZE, __FUNCTION__,
+  UDPSOCKET_LOG(("%s: %s:%u length %zu", __FUNCTION__,
                  aAddressInfo.addr().get(), aAddressInfo.port(), aData.Length()));
   nsresult rv = mSocket->CallListenerReceivedData(aAddressInfo.addr(), aAddressInfo.port(),
                                                   aData.Elements(), aData.Length());

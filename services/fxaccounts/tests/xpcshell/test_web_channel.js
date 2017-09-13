@@ -38,7 +38,7 @@ add_test(function() {
   run_next_test();
 });
 
-add_task(function* test_rejection_reporting() {
+add_task(async function test_rejection_reporting() {
   let mockMessage = {
     command: "fxaccounts:login",
     messageId: "1234",
@@ -65,7 +65,7 @@ add_task(function* test_rejection_reporting() {
 
   channel._channelCallback(WEBCHANNEL_ID, mockMessage, mockSendingContext);
 
-  let { message, context } = yield promiseSend;
+  let { message, context } = await promiseSend;
 
   equal(context, mockSendingContext, "Should forward the original context");
   equal(message.command, "fxaccounts:login",
@@ -235,6 +235,56 @@ add_test(function test_sync_preferences_message() {
   channel._channelCallback(WEBCHANNEL_ID, mockMessage, mockSendingContext);
 });
 
+add_test(function test_fxa_status_message() {
+  let mockMessage = {
+    command: "fxaccounts:fxa_status",
+    messageId: 123,
+    data: {
+      service: "sync"
+    }
+  };
+
+  let channel = new FxAccountsWebChannel({
+    channel_id: WEBCHANNEL_ID,
+    content_uri: URL_STRING,
+    helpers: {
+      async getFxaStatus() {
+        return {
+          signedInUser: {
+            email: "testuser@testuser.com",
+            sessionToken: "session-token",
+            uid: "uid",
+            verified: true
+          },
+          capabilities: {
+            engines: ["creditcards", "addresses"]
+          }
+        };
+      }
+    }
+  });
+
+  channel._channel = {
+    send(response, sendingContext) {
+      do_check_eq(response.command, "fxaccounts:fxa_status");
+      do_check_eq(response.messageId, 123);
+
+      let signedInUser = response.data.signedInUser;
+      do_check_true(!!signedInUser);
+      do_check_eq(signedInUser.email, "testuser@testuser.com");
+      do_check_eq(signedInUser.sessionToken, "session-token");
+      do_check_eq(signedInUser.uid, "uid");
+      do_check_eq(signedInUser.verified, true);
+
+      deepEqual(response.data.capabilities.engines, ["creditcards", "addresses"]);
+
+      run_next_test();
+    }
+  };
+
+  channel._channelCallback(WEBCHANNEL_ID, mockMessage, mockSendingContext);
+});
+
 add_test(function test_unrecognized_message() {
   let mockMessage = {
     command: "fxaccounts:unrecognized",
@@ -276,7 +326,7 @@ add_test(function test_helpers_should_allow_relink_different_email() {
   run_next_test();
 });
 
-add_task(function* test_helpers_login_without_customize_sync() {
+add_task(async function test_helpers_login_without_customize_sync() {
   let helpers = new FxAccountsWebChannelHelpers({
     fxAccounts: {
       setSignedInUser(accountData) {
@@ -299,14 +349,14 @@ add_task(function* test_helpers_login_without_customize_sync() {
   // ensure the previous account pref is overwritten.
   helpers.setPreviousAccountNameHashPref("lastuser@testuser.com");
 
-  yield helpers.login({
+  await helpers.login({
     email: "testuser@testuser.com",
     verifiedCanLinkAccount: true,
     customizeSync: false
   });
 });
 
-add_task(function* test_helpers_login_with_customize_sync() {
+add_task(async function test_helpers_login_with_customize_sync() {
   let helpers = new FxAccountsWebChannelHelpers({
     fxAccounts: {
       setSignedInUser(accountData) {
@@ -323,14 +373,14 @@ add_task(function* test_helpers_login_with_customize_sync() {
     }
   });
 
-  yield helpers.login({
+  await helpers.login({
     email: "testuser@testuser.com",
     verifiedCanLinkAccount: true,
     customizeSync: true
   });
 });
 
-add_task(function* test_helpers_login_with_customize_sync_and_declined_engines() {
+add_task(async function test_helpers_login_with_customize_sync_and_declined_engines() {
   let helpers = new FxAccountsWebChannelHelpers({
     fxAccounts: {
       setSignedInUser(accountData) {
@@ -360,12 +410,48 @@ add_task(function* test_helpers_login_with_customize_sync_and_declined_engines()
   do_check_eq(Services.prefs.getBoolPref("services.sync.engine.passwords"), true);
   do_check_eq(Services.prefs.getBoolPref("services.sync.engine.prefs"), true);
   do_check_eq(Services.prefs.getBoolPref("services.sync.engine.tabs"), true);
-  yield helpers.login({
+  await helpers.login({
     email: "testuser@testuser.com",
     verifiedCanLinkAccount: true,
     customizeSync: true,
     declinedSyncEngines: ["addons", "prefs"]
   });
+});
+
+add_task(async function test_helpers_login_with_offered_sync_engines() {
+  let helpers;
+  const setSignedInUserCalled = new Promise(resolve => {
+    helpers = new FxAccountsWebChannelHelpers({
+      fxAccounts: {
+        async setSignedInUser(accountData) {
+          resolve(accountData);
+        }
+      }
+    });
+  });
+
+  Services.prefs.setBoolPref("services.sync.engine.creditcards", false);
+  Services.prefs.setBoolPref("services.sync.engine.addresses", false);
+
+  await helpers.login({
+    email: "testuser@testuser.com",
+    verifiedCanLinkAccount: true,
+    customizeSync: true,
+    declinedSyncEngines: ["addresses"],
+    offeredSyncEngines: ["creditcards", "addresses"]
+  });
+
+  const accountData = await setSignedInUserCalled;
+
+  // ensure fxAccounts is informed of the new user being signed in.
+  equal(accountData.email, "testuser@testuser.com");
+
+  // offeredSyncEngines should be stripped in the data.
+  ok(!("offeredSyncEngines" in accountData));
+  // credit cards was offered but not declined.
+  equal(Services.prefs.getBoolPref("services.sync.engine.creditcards"), true);
+  // addresses was offered and explicitely declined.
+  equal(Services.prefs.getBoolPref("services.sync.engine.addresses"), false);
 });
 
 add_test(function test_helpers_open_sync_preferences() {
@@ -384,7 +470,293 @@ add_test(function test_helpers_open_sync_preferences() {
   helpers.openSyncPreferences(mockBrowser, "fxa:verification_complete");
 });
 
-add_task(function* test_helpers_change_password() {
+add_task(async function test_helpers_getFxAStatus_extra_engines() {
+  let helpers = new FxAccountsWebChannelHelpers({
+    fxAccounts: {
+      getSignedInUser() {
+        return Promise.resolve({
+          email: "testuser@testuser.com",
+          kA: "kA",
+          kb: "kB",
+          sessionToken: "sessionToken",
+          uid: "uid",
+          verified: true
+        });
+      }
+    },
+    privateBrowsingUtils: {
+      isBrowserPrivate: () => true
+    }
+  });
+
+  Services.prefs.setBoolPref("services.sync.engine.creditcards.available", true);
+  // Not defining "services.sync.engine.addresses.available" on purpose.
+
+  let fxaStatus = await helpers.getFxaStatus("sync", mockSendingContext);
+  ok(!!fxaStatus);
+  ok(!!fxaStatus.signedInUser);
+  deepEqual(fxaStatus.capabilities.engines, ["creditcards"]);
+});
+
+
+add_task(async function test_helpers_getFxaStatus_allowed_signedInUser() {
+  let wasCalled = {
+    getSignedInUser: false,
+    shouldAllowFxaStatus: false
+  };
+
+  let helpers = new FxAccountsWebChannelHelpers({
+    fxAccounts: {
+      getSignedInUser() {
+        wasCalled.getSignedInUser = true;
+        return Promise.resolve({
+          email: "testuser@testuser.com",
+          kA: "kA",
+          kb: "kB",
+          sessionToken: "sessionToken",
+          uid: "uid",
+          verified: true
+        });
+      }
+    }
+  });
+
+  helpers.shouldAllowFxaStatus = (service, sendingContext) => {
+    wasCalled.shouldAllowFxaStatus = true;
+    do_check_eq(service, "sync");
+    do_check_eq(sendingContext, mockSendingContext);
+
+    return true;
+  };
+
+  return helpers.getFxaStatus("sync", mockSendingContext)
+    .then(fxaStatus => {
+      do_check_true(!!fxaStatus);
+      do_check_true(wasCalled.getSignedInUser);
+      do_check_true(wasCalled.shouldAllowFxaStatus);
+
+      do_check_true(!!fxaStatus.signedInUser);
+      let {signedInUser} = fxaStatus;
+
+      do_check_eq(signedInUser.email, "testuser@testuser.com");
+      do_check_eq(signedInUser.sessionToken, "sessionToken");
+      do_check_eq(signedInUser.uid, "uid");
+      do_check_true(signedInUser.verified);
+
+      // These properties are filtered and should not
+      // be returned to the requester.
+      do_check_false("kA" in signedInUser);
+      do_check_false("kB" in signedInUser);
+    });
+});
+
+add_task(async function test_helpers_getFxaStatus_allowed_no_signedInUser() {
+  let wasCalled = {
+    getSignedInUser: false,
+    shouldAllowFxaStatus: false
+  };
+
+  let helpers = new FxAccountsWebChannelHelpers({
+    fxAccounts: {
+      getSignedInUser() {
+        wasCalled.getSignedInUser = true;
+        return Promise.resolve(null);
+      }
+    }
+  });
+
+  helpers.shouldAllowFxaStatus = (service, sendingContext) => {
+    wasCalled.shouldAllowFxaStatus = true;
+    do_check_eq(service, "sync");
+    do_check_eq(sendingContext, mockSendingContext);
+
+    return true;
+  };
+
+  return helpers.getFxaStatus("sync", mockSendingContext)
+    .then(fxaStatus => {
+      do_check_true(!!fxaStatus);
+      do_check_true(wasCalled.getSignedInUser);
+      do_check_true(wasCalled.shouldAllowFxaStatus);
+
+      do_check_null(fxaStatus.signedInUser);
+    });
+});
+
+add_task(async function test_helpers_getFxaStatus_not_allowed() {
+  let wasCalled = {
+    getSignedInUser: false,
+    shouldAllowFxaStatus: false
+  };
+
+  let helpers = new FxAccountsWebChannelHelpers({
+    fxAccounts: {
+      getSignedInUser() {
+        wasCalled.getSignedInUser = true;
+        return Promise.resolve(null);
+      }
+    }
+  });
+
+  helpers.shouldAllowFxaStatus = (service, sendingContext) => {
+    wasCalled.shouldAllowFxaStatus = true;
+    do_check_eq(service, "sync");
+    do_check_eq(sendingContext, mockSendingContext);
+
+    return false;
+  };
+
+  return helpers.getFxaStatus("sync", mockSendingContext)
+    .then(fxaStatus => {
+      do_check_true(!!fxaStatus);
+      do_check_false(wasCalled.getSignedInUser);
+      do_check_true(wasCalled.shouldAllowFxaStatus);
+
+      do_check_null(fxaStatus.signedInUser);
+    });
+});
+
+add_task(async function test_helpers_shouldAllowFxaStatus_sync_service_not_private_browsing() {
+  let wasCalled = {
+    isPrivateBrowsingMode: false
+  };
+  let helpers = new FxAccountsWebChannelHelpers({});
+
+  helpers.isPrivateBrowsingMode = (sendingContext) => {
+    wasCalled.isPrivateBrowsingMode = true;
+    do_check_eq(sendingContext, mockSendingContext);
+    return false;
+  }
+
+  let shouldAllowFxaStatus = helpers.shouldAllowFxaStatus("sync", mockSendingContext);
+  do_check_true(shouldAllowFxaStatus);
+  do_check_true(wasCalled.isPrivateBrowsingMode);
+});
+
+add_task(async function test_helpers_shouldAllowFxaStatus_oauth_service_not_private_browsing() {
+  let wasCalled = {
+    isPrivateBrowsingMode: false
+  };
+  let helpers = new FxAccountsWebChannelHelpers({});
+
+  helpers.isPrivateBrowsingMode = (sendingContext) => {
+    wasCalled.isPrivateBrowsingMode = true;
+    do_check_eq(sendingContext, mockSendingContext);
+    return false;
+  }
+
+  let shouldAllowFxaStatus = helpers.shouldAllowFxaStatus("dcdb5ae7add825d2", mockSendingContext);
+  do_check_true(shouldAllowFxaStatus);
+  do_check_true(wasCalled.isPrivateBrowsingMode);
+});
+
+add_task(async function test_helpers_shouldAllowFxaStatus_no_service_not_private_browsing() {
+  let wasCalled = {
+    isPrivateBrowsingMode: false
+  };
+  let helpers = new FxAccountsWebChannelHelpers({});
+
+  helpers.isPrivateBrowsingMode = (sendingContext) => {
+    wasCalled.isPrivateBrowsingMode = true;
+    do_check_eq(sendingContext, mockSendingContext);
+    return false;
+  }
+
+  let shouldAllowFxaStatus = helpers.shouldAllowFxaStatus("", mockSendingContext);
+  do_check_true(shouldAllowFxaStatus);
+  do_check_true(wasCalled.isPrivateBrowsingMode);
+});
+
+add_task(async function test_helpers_shouldAllowFxaStatus_sync_service_private_browsing() {
+  let wasCalled = {
+    isPrivateBrowsingMode: false
+  };
+  let helpers = new FxAccountsWebChannelHelpers({});
+
+  helpers.isPrivateBrowsingMode = (sendingContext) => {
+    wasCalled.isPrivateBrowsingMode = true;
+    do_check_eq(sendingContext, mockSendingContext);
+    return true;
+  }
+
+  let shouldAllowFxaStatus = helpers.shouldAllowFxaStatus("sync", mockSendingContext);
+  do_check_true(shouldAllowFxaStatus);
+  do_check_true(wasCalled.isPrivateBrowsingMode);
+});
+
+add_task(async function test_helpers_shouldAllowFxaStatus_oauth_service_private_browsing() {
+  let wasCalled = {
+    isPrivateBrowsingMode: false
+  };
+  let helpers = new FxAccountsWebChannelHelpers({});
+
+  helpers.isPrivateBrowsingMode = (sendingContext) => {
+    wasCalled.isPrivateBrowsingMode = true;
+    do_check_eq(sendingContext, mockSendingContext);
+    return true;
+  }
+
+  let shouldAllowFxaStatus = helpers.shouldAllowFxaStatus("dcdb5ae7add825d2", mockSendingContext);
+  do_check_false(shouldAllowFxaStatus);
+  do_check_true(wasCalled.isPrivateBrowsingMode);
+});
+
+add_task(async function test_helpers_shouldAllowFxaStatus_no_service_private_browsing() {
+  let wasCalled = {
+    isPrivateBrowsingMode: false
+  };
+  let helpers = new FxAccountsWebChannelHelpers({});
+
+  helpers.isPrivateBrowsingMode = (sendingContext) => {
+    wasCalled.isPrivateBrowsingMode = true;
+    do_check_eq(sendingContext, mockSendingContext);
+    return true;
+  }
+
+  let shouldAllowFxaStatus = helpers.shouldAllowFxaStatus("", mockSendingContext);
+  do_check_false(shouldAllowFxaStatus);
+  do_check_true(wasCalled.isPrivateBrowsingMode);
+});
+
+add_task(async function test_helpers_isPrivateBrowsingMode_private_browsing() {
+  let wasCalled = {
+    isBrowserPrivate: false
+  };
+  let helpers = new FxAccountsWebChannelHelpers({
+    privateBrowsingUtils: {
+      isBrowserPrivate(browser) {
+        wasCalled.isBrowserPrivate = true;
+        do_check_eq(browser, mockSendingContext.browser);
+        return true;
+      }
+    }
+  });
+
+  let isPrivateBrowsingMode = helpers.isPrivateBrowsingMode(mockSendingContext);
+  do_check_true(isPrivateBrowsingMode);
+  do_check_true(wasCalled.isBrowserPrivate);
+});
+
+add_task(async function test_helpers_isPrivateBrowsingMode_private_browsing() {
+  let wasCalled = {
+    isBrowserPrivate: false
+  };
+  let helpers = new FxAccountsWebChannelHelpers({
+    privateBrowsingUtils: {
+      isBrowserPrivate(browser) {
+        wasCalled.isBrowserPrivate = true;
+        do_check_eq(browser, mockSendingContext.browser);
+        return false;
+      }
+    }
+  });
+
+  let isPrivateBrowsingMode = helpers.isPrivateBrowsingMode(mockSendingContext);
+  do_check_false(isPrivateBrowsingMode);
+  do_check_true(wasCalled.isBrowserPrivate);
+});
+
+add_task(async function test_helpers_change_password() {
   let wasCalled = {
     updateUserAccountData: false,
     updateDeviceRegistration: false
@@ -413,12 +785,12 @@ add_task(function* test_helpers_change_password() {
       }
     }
   });
-  yield helpers.changePassword({ email: "email", uid: "uid", kA: "kA", foo: "foo" });
+  await helpers.changePassword({ email: "email", uid: "uid", kA: "kA", foo: "foo" });
   do_check_true(wasCalled.updateUserAccountData);
   do_check_true(wasCalled.updateDeviceRegistration);
 });
 
-add_task(function* test_helpers_change_password_with_error() {
+add_task(async function test_helpers_change_password_with_error() {
   let wasCalled = {
     updateUserAccountData: false,
     updateDeviceRegistration: false
@@ -437,17 +809,13 @@ add_task(function* test_helpers_change_password_with_error() {
     }
   });
   try {
-    yield helpers.changePassword({});
+    await helpers.changePassword({});
     do_check_false("changePassword should have rejected");
   } catch (_) {
     do_check_true(wasCalled.updateUserAccountData);
     do_check_false(wasCalled.updateDeviceRegistration);
   }
 });
-
-function run_test() {
-  run_next_test();
-}
 
 function makeObserver(aObserveTopic, aObserveFunc) {
   let callback = function(aSubject, aTopic, aData) {
@@ -463,7 +831,7 @@ function makeObserver(aObserveTopic, aObserveFunc) {
     Services.obs.removeObserver(callback, aObserveTopic);
   }
 
-  Services.obs.addObserver(callback, aObserveTopic, false);
+  Services.obs.addObserver(callback, aObserveTopic);
   return removeMe;
 }
 

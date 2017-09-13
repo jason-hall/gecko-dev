@@ -1285,7 +1285,6 @@ class Assembler : public AssemblerShared
 
     CompactBufferWriter jumpRelocations_;
     CompactBufferWriter dataRelocations_;
-    CompactBufferWriter preBarriers_;
 
     ARMBuffer m_buffer;
 
@@ -1318,7 +1317,7 @@ class Assembler : public AssemblerShared
     uint32_t spewProbe(Label* l);
     uint32_t spewDefine(Label* l);
     void spew(const char* fmt, ...) MOZ_FORMAT_PRINTF(2, 3);
-    void spew(const char* fmt, va_list args);
+    void spew(const char* fmt, va_list args) MOZ_FORMAT_PRINTF(2, 0);
 #endif
 
   public:
@@ -1363,9 +1362,6 @@ class Assembler : public AssemblerShared
                 dataRelocations_.writeUnsigned(nextOffset().getOffset());
         }
     }
-    void writePrebarrierOffset(CodeOffset label) {
-        preBarriers_.writeUnsigned(label.offset());
-    }
 
     enum RelocBranchStyle {
         B_MOVWT,
@@ -1388,15 +1384,9 @@ class Assembler : public AssemblerShared
 
     static uintptr_t GetPointer(uint8_t*);
     template <class Iter>
-    static const uint32_t* GetPtr32Target(Iter* iter, Register* dest = nullptr, RelocStyle* rs = nullptr);
+    static const uint32_t* GetPtr32Target(Iter iter, Register* dest = nullptr, RelocStyle* rs = nullptr);
 
     bool oom() const;
-
-    void disableProtection() {}
-    void enableProtection() {}
-    void setLowerBoundForProtection(size_t) {}
-    void unprotectRegion(unsigned char*, size_t) {}
-    void reprotectRegion(unsigned char*, size_t) {}
 
     void setPrinter(Sprinter* sp) {
 #ifdef JS_DISASM_ARM
@@ -1415,14 +1405,12 @@ class Assembler : public AssemblerShared
     bool asmMergeWith(Assembler& other);
     void copyJumpRelocationTable(uint8_t* dest);
     void copyDataRelocationTable(uint8_t* dest);
-    void copyPreBarrierTable(uint8_t* dest);
 
     // Size of the instruction stream, in bytes, after pools are flushed.
     size_t size() const;
     // Size of the jump relocation table, in bytes.
     size_t jumpRelocationTableBytes() const;
     size_t dataRelocationTableBytes() const;
-    size_t preBarrierTableBytes() const;
 
     // Size of the data table, in bytes.
     size_t bytesNeeded() const;
@@ -2264,22 +2252,33 @@ class InstMOV : public InstALU
     static InstMOV* AsTHIS (const Instruction& i);
 };
 
-
 class InstructionIterator
 {
   private:
-    Instruction* i;
-
+    Instruction* inst_;
   public:
-    explicit InstructionIterator(Instruction* i_);
-
+    explicit InstructionIterator(Instruction* inst) : inst_(inst) {
+        skipPool();
+    }
+    void skipPool() {
+        inst_ = inst_->skipPool();
+    }
     Instruction* next() {
-        i = i->next();
+        inst_ = inst_->next();
         return cur();
     }
     Instruction* cur() const {
-        return i;
+        return inst_;
     }
+};
+
+class BufferInstructionIterator : public ARMBuffer::AssemblerBufferInstIterator
+{
+  public:
+    BufferInstructionIterator(BufferOffset bo, ARMBuffer* buffer)
+      : ARMBuffer::AssemblerBufferInstIterator(bo, buffer)
+    {}
+    void skipPool();
 };
 
 static const uint32_t NumIntArgRegs = 4;

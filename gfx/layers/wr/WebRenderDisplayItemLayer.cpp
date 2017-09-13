@@ -8,67 +8,56 @@
 #include "LayersLogging.h"
 #include "mozilla/webrender/webrender_ffi.h"
 #include "mozilla/webrender/WebRenderTypes.h"
+#include "mozilla/layers/ScrollingLayersHelper.h"
+#include "mozilla/layers/StackingContextHelper.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
 #include "nsDisplayList.h"
 #include "mozilla/gfx/Matrix.h"
+#include "UnitTransforms.h"
 
 namespace mozilla {
 namespace layers {
 
+WebRenderDisplayItemLayer::~WebRenderDisplayItemLayer()
+{
+  MOZ_COUNT_DTOR(WebRenderDisplayItemLayer);
+}
+
 void
-WebRenderDisplayItemLayer::RenderLayer(wr::DisplayListBuilder& aBuilder)
+WebRenderDisplayItemLayer::RenderLayer(wr::DisplayListBuilder& aBuilder,
+                                       const StackingContextHelper& aSc)
 {
   if (mVisibleRegion.IsEmpty()) {
     return;
   }
 
+  ScrollingLayersHelper scroller(this, aBuilder, aSc);
+
   if (mItem) {
-    wr::DisplayListBuilder builder(WrBridge()->GetPipeline());
+    wr::LayoutSize contentSize; // this won't actually be used by anything
+    wr::DisplayListBuilder builder(WrBridge()->GetPipeline(), contentSize);
     // We might have recycled this layer. Throw away the old commands.
     mParentCommands.Clear();
-    mItem->CreateWebRenderCommands(builder, mParentCommands, this);
-    mBuiltDisplayList = builder.Finalize();
-  }
-  // else we have an empty transaction and just use the
-  // old commands.
 
-  aBuilder.PushBuiltDisplayList(Move(mBuiltDisplayList));
+    mItem->CreateWebRenderCommands(builder, aSc, mParentCommands, WrManager(),
+                                   GetDisplayListBuilder());
+    builder.Finalize(contentSize, mBuiltDisplayList);
+  } else {
+    // else we have an empty transaction and just use the
+    // old commands.
+    WebRenderLayerManager* manager = WrManager();
+    MOZ_ASSERT(manager);
+
+    // Since our recording relies on our parent layer's transform and stacking context
+    // If this layer or our parent changed, this empty transaction won't work.
+    if (manager->IsMutatedLayer(this) || manager->IsMutatedLayer(GetParent())) {
+      manager->SetTransactionIncomplete();
+      return;
+    }
+  }
+
+  aBuilder.PushBuiltDisplayList(mBuiltDisplayList);
   WrBridge()->AddWebRenderParentCommands(mParentCommands);
-}
-
-uint64_t
-WebRenderDisplayItemLayer::SendImageContainer(ImageContainer* aContainer)
-{
-  if (mImageContainer != aContainer) {
-    AutoLockImage autoLock(aContainer);
-    Image* image = autoLock.GetImage();
-    if (!image) {
-      return 0;
-    }
-
-    if (!mImageClient) {
-      mImageClient = ImageClient::CreateImageClient(CompositableType::IMAGE,
-                                                    WrBridge(),
-                                                    TextureFlags::DEFAULT);
-      if (!mImageClient) {
-        return 0;
-      }
-      mImageClient->Connect();
-    }
-
-    if (!mExternalImageId) {
-      MOZ_ASSERT(mImageClient);
-      mExternalImageId = WrBridge()->AllocExternalImageIdForCompositable(mImageClient);
-    }
-    MOZ_ASSERT(mExternalImageId);
-
-    if (mImageClient && !mImageClient->UpdateImage(aContainer, /* unused */0)) {
-      return 0;
-    }
-    mImageContainer = aContainer;
-  }
-
-  return mExternalImageId;
 }
 
 } // namespace layers

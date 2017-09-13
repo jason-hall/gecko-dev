@@ -7,15 +7,16 @@
 #define MediaInfo_h
 
 #include "mozilla/UniquePtr.h"
-#include "nsRect.h"
 #include "mozilla/RefPtr.h"
-#include "nsSize.h"
+#include "nsDataHashtable.h"
 #include "nsString.h"
 #include "nsTArray.h"
 #include "ImageTypes.h"
 #include "MediaData.h"
-#include "StreamTracks.h" // for TrackID
+#include "TrackID.h" // for TrackID
 #include "TimeUnits.h"
+#include "mozilla/gfx/Point.h" // for gfx::IntSize
+#include "mozilla/gfx/Rect.h"  // for gfx::IntRect
 
 namespace mozilla {
 
@@ -35,6 +36,8 @@ public:
   nsCString mKey;
   nsCString mValue;
 };
+
+typedef nsDataHashtable<nsCStringHashKey, nsCString> MetadataTags;
 
   // Maximum channel number we can currently handle (7.1)
 #define MAX_AUDIO_CHANNELS 8
@@ -62,8 +65,6 @@ public:
     , mLanguage(aLanguage)
     , mEnabled(aEnabled)
     , mTrackId(aTrackId)
-    , mDuration(0)
-    , mMediaTime(0)
     , mIsRenderedExternally(false)
     , mType(aType)
   {
@@ -94,8 +95,8 @@ public:
   TrackID mTrackId;
 
   nsCString mMimeType;
-  int64_t mDuration;
-  int64_t mMediaTime;
+  media::TimeUnit mDuration;
+  media::TimeUnit mMediaTime;
   CryptoTrack mCrypto;
 
   nsTArray<MetadataTag> mTags;
@@ -178,7 +179,7 @@ private:
   TrackType mType;
 };
 
-// String version of track type. Don't use with kUndefinedTrack.
+// String version of track type.
 const char* TrackTypeToStr(TrackInfo::TrackType aTrack);
 
 // Stores info relevant to presenting media frames.
@@ -198,20 +199,25 @@ public:
   }
 
   explicit VideoInfo(int32_t aWidth, int32_t aHeight)
-    : VideoInfo(nsIntSize(aWidth, aHeight))
+    : VideoInfo(gfx::IntSize(aWidth, aHeight))
   {
   }
 
-  explicit VideoInfo(const nsIntSize& aSize)
-    : TrackInfo(kVideoTrack, NS_LITERAL_STRING("2"), NS_LITERAL_STRING("main"),
-                EmptyString(), EmptyString(), true, 2)
+  explicit VideoInfo(const gfx::IntSize& aSize)
+    : TrackInfo(kVideoTrack,
+                NS_LITERAL_STRING("2"),
+                NS_LITERAL_STRING("main"),
+                EmptyString(),
+                EmptyString(),
+                true,
+                2)
     , mDisplay(aSize)
     , mStereoMode(StereoMode::MONO)
     , mImage(aSize)
     , mCodecSpecificConfig(new MediaByteBuffer)
     , mExtraData(new MediaByteBuffer)
     , mRotation(kDegree_0)
-    , mImageRect(nsIntRect(nsIntPoint(), aSize))
+    , mImageRect(gfx::IntRect(gfx::IntPoint(), aSize))
   {
   }
 
@@ -258,18 +264,15 @@ public:
     return mAlphaPresent;
   }
 
-  nsIntRect ImageRect() const
+  gfx::IntRect ImageRect() const
   {
-    if (mImageRect.width < 0 || mImageRect.height < 0) {
-      return nsIntRect(0, 0, mImage.width, mImage.height);
+    if (mImageRect.Width() < 0 || mImageRect.Height() < 0) {
+      return gfx::IntRect(0, 0, mImage.width, mImage.height);
     }
     return mImageRect;
   }
 
-  void SetImageRect(const nsIntRect& aRect)
-  {
-    mImageRect = aRect;
-  }
+  void SetImageRect(const gfx::IntRect& aRect) { mImageRect = aRect; }
 
   // Returned the crop rectangle scaled to aWidth/aHeight size relative to
   // mImage size.
@@ -279,18 +282,18 @@ public:
   // reports. This is legal in WebM, and we will preserve the ratio of the crop
   // rectangle as it was reported relative to the picture size reported by the
   // container.
-  nsIntRect ScaledImageRect(int64_t aWidth, int64_t aHeight) const
+  gfx::IntRect ScaledImageRect(int64_t aWidth, int64_t aHeight) const
   {
     if ((aWidth == mImage.width && aHeight == mImage.height)
         || !mImage.width
         || !mImage.height) {
       return ImageRect();
     }
-    nsIntRect imageRect = ImageRect();
+    gfx::IntRect imageRect = ImageRect();
     imageRect.x = (imageRect.x * aWidth) / mImage.width;
     imageRect.y = (imageRect.y * aHeight) / mImage.height;
-    imageRect.width = (aWidth * imageRect.width) / mImage.width;
-    imageRect.height = (aHeight * imageRect.height) / mImage.height;
+    imageRect.SetWidth((aWidth * imageRect.Width()) / mImage.width);
+    imageRect.SetHeight((aHeight * imageRect.Height()) / mImage.height);
     return imageRect;
   }
 
@@ -311,13 +314,13 @@ public:
 
   // Size in pixels at which the video is rendered. This is after it has
   // been scaled by its aspect ratio.
-  nsIntSize mDisplay;
+  gfx::IntSize mDisplay;
 
   // Indicates the frame layout for single track stereo videos.
   StereoMode mStereoMode;
 
   // Size of the decoded video's image.
-  nsIntSize mImage;
+  gfx::IntSize mImage;
 
   RefPtr<MediaByteBuffer> mCodecSpecificConfig;
   RefPtr<MediaByteBuffer> mExtraData;
@@ -329,7 +332,7 @@ public:
 private:
   // mImage may be cropped; currently only used with the WebM container.
   // A negative width or height indicate that no cropping is to occur.
-  nsIntRect mImageRect;
+  gfx::IntRect mImageRect;
 
   // Indicates whether or not frames may contain alpha information.
   bool mAlphaPresent = false;
@@ -476,7 +479,7 @@ public:
     }
     // Set dummy values so that HasVideo() will return true;
     // See VideoInfo::IsValid()
-    mVideo.mDisplay = nsIntSize(1, 1);
+    mVideo.mDisplay = gfx::IntSize(1, 1);
   }
 
   bool HasAudio() const

@@ -31,9 +31,9 @@ public:
   RefPtr<DecodePromise> Drain() override;
   RefPtr<FlushPromise> Flush() override;
   RefPtr<ShutdownPromise> Shutdown() override;
-  const char* GetDescriptionName() const override
+  nsCString GetDescriptionName() const override
   {
-    return "android remote decoder";
+    return NS_LITERAL_CSTRING("android decoder (remote)");
   }
 
 protected:
@@ -45,7 +45,8 @@ protected:
 
   // Methods only called on mTaskQueue.
   RefPtr<ShutdownPromise> ProcessShutdown();
-  void Output(MediaData* aSample);
+  void UpdateInputStatus(int64_t aTimestamp, bool aProcessed);
+  void UpdateOutputStatus(MediaData* aSample);
   void ReturnDecodedData();
   void DrainComplete();
   void Error(const MediaResult& aError);
@@ -76,6 +77,7 @@ protected:
   };
   DrainStatus mDrainStatus = DrainStatus::DRAINED;
   DecodedData mDecodedData;
+  size_t mNumPendingInputs;
 };
 
 } // namespace mozilla

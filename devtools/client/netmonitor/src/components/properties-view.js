@@ -14,15 +14,16 @@ const {
 } = require("devtools/client/shared/vendor/react");
 
 const { REPS, MODE } = require("devtools/client/shared/components/reps/reps");
-const Rep = createFactory(REPS.Rep);
+const { Rep } = REPS;
 
 const { FILTER_SEARCH_DELAY } = require("../constants");
 
 // Components
 const SearchBox = createFactory(require("devtools/client/shared/components/search-box"));
-const TreeView = createFactory(require("devtools/client/shared/components/tree/tree-view"));
+const TreeViewClass = require("devtools/client/shared/components/tree/tree-view");
+const TreeView = createFactory(TreeViewClass);
 const TreeRow = createFactory(require("devtools/client/shared/components/tree/tree-row"));
-const Editor = createFactory(require("./editor"));
+const SourceEditor = createFactory(require("./source-editor"));
 
 const { div, tr, td } = DOM;
 const AUTO_EXPAND_MAX_LEVEL = 7;
@@ -88,9 +89,9 @@ const PropertiesView = createClass({
     // Display source editor when specifying to EDITOR_CONFIG_ID along with config
     if (level === 1 && name === EDITOR_CONFIG_ID) {
       return (
-        tr({ className: "editor-row-container" },
+        tr({ key: EDITOR_CONFIG_ID, className: "editor-row-container" },
           td({ colSpan: 2 },
-            Editor(value)
+            SourceEditor(value)
           )
         )
       );
@@ -137,38 +138,6 @@ const PropertiesView = createClass({
     });
   },
 
-  getExpandedNodes: function (object, path = "", level = 0) {
-    if (typeof object != "object") {
-      return null;
-    }
-
-    if (level > AUTO_EXPAND_MAX_LEVEL) {
-      return null;
-    }
-
-    let expandedNodes = new Set();
-    for (let prop in object) {
-      if (expandedNodes.size > AUTO_EXPAND_MAX_NODES) {
-        // If we reached the limit of expandable nodes, bail out to avoid performance
-        // issues.
-        break;
-      }
-
-      let nodePath = path + "/" + prop;
-      expandedNodes.add(nodePath);
-
-      let nodes = this.getExpandedNodes(object[prop], nodePath, level + 1);
-      if (nodes) {
-        let newSize = expandedNodes.size + nodes.size;
-        if (newSize < AUTO_EXPAND_MAX_NODES) {
-          // Avoid having a subtree half expanded.
-          expandedNodes = new Set([...expandedNodes, ...nodes]);
-        }
-      }
-    }
-    return expandedNodes;
-  },
-
   render() {
     const {
       decorator,
@@ -205,7 +174,10 @@ const PropertiesView = createClass({
             enableInput,
             expandableStrings,
             useQuotes: false,
-            expandedNodes: this.getExpandedNodes(object),
+            expandedNodes: TreeViewClass.getExpandedNodes(
+              object,
+              {maxLevel: AUTO_EXPAND_MAX_LEVEL, maxNodes: AUTO_EXPAND_MAX_NODES}
+            ),
             onFilter: (props) => this.onFilter(props, sectionNames),
             renderRow: renderRow || this.renderRowWithEditor,
             renderValue: renderValue || this.renderValueWithRep,

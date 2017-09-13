@@ -6,6 +6,7 @@
 #ifndef nsIDocumentInlines_h
 #define nsIDocumentInlines_h
 
+#include "nsContentUtils.h"
 #include "nsIDocument.h"
 #include "mozilla/dom/HTMLBodyElement.h"
 #include "nsStyleSheetService.h"
@@ -19,8 +20,8 @@ nsIDocument::GetBodyElement()
 template<typename T>
 size_t
 nsIDocument::FindDocStyleSheetInsertionPoint(
-    const nsTArray<RefPtr<T>>& aDocSheets,
-    T* aSheet)
+    const nsTArray<T>& aDocSheets,
+    mozilla::StyleSheet* aSheet)
 {
   nsStyleSheetService* sheetService = nsStyleSheetService::GetInstance();
 
@@ -30,12 +31,11 @@ nsIDocument::FindDocStyleSheetInsertionPoint(
   int32_t count = aDocSheets.Length();
   int32_t index;
   for (index = 0; index < count; index++) {
-    T* sheet = aDocSheets[index];
+    mozilla::StyleSheet* sheet = static_cast<mozilla::StyleSheet*>(
+      aDocSheets[index]);
     int32_t sheetDocIndex = GetIndexOfStyleSheet(sheet);
     if (sheetDocIndex > newDocIndex)
       break;
-
-    mozilla::StyleSheet* sheetHandle = sheet;
 
     // If the sheet is not owned by the document it can be an author
     // sheet registered at nsStyleSheetService or an additional author
@@ -45,17 +45,34 @@ nsIDocument::FindDocStyleSheetInsertionPoint(
       if (sheetService) {
         auto& authorSheets =
           *sheetService->AuthorStyleSheets(GetStyleBackendType());
-        if (authorSheets.IndexOf(sheetHandle) != authorSheets.NoIndex) {
+        if (authorSheets.IndexOf(sheet) != authorSheets.NoIndex) {
           break;
         }
       }
-      if (sheetHandle == GetFirstAdditionalAuthorSheet()) {
+      if (sheet == GetFirstAdditionalAuthorSheet()) {
         break;
       }
     }
   }
 
   return size_t(index);
+}
+
+inline void
+nsIDocument::SetServoRestyleRoot(nsINode* aRoot, uint32_t aDirtyBits)
+{
+  MOZ_ASSERT(aRoot);
+  MOZ_ASSERT(aDirtyBits);
+  MOZ_ASSERT((aDirtyBits & ~Element::kAllServoDescendantBits) == 0);
+  MOZ_ASSERT((aDirtyBits & mServoRestyleRootDirtyBits) == mServoRestyleRootDirtyBits);
+
+  MOZ_ASSERT(!mServoRestyleRoot ||
+             mServoRestyleRoot == aRoot ||
+             nsContentUtils::ContentIsFlattenedTreeDescendantOfForStyle(mServoRestyleRoot, aRoot));
+  MOZ_ASSERT(aRoot == aRoot->OwnerDocAsNode() ||
+             (aRoot->IsElement() && aRoot->IsInComposedDoc()));
+  mServoRestyleRoot = aRoot;
+  mServoRestyleRootDirtyBits = aDirtyBits;
 }
 
 #endif // nsIDocumentInlines_h

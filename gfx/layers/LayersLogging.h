@@ -19,6 +19,20 @@
 #include "nscore.h"                     // for nsACString, etc
 
 namespace mozilla {
+
+namespace wr {
+struct ColorF;
+
+struct TypedSize2D_f32__LayerPixel;
+typedef TypedSize2D_f32__LayerPixel LayerSize;
+typedef LayerSize LayoutSize;
+
+struct TypedRect_f32__LayerPixel;
+typedef TypedRect_f32__LayerPixel LayerRect;
+typedef LayerRect LayoutRect;
+
+} // namespace wr
+
 namespace gfx {
 template <class units, class F> struct RectTyped;
 } // namespace gfx
@@ -71,7 +85,7 @@ AppendToString(std::stringstream& aStream, const mozilla::gfx::RectTyped<T>& r,
   aStream << pfx;
   aStream << nsPrintfCString(
     "(x=%f, y=%f, w=%f, h=%f)",
-    r.x, r.y, r.width, r.height).get();
+    r.x, r.y, r.Width(), r.Height()).get();
   aStream << sfx;
 }
 
@@ -83,9 +97,21 @@ AppendToString(std::stringstream& aStream, const mozilla::gfx::IntRectTyped<T>& 
   aStream << pfx;
   aStream << nsPrintfCString(
     "(x=%d, y=%d, w=%d, h=%d)",
-    r.x, r.y, r.width, r.height).get();
+    r.x, r.y, r.Width(), r.Height()).get();
   aStream << sfx;
 }
+
+void
+AppendToString(std::stringstream& aStream, const wr::ColorF& c,
+               const char* pfx="", const char* sfx="");
+
+void
+AppendToString(std::stringstream& aStream, const wr::LayoutRect& r,
+               const char* pfx="", const char* sfx="");
+
+void
+AppendToString(std::stringstream& aStream, const wr::LayoutSize& s,
+               const char* pfx="", const char* sfx="");
 
 void
 AppendToString(std::stringstream& aStream, const nsRegion& r,

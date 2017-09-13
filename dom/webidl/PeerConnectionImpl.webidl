@@ -63,7 +63,8 @@ interface PeerConnectionImpl  {
   sequence<MediaStream> getLocalStreams();
   sequence<MediaStream> getRemoteStreams();
 
-  void selectSsrc(MediaStreamTrack recvTrack, unsigned short ssrcIndex);
+  void addRIDExtension(MediaStreamTrack recvTrack, unsigned short extensionId);
+  void addRIDFilter(MediaStreamTrack recvTrack, DOMString rid);
 
   /* As the ICE candidates roll in this one should be called each time
    * in order to keep the candidate list up-to-date for the next SDP-related
@@ -88,7 +89,11 @@ interface PeerConnectionImpl  {
   [Constant]
   readonly attribute DOMString fingerprint;
   readonly attribute DOMString localDescription;
+  readonly attribute DOMString currentLocalDescription;
+  readonly attribute DOMString pendingLocalDescription;
   readonly attribute DOMString remoteDescription;
+  readonly attribute DOMString currentRemoteDescription;
+  readonly attribute DOMString pendingRemoteDescription;
 
   readonly attribute PCImplIceConnectionState iceConnectionState;
   readonly attribute PCImplIceGatheringState iceGatheringState;

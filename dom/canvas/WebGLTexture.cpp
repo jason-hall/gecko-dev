@@ -314,8 +314,9 @@ WebGLTexture::IsComplete(const char* funcName, uint32_t texUnit,
 {
     *out_initFailed = false;
 
-    if (!EnsureLevelInitialized(funcName, mBaseMipmapLevel)) {
-        *out_initFailed = true;
+    const auto maxLevel = kMaxLevelCount - 1;
+    if (mBaseMipmapLevel > maxLevel) {
+        *out_reason = "`level_base` too high.";
         return false;
     }
 
@@ -444,6 +445,11 @@ WebGLTexture::IsComplete(const char* funcName, uint32_t texUnit,
         //    image is not cube complete, or TEXTURE_MIN_FILTER is one that requires a
         //    mipmap and the texture is not mipmap cube complete."
         // (already covered)
+    }
+
+    if (!EnsureLevelInitialized(funcName, mBaseMipmapLevel)) {
+        *out_initFailed = true;
+        return false;
     }
 
     return true;

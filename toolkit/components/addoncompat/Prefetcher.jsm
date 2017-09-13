@@ -10,9 +10,6 @@ const Cu = Components.utils;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Preferences",
-                                  "resource://gre/modules/Preferences.jsm");
-
 // Rules are defined at the bottom of this file.
 var PrefetcherRules = {};
 
@@ -348,9 +345,9 @@ var Prefetcher = {
       }
     }
 
-    this.prefetchingEnabled = Preferences.get(PREF_PREFETCHING_ENABLED, false);
-    Services.prefs.addObserver(PREF_PREFETCHING_ENABLED, this, false);
-    Services.obs.addObserver(this, "xpcom-shutdown", false);
+    this.prefetchingEnabled = Services.prefs.getBoolPref(PREF_PREFETCHING_ENABLED, false);
+    Services.prefs.addObserver(PREF_PREFETCHING_ENABLED, this);
+    Services.obs.addObserver(this, "xpcom-shutdown");
   },
 
   observe(subject, topic, data) {
@@ -358,7 +355,7 @@ var Prefetcher = {
       Services.prefs.removeObserver(PREF_PREFETCHING_ENABLED, this);
       Services.obs.removeObserver(this, "xpcom-shutdown");
     } else if (topic == PREF_PREFETCHING_ENABLED) {
-      this.prefetchingEnabled = Preferences.get(PREF_PREFETCHING_ENABLED, false);
+      this.prefetchingEnabled = Services.prefs.getBoolPref(PREF_PREFETCHING_ENABLED, false);
     }
   },
 

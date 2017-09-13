@@ -14,6 +14,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/TextEditor.h"
 #include "mozilla/WeakPtr.h"
 #include "mozilla/dom/HTMLInputElementBinding.h"
 #include "mozilla/dom/Nullable.h"
@@ -24,7 +25,6 @@ class nsTextInputSelectionImpl;
 class nsAnonDivObserver;
 class nsISelectionController;
 class nsFrameSelection;
-class nsIEditor;
 class nsITextControlElement;
 class nsFrame;
 
@@ -153,7 +153,7 @@ public:
     MOZ_ASSERT(!mMutationObserver);
   }
 
-  nsIEditor* GetEditor();
+  mozilla::TextEditor* GetTextEditor();
   nsISelectionController* GetSelectionController() const;
   nsFrameSelection* GetConstFrameSelection();
   nsresult BindToFrame(nsTextControlFrame* aFrame);
@@ -173,16 +173,36 @@ public:
     // Whether the value change should be notified to the frame/contet nor not.
     eSetValue_Notify                = 1 << 2,
     // Whether to move the cursor to end of the value (in the case when we have
-    // cached selection offsets).  If this is not set, the cached selection
-    // offsets will simply be clamped to be within the length of the new value.
-    eSetValue_MoveCursorToEnd       = 1 << 3,
+    // cached selection offsets), in the case when the value has changed.  If
+    // this is not set, the cached selection offsets will simply be clamped to
+    // be within the length of the new value.  In either case, if the value has
+    // not changed the cursor won't move.
+    eSetValue_MoveCursorToEndIfValueChanged = 1 << 3,
+    // The value is changed for a XUL text control as opposed to for an HTML
+    // text control.  Such value changes are different in that they preserve the
+    // undo history.
+    eSetValue_ForXUL                = 1 << 4,
   };
-  MOZ_MUST_USE bool SetValue(const nsAString& aValue, uint32_t aFlags);
+  MOZ_MUST_USE bool SetValue(const nsAString& aValue,
+                             const nsAString* aOldValue,
+                             uint32_t aFlags);
+  MOZ_MUST_USE bool SetValue(const nsAString& aValue,
+                             uint32_t aFlags)
+  {
+    return SetValue(aValue, nullptr, aFlags);
+  }
   void GetValue(nsAString& aValue, bool aIgnoreWrap) const;
+  bool HasNonEmptyValue();
+  // The following methods are for textarea element to use whether default
+  // value or not.
+  // XXX We might have to add assertion when it is into editable,
+  // or reconsider fixing bug 597525 to remove these.
   void EmptyValue() { if (mValue) mValue->Truncate(); }
   bool IsEmpty() const { return mValue ? mValue->IsEmpty() : true; }
 
   nsresult CreatePlaceholderNode();
+  nsresult CreatePreviewNode();
+  mozilla::dom::Element* CreateEmptyDivNode();
 
   mozilla::dom::Element* GetRootNode() {
     return mRootNode;
@@ -190,15 +210,15 @@ public:
   mozilla::dom::Element* GetPlaceholderNode() {
     return mPlaceholderDiv;
   }
+  mozilla::dom::Element* GetPreviewNode() {
+    return mPreviewDiv;
+  }
 
   bool IsSingleLineTextControl() const {
     return mTextCtrlElement->IsSingleLineTextControl();
   }
   bool IsTextArea() const {
     return mTextCtrlElement->IsTextArea();
-  }
-  bool IsPlainTextControl() const {
-    return mTextCtrlElement->IsPlainTextControl();
   }
   bool IsPasswordTextControl() const {
     return mTextCtrlElement->IsPasswordTextControl();
@@ -213,21 +233,49 @@ public:
     return mTextCtrlElement->GetRows();
   }
 
+  void UpdateOverlayTextVisibility(bool aNotify);
+
   // placeholder methods
-  void UpdatePlaceholderVisibility(bool aNotify);
   bool GetPlaceholderVisibility() {
     return mPlaceholderVisibility;
   }
   void UpdatePlaceholderText(bool aNotify);
+
+  // preview methods
+  void SetPreviewText(const nsAString& aValue, bool aNotify);
+  void GetPreviewText(nsAString& aValue);
+  bool GetPreviewVisibility() {
+    return mPreviewVisibility;
+  }
 
   /**
    * Get the maxlength attribute
    * @param aMaxLength the value of the max length attr
    * @returns false if attr not defined
    */
-  bool GetMaxLength(int32_t* aMaxLength);
+  int32_t GetMaxLength();
 
-  void ClearValueCache() { mCachedValue.Truncate(); }
+  void ClearValueCache()
+  {
+    mCachedValue.SetIsVoid(true);
+    MOZ_ASSERT(mCachedValue.IsEmpty());
+  }
+  void SetValueCache(const nsAString& aValue)
+  {
+    mCachedValue.Assign(aValue);
+    MOZ_ASSERT(!mCachedValue.IsVoid());
+  }
+  MOZ_MUST_USE bool
+  SetValueCache(const nsAString& aValue,
+                const mozilla::fallible_t& aFallible)
+  {
+    if (!mCachedValue.Assign(aValue, aFallible)) {
+      ClearValueCache();
+      return false;
+    }
+    MOZ_ASSERT(!mCachedValue.IsVoid());
+    return true;
+  }
 
   void HideSelectionIfBlurred();
 
@@ -267,10 +315,15 @@ public:
         mIsDirty = true;
         mDirection = value;
       }
-      // return true only if mStart, mEnd, or mDirection have been modified
+      // return true only if mStart, mEnd, or mDirection have been modified,
+      // or if SetIsDirty() was explicitly called.
       bool IsDirty() const
       {
         return mIsDirty;
+      }
+      void SetIsDirty()
+      {
+        mIsDirty = true;
       }
     private:
       uint32_t mStart, mEnd;
@@ -418,14 +471,20 @@ private:
   // mSelCon is non-null while we have an mBoundFrame.
   RefPtr<nsTextInputSelectionImpl> mSelCon;
   RefPtr<RestoreSelectionState> mRestoringSelection;
-  nsCOMPtr<nsIEditor> mEditor;
+  RefPtr<mozilla::TextEditor> mTextEditor;
   nsCOMPtr<mozilla::dom::Element> mRootNode;
   nsCOMPtr<mozilla::dom::Element> mPlaceholderDiv;
+  nsCOMPtr<mozilla::dom::Element> mPreviewDiv;
   nsTextControlFrame* mBoundFrame;
   RefPtr<nsTextInputListener> mTextListener;
   mozilla::Maybe<nsString> mValue;
   RefPtr<nsAnonDivObserver> mMutationObserver;
-  mutable nsString mCachedValue; // Caches non-hard-wrapped value on a multiline control.
+  // Cache of the |.value| of <input> or <textarea> element without hard-wrap.
+  // If its IsVoid() returns true, it doesn't cache |.value|.
+  // Otherwise, it's cached when setting specific value or getting value from
+  // TextEditor.  Additionally, when contents in the anonymous <div> element
+  // is modified, this is cleared.
+  nsString mCachedValue;
   // mValueBeingSet is available only while SetValue() is requesting to commit
   // composition.  I.e., this is valid only while mIsCommittingComposition is
   // true.  While active composition is being committed, GetValue() needs
@@ -439,6 +498,7 @@ private:
   bool mSelectionCached; // Whether mSelectionProperties is valid
   mutable bool mSelectionRestoreEagerInit; // Whether we're eager initing because of selection restore
   bool mPlaceholderVisibility;
+  bool mPreviewVisibility;
   bool mIsCommittingComposition;
 };
 

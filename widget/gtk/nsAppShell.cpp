@@ -21,11 +21,14 @@
 #ifdef MOZ_ENABLE_DBUS
 #include "WakeLockListener.h"
 #endif
+#include "gfxPlatform.h"
 #include "ScreenHelperGTK.h"
+#include "HeadlessScreenHelper.h"
 #include "mozilla/widget/ScreenManager.h"
 
 using mozilla::Unused;
 using mozilla::widget::ScreenHelperGTK;
+using mozilla::widget::HeadlessScreenHelper;
 using mozilla::widget::ScreenManager;
 using mozilla::LazyLogModule;
 
@@ -145,13 +148,15 @@ nsAppShell::Init()
     g_type_init();
 
 #ifdef MOZ_ENABLE_DBUS
-    nsCOMPtr<nsIPowerManagerService> powerManagerService =
-      do_GetService(POWERMANAGERSERVICE_CONTRACTID);
+    if (XRE_IsParentProcess()) {
+        nsCOMPtr<nsIPowerManagerService> powerManagerService =
+            do_GetService(POWERMANAGERSERVICE_CONTRACTID);
 
-    if (powerManagerService) {
-        powerManagerService->AddWakeLockListener(WakeLockListener::GetSingleton());
-    } else {
-        NS_WARNING("Failed to retrieve PowerManagerService, wakelocks will be broken!");
+        if (powerManagerService) {
+            powerManagerService->AddWakeLockListener(WakeLockListener::GetSingleton());
+        } else {
+            NS_WARNING("Failed to retrieve PowerManagerService, wakelocks will be broken!");
+        }
     }
 #endif
 
@@ -162,7 +167,11 @@ nsAppShell::Init()
 
     if (XRE_IsParentProcess()) {
         ScreenManager& screenManager = ScreenManager::GetSingleton();
-        screenManager.SetHelper(mozilla::MakeUnique<ScreenHelperGTK>());
+        if (gfxPlatform::IsHeadless()) {
+            screenManager.SetHelper(mozilla::MakeUnique<HeadlessScreenHelper>());
+        } else {
+            screenManager.SetHelper(mozilla::MakeUnique<ScreenHelperGTK>());
+        }
     }
 
 #if MOZ_WIDGET_GTK == 3

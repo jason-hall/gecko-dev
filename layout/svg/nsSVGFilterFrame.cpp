@@ -33,7 +33,7 @@ uint16_t
 nsSVGFilterFrame::GetEnumValue(uint32_t aIndex, nsIContent *aDefault)
 {
   nsSVGEnum& thisEnum =
-    static_cast<SVGFilterElement *>(mContent)->mEnumAttributes[aIndex];
+    static_cast<SVGFilterElement *>(GetContent())->mEnumAttributes[aIndex];
 
   if (thisEnum.IsExplicitlySet())
     return thisEnum.GetAnimValue();
@@ -60,7 +60,7 @@ const nsSVGLength2 *
 nsSVGFilterFrame::GetLengthValue(uint32_t aIndex, nsIContent *aDefault)
 {
   const nsSVGLength2 *thisLength =
-    &static_cast<SVGFilterElement *>(mContent)->mLengthAttributes[aIndex];
+    &static_cast<SVGFilterElement *>(GetContent())->mLengthAttributes[aIndex];
 
   if (thisLength->IsExplicitlySet())
     return thisLength;
@@ -90,7 +90,7 @@ nsSVGFilterFrame::GetFilterContent(nsIContent *aDefault)
     RefPtr<nsSVGFE> primitive;
     CallQueryInterface(child, (nsSVGFE**)getter_AddRefs(primitive));
     if (primitive) {
-      return static_cast<SVGFilterElement *>(mContent);
+      return static_cast<SVGFilterElement *>(GetContent());
     }
   }
 
@@ -117,11 +117,11 @@ nsSVGFilterFrame::GetReferencedFilter()
     return nullptr;
 
   nsSVGPaintingProperty *property =
-    Properties().Get(nsSVGEffects::HrefAsPaintingProperty());
+    GetProperty(nsSVGEffects::HrefAsPaintingProperty());
 
   if (!property) {
     // Fetch our Filter element's href or xlink:href attribute
-    SVGFilterElement *filter = static_cast<SVGFilterElement *>(mContent);
+    SVGFilterElement *filter = static_cast<SVGFilterElement *>(GetContent());
     nsAutoString href;
     if (filter->mStringAttributes[SVGFilterElement::HREF].IsExplicitlySet()) {
       filter->mStringAttributes[SVGFilterElement::HREF]
@@ -153,8 +153,8 @@ nsSVGFilterFrame::GetReferencedFilter()
   if (!result)
     return nullptr;
 
-  nsIAtom* frameType = result->GetType();
-  if (frameType != nsGkAtoms::svgFilterFrame)
+  LayoutFrameType frameType = result->Type();
+  if (frameType != LayoutFrameType::SVGFilter)
     return nullptr;
 
   return static_cast<nsSVGFilterFrame*>(result);
@@ -177,7 +177,7 @@ nsSVGFilterFrame::AttributeChanged(int32_t  aNameSpaceID,
               aNameSpaceID == kNameSpaceID_None) &&
              aAttribute == nsGkAtoms::href) {
     // Blow away our reference, if any
-    Properties().Delete(nsSVGEffects::HrefAsPaintingProperty());
+    DeleteProperty(nsSVGEffects::HrefAsPaintingProperty());
     mNoHRefURI = false;
     // And update whoever references us
     nsSVGEffects::InvalidateDirectRenderingObservers(this);
@@ -198,9 +198,3 @@ nsSVGFilterFrame::Init(nsIContent*       aContent,
   nsSVGContainerFrame::Init(aContent, aParent, aPrevInFlow);
 }
 #endif /* DEBUG */
-
-nsIAtom *
-nsSVGFilterFrame::GetType() const
-{
-  return nsGkAtoms::svgFilterFrame;
-}

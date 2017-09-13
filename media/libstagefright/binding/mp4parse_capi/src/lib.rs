@@ -69,6 +69,7 @@ pub enum mp4parse_status {
     UNSUPPORTED = 3,
     EOF = 4,
     IO = 5,
+    TABLE_TOO_LARGE = 6,
 }
 
 #[allow(non_camel_case_types)]
@@ -94,6 +95,10 @@ pub enum mp4parse_codec {
     AVC,
     VP9,
     MP3,
+    MP4V,
+    JPEG,   // for QT JPEG atom in video track
+    AC3,
+    EC3,
 }
 
 impl Default for mp4parse_codec {
@@ -172,12 +177,8 @@ pub struct mp4parse_track_audio_info {
     pub bit_depth: u16,
     pub sample_rate: u32,
     pub profile: u16,
-    // TODO:
-    //  codec_specific_data is AudioInfo.mCodecSpecificConfig,
-    //  codec_specific_config is AudioInfo.mExtraData.
-    //  It'd be better to change name same as AudioInfo.
-    pub codec_specific_data: mp4parse_byte_data,
     pub codec_specific_config: mp4parse_byte_data,
+    pub extra_data: mp4parse_byte_data,
     pub protected_data: mp4parse_sinf_info,
 }
 
@@ -335,7 +336,8 @@ pub unsafe extern fn mp4parse_read(parser: *mut mp4parse_parser) -> mp4parse_sta
             // those to our Error::UnexpectedEOF variant.
             (*parser).set_poisoned(true);
             mp4parse_status::IO
-        }
+        },
+        Err(Error::TableTooLarge) => mp4parse_status::TABLE_TOO_LARGE,
     }
 }
 
@@ -417,6 +419,7 @@ pub unsafe extern fn mp4parse_get_track_info(parser: *mut mp4parse_parser, track
         TrackType::Unknown => return mp4parse_status::UNSUPPORTED,
     };
 
+    // Return UNKNOWN for unsupported format.
     info.codec = match context.tracks[track_index].data {
         Some(SampleEntry::Audio(ref audio)) => match audio.codec_specific {
             AudioCodecSpecific::OpusSpecificBox(_) =>
@@ -437,6 +440,8 @@ pub unsafe extern fn mp4parse_get_track_info(parser: *mut mp4parse_parser, track
                 mp4parse_codec::VP9,
             VideoCodecSpecific::AVCConfig(_) =>
                 mp4parse_codec::AVC,
+            VideoCodecSpecific::ESDSConfig(_) => // MP4V (14496-2) video is unsupported.
+                mp4parse_codec::UNKNOWN,
         },
         _ => mp4parse_codec::UNKNOWN,
     };
@@ -523,10 +528,10 @@ pub unsafe extern fn mp4parse_get_track_audio_info(parser: *mut mp4parse_parser,
             if v.codec_esds.len() > std::u32::MAX as usize {
                 return mp4parse_status::INVALID;
             }
-            (*info).codec_specific_config.length = v.codec_esds.len() as u32;
-            (*info).codec_specific_config.data = v.codec_esds.as_ptr();
-            (*info).codec_specific_data.length = v.decoder_specific_data.len() as u32;
-            (*info).codec_specific_data.data = v.decoder_specific_data.as_ptr();
+            (*info).extra_data.length = v.codec_esds.len() as u32;
+            (*info).extra_data.data = v.codec_esds.as_ptr();
+            (*info).codec_specific_config.length = v.decoder_specific_data.len() as u32;
+            (*info).codec_specific_config.data = v.decoder_specific_data.as_ptr();
             if let Some(rate) = v.audio_sample_rate {
                 (*info).sample_rate = rate;
             }
@@ -543,8 +548,8 @@ pub unsafe extern fn mp4parse_get_track_audio_info(parser: *mut mp4parse_parser,
             if streaminfo.block_type != 0 || streaminfo.data.len() != 34 {
                 return mp4parse_status::INVALID;
             }
-            (*info).codec_specific_config.length = streaminfo.data.len() as u32;
-            (*info).codec_specific_config.data = streaminfo.data.as_ptr();
+            (*info).extra_data.length = streaminfo.data.len() as u32;
+            (*info).extra_data.data = streaminfo.data.as_ptr();
         }
         AudioCodecSpecific::OpusSpecificBox(ref opus) => {
             let mut v = Vec::new();
@@ -559,8 +564,8 @@ pub unsafe extern fn mp4parse_get_track_audio_info(parser: *mut mp4parse_parser,
                         if v.len() > std::u32::MAX as usize {
                             return mp4parse_status::INVALID;
                         }
-                        (*info).codec_specific_config.length = v.len() as u32;
-                        (*info).codec_specific_config.data = v.as_ptr();
+                        (*info).extra_data.length = v.len() as u32;
+                        (*info).extra_data.data = v.as_ptr();
                     }
                 }
             }
@@ -629,8 +634,11 @@ pub unsafe extern fn mp4parse_get_track_video_info(parser: *mut mp4parse_parser,
     (*info).image_width = video.width;
     (*info).image_height = video.height;
 
-    if let VideoCodecSpecific::AVCConfig(ref avc) = video.codec_specific {
-        (*info).extra_data.set_data(avc);
+    match video.codec_specific {
+        VideoCodecSpecific::AVCConfig(ref data) | VideoCodecSpecific::ESDSConfig(ref data) => {
+          (*info).extra_data.set_data(data);
+        },
+        _ => {}
     }
 
     if let Some(p) = video.protection_info.iter().find(|sinf| sinf.tenc.is_some()) {
@@ -876,7 +884,10 @@ fn create_sample_table(track: &Track, track_offset_time: i64) -> Option<Vec<mp4p
     for i in stsc_iter {
         let chunk_id = i.0 as usize;
         let sample_counts = i.1;
-        let mut cur_position: u64 = stco.offsets[chunk_id];
+        let mut cur_position = match stco.offsets.get(chunk_id) {
+            Some(&i) => i,
+            _ => return None,
+        };
         for _ in 0 .. sample_counts {
             let start_offset = cur_position;
             let end_offset = match (stsz.sample_size, sample_size_iter.next()) {
@@ -905,7 +916,11 @@ fn create_sample_table(track: &Track, track_offset_time: i64) -> Option<Vec<mp4p
     // Mark the sync sample in sample_table according to 'stss'.
     if let Some(ref v) = track.stss {
         for iter in &v.samples {
-            sample_table[(iter - 1) as usize].sync = true;
+            if let Some(elem) = sample_table.get_mut((iter - 1) as usize) {
+                elem.sync = true;
+            } else {
+                return None;
+            }
         }
     }
 
@@ -942,19 +957,9 @@ fn create_sample_table(track: &Track, track_offset_time: i64) -> Option<Vec<mp4p
         // ctts_offset is the current sample offset time.
         let ctts_offset = ctts_offset_iter.next_offset_time();
 
-        // ctts_offset could be negative but (decode_time + ctts_offset) should always be positive
-        // value.
-        let start_composition = track_time_to_us(decode_time + ctts_offset, timescale).and_then(|t| {
-            if t < 0 { return None; }
-            Some(t)
-        });
+        let start_composition = track_time_to_us(decode_time + ctts_offset, timescale);
 
-        // ctts_offset could be negative but (sum_delta + ctts_offset) should always be positive
-        // value.
-        let end_composition = track_time_to_us(sum_delta + ctts_offset, timescale).and_then(|t| {
-            if t < 0 { return None; }
-            Some(t)
-        });
+        let end_composition = track_time_to_us(sum_delta + ctts_offset, timescale);
 
         let start_decode = track_time_to_us(decode_time, timescale);
 
@@ -991,8 +996,8 @@ fn create_sample_table(track: &Track, track_offset_time: i64) -> Option<Vec<mp4p
 
         let iter = sort_table.iter();
         for i in 0 .. (iter.len() - 1) {
-            let current_index = sort_table[i] as usize;
-            let peek_index = sort_table[i + 1] as usize;
+            let current_index = sort_table[i];
+            let peek_index = sort_table[i + 1];
             let next_start_composition_time = sample_table[peek_index].start_composition;
             let sample = &mut sample_table[current_index];
             sample.end_composition = next_start_composition_time;
@@ -1049,13 +1054,14 @@ pub unsafe extern fn mp4parse_is_fragmented(parser: *mut mp4parse_parser, track_
 
     // check sample tables.
     let mut iter = tracks.iter();
-    match iter.find(|track| track.track_id == Some(track_id)) {
-        Some(track) if track.empty_sample_boxes.all_empty() => (*fragmented) = true as u8,
-        Some(_) => {},
-        None => return mp4parse_status::BAD_ARG,
-    }
-
-    mp4parse_status::OK
+    iter.find(|track| track.track_id == Some(track_id)).map_or(mp4parse_status::BAD_ARG, |track| {
+        match (&track.stsc, &track.stco, &track.stts) {
+            (&Some(ref stsc), &Some(ref stco), &Some(ref stts))
+                if stsc.samples.is_empty() && stco.offsets.is_empty() && stts.samples.is_empty() => (*fragmented) = true as u8,
+            _ => {},
+        };
+        mp4parse_status::OK
+    })
 }
 
 /// Get 'pssh' system id and 'pssh' box content for eme playback.

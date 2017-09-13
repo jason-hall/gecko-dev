@@ -10,15 +10,19 @@ const {
   prepareMessage
 } = require("devtools/client/webconsole/new-console-output/utils/messages");
 const { IdGenerator } = require("devtools/client/webconsole/new-console-output/utils/id-generator");
-const { batchActions } = require("devtools/client/webconsole/new-console-output/actions/enhancers");
+const { batchActions } = require("devtools/client/shared/redux/middleware/debounce");
+
 const {
   MESSAGE_ADD,
   NETWORK_MESSAGE_UPDATE,
+  NETWORK_UPDATE_REQUEST,
   MESSAGES_CLEAR,
   MESSAGE_OPEN,
   MESSAGE_CLOSE,
   MESSAGE_TYPE,
   MESSAGE_TABLE_RECEIVE,
+  MESSAGE_OBJECT_PROPERTIES_RECEIVE,
+  MESSAGE_OBJECT_ENTRIES_RECEIVE,
 } = require("../constants");
 
 const defaultIdGenerator = new IdGenerator();
@@ -91,7 +95,7 @@ function messageTableDataReceive(id, data) {
   };
 }
 
-function networkMessageUpdate(packet, idGenerator = null) {
+function networkMessageUpdate(packet, idGenerator = null, response) {
   if (idGenerator == null) {
     idGenerator = defaultIdGenerator;
   }
@@ -101,6 +105,80 @@ function networkMessageUpdate(packet, idGenerator = null) {
   return {
     type: NETWORK_MESSAGE_UPDATE,
     message,
+    response,
+  };
+}
+
+function networkUpdateRequest(id, data) {
+  return {
+    type: NETWORK_UPDATE_REQUEST,
+    id,
+    data,
+  };
+}
+
+/**
+ * This action is used to load the properties of a grip passed as an argument,
+ * for a given message. The action then dispatch the messageObjectPropertiesReceive
+ * action with the loaded properties.
+ * This action is mainly called by the ObjectInspector component when the user expands
+ *  an object.
+ *
+ * @param {string} id - The message id the grip is in.
+ * @param {ObjectClient} client - The ObjectClient built for the grip.
+ * @param {object} grip - The grip to load properties from.
+ * @returns {async function} - A function that retrieves the properties
+ *          and dispatch the messageObjectPropertiesReceive action.
+ */
+function messageObjectPropertiesLoad(id, client, grip) {
+  return async (dispatch) => {
+    const response = await client.getPrototypeAndProperties();
+    dispatch(messageObjectPropertiesReceive(id, grip.actor, response));
+  };
+}
+
+function messageObjectEntriesLoad(id, client, grip) {
+  return (dispatch) => {
+    client.enumEntries(enumResponse => {
+      const {iterator} = enumResponse;
+      iterator.slice(0, iterator.count, sliceResponse => {
+        dispatch(messageObjectEntriesReceive(id, grip.actor, sliceResponse));
+      });
+    });
+  };
+}
+
+/**
+ * This action is dispatched when properties of a grip are loaded.
+ *
+ * @param {string} id - The message id the grip is in.
+ * @param {string} actor - The actor id of the grip the properties were loaded from.
+ * @param {object} properties - A RDP packet that contains the properties of the grip.
+ * @returns {object}
+ */
+function messageObjectPropertiesReceive(id, actor, properties) {
+  return {
+    type: MESSAGE_OBJECT_PROPERTIES_RECEIVE,
+    id,
+    actor,
+    properties
+  };
+}
+
+/**
+ * This action is dispatched when entries of a grip are loaded.
+ *
+ * @param {string} id - The message id the grip is in.
+ * @param {string} actor - The actor id of the grip the properties were loaded from.
+ * @param {object} entries - A RDP packet that contains the entries of the grip.
+ * @returns {object}
+ */
+function messageObjectEntriesReceive(id, actor, entries) {
+  return {
+    type: MESSAGE_OBJECT_ENTRIES_RECEIVE,
+    id,
+    actor,
+    entries
   };
 }
 
@@ -111,5 +189,12 @@ module.exports = {
   messageClose,
   messageTableDataGet,
   networkMessageUpdate,
+  networkUpdateRequest,
+  messageObjectPropertiesLoad,
+  messageObjectEntriesLoad,
+  // for test purpose only.
+  messageTableDataReceive,
+  messageObjectPropertiesReceive,
+  messageObjectEntriesReceive,
 };
 

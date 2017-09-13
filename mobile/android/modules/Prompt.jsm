@@ -7,12 +7,21 @@
 var Cc = Components.classes;
 var Ci = Components.interfaces;
 
+Components.utils.import("resource://gre/modules/Messaging.jsm");
 Components.utils.import("resource://gre/modules/Services.jsm");
 
-this.EXPORTED_SYMBOLS = ["Prompt"];
+this.EXPORTED_SYMBOLS = ["Prompt", "DoorHanger"];
 
 function log(msg) {
   Services.console.logStringMessage(msg);
+}
+
+function getRootWindow(win) {
+  // Get the root xul window.
+  return win.QueryInterface(Ci.nsIInterfaceRequestor)
+            .getInterface(Ci.nsIDocShell).QueryInterface(Ci.nsIDocShellTreeItem)
+            .rootTreeItem.QueryInterface(Ci.nsIInterfaceRequestor)
+            .getInterface(Ci.nsIDOMWindow);
 }
 
 function Prompt(aOptions) {
@@ -21,8 +30,10 @@ function Prompt(aOptions) {
   this.msg = { async: true };
 
   if (this.window) {
-    let window = Services.wm.getMostRecentWindow("navigator:browser");
-    var tab = window.BrowserApp.getTabForWindow(this.window);
+    let window = getRootWindow(this.window);
+    var tab = window &&
+              window.BrowserApp &&
+              window.BrowserApp.getTabForWindow(this.window);
     if (tab) {
       this.msg.tabId = tab.id;
     }
@@ -114,7 +125,7 @@ Prompt.prototype = {
       value: aOptions.value,
       hint: aOptions.hint,
       autofocus: aOptions.autofocus,
-      id : aOptions.id
+      id: aOptions.id
     });
   },
 
@@ -174,11 +185,24 @@ Prompt.prototype = {
     this._innerShow();
   },
 
+  _getDispatcher: function(win) {
+    let root = win && getRootWindow(win);
+    try {
+      return root && (root.WindowEventDispatcher || EventDispatcher.for(root));
+    } catch (e) {
+      // No EventDispatcher for this window.
+      return null;
+    }
+  },
+
   _innerShow: function() {
-    let window = Services.wm.getMostRecentWindow("navigator:browser");
-    window.WindowEventDispatcher.sendRequestForResult(this.msg).then((data) => {
-      if (this.callback)
+    let dispatcher =
+        this._getDispatcher(this.window) ||
+        this._getDispatcher(Services.wm.getMostRecentWindow("navigator:browser"));
+    dispatcher.sendRequestForResult(this.msg).then((data) => {
+      if (this.callback) {
         this.callback(data);
+      }
     });
   },
 
@@ -232,3 +256,58 @@ Prompt.prototype = {
   },
 
 }
+
+var DoorHanger = {
+  _getTabId: function(aWindow, aBrowserApp) {
+      let tab = aBrowserApp.getTabForWindow(aWindow.top) ||
+                aBrowserApp.selectedTab;
+      return tab ? tab.id : -1;
+  },
+
+  show: function(aWindow, aMessage, aValue, aButtons, aOptions, aCategory) {
+    let chromeWin = getRootWindow(aWindow);
+    if (chromeWin.BrowserApp) {
+      // We're dealing with browser.js.
+      return chromeWin.NativeWindow.doorhanger.show(
+          aMessage, aValue, aButtons, this._getTabId(aWindow, chromeWin.BrowserApp),
+          aOptions, aCategory);
+    }
+
+    // We're dealing with GeckoView (e.g. custom tabs).
+    aButtons = aButtons || [];
+
+    // Extract callbacks into a separate array, and replace each callback in
+    // the buttons array with an index into the callback array.
+    let callbacks = aButtons.map((aButton, aIndex) => {
+      let cb = aButton.callback;
+      aButton.callback = aIndex;
+      return cb;
+    });
+
+    EventDispatcher.for(chromeWin).sendRequestForResult({
+      type: "Doorhanger:Add",
+      message: aMessage,
+      value: aValue,
+      buttons: aButtons,
+      options: aOptions || {},
+      category: aCategory,
+    }).then(response => {
+      // Pass the value of the optional checkbox to the callback
+      callbacks[response.callback](response.checked, response.inputs);
+    });
+  },
+
+  hide: function(aWindow, aValue) {
+    let chromeWin = getRootWindow(aWindow);
+    if (chromeWin.BrowserApp) {
+      // We're dealing with browser.js.
+      return chromeWin.NativeWindow.doorhanger.hide(
+          aValue, this._getTabId(aWindow, chromeWin.BrowserApp));
+    }
+
+    EventDispatcher.for(chromeWin).sendRequest({
+      type: "Doorhanger:Remove",
+      value: aValue,
+    });
+  },
+};

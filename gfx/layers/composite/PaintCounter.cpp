@@ -29,9 +29,9 @@ PaintCounter::PaintCounter()
   mSurface = Factory::CreateDataSourceSurface(mRect.Size(), mFormat);
   mStride = mSurface->Stride();
 
-  mCanvas.reset(
-    SkCanvas::NewRasterDirect(MakeSkiaImageInfo(mRect.Size(), mFormat),
-                              mSurface->GetData(), mStride));
+  mCanvas =
+    SkCanvas::MakeRasterDirect(MakeSkiaImageInfo(mRect.Size(), mFormat),
+                              mSurface->GetData(), mStride);
   mCanvas->clear(SK_ColorWHITE);
 }
 
@@ -71,7 +71,7 @@ PaintCounter::Draw(Compositor* aCompositor, TimeDuration aPaintTime, TimeDuratio
   effectChain.mPrimaryEffect = mTexturedEffect;
 
   gfx::Matrix4x4 identity;
-  Rect rect(mRect.x, mRect.y, mRect.width, mRect.height);
+  Rect rect(mRect.x, mRect.y, mRect.Width(), mRect.Height());
   aCompositor->DrawQuad(rect, mRect, effectChain, 1.0, identity);
 }
 

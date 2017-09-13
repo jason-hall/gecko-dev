@@ -25,19 +25,13 @@ nsMathMLmspaceFrame::~nsMathMLmspaceFrame()
 {
 }
 
-bool
-nsMathMLmspaceFrame::IsLeaf() const
-{
-  return true;
-}
-
 void
 nsMathMLmspaceFrame::ProcessAttributes(nsPresContext* aPresContext)
 {
   nsAutoString value;
   float fontSizeInflation = nsLayoutUtils::FontSizeInflationFor(this);
 
-  // width 
+  // width
   //
   // "Specifies the desired width of the space."
   //
@@ -46,7 +40,7 @@ nsMathMLmspaceFrame::ProcessAttributes(nsPresContext* aPresContext)
   //
   // The default value is "0em", so unitless values can be ignored.
   // <mspace/> is listed among MathML elements allowing negative spacing and
-  // the MathML test suite contains "Presentation/TokenElements/mspace/mspace2" 
+  // the MathML test suite contains "Presentation/TokenElements/mspace/mspace2"
   // as an example. Hence we allow negative values.
   //
   mWidth = 0;

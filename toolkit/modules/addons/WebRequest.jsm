@@ -16,11 +16,12 @@ const Cr = Components.results;
 const {nsIHttpActivityObserver, nsISocketTransport} = Ci;
 
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
-                                  "resource://gre/modules/BrowserUtils.jsm");
+XPCOMUtils.defineLazyServiceGetter(this, "NSSErrorsService",
+                                   "@mozilla.org/nss_errors_service;1",
+                                   "nsINSSErrorsService");
+
 XPCOMUtils.defineLazyModuleGetter(this, "ExtensionUtils",
                                   "resource://gre/modules/ExtensionUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "WebRequestCommon",
@@ -28,7 +29,14 @@ XPCOMUtils.defineLazyModuleGetter(this, "WebRequestCommon",
 XPCOMUtils.defineLazyModuleGetter(this, "WebRequestUpload",
                                   "resource://gre/modules/WebRequestUpload.jsm");
 
+XPCOMUtils.defineLazyServiceGetter(this, "webReqService",
+                                   "@mozilla.org/addons/webrequest-service;1",
+                                   "mozIWebRequestService");
+
 XPCOMUtils.defineLazyGetter(this, "ExtensionError", () => ExtensionUtils.ExtensionError);
+
+let WebRequestListener = Components.Constructor("@mozilla.org/webextensions/webRequestListener;1",
+                                                "nsIWebRequestListener", "init");
 
 function attachToChannel(channel, key, data) {
   if (channel instanceof Ci.nsIWritablePropertyBag2) {
@@ -48,7 +56,14 @@ function extractFromChannel(channel, key) {
 
 function getData(channel) {
   const key = "mozilla.webRequest.data";
-  return extractFromChannel(channel, key) || attachToChannel(channel, key, {});
+  return (extractFromChannel(channel, key) ||
+          attachToChannel(channel, key, {registeredFilters: new Map()}));
+}
+
+function getFinalChannelURI(channel) {
+  let {loadInfo} = channel;
+  // resultPrincipalURI may be null, but originalURI never will be.
+  return (loadInfo && loadInfo.resultPrincipalURI) || channel.originalURI;
 }
 
 var RequestId = {
@@ -67,7 +82,7 @@ var RequestId = {
 };
 
 function runLater(job) {
-  Services.tm.currentThread.dispatch(job, Ci.nsIEventTarget.DISPATCH_NORMAL);
+  Services.tm.dispatchToMainThread(job);
 }
 
 function parseFilter(filter) {
@@ -79,7 +94,7 @@ function parseFilter(filter) {
   return {urls: filter.urls || null, types: filter.types || null};
 }
 
-function parseExtra(extra, allowed = []) {
+function parseExtra(extra, allowed = [], optionsObj = {}) {
   if (extra) {
     for (let ex of extra) {
       if (allowed.indexOf(ex) == -1) {
@@ -88,7 +103,7 @@ function parseExtra(extra, allowed = []) {
     }
   }
 
-  let result = {};
+  let result = Object.assign({}, optionsObj);
   for (let al of allowed) {
     if (extra && extra.indexOf(al) != -1) {
       result[al] = true;
@@ -288,7 +303,7 @@ var ContentPolicyManager = {
 
   runChannelListener(kind, data) {
     let listeners = HttpObserverManager.listeners[kind];
-    let uri = BrowserUtils.makeURI(data.url);
+    let uri = Services.io.newURI(data.url);
     let policyType = data.type;
     for (let [callback, opts] of listeners.entries()) {
       if (!HttpObserverManager.shouldRunListener(policyType, uri, opts.filter)) {
@@ -305,7 +320,7 @@ var ContentPolicyManager = {
     opts.id = id;
     if (opts.filter.urls) {
       opts.filter = Object.assign({}, opts.filter);
-      opts.filter.urls = opts.filter.urls.serialize();
+      opts.filter.urls = opts.filter.urls.patterns.map(url => url.pattern);
     }
     Services.ppmm.broadcastAsyncMessage("WebRequest:AddContentPolicy", opts);
 
@@ -326,10 +341,10 @@ var ContentPolicyManager = {
 };
 ContentPolicyManager.init();
 
-function StartStopListener(manager, loadContext) {
+function StartStopListener(manager, channel, loadContext) {
   this.manager = manager;
   this.loadContext = loadContext;
-  this.orig = null;
+  new WebRequestListener(this, channel);
 }
 
 StartStopListener.prototype = {
@@ -338,20 +353,10 @@ StartStopListener.prototype = {
 
   onStartRequest: function(request, context) {
     this.manager.onStartRequest(request, this.loadContext);
-    this.orig.onStartRequest(request, context);
   },
 
   onStopRequest(request, context, statusCode) {
-    try {
-      this.orig.onStopRequest(request, context, statusCode);
-    } catch (e) {
-      Cu.reportError(e);
-    }
     this.manager.onStopRequest(request, this.loadContext);
-  },
-
-  onDataAvailable(...args) {
-    return this.orig.onDataAvailable(...args);
   },
 };
 
@@ -468,13 +473,18 @@ class AuthRequestor {
   // nsIAuthPrompt2 asyncPromptAuth
   asyncPromptAuth(channel, callback, context, level, authInfo) {
     let uri = channel.URI;
+    let proxyInfo;
+    let isProxy = !!(authInfo.flags & authInfo.AUTH_PROXY);
+    if (isProxy && channel instanceof Ci.nsIProxiedChannel) {
+      proxyInfo = channel.proxyInfo;
+    }
     let data = {
       scheme: authInfo.authenticationScheme,
       realm: authInfo.realm,
-      isProxy: !!(authInfo.flags & authInfo.AUTH_PROXY),
+      isProxy,
       challenger: {
-        host: uri.host,
-        port: uri.port,
+        host: proxyInfo ? proxyInfo.host : uri.host,
+        port: proxyInfo ? proxyInfo.port : uri.port,
       },
     };
 
@@ -532,6 +542,7 @@ class AuthRequestor {
 }
 
 HttpObserverManager = {
+  openingInitialized: false,
   modifyInitialized: false,
   examineInitialized: false,
   redirectInitialized: false,
@@ -555,17 +566,31 @@ HttpObserverManager = {
   },
 
   addOrRemove() {
-    let needModify = this.listeners.opening.size || this.listeners.modify.size || this.listeners.afterModify.size;
-    if (needModify && !this.modifyInitialized) {
-      this.modifyInitialized = true;
-      Services.obs.addObserver(this, "http-on-modify-request", false);
-    } else if (!needModify && this.modifyInitialized) {
-      this.modifyInitialized = false;
+    let needOpening = this.listeners.opening.size;
+    let needModify = this.listeners.modify.size || this.listeners.afterModify.size;
+    if (needOpening && !this.openingInitialized) {
+      this.openingInitialized = true;
+      Services.obs.addObserver(this, "http-on-modify-request");
+    } else if (!needOpening && this.openingInitialized) {
+      this.openingInitialized = false;
       Services.obs.removeObserver(this, "http-on-modify-request");
     }
+    if (needModify && !this.modifyInitialized) {
+      this.modifyInitialized = true;
+      Services.obs.addObserver(this, "http-on-before-connect");
+    } else if (!needModify && this.modifyInitialized) {
+      this.modifyInitialized = false;
+      Services.obs.removeObserver(this, "http-on-before-connect");
+    }
+
+    let haveBlocking = Object.values(this.listeners)
+                             .some(listeners => Array.from(listeners.values())
+                                                     .some(listener => listener.blockingAllowed));
+
     this.needTracing = this.listeners.onStart.size ||
                        this.listeners.onError.size ||
-                       this.listeners.onStop.size;
+                       this.listeners.onStop.size ||
+                       haveBlocking;
 
     let needExamine = this.needTracing ||
                       this.listeners.headersReceived.size ||
@@ -573,9 +598,9 @@ HttpObserverManager = {
 
     if (needExamine && !this.examineInitialized) {
       this.examineInitialized = true;
-      Services.obs.addObserver(this, "http-on-examine-response", false);
-      Services.obs.addObserver(this, "http-on-examine-cached-response", false);
-      Services.obs.addObserver(this, "http-on-examine-merged-response", false);
+      Services.obs.addObserver(this, "http-on-examine-response");
+      Services.obs.addObserver(this, "http-on-examine-cached-response");
+      Services.obs.addObserver(this, "http-on-examine-merged-response");
     } else if (!needExamine && this.examineInitialized) {
       this.examineInitialized = false;
       Services.obs.removeObserver(this, "http-on-examine-response");
@@ -583,7 +608,7 @@ HttpObserverManager = {
       Services.obs.removeObserver(this, "http-on-examine-merged-response");
     }
 
-    let needRedirect = this.listeners.onRedirect.size;
+    let needRedirect = this.listeners.onRedirect.size || haveBlocking;
     if (needRedirect && !this.redirectInitialized) {
       this.redirectInitialized = true;
       ChannelEventSink.register();
@@ -632,9 +657,10 @@ HttpObserverManager = {
     let channel = subject.QueryInterface(Ci.nsIHttpChannel);
     switch (topic) {
       case "http-on-modify-request":
-        let loadContext = this.getLoadContext(channel);
-
-        this.runChannelListener(channel, loadContext, "opening");
+        this.runChannelListener(channel, this.getLoadContext(channel), "opening");
+        break;
+      case "http-on-before-connect":
+        this.runChannelListener(channel, this.getLoadContext(channel), "modify");
         break;
       case "http-on-examine-cached-response":
       case "http-on-examine-merged-response":
@@ -662,6 +688,14 @@ HttpObserverManager = {
   GOOD_LAST_ACTIVITY: nsIHttpActivityObserver.ACTIVITY_SUBTYPE_RESPONSE_HEADER,
   observeActivity(channel, activityType, activitySubtype /* , aTimestamp, aExtraSizeData, aExtraStringData */) {
     let channelData = getData(channel);
+
+    // StartStopListener has to be activated early in the request to catch
+    // SSL connection issues which do not get reported via nsIHttpActivityObserver.
+    if (activityType == nsIHttpActivityObserver.ACTIVITY_TYPE_HTTP_TRANSACTION &&
+        activitySubtype == nsIHttpActivityObserver.ACTIVITY_SUBTYPE_REQUEST_HEADER) {
+      this.attachStartStopListener(channel, channelData);
+    }
+
     let lastActivity = channelData.lastActivity || 0;
     if (activitySubtype === nsIHttpActivityObserver.ACTIVITY_SUBTYPE_RESPONSE_COMPLETE &&
         lastActivity && lastActivity !== this.GOOD_LAST_ACTIVITY) {
@@ -678,6 +712,10 @@ HttpObserverManager = {
   },
 
   shouldRunListener(policyType, uri, filter) {
+    // force the protocol to be ws again.
+    if (policyType == "websocket" && ["http", "https"].includes(uri.scheme)) {
+      uri = new Services.io.newURI(`ws${uri.spec.substring(4)}`);
+    }
     return WebRequestCommon.typeMatches(policyType, filter.types) &&
            WebRequestCommon.urlMatches(uri, filter.urls);
   },
@@ -688,9 +726,16 @@ HttpObserverManager = {
     return this.resultsMap;
   },
   maybeError(channel, extraData = null, channelData = null) {
+    if (!(extraData && extraData.error) && channel.securityInfo) {
+      let securityInfo = channel.securityInfo.QueryInterface(Ci.nsITransportSecurityInfo);
+      if (NSSErrorsService.isNSSErrorCode(securityInfo.errorCode)) {
+        let nsresult = NSSErrorsService.getXPCOMFromNSSError(securityInfo.errorCode);
+        extraData = {error: NSSErrorsService.getErrorMessage(nsresult)};
+      }
+    }
     if (!(extraData && extraData.error)) {
       if (!Components.isSuccessCode(channel.status)) {
-        extraData = {error: this.resultsMap.get(channel.status)};
+        extraData = {error: this.resultsMap.get(channel.status) || "NS_ERROR_NET_UNKNOWN"};
       }
     }
     return extraData;
@@ -740,24 +785,31 @@ HttpObserverManager = {
   getRequestData(channel, loadContext, policyType, extraData) {
     let {loadInfo} = channel;
 
+    let URI = getFinalChannelURI(channel);
     let data = {
       requestId: RequestId.get(channel),
-      url: channel.URI.spec,
+      url: URI.spec,
       method: channel.requestMethod,
       browser: loadContext && loadContext.topFrameElement,
       type: WebRequestCommon.typeForPolicyType(policyType),
       fromCache: getData(channel).fromCache,
+      // Defaults for a top level request
       windowId: 0,
-      parentWindowId: 0,
+      parentWindowId: -1,
     };
+
+    // force the protocol to be ws again.
+    if (data.type == "websocket" && data.url.startsWith("http")) {
+      data.url = `ws${data.url.substring(4)}`;
+    }
 
     if (loadInfo) {
       let originPrincipal = loadInfo.triggeringPrincipal;
-      if (originPrincipal.URI) {
+      if (!originPrincipal.isNullPrincipal && originPrincipal.URI) {
         data.originUrl = originPrincipal.URI.spec;
       }
       let docPrincipal = loadInfo.loadingPrincipal;
-      if (docPrincipal && docPrincipal.URI) {
+      if (docPrincipal && !docPrincipal.isNullPrincipal && docPrincipal.URI) {
         data.documentUrl = docPrincipal.URI.spec;
       }
 
@@ -772,15 +824,27 @@ HttpObserverManager = {
                                                  loadInfo.principalToInherit ||
                                                  loadInfo.triggeringPrincipal);
 
-      if (loadInfo.frameOuterWindowID) {
+      // Handle window and parent id values for sub_frame requests or requests
+      // inside a sub_frame.
+      if (loadInfo.frameOuterWindowID != 0) {
+        // This is a sub_frame.  Only frames (ie. iframe; a request with a frameloader)
+        // have a non-zero frameOuterWindowID.  For a sub_frame, outerWindowID
+        // points at the frames parent.  The parent frame is the main_frame if
+        // outerWindowID == parentOuterWindowID, in which case set parentWindowId
+        // to zero.
         Object.assign(data, {
           windowId: loadInfo.frameOuterWindowID,
-          parentWindowId: loadInfo.outerWindowID,
+          parentWindowId: loadInfo.outerWindowID == loadInfo.parentOuterWindowID ? 0 : loadInfo.outerWindowID,
         });
-      } else {
+      } else if (loadInfo.outerWindowID != loadInfo.parentOuterWindowID) {
+        // This is a non-frame (e.g. script, image, etc) request within a
+        // sub_frame.  We have to check parentOuterWindowID against the browser
+        // to see if it is the main_frame in which case the parenteWindowId
+        // available to the caller must be set to zero.
+        let parentMainFrame = data.browser && data.browser.outerWindowID == loadInfo.parentOuterWindowID;
         Object.assign(data, {
           windowId: loadInfo.outerWindowID,
-          parentWindowId: loadInfo.parentOuterWindowID,
+          parentWindowId: parentMainFrame ? 0 : loadInfo.parentOuterWindowID,
         });
       }
     }
@@ -794,24 +858,70 @@ HttpObserverManager = {
       }
     }
 
+    if (channel instanceof Ci.nsIProxiedChannel && channel.proxyInfo) {
+      let pi = channel.proxyInfo;
+      data.proxyInfo = {
+        host: pi.host,
+        port: pi.port,
+        type: pi.type,
+        username: pi.username,
+        proxyDNS: pi.flags == Ci.nsIProxyInfo.TRANSPARENT_PROXY_RESOLVES_HOST,
+        failoverTimeout: pi.failoverTimeout,
+      };
+    }
+
     return Object.assign(data, extraData);
   },
 
   canModify(channel) {
     let {isHostPermitted} = AddonManagerPermissions;
 
-    if (isHostPermitted(channel.URI.host)) {
+    // Bug 1334550 introduced the possibility of having a JAR uri here,
+    // use the result uri if possible in that case.
+    let URI = getFinalChannelURI(channel);
+    if (URI && isHostPermitted(URI.host)) {
       return false;
     }
 
     let {loadInfo} = channel;
     if (loadInfo && loadInfo.loadingPrincipal) {
       let {loadingPrincipal} = loadInfo;
-
-      return loadingPrincipal.URI && !isHostPermitted(loadingPrincipal.URI.host);
+      try {
+        return loadingPrincipal.URI && !isHostPermitted(loadingPrincipal.URI.host);
+      } catch (e) {
+        // about:newtab and other non-host URIs will throw.  Those wont be in
+        // the host permitted list, so we pass on the error.
+      }
     }
 
     return true;
+  },
+
+  registerChannel(channel, opts) {
+    if (!opts.blockingAllowed || !opts.addonId) {
+      return;
+    }
+
+    let data = getData(channel);
+    if (data.registeredFilters.has(opts.addonId)) {
+      return;
+    }
+
+    let filter = webReqService.registerTraceableChannel(
+      parseInt(data.requestId, 10),
+      channel,
+      opts.addonId,
+      opts.tabParent);
+
+    data.registeredFilters.set(opts.addonId, filter);
+  },
+
+  destroyFilters(channel) {
+    let filters = getData(channel).registeredFilters;
+    for (let [key, filter] of filters.entries()) {
+      filter.destruct();
+      filters.delete(key);
+    }
   },
 
   runChannelListener(channel, loadContext = null, kind, extraData = null) {
@@ -823,6 +933,7 @@ HttpObserverManager = {
       if (this.activityInitialized) {
         let channelData = getData(channel);
         if (kind === "onError") {
+          this.destroyFilters(channel);
           if (channelData.errorNotified) {
             return;
           }
@@ -836,12 +947,12 @@ HttpObserverManager = {
       let policyType = (loadInfo ? loadInfo.externalContentPolicyType
                                  : Ci.nsIContentPolicy.TYPE_OTHER);
 
-      let includeStatus = (["headersReceived", "authRequired", "onRedirect", "onStart", "onStop"].includes(kind) &&
-                           channel instanceof Ci.nsIHttpChannel);
+      let includeStatus = ["headersReceived", "authRequired", "onRedirect", "onStart", "onStop"].includes(kind);
+      let registerFilter = ["opening", "modify", "afterModify", "headersReceived", "authRequired", "onRedirect"].includes(kind);
 
       let canModify = this.canModify(channel);
       let commonData = null;
-      let uri = channel.URI;
+      let uri = getFinalChannelURI(channel);
       let requestBody;
       for (let [callback, opts] of this.listeners[kind].entries()) {
         if (!this.shouldRunListener(policyType, uri, opts.filter)) {
@@ -852,6 +963,10 @@ HttpObserverManager = {
           commonData = this.getRequestData(channel, loadContext, policyType, extraData);
         }
         let data = Object.assign({}, commonData);
+
+        if (registerFilter) {
+          this.registerChannel(channel, opts);
+        }
 
         if (opts.requestHeaders) {
           requestHeaders = requestHeaders || new RequestHeaderChanger(channel);
@@ -890,7 +1005,7 @@ HttpObserverManager = {
                              requestHeaders, responseHeaders);
   },
 
-  applyChanges: Task.async(function* (kind, channel, loadContext, handlerResults, requestHeaders, responseHeaders) {
+  async applyChanges(kind, channel, loadContext, handlerResults, requestHeaders, responseHeaders) {
     let asyncHandlers = handlerResults.filter(({result}) => isThenable(result));
     let isAsync = asyncHandlers.length > 0;
     let shouldResume = false;
@@ -901,7 +1016,7 @@ HttpObserverManager = {
 
         for (let value of asyncHandlers) {
           try {
-            value.result = yield value.result;
+            value.result = await value.result;
           } catch (e) {
             Cu.reportError(e);
             value.result = {};
@@ -926,7 +1041,7 @@ HttpObserverManager = {
           try {
             this.maybeResume(channel);
 
-            channel.redirectTo(BrowserUtils.makeURI(result.redirectUrl));
+            channel.redirectTo(Services.io.newURI(result.redirectUrl));
             return;
           } catch (e) {
             Cu.reportError(e);
@@ -957,10 +1072,8 @@ HttpObserverManager = {
         }
       }
 
-      if (kind === "opening") {
-        yield this.runChannelListener(channel, loadContext, "modify");
-      } else if (kind === "modify") {
-        yield this.runChannelListener(channel, loadContext, "afterModify");
+      if (kind === "modify") {
+        await this.runChannelListener(channel, loadContext, "afterModify");
       }
     } catch (e) {
       Cu.reportError(e);
@@ -970,7 +1083,7 @@ HttpObserverManager = {
     if (shouldResume) {
       this.maybeResume(channel);
     }
-  }),
+  },
 
   shouldHookListener(listener, channel) {
     if (listener.size == 0) {
@@ -989,27 +1102,32 @@ HttpObserverManager = {
     return false;
   },
 
-  examine(channel, topic, data) {
-    let loadContext = this.getLoadContext(channel);
-
-    let channelData = getData(channel);
-    if (this.needTracing) {
-      // Check whether we've already added a listener to this channel,
-      // so we don't wind up chaining multiple listeners.
-      if (!channelData.hasListener && channel instanceof Ci.nsITraceableChannel) {
-        let responseStatus = channel.responseStatus;
-        // skip redirections, https://bugzilla.mozilla.org/show_bug.cgi?id=728901#c8
-        if (responseStatus < 300 || responseStatus >= 400) {
-          let listener = new StartStopListener(this, loadContext);
-          let orig = channel.setNewListener(listener);
-          listener.orig = orig;
-          channelData.hasListener = true;
-        }
-      }
+  attachStartStopListener(channel, channelData) {
+    // Check whether we've already added a listener to this channel,
+    // so we don't wind up chaining multiple listeners.
+    if (!this.needTracing || channelData.hasListener || !(channel instanceof Ci.nsITraceableChannel)) {
+      return;
     }
+    let responseStatus = 0;
+    try {
+      responseStatus = channel.QueryInterface(Ci.nsIHttpChannel).responseStatus;
+    } catch (e) {
+      /* NS_ERROR_NOT_AVAILABLE if checked prior to onStartRequest. */
+    }
+    // skip redirections, https://bugzilla.mozilla.org/show_bug.cgi?id=728901#c8
+    if (responseStatus < 300 || responseStatus >= 400) {
+      let loadContext = this.getLoadContext(channel);
+      new StartStopListener(this, channel, loadContext);
+      channelData.hasListener = true;
+    }
+  },
+
+  examine(channel, topic, data) {
+    let channelData = getData(channel);
+    this.attachStartStopListener(channel, channelData);
 
     if (this.listeners.headersReceived.size) {
-      this.runChannelListener(channel, loadContext, "headersReceived");
+      this.runChannelListener(channel, this.getLoadContext(channel), "headersReceived");
     }
 
     if (!channelData.hasAuthRequestor && this.shouldHookListener(this.listeners.authRequired, channel)) {
@@ -1019,11 +1137,15 @@ HttpObserverManager = {
   },
 
   onChannelReplaced(oldChannel, newChannel) {
+    // We want originalURI, this will provide a moz-ext rather than jar or file
+    // uri on redirects.
+    this.destroyFilters(oldChannel);
     this.runChannelListener(oldChannel, this.getLoadContext(oldChannel),
-                            "onRedirect", {redirectUrl: newChannel.URI.spec});
+                            "onRedirect", {redirectUrl: newChannel.originalURI.spec});
   },
 
   onStartRequest(channel, loadContext) {
+    this.destroyFilters(channel);
     this.runChannelListener(channel, loadContext, "onStart");
   },
 
@@ -1035,10 +1157,12 @@ HttpObserverManager = {
 var onBeforeRequest = {
   allowedOptions: ["blocking", "requestBody"],
 
-  addListener(callback, filter = null, opt_extraInfoSpec = null) {
-    let opts = parseExtra(opt_extraInfoSpec, this.allowedOptions);
+  addListener(callback, filter = null, options = null, optionsObject = null) {
+    let opts = parseExtra(options, this.allowedOptions);
     opts.filter = parseFilter(filter);
     ContentPolicyManager.addListener(callback, opts);
+
+    opts = Object.assign({}, opts, optionsObject);
     HttpObserverManager.addListener("opening", callback, opts);
   },
 
@@ -1054,8 +1178,8 @@ function HttpEvent(internalEvent, options) {
 }
 
 HttpEvent.prototype = {
-  addListener(callback, filter = null, opt_extraInfoSpec = null) {
-    let opts = parseExtra(opt_extraInfoSpec, this.options);
+  addListener(callback, filter = null, options = null, optionsObject = null) {
+    let opts = parseExtra(options, this.options, optionsObject);
     opts.filter = parseFilter(filter);
     HttpObserverManager.addListener(this.internalEvent, callback, opts);
   },
@@ -1068,7 +1192,7 @@ HttpEvent.prototype = {
 var onBeforeSendHeaders = new HttpEvent("modify", ["requestHeaders", "blocking"]);
 var onSendHeaders = new HttpEvent("afterModify", ["requestHeaders"]);
 var onHeadersReceived = new HttpEvent("headersReceived", ["blocking", "responseHeaders"]);
-var onAuthRequired = new HttpEvent("authRequired", ["blocking", "responseHeaders"]); // TODO asyncBlocking
+var onAuthRequired = new HttpEvent("authRequired", ["blocking", "responseHeaders"]);
 var onBeforeRedirect = new HttpEvent("onRedirect", ["responseHeaders"]);
 var onResponseStarted = new HttpEvent("onStart", ["responseHeaders"]);
 var onCompleted = new HttpEvent("onStop", ["responseHeaders"]);

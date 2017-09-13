@@ -34,6 +34,12 @@ namespace css {
 class Rule;
 class Declaration;
 class StyleRule;
+
+enum class SupportsParsingSettings {
+  Normal,
+  ImpliedParentheses
+};
+
 } // namespace css
 } // namespace mozilla
 
@@ -45,7 +51,6 @@ public:
                        mozilla::CSSStyleSheet* aSheet = nullptr);
   ~nsCSSParser();
 
-  static void Startup();
   static void Shutdown();
 
 private:
@@ -156,7 +161,7 @@ public:
    * replacing its current contents. |aURL| and |aLineNumber| are used for error
    * reporting.
    */
-  void ParseMediaList(const nsSubstring& aBuffer,
+  void ParseMediaList(const nsAString& aBuffer,
                       nsIURI*            aURL,
                       uint32_t           aLineNumber,
                       nsMediaList*       aMediaList);
@@ -183,7 +188,7 @@ public:
    * Parse aBuffer into a nsCSSValue |aValue|. Will return false
    * if aBuffer is not a valid font family list.
    */
-  bool ParseFontFamilyListString(const nsSubstring& aBuffer,
+  bool ParseFontFamilyListString(const nsAString& aBuffer,
                                  nsIURI*            aURL,
                                  uint32_t           aLineNumber,
                                  nsCSSValue&        aValue);
@@ -194,7 +199,7 @@ public:
    * One can use nsRuleNode::ComputeColor to compute an nscolor from
    * the returned nsCSSValue.
    */
-  bool ParseColorString(const nsSubstring& aBuffer,
+  bool ParseColorString(const nsAString& aBuffer,
                         nsIURI*            aURL,
                         uint32_t           aLineNumber,
                         nsCSSValue&        aValue,
@@ -206,7 +211,7 @@ public:
    * One can use nsRuleNode::GetRectValue to compute an nsCSSRect from
    * the returned nsCSSValue.
    */
-  bool ParseMarginString(const nsSubstring& aBuffer,
+  bool ParseMarginString(const nsAString& aBuffer,
                          nsIURI*            aURL,
                          uint32_t           aLineNumber,
                          nsCSSValue&        aValue,
@@ -216,7 +221,7 @@ public:
    * Parse aBuffer into a selector list.  On success, caller must
    * delete *aSelectorList when done with it.
    */
-  nsresult ParseSelectorString(const nsSubstring&  aSelectorString,
+  nsresult ParseSelectorString(const nsAString&  aSelectorString,
                                nsIURI*             aURL,
                                uint32_t            aLineNumber,
                                nsCSSSelectorList** aSelectorList);
@@ -226,7 +231,7 @@ public:
    * Return it if the parse was successful.
    */
   already_AddRefed<nsCSSKeyframeRule>
-  ParseKeyframeRule(const nsSubstring& aBuffer,
+  ParseKeyframeRule(const nsAString& aBuffer,
                     nsIURI*            aURL,
                     uint32_t           aLineNumber);
 
@@ -234,7 +239,7 @@ public:
    * Parse a selector list for a keyframe rule.  Return whether
    * the parse succeeded.
    */
-  bool ParseKeyframeSelectorString(const nsSubstring& aSelectorString,
+  bool ParseKeyframeSelectorString(const nsAString& aSelectorString,
                                    nsIURI*            aURL,
                                    uint32_t           aLineNumber,
                                    InfallibleTArray<float>& aSelectorList);
@@ -252,11 +257,17 @@ public:
   /**
    * Parse an @supports condition and returns the result of evaluating the
    * condition.
+   *
+   * The one-argument CSS.supports() allows for providing a parentheses-less
+   * @supports condition, i.e. the parentheses are "implied". In such a case,
+   * aSettings can be set to ImpliedParentheses.
    */
   bool EvaluateSupportsCondition(const nsAString& aCondition,
                                  nsIURI* aDocURL,
                                  nsIURI* aBaseURL,
-                                 nsIPrincipal* aDocPrincipal);
+                                 nsIPrincipal* aDocPrincipal,
+                                 mozilla::css::SupportsParsingSettings aSettings
+                                  = mozilla::css::SupportsParsingSettings::Normal);
 
   typedef void (*VariableEnumFunc)(const nsAString&, void*);
 
@@ -304,9 +315,11 @@ public:
                                    uint32_t aLineNumber,
                                    uint32_t aLineOffset);
 
-  bool ParseCounterStyleName(const nsAString& aBuffer,
-                             nsIURI* aURL,
-                             nsAString& aName);
+  /**
+   * Parses a string as a counter-style name. Returns nullptr if fails.
+   */
+  already_AddRefed<nsIAtom> ParseCounterStyleName(const nsAString& aBuffer,
+                                                  nsIURI* aURL);
 
   bool ParseCounterDescriptor(nsCSSCounterDesc aDescID,
                               const nsAString& aBuffer,

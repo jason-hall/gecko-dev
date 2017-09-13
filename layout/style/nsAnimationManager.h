@@ -10,16 +10,17 @@
 #include "mozilla/EventForwards.h"
 #include "AnimationCommon.h"
 #include "mozilla/dom/Animation.h"
+#include "mozilla/Keyframe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/TimeStamp.h"
+#include "nsRFPService.h"
 
 class nsIGlobalObject;
 class nsStyleContext;
+class ServoComputedData;
 struct nsStyleDisplay;
-struct ServoComputedValues;
 
 namespace mozilla {
-struct ServoComputedValuesWithParent;
 namespace css {
 class Declaration;
 } /* namespace css */
@@ -28,6 +29,8 @@ class KeyframeEffectReadOnly;
 class Promise;
 } /* namespace dom */
 
+class GeckoStyleContext;
+class ServoStyleContext;
 enum class CSSPseudoElementType : uint8_t;
 struct NonOwningAnimationTarget;
 
@@ -40,7 +43,7 @@ struct AnimationEventInfo {
   AnimationEventInfo(dom::Element* aElement,
                      CSSPseudoElementType aPseudoType,
                      EventMessage aMessage,
-                     const nsSubstring& aAnimationName,
+                     const nsAString& aAnimationName,
                      const StickyTimeDuration& aElapsedTime,
                      const TimeStamp& aTimeStamp,
                      dom::Animation* aAnimation)
@@ -51,7 +54,8 @@ struct AnimationEventInfo {
   {
     // XXX Looks like nobody initialize WidgetEvent::time
     mEvent.mAnimationName = aAnimationName;
-    mEvent.mElapsedTime = aElapsedTime.ToSeconds();
+    mEvent.mElapsedTime =
+      nsRFPService::ReduceTimePrecisionAsSecs(aElapsedTime.ToSeconds());
     mEvent.mPseudoElement =
       AnimationCollection<dom::CSSAnimation>::PseudoTypeAsString(aPseudoType);
   }
@@ -74,7 +78,7 @@ class CSSAnimation final : public Animation
 {
 public:
  explicit CSSAnimation(nsIGlobalObject* aGlobal,
-                       const nsSubstring& aAnimationName)
+                       const nsAString& aAnimationName)
     : dom::Animation(aGlobal)
     , mAnimationName(aAnimationName)
     , mIsStylePaused(false)
@@ -107,6 +111,14 @@ public:
   virtual void Play(ErrorResult& aRv, LimitBehavior aLimitBehavior) override;
   virtual void Pause(ErrorResult& aRv) override;
 
+  // NOTE: tabbrowser.xml currently relies on the fact that reading the
+  // currentTime of a CSSAnimation does *not* flush style (whereas reading the
+  // playState does). If CSS Animations 2 specifies that reading currentTime
+  // also flushes style we will need to find another way to detect canceled
+  // animations in tabbrowser.xml. On the other hand, if CSS Animations 2
+  // specifies that reading playState does *not* flush style (and we drop the
+  // following override), then we should update tabbrowser.xml to check
+  // the playState instead.
   virtual AnimationPlayState PlayStateFromJS() const override;
   virtual void PlayFromJS(ErrorResult& aRv) override;
 
@@ -187,7 +199,7 @@ protected:
   // This is used for setting the elapsedTime member of CSS AnimationEvents.
   TimeDuration InitialAdvance() const {
     return mEffect ?
-           std::max(TimeDuration(), mEffect->SpecifiedTiming().mDelay * -1) :
+           std::max(TimeDuration(), mEffect->SpecifiedTiming().Delay() * -1) :
            TimeDuration();
   }
 
@@ -321,7 +333,7 @@ public:
    * aStyleContext may be a style context for aElement or for its
    * :before or :after pseudo-element.
    */
-  void UpdateAnimations(nsStyleContext* aStyleContext,
+  void UpdateAnimations(mozilla::GeckoStyleContext* aStyleContext,
                         mozilla::dom::Element* aElement);
 
   /**
@@ -331,7 +343,7 @@ public:
   void UpdateAnimations(
     mozilla::dom::Element* aElement,
     mozilla::CSSPseudoElementType aPseudoType,
-    const mozilla::ServoComputedValuesWithParent& aServoValues);
+    const mozilla::ServoStyleContext* aComputedValues);
 
   /**
    * Add a pending event.
@@ -356,6 +368,39 @@ public:
   }
   void SortEvents()      { mEventDispatcher.SortEvents(); }
   void ClearEventQueue() { mEventDispatcher.ClearEventQueue(); }
+
+  // Utility function to walk through |aIter| to find the Keyframe with
+  // matching offset and timing function but stopping as soon as the offset
+  // differs from |aOffset| (i.e. it assumes a sorted iterator).
+  //
+  // If a matching Keyframe is found,
+  //   Returns true and sets |aIndex| to the index of the matching Keyframe
+  //   within |aIter|.
+  //
+  // If no matching Keyframe is found,
+  //   Returns false and sets |aIndex| to the index in the iterator of the
+  //   first Keyframe with an offset differing to |aOffset| or, if the end
+  //   of the iterator is reached, sets |aIndex| to the index after the last
+  //   Keyframe.
+  template <class IterType, class TimingFunctionType>
+  static bool FindMatchingKeyframe(
+    IterType&& aIter,
+    double aOffset,
+    const TimingFunctionType& aTimingFunctionToMatch,
+    size_t& aIndex)
+  {
+    aIndex = 0;
+    for (mozilla::Keyframe& keyframe : aIter) {
+      if (keyframe.mOffset.value() != aOffset) {
+        break;
+      }
+      if (keyframe.mTimingFunction == aTimingFunctionToMatch) {
+        return true;
+      }
+      ++aIndex;
+    }
+    return false;
+  }
 
 protected:
   ~nsAnimationManager() override = default;

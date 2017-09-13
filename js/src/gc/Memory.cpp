@@ -505,6 +505,7 @@ static inline void*
 MapMemoryAt(void* desired, size_t length, int prot = PROT_READ | PROT_WRITE,
             int flags = MAP_PRIVATE | MAP_ANON, int fd = -1, off_t offset = 0)
 {
+
 #if defined(__ia64__) || defined(__aarch64__) || \
     (defined(__sparc__) && defined(__arch64__) && (defined(__NetBSD__) || defined(__linux__)))
     MOZ_ASSERT((0xffff800000000000ULL & (uintptr_t(desired) + length - 1)) == 0);
@@ -529,7 +530,7 @@ static inline void*
 MapMemory(size_t length, int prot = PROT_READ | PROT_WRITE,
           int flags = MAP_PRIVATE | MAP_ANON, int fd = -1, off_t offset = 0)
 {
-#if defined(__ia64__) || (defined(__sparc64__) && defined(__NetBSD__))
+#if defined(__ia64__) || (defined(__sparc__) && defined(__arch64__) && defined(__NetBSD__))
     /*
      * The JS engine assumes that all allocated pointers have their high 17 bits clear,
      * which ia64's mmap doesn't support directly. However, we can emulate it by passing
@@ -556,7 +557,7 @@ MapMemory(size_t length, int prot = PROT_READ | PROT_WRITE,
         return nullptr;
     }
     return region;
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || (defined(__sparc__) && defined(__arch64__) && defined(__linux__))
    /*
     * There might be similar virtual address issue on arm64 which depends on
     * hardware and kernel configurations. But the work around is slightly
@@ -768,7 +769,11 @@ MarkPagesUnused(void* p, size_t size)
         return false;
 
     MOZ_ASSERT(OffsetFromAligned(p, pageSize) == 0);
+#if defined(XP_SOLARIS)
+    int result = posix_madvise(p, size, POSIX_MADV_DONTNEED);
+#else
     int result = madvise(p, size, MADV_DONTNEED);
+#endif
     return result != -1;
 }
 
@@ -791,6 +796,7 @@ GetPageFaultCount()
     return usage.ru_majflt;
 }
 
+>>>>>>> a17af05f6f9f79dd18cb2721cc8d0a0dfa1d04de
 void*
 AllocateMappedContent(int fd, size_t offset, size_t length, size_t alignment)
 {

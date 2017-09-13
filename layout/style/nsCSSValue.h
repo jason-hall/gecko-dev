@@ -102,11 +102,11 @@ protected:
   // For both constructors principal of aExtraData must not be null.
   // Construct with a base URI; this will create the actual URI lazily from
   // aString and aExtraData.
-  URLValueData(nsStringBuffer* aString,
+  URLValueData(const nsAString& aString,
                already_AddRefed<URLExtraData> aExtraData);
   // Construct with the actual URI.
   URLValueData(already_AddRefed<PtrHolder<nsIURI>> aURI,
-               nsStringBuffer* aString,
+               const nsAString& aString,
                already_AddRefed<URLExtraData> aExtraData);
 
 public:
@@ -131,9 +131,17 @@ public:
 
   nsIURI* GetURI() const;
 
-  bool IsLocalRef() const { return mIsLocalRef; }
+  bool IsLocalRef() const;
 
   bool HasRef() const;
+
+  // This function takes a guess whether the URL has a fragment, by searching
+  // for a hash character. It definitely returns false if we know it can't
+  // have a fragment because it has no hash character.
+  //
+  // MightHaveRef can be used in any thread, whereas HasRef can only be used
+  // in the main thread.
+  bool MightHaveRef() const;
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(URLValueData)
 
@@ -153,12 +161,13 @@ private:
   // invalid, even once resolved.
   mutable PtrHandle<nsIURI> mURI;
 public:
-  RefPtr<nsStringBuffer> mString;
+  nsString mString;
   RefPtr<URLExtraData> mExtraData;
 private:
   mutable bool mURIResolved;
   // mIsLocalRef is set when url starts with a U+0023 number sign(#) character.
-  bool mIsLocalRef;
+  mutable Maybe<bool> mIsLocalRef;
+  mutable Maybe<bool> mMightHaveRef;
 
 protected:
   virtual ~URLValueData() = default;
@@ -173,13 +182,13 @@ private:
 struct URLValue final : public URLValueData
 {
   // These two constructors are safe to call only on the main thread.
-  URLValue(nsStringBuffer* aString, nsIURI* aBaseURI, nsIURI* aReferrer,
+  URLValue(const nsAString& aString, nsIURI* aBaseURI, nsIURI* aReferrer,
            nsIPrincipal* aOriginPrincipal);
-  URLValue(nsIURI* aURI, nsStringBuffer* aString, nsIURI* aBaseURI,
+  URLValue(nsIURI* aURI, const nsAString& aString, nsIURI* aBaseURI,
            nsIURI* aReferrer, nsIPrincipal* aOriginPrincipal);
 
   // This constructor is safe to call from any thread.
-  URLValue(nsStringBuffer* aString,
+  URLValue(const nsAString& aString,
            already_AddRefed<URLExtraData> aExtraData)
     : URLValueData(aString, Move(aExtraData)) {}
 
@@ -194,16 +203,15 @@ struct ImageValue final : public URLValueData
   // Not making the constructor and destructor inline because that would
   // force us to include imgIRequest.h, which leads to REQUIRES hell, since
   // this header is included all over.
-  // aString must not be null.
   //
   // This constructor is only safe to call from the main thread.
-  ImageValue(nsIURI* aURI, nsStringBuffer* aString,
+  ImageValue(nsIURI* aURI, const nsAString& aString,
              already_AddRefed<URLExtraData> aExtraData,
              nsIDocument* aDocument);
 
   // This constructor is safe to call from any thread, but Initialize
   // must be called later for the object to be useful.
-  ImageValue(nsStringBuffer* aString,
+  ImageValue(const nsAString& aString,
              already_AddRefed<URLExtraData> aExtraData);
 
   ImageValue(const ImageValue&) = delete;
@@ -222,9 +230,7 @@ public:
   nsRefPtrHashtable<nsPtrHashKey<nsIDocument>, imgRequestProxy> mRequests;
 
 private:
-#ifdef DEBUG
-  bool mInitialized = false;
-#endif
+  bool mLoadedImage = false;
 };
 
 struct GridNamedArea {
@@ -269,7 +275,7 @@ struct GridTemplateAreasValue final {
     return !(*this == aOther);
   }
 
-  NS_INLINE_DECL_REFCOUNTING(GridTemplateAreasValue)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(GridTemplateAreasValue)
 
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
@@ -609,15 +615,11 @@ public:
     return !(*this == aOther);
   }
 
-  // Enum for AppendToString's aValueSerialization argument.
-  enum Serialization { eNormalized, eAuthorSpecified };
-
   /**
    * Serialize |this| as a specified value for |aProperty| and append
    * it to |aResult|.
    */
-  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                      Serialization aValueSerialization) const;
+  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult) const;
 
   nsCSSUnit GetUnit() const { return mUnit; }
   bool      IsLengthUnit() const
@@ -629,18 +631,18 @@ public:
    * which we try to match based on the physical characteristics of an
    * output device.
    */
-  bool      IsFixedLengthUnit() const  
+  bool      IsFixedLengthUnit() const
     { return mUnit == eCSSUnit_PhysicalMillimeter; }
   /**
    * What the spec calls relative length units is, for us, split
    * between relative length units and pixel length units.
-   * 
+   *
    * A "relative" length unit is a multiple of some derived metric,
    * such as a font em-size, which itself was controlled by an input CSS
    * length. Relative length units should not be scaled by zooming, since
    * the underlying CSS length would already have been scaled.
    */
-  bool      IsRelativeLengthUnit() const  
+  bool      IsRelativeLengthUnit() const
     { return eCSSUnit_EM <= mUnit && mUnit <= eCSSUnit_RootEM; }
   /**
    * A "pixel" length unit is a some multiple of CSS pixels.
@@ -655,11 +657,11 @@ public:
     { return IsPercentLengthUnit(mUnit); }
   static bool IsFloatUnit(nsCSSUnit aUnit)
     { return eCSSUnit_Number <= aUnit; }
-  bool      IsAngularUnit() const  
+  bool      IsAngularUnit() const
     { return eCSSUnit_Degree <= mUnit && mUnit <= eCSSUnit_Turn; }
-  bool      IsFrequencyUnit() const  
+  bool      IsFrequencyUnit() const
     { return eCSSUnit_Hertz <= mUnit && mUnit <= eCSSUnit_Kilohertz; }
-  bool      IsTimeUnit() const  
+  bool      IsTimeUnit() const
     { return eCSSUnit_Seconds <= mUnit && mUnit <= eCSSUnit_Milliseconds; }
   bool      IsCalcUnit() const
     { return eCSSUnit_Calc <= mUnit && mUnit <= eCSSUnit_Calc_Divided; }
@@ -847,9 +849,9 @@ public:
   {
     MOZ_ASSERT(mUnit == eCSSUnit_URL || mUnit == eCSSUnit_Image,
                "not a URL value");
-    return GetBufferValue(mUnit == eCSSUnit_URL ?
-                            mValue.mURL->mString :
-                            mValue.mImage->mString);
+    return mUnit == eCSSUnit_URL ?
+             mValue.mURL->mString.get() :
+             mValue.mImage->mString.get();
   }
 
   // Not making this inline because that would force us to include
@@ -897,6 +899,7 @@ public:
   void SetPercentValue(float aValue);
   void SetFloatValue(float aValue, nsCSSUnit aUnit);
   void SetStringValue(const nsString& aValue, nsCSSUnit aUnit);
+  void SetAtomIdentValue(already_AddRefed<nsIAtom> aValue);
   void SetColorValue(nscolor aValue);
   void SetIntegerColorValue(nscolor aValue, nsCSSUnit aUnit);
   // converts the nscoord to pixels
@@ -968,13 +971,11 @@ public:
   static void
   AppendSidesShorthandToString(const nsCSSPropertyID aProperties[],
                                const nsCSSValue* aValues[],
-                               nsAString& aString,
-                               Serialization aSerialization);
+                               nsAString& aString);
   static void
   AppendBasicShapeRadiusToString(const nsCSSPropertyID aProperties[],
                                  const nsCSSValue* aValues[],
-                                 nsAString& aResult,
-                                 Serialization aValueSerialization);
+                                 nsAString& aResult);
   static void
   AppendAlignJustifyValueToString(int32_t aValue, nsAString& aResult);
 
@@ -983,21 +984,16 @@ private:
     return static_cast<char16_t*>(aBuffer->Data());
   }
 
-  void AppendPolygonToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                             Serialization aValueSerialization) const;
+  void AppendPolygonToString(nsCSSPropertyID aProperty,
+                             nsAString& aResult) const;
   void AppendPositionCoordinateToString(const nsCSSValue& aValue,
                                         nsCSSPropertyID aProperty,
-                                        nsAString& aResult,
-                                        Serialization aSerialization) const;
+                                        nsAString& aResult) const;
   void AppendCircleOrEllipseToString(
            nsCSSKeyword aFunctionId,
-           nsCSSPropertyID aProperty, nsAString& aResult,
-           Serialization aValueSerialization) const;
-  void AppendBasicShapePositionToString(
-           nsAString& aResult,
-           Serialization aValueSerialization) const;
-  void AppendInsetToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                           Serialization aValueSerialization) const;
+           nsCSSPropertyID aProperty, nsAString& aResult) const;
+  void AppendBasicShapePositionToString(nsAString& aResult) const;
+  void AppendInsetToString(nsCSSPropertyID aProperty, nsAString& aResult) const;
 protected:
   nsCSSUnit mUnit;
   union {
@@ -1121,8 +1117,7 @@ struct nsCSSValueList {
 
   nsCSSValueList* Clone() const;  // makes a deep copy. Infallible.
   void CloneInto(nsCSSValueList* aList) const; // makes a deep copy into aList
-  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                      nsCSSValue::Serialization aValueSerialization) const;
+  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult) const;
 
   static bool Equal(const nsCSSValueList* aList1,
                     const nsCSSValueList* aList2);
@@ -1184,8 +1179,7 @@ private:
 public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(nsCSSValueSharedList)
 
-  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                      nsCSSValue::Serialization aValueSerialization) const;
+  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult) const;
 
   bool operator==(nsCSSValueSharedList const& aOther) const;
   bool operator!=(const nsCSSValueSharedList& aOther) const
@@ -1225,8 +1219,7 @@ struct nsCSSRect {
   nsCSSRect(const nsCSSRect& aCopy);
   ~nsCSSRect();
 
-  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                      nsCSSValue::Serialization aValueSerialization) const;
+  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult) const;
 
   bool operator==(const nsCSSRect& aOther) const {
     return mTop == aOther.mTop &&
@@ -1367,8 +1360,7 @@ struct nsCSSValuePair {
            mYValue.GetUnit() != eCSSUnit_Null;
   }
 
-  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                      nsCSSValue::Serialization aValueSerialization) const;
+  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult) const;
 
   size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
@@ -1406,8 +1398,8 @@ struct nsCSSValueTriplet {
     {
         MOZ_COUNT_CTOR(nsCSSValueTriplet);
     }
-    nsCSSValueTriplet(const nsCSSValue& aXValue, 
-                      const nsCSSValue& aYValue, 
+    nsCSSValueTriplet(const nsCSSValue& aXValue,
+                      const nsCSSValue& aYValue,
                       const nsCSSValue& aZValue)
         : mXValue(aXValue), mYValue(aYValue), mZValue(aZValue)
     {
@@ -1459,8 +1451,7 @@ struct nsCSSValueTriplet {
                mZValue.GetUnit() != eCSSUnit_Null;
     }
 
-    void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                        nsCSSValue::Serialization aValueSerialization) const;
+    void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult) const;
 
     nsCSSValue mXValue;
     nsCSSValue mYValue;
@@ -1523,8 +1514,7 @@ struct nsCSSValuePairList {
   ~nsCSSValuePairList();
 
   nsCSSValuePairList* Clone() const; // makes a deep copy. Infallible.
-  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult,
-                      nsCSSValue::Serialization aValueSerialization) const;
+  void AppendToString(nsCSSPropertyID aProperty, nsAString& aResult) const;
 
   static bool Equal(const nsCSSValuePairList* aList1,
                     const nsCSSValuePairList* aList2);
@@ -1623,7 +1613,11 @@ struct nsCSSValueGradient final {
   // true if gradient is radial, false if it is linear
   bool mIsRadial;
   bool mIsRepeating;
-  bool mIsLegacySyntax;
+  bool mIsLegacySyntax; // If true, serialization should use a vendor prefix.
+  // XXXdholbert This will hopefully be going away soon, if bug 1337655 sticks:
+  bool mIsMozLegacySyntax; // (Only makes sense when mIsLegacySyntax is true.)
+                           // If true, serialization should use -moz prefix.
+                           // Else, serialization should use -webkit prefix.
   bool mIsExplicitSize;
   // line position and angle
   nsCSSValuePair mBgPos;
@@ -1681,6 +1675,7 @@ public:
     if (mIsRadial != aOther.mIsRadial ||
         mIsRepeating != aOther.mIsRepeating ||
         mIsLegacySyntax != aOther.mIsLegacySyntax ||
+        mIsMozLegacySyntax != aOther.mIsMozLegacySyntax ||
         mIsExplicitSize != aOther.mIsExplicitSize ||
         mBgPos != aOther.mBgPos ||
         mAngle != aOther.mAngle ||
@@ -1743,6 +1738,9 @@ private:
 public:
   bool operator==(const nsCSSValueTokenStream& aOther) const
   {
+    // This is not safe to call OMT, due to the URI/Principal Equals calls.
+    MOZ_ASSERT(NS_IsMainThread());
+
     bool eq;
     return mPropertyID == aOther.mPropertyID &&
            mShorthandPropertyID == aOther.mShorthandPropertyID &&
@@ -1811,7 +1809,16 @@ public:
     , mComponent2(aComponent2)
     , mComponent3(aComponent3)
     , mAlpha(aAlpha)
-  {}
+  {
+    // We may copy nsCSSValueFloatColor and do some comparisons on them.
+    // In order to get the correct result, we have to make sure each component
+    // is finite.
+    MOZ_ASSERT(mozilla::IsFinite(aComponent1) &&
+               mozilla::IsFinite(aComponent2) &&
+               mozilla::IsFinite(aComponent3) &&
+               mozilla::IsFinite(aAlpha),
+               "Caller must ensure color components are finite");
+  }
 
 private:
   // Private destructor, to discourage deletion outside of Release():

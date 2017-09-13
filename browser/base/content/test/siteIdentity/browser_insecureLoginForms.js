@@ -16,8 +16,8 @@ function waitForInsecureLoginFormsStateChange(browser, count) {
 /**
  * Checks the insecure login forms logic for the identity block.
  */
-add_task(function* test_simple() {
-  yield SpecialPowers.pushPrefEnv({
+add_task(async function test_simple() {
+  await SpecialPowers.pushPrefEnv({
     "set": [["security.insecure_password.ui.enabled", true]],
   });
 
@@ -27,9 +27,9 @@ add_task(function* test_simple() {
     ["https://example.com", false],
   ]) {
     let testUrlPath = origin + TEST_URL_PATH;
-    let tab = gBrowser.addTab(testUrlPath + "form_basic.html");
+    let tab = BrowserTestUtils.addTab(gBrowser, testUrlPath + "form_basic.html");
     let browser = tab.linkedBrowser;
-    yield Promise.all([
+    await Promise.all([
       BrowserTestUtils.switchTab(gBrowser, tab),
       BrowserTestUtils.browserLoaded(browser),
       // One event is triggered by pageshow and one by DOMFormHasPassword.
@@ -38,7 +38,9 @@ add_task(function* test_simple() {
 
     let { gIdentityHandler } = gBrowser.ownerGlobal;
     gIdentityHandler._identityBox.click();
+    let promiseViewShown = BrowserTestUtils.waitForEvent(gIdentityHandler._identityPopup, "ViewShown");
     document.getElementById("identity-popup-security-expander").click();
+    await promiseViewShown;
 
     if (expectWarning) {
       ok(is_visible(document.getElementById("connection-icon")), "Connection icon should be visible");
@@ -52,7 +54,7 @@ add_task(function* test_simple() {
             .getComputedStyle(document.getElementById("identity-popup-security-content"))
             .getPropertyValue("background-image");
       is(connectionIconImage,
-         "url(\"chrome://browser/skin/connection-mixed-active-loaded.svg#icon\")",
+         "url(\"chrome://browser/skin/connection-mixed-active-loaded.svg\")",
          "Using expected icon image in the identity block");
       is(securityViewBG,
          "url(\"chrome://browser/skin/controlcenter/mcb-disabled.svg\")",
@@ -72,7 +74,13 @@ add_task(function* test_simple() {
        expectWarning,
        "The relevant messages should be visible or hidden.");
 
-    gIdentityHandler._identityPopup.hidden = true;
+    if (gIdentityHandler._identityPopup.state != "closed") {
+      let hideEvent = BrowserTestUtils.waitForEvent(gIdentityHandler._identityPopup, "popuphidden");
+      info("hiding popup");
+      gIdentityHandler._identityPopup.hidePopup();
+      await hideEvent;
+    }
+
     gBrowser.removeTab(tab);
   }
 });
@@ -81,25 +89,25 @@ add_task(function* test_simple() {
  * Checks that the insecure login forms logic does not regress mixed content
  * blocking messages when mixed active content is loaded.
  */
-add_task(function* test_mixedcontent() {
-  yield SpecialPowers.pushPrefEnv({
+add_task(async function test_mixedcontent() {
+  await SpecialPowers.pushPrefEnv({
     "set": [["security.mixed_content.block_active_content", false]],
   });
 
   // Load the page with the subframe in a new tab.
   let testUrlPath = "://example.com" + TEST_URL_PATH;
-  let tab = gBrowser.addTab("https" + testUrlPath + "insecure_test.html");
+  let tab = BrowserTestUtils.addTab(gBrowser, "https" + testUrlPath + "insecure_test.html");
   let browser = tab.linkedBrowser;
-  yield Promise.all([
+  await Promise.all([
     BrowserTestUtils.switchTab(gBrowser, tab),
     BrowserTestUtils.browserLoaded(browser),
     // Two events are triggered by pageshow and one by DOMFormHasPassword.
     waitForInsecureLoginFormsStateChange(browser, 3),
   ]);
 
-  assertMixedContentBlockingState(browser, { activeLoaded: true,
-                                             activeBlocked: false,
-                                             passiveLoaded: false });
+  await assertMixedContentBlockingState(browser, { activeLoaded: true,
+                                                   activeBlocked: false,
+                                                   passiveLoaded: false });
 
   gBrowser.removeTab(tab);
 });
@@ -107,26 +115,28 @@ add_task(function* test_mixedcontent() {
 /**
  * Checks that insecure window.opener does not trigger a warning.
  */
-add_task(function* test_ignoring_window_opener() {
+add_task(async function test_ignoring_window_opener() {
   let newTabURL = "https://example.com" + TEST_URL_PATH + "form_basic.html";
   let path = getRootDirectory(gTestPath)
     .replace("chrome://mochitests/content", "http://example.com");
   let url = path + "insecure_opener.html";
 
-  yield BrowserTestUtils.withNewTab(url, function*(browser) {
+  await BrowserTestUtils.withNewTab(url, async function(browser) {
     // Clicking the link will spawn a new tab.
     let loaded = BrowserTestUtils.waitForNewTab(gBrowser, newTabURL);
-    yield ContentTask.spawn(browser, {}, function() {
+    await ContentTask.spawn(browser, {}, function() {
       content.document.getElementById("link").click();
     });
-    let tab = yield loaded;
+    let tab = await loaded;
     browser = tab.linkedBrowser;
-    yield waitForInsecureLoginFormsStateChange(browser, 2);
+    await waitForInsecureLoginFormsStateChange(browser, 2);
 
     // Open the identity popup.
     let { gIdentityHandler } = gBrowser.ownerGlobal;
     gIdentityHandler._identityBox.click();
+    let promiseViewShown = BrowserTestUtils.waitForEvent(gIdentityHandler._identityPopup, "ViewShown");
     document.getElementById("identity-popup-security-expander").click();
+    await promiseViewShown;
 
     ok(is_visible(document.getElementById("connection-icon")),
        "Connection icon is visible");
@@ -155,8 +165,13 @@ add_task(function* test_ignoring_window_opener() {
                    element => is_hidden(element)),
        "All messages should be hidden.");
 
-    gIdentityHandler._identityPopup.hidden = true;
+    if (gIdentityHandler._identityPopup.state != "closed") {
+      info("hiding popup");
+      let hideEvent = BrowserTestUtils.waitForEvent(gIdentityHandler._identityPopup, "popuphidden");
+      gIdentityHandler._identityPopup.hidePopup();
+      await hideEvent;
+    }
 
-    yield BrowserTestUtils.removeTab(tab);
+    await BrowserTestUtils.removeTab(tab);
   });
 });

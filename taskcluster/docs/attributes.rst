@@ -26,8 +26,9 @@ The projects where this task should be in the target task set.  This is how
 requirements like "only run this on inbound" get implemented.  These are
 either project names or the aliases
 
- * `integration` -- integration branches
- * `release` -- release branches including mozilla-central
+ * `integration` -- integration repositories (autoland, inbound, etc)
+ * `trunk` -- integration repositories plus mozilla-central
+ * `release` -- release repositories including mozilla-central
  * `all` -- everywhere (the default)
 
 For try, this attribute applies only if ``-p all`` is specified.  All jobs can
@@ -155,3 +156,21 @@ locale
 For jobs that operate on only one locale, we set the attribute ``locale`` to the
 specific locale involved. Currently this is only in l10n versions of the
 ``beetmover`` and ``balrog`` kinds.
+
+signed
+======
+Signals that the output of this task contains signed artifacts.
+
+repackage_type
+==============
+This is the type of repackage. Can be ``repackage`` or 
+``repackage_signing``.
+
+toolchain-artifact
+==================
+For toolchain jobs, this is the path to the artifact for that toolchain.
+
+toolchain-alias
+===============
+For toolchain jobs, this optionally gives an alias that can be used instead of the
+real toolchain job name in the toolchains list for build jobs.

@@ -2,13 +2,13 @@
 "crash" ping
 ============
 
-This ping is captured after the main Firefox process crashes or after a content
+This ping is captured after the main Firefox process crashes or after a child process
 process crashes, whether or not the crash report is submitted to
 crash-stats.mozilla.org. It includes non-identifying metadata about the crash.
 
 This ping is sent either by the ```CrashManager``` or by the crash reporter
 client. The ```CrashManager``` is responsible for sending crash pings for the
-content process crashes, which are sent right after the crash is detected,
+child processes crashes, which are sent right after the crash is detected,
 as well as for main process crashes, which are sent after Firefox restarts
 successfully. The crash reporter client sends crash pings only for main process
 crashes whether or not the user also reports the crash. The crash reporter
@@ -28,7 +28,6 @@ Structure:
       ... common ping data
       clientId: <UUID>,
       environment: { ... },
-      processType: <type>, // Type of process that crashed, see below for a list of types
       payload: {
         crashDate: "YYYY-MM-DD",
         crashTime: <ISO Date>, // per-hour resolution
@@ -38,6 +37,7 @@ Structure:
                            // intention of uplifting to Firefox 46
         crashId: <UUID>, // Optional, ID of the associated crash
         minidumpSha256Hash: <hash>, // SHA256 hash of the minidump file
+        processType: <type>, // Type of process that crashed, see below for a list of types
         stackTraces: { ... }, // Optional, see below
         metadata: { // Annotations saved while Firefox was running. See nsExceptionHandler.cpp for more information
           ProductID: "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}",
@@ -45,6 +45,7 @@ Structure:
           ReleaseChannel: <channel>,
           Version: <version number>,
           BuildID: "YYYYMMDDHHMMSS",
+          AsyncShutdownTimeout: <json>, // Optional, present when a shutdown blocker failed to respond within a reasonable amount of time
           AvailablePageFile: <size>, // Windows-only, available paging file
           AvailablePhysicalMemory: <size>, // Windows-only, available physical memory
           AvailableVirtualMemory: <size>, // Windows-only, available virtual memory
@@ -56,7 +57,9 @@ Structure:
           IsGarbageCollecting: 1, // Optional, present only if set to 1
           MozCrashReason: <reason>, // Optional, contains the string passed to MOZ_CRASH()
           OOMAllocationSize: <size>, // Size of the allocation that caused an OOM
+          RemoteType: <type>, // Optional, type of content process, see below for a list of types
           SecondsSinceLastCrash: <duration>, // Seconds elapsed since the last crash occurred
+          ShutdownProgress: <phase>, // Optional, contains the shutdown phase in which the crash occurred
           SystemMemoryUsePercentage: <percentage>, // Windows-only, percent of memory in use
           TelemetrySessionId: <id>, // Active telemetry session ID when the crash was recorded
           TextureUsage: <usage>, // Optional, usage of texture memory in bytes
@@ -89,6 +92,27 @@ are sent only for the ones below:
 +---------------+---------------------------------------------------+
 | content       | Content process                                   |
 +---------------+---------------------------------------------------+
+| gpu           | GPU process                                       |
++---------------+---------------------------------------------------+
+
+.. _remote-process-types:
+
+Remote Process Types
+--------------------
+
+The optional ``remoteType`` field contains the type of the content process that
+crashed. As such it is present only if ``processType`` contains the ``content``
+value. The following content process types are currently defined:
+
++-----------+--------------------------------------------------------+
+| Type      | Description                                            |
++===========+========================================================+
+| web       | The content process was running code from a web page   |
++-----------+--------------------------------------------------------+
+| file      | The content process was running code from a local file |
++-----------+--------------------------------------------------------+
+| extension | The content process was running code from an extension |
++-----------+--------------------------------------------------------+
 
 Stack Traces
 ------------

@@ -262,6 +262,7 @@ typedef FallibleTArray<AddPrefix>   AddPrefixArray;
 typedef FallibleTArray<AddComplete> AddCompleteArray;
 typedef FallibleTArray<SubPrefix>   SubPrefixArray;
 typedef FallibleTArray<SubComplete> SubCompleteArray;
+typedef FallibleTArray<Prefix>      MissPrefixArray;
 
 /**
  * Compares chunks by their add chunk, then their prefix.
@@ -318,7 +319,6 @@ typedef nsClassHashtable<nsUint32HashKey, nsCString> PrefixStringMap;
 
 typedef nsDataHashtable<nsCStringHashKey, int64_t> TableFreshnessMap;
 
-typedef nsCStringHashKey VLHashPrefixString;
 typedef nsCStringHashKey FullHashString;
 
 typedef nsDataHashtable<FullHashString, int64_t> FullHashExpiryCache;
@@ -354,7 +354,17 @@ struct CachedFullHashResponse {
   }
 };
 
-typedef nsClassHashtable<VLHashPrefixString, CachedFullHashResponse> FullHashResponseMap;
+typedef nsClassHashtable<nsUint32HashKey, CachedFullHashResponse> FullHashResponseMap;
+
+template<class T>
+void
+CopyClassHashTable(const T& aSource, T& aDestination)
+{
+  for (auto iter = aSource.ConstIter(); !iter.Done(); iter.Next()) {
+    auto value = aDestination.LookupOrAdd(iter.Key());
+    *value = *(iter.Data());
+  }
+}
 
 } // namespace safebrowsing
 } // namespace mozilla

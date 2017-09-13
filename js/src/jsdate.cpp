@@ -18,6 +18,7 @@
 #include "jsdate.h"
 
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/Atomics.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Sprintf.h"
 
@@ -48,16 +49,21 @@
 
 using namespace js;
 
+using mozilla::Atomic;
 using mozilla::ArrayLength;
 using mozilla::IsFinite;
 using mozilla::IsNaN;
 using mozilla::NumbersAreIdentical;
+using mozilla::ReleaseAcquire;
 
 using JS::AutoCheckCannotGC;
 using JS::ClippedTime;
 using JS::GenericNaN;
 using JS::TimeClip;
 using JS::ToInteger;
+
+// When this value is non-zero, we'll round the time by this resolution.
+static Atomic<uint32_t, ReleaseAcquire> sResolutionUsec;
 
 /*
  * The JS 'Date' object is patterned after the Java 'Date' object.
@@ -397,6 +403,12 @@ JS_PUBLIC_API(double)
 JS::DayWithinYear(double time, double year)
 {
     return ::DayWithinYear(time, year);
+}
+
+JS_PUBLIC_API(void)
+JS::SetTimeResolutionUsec(uint32_t resolution)
+{
+    sResolutionUsec = resolution;
 }
 
 /*
@@ -1250,7 +1262,11 @@ date_parse(JSContext* cx, unsigned argc, Value* vp)
 static ClippedTime
 NowAsMillis()
 {
-    return TimeClip(static_cast<double>(PRMJ_Now()) / PRMJ_USEC_PER_MSEC);
+    double now = PRMJ_Now();
+    if (sResolutionUsec) {
+        now = floor(now / sResolutionUsec) * sResolutionUsec;
+    }
+    return TimeClip(now / PRMJ_USEC_PER_MSEC);
 }
 
 bool
@@ -2924,47 +2940,20 @@ date_toSource(JSContext* cx, unsigned argc, Value* vp)
 }
 #endif
 
-MOZ_ALWAYS_INLINE bool
-IsObject(HandleValue v)
-{
-    return v.isObject();
-}
-
 // ES6 20.3.4.41.
 MOZ_ALWAYS_INLINE bool
 date_toString_impl(JSContext* cx, const CallArgs& args)
 {
-    // Step 1.
-    RootedObject obj(cx, &args.thisv().toObject());
-
-    // Step 2.
-    ESClass cls;
-    if (!GetBuiltinClass(cx, obj, &cls))
-        return false;
-
-    double tv;
-    if (cls != ESClass::Date) {
-        // Step 2.
-        tv = GenericNaN();
-    } else {
-        // Step 3.
-        RootedValue unboxed(cx);
-        if (!Unbox(cx, obj, &unboxed))
-            return false;
-
-        tv = unboxed.toNumber();
-    }
-
-    // Step 4.
-    return FormatDate(cx, tv, FormatSpec::DateTime, args.rval());
+    // Steps 1-2.
+    return FormatDate(cx, args.thisv().toObject().as<DateObject>().UTCTime().toNumber(),
+                      FormatSpec::DateTime, args.rval());
 }
 
 bool
 date_toString(JSContext* cx, unsigned argc, Value* vp)
 {
-    // Step 1.
     CallArgs args = CallArgsFromVp(argc, vp);
-    return CallNonGenericMethod<IsObject, date_toString_impl>(cx, args);
+    return CallNonGenericMethod<IsDate, date_toString_impl>(cx, args);
 }
 
 MOZ_ALWAYS_INLINE bool
@@ -3079,8 +3068,7 @@ NewDateObject(JSContext* cx, const CallArgs& args, ClippedTime t)
     MOZ_ASSERT(args.isConstructing());
 
     RootedObject proto(cx);
-    RootedObject newTarget(cx, &args.newTarget().toObject());
-    if (!GetPrototypeFromConstructor(cx, newTarget, &proto))
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto))
         return false;
 
     JSObject* obj = NewDateObjectMsec(cx, t, proto);

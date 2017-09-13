@@ -29,6 +29,21 @@ for (let key of Object.keys(ThreadSafeDevToolsUtils)) {
 }
 
 /**
+ * Helper for Cu.isCrossProcessWrapper that works with Debugger.Objects.
+ * This will always return false in workers (see the implementation in
+ * ThreadSafeDevToolsUtils.js).
+ *
+ * @param Debugger.Object debuggerObject
+ * @return bool
+ */
+exports.isCPOW = function (debuggerObject) {
+  try {
+    return Cu.isCrossProcessWrapper(debuggerObject.unsafeDereference());
+  } catch (e) { }
+  return false;
+};
+
+/**
  * Waits for the next tick in the event loop to execute a callback.
  */
 exports.executeSoon = function (fn) {
@@ -46,9 +61,9 @@ exports.executeSoon = function (fn) {
     } else {
       executor = fn;
     }
-    Services.tm.mainThread.dispatch({
+    Services.tm.dispatchToMainThread({
       run: exports.makeInfallible(executor)
-    }, Ci.nsIThread.DISPATCH_NORMAL);
+    });
   }
 };
 
@@ -233,13 +248,31 @@ exports.isSafeJSObject = function (obj) {
     return true;
   }
 
-  let principal = Cu.getObjectPrincipal(obj);
-  if (Services.scriptSecurityManager.isSystemPrincipal(principal)) {
-    // allow chrome objects
+  // Xray wrappers protect against unintended code execution.
+  if (Cu.isXrayWrapper(obj)) {
     return true;
   }
 
-  return Cu.isXrayWrapper(obj);
+  // If there aren't Xrays, only allow chrome objects.
+  let principal = Cu.getObjectPrincipal(obj);
+  if (!Services.scriptSecurityManager.isSystemPrincipal(principal)) {
+    return false;
+  }
+
+  // Scripted proxy objects without Xrays can run their proxy traps.
+  if (Cu.isProxy(obj)) {
+    return false;
+  }
+
+  // Even if `obj` looks safe, an unsafe object in its prototype chain may still
+  // run unintended code, e.g. when using the `instanceof` operator.
+  let proto = Object.getPrototypeOf(obj);
+  if (proto && !exports.isSafeJSObject(proto)) {
+    return false;
+  }
+
+  // Allow non-problematic chrome objects.
+  return true;
 };
 
 exports.dumpn = function (str) {
@@ -361,10 +394,6 @@ DevToolsUtils.defineLazyGetter(this, "NetUtil", () => {
 
 DevToolsUtils.defineLazyGetter(this, "OS", () => {
   return Cu.import("resource://gre/modules/osfile.jsm", {}).OS;
-});
-
-DevToolsUtils.defineLazyGetter(this, "TextDecoder", () => {
-  return Cu.import("resource://gre/modules/osfile.jsm", {}).TextDecoder;
 });
 
 DevToolsUtils.defineLazyGetter(this, "NetworkHelper", () => {

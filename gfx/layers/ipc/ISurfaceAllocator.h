@@ -29,6 +29,7 @@ class DataSourceSurface;
 namespace layers {
 
 class CompositableForwarder;
+class CompositorBridgeParentBase;
 class TextureForwarder;
 
 class ShmemAllocator;
@@ -89,6 +90,8 @@ public:
   virtual LegacySurfaceDescriptorAllocator*
   AsLegacySurfaceDescriptorAllocator() { return nullptr; }
 
+  virtual CompositorBridgeParentBase* AsCompositorBridgeParentBase() { return nullptr; }
+
   // ipc info
 
   virtual bool IPCOpen() const { return true; }
@@ -116,8 +119,6 @@ public:
   virtual base::ProcessId GetParentPid() const = 0;
 
   virtual MessageLoop * GetMessageLoop() const = 0;
-
-  virtual int32_t GetMaxTextureSize() const;
 
   virtual void CancelWaitForRecycle(uint64_t aTextureId) = 0;
 };

@@ -34,11 +34,9 @@
 #include "mozilla/EventStateManager.h"
 #include "nsIAtom.h"
 #include "nsRange.h"
-#include "nsContentList.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/dom/Element.h"
 #include "nsRuleWalker.h"
-#include "nsRuleProcessorData.h"
 #include "nsCSSPseudoClasses.h"
 #include "nsCSSRuleProcessor.h"
 #include "mozilla/dom/CSSLexer.h"
@@ -48,13 +46,12 @@
 #include "nsCSSProps.h"
 #include "nsCSSValue.h"
 #include "nsColor.h"
-#include "mozilla/StyleSetHandle.h"
 #include "mozilla/StyleSetHandleInlines.h"
 #include "nsStyleUtil.h"
 #include "nsQueryObject.h"
 #include "mozilla/ServoBindings.h"
-#include "mozilla/ServoCSSRuleList.h"
 #include "mozilla/ServoStyleRule.h"
+#include "mozilla/ServoStyleRuleMap.h"
 
 using namespace mozilla;
 using namespace mozilla::css;
@@ -99,20 +96,17 @@ inDOMUtils::GetAllStyleSheets(nsIDOMDocument *aDocument, uint32_t *aLength,
     for (int32_t i = 0; i < styleSet->SheetCount(sheetType); i++) {
       sheets.AppendElement(styleSet->StyleSheetAt(sheetType, i));
     }
-    if (styleSet->IsGecko()) {
-      AutoTArray<CSSStyleSheet*, 32> xblSheetArray;
-      styleSet->AsGecko()->AppendAllXBLStyleSheets(xblSheetArray);
 
-      // The XBL stylesheet array will quite often be full of duplicates. Cope:
-      nsTHashtable<nsPtrHashKey<CSSStyleSheet>> sheetSet;
-      for (CSSStyleSheet* sheet : xblSheetArray) {
-        if (!sheetSet.Contains(sheet)) {
-          sheetSet.PutEntry(sheet);
-          sheets.AppendElement(sheet);
-        }
+    AutoTArray<StyleSheet*, 32> xblSheetArray;
+    styleSet->AppendAllXBLStyleSheets(xblSheetArray);
+
+    // The XBL stylesheet array will quite often be full of duplicates. Cope:
+    nsTHashtable<nsPtrHashKey<StyleSheet>> sheetSet;
+    for (StyleSheet* sheet : xblSheetArray) {
+      if (!sheetSet.Contains(sheet)) {
+        sheetSet.PutEntry(sheet);
+        sheets.AppendElement(sheet);
       }
-    } else {
-      NS_WARNING("stylo: XBL style sheets not supported yet");
     }
   }
 
@@ -245,14 +239,13 @@ inDOMUtils::GetCSSStyleRules(nsIDOMElement *aElement,
     return NS_OK;
   }
 
-  NonOwningStyleContextSource source = styleContext->StyleSource();
-  if (source.IsNull()) {
-    return NS_OK;
-  }
 
   nsCOMPtr<nsIMutableArray> rules = nsArray::Create();
-  if (source.IsGeckoRuleNodeOrNull()) {
-    nsRuleNode* ruleNode = source.AsGeckoRuleNode();
+  if (auto gecko = styleContext->GetAsGecko()) {
+    nsRuleNode* ruleNode = gecko->RuleNode();
+    if (!ruleNode) {
+      return NS_OK;
+    }
 
     AutoTArray<nsRuleNode*, 16> ruleNodes;
     while (!ruleNode->IsRoot()) {
@@ -270,40 +263,55 @@ inDOMUtils::GetCSSStyleRules(nsIDOMElement *aElement,
       }
     }
   } else {
-    // It's a Servo source, so use some servo methods on the element to get
-    // the rule list.
+    nsIDocument* doc = element->GetOwnerDocument();
+    nsIPresShell* shell = doc->GetShell();
+    if (!shell) {
+      return NS_OK;
+    }
+
+    ServoStyleContext* servo = styleContext->AsServo();
     nsTArray<const RawServoStyleRule*> rawRuleList;
-    Servo_Element_GetStyleRuleList(element, &rawRuleList);
-    size_t rawRuleCount = rawRuleList.Length();
+    Servo_ComputedValues_GetStyleRuleList(servo, &rawRuleList);
 
-    // We have RawServoStyleRules, and now we'll map them to ServoStyleRules
-    // by looking them up in the ServoStyleSheets owned by this document.
-    ServoCSSRuleList::StyleRuleHashtable rawRulesToRules;
+    AutoTArray<ServoStyleRuleMap*, 1> maps;
+    {
+      ServoStyleSet* styleSet = shell->StyleSet()->AsServo();
+      ServoStyleRuleMap* map = styleSet->StyleRuleMap();
+      map->EnsureTable();
+      maps.AppendElement(map);
+    }
 
-    nsIDocument* document = element->GetOwnerDocument();
-    int32_t sheetCount = document->GetNumberOfStyleSheets();
-
-    for (int32_t i = 0; i < sheetCount; i++) {
-      StyleSheet* sheet = document->GetStyleSheetAt(i);
-      MOZ_ASSERT(sheet->IsServo());
-
-      ErrorResult ignored;
-      ServoCSSRuleList* ruleList = static_cast<ServoCSSRuleList*>(
-        sheet->GetCssRules(*nsContentUtils::SubjectPrincipal(), ignored));
-      if (ruleList) {
-        // Generate the map from raw rules to rules.
-        ruleList->FillStyleRuleHashtable(rawRulesToRules);
+    // Collect style rule maps for bindings.
+    for (nsIContent* bindingContent = element; bindingContent;
+         bindingContent = bindingContent->GetBindingParent()) {
+      if (nsXBLBinding* binding = bindingContent->GetXBLBinding()) {
+        if (ServoStyleSet* styleSet = binding->GetServoStyleSet()) {
+          ServoStyleRuleMap* map = styleSet->StyleRuleMap();
+          map->EnsureTable();
+          maps.AppendElement(map);
+        }
       }
+      // Note that we intentionally don't cut off here, unlike when we
+      // do styling, because even if style rules from parent binding
+      // do not apply to the element directly in those cases, their
+      // rules may still show up in the list we get above due to the
+      // inheritance in cascading.
     }
 
     // Find matching rules in the table.
-    for (size_t j = 0; j < rawRuleCount; j++) {
-      const RawServoStyleRule* rawRule = rawRuleList.ElementAt(j);
-      ServoStyleRule* rule;
-      rawRulesToRules.Get(rawRule, &rule);
-      MOZ_ASSERT(rule, "We should always be able to map a raw rule to a rule.");
-      RefPtr<css::Rule> ruleObj(rule);
-      rules->AppendElement(ruleObj, false);
+    for (const RawServoStyleRule* rawRule : Reversed(rawRuleList)) {
+      ServoStyleRule* rule = nullptr;
+      for (ServoStyleRuleMap* map : maps) {
+        rule = map->Lookup(rawRule);
+        if (rule) {
+          break;
+        }
+      }
+      if (rule) {
+        rules->AppendElement(static_cast<css::Rule*>(rule), false);
+      } else {
+        MOZ_ASSERT_UNREACHABLE("We should be able to map a raw rule to a rule");
+      }
     }
   }
 
@@ -312,7 +320,7 @@ inDOMUtils::GetCSSStyleRules(nsIDOMElement *aElement,
   return NS_OK;
 }
 
-static already_AddRefed<StyleRule>
+static already_AddRefed<BindingStyleRule>
 GetRuleFromDOMRule(nsIDOMCSSStyleRule *aRule, ErrorResult& rv)
 {
   nsCOMPtr<nsICSSStyleRuleDOMWrapper> rule = do_QueryInterface(aRule);
@@ -321,7 +329,7 @@ GetRuleFromDOMRule(nsIDOMCSSStyleRule *aRule, ErrorResult& rv)
     return nullptr;
   }
 
-  RefPtr<StyleRule> cssrule;
+  RefPtr<BindingStyleRule> cssrule;
   rv = rule->GetCSSStyleRule(getter_AddRefs(cssrule));
   if (rv.Failed()) {
     return nullptr;
@@ -405,37 +413,14 @@ NS_IMETHODIMP
 inDOMUtils::GetSelectorCount(nsIDOMCSSStyleRule* aRule, uint32_t *aCount)
 {
   ErrorResult rv;
-  RefPtr<StyleRule> rule = GetRuleFromDOMRule(aRule, rv);
+  RefPtr<BindingStyleRule> rule = GetRuleFromDOMRule(aRule, rv);
   if (rv.Failed()) {
     return rv.StealNSResult();
   }
 
-  uint32_t count = 0;
-  for (nsCSSSelectorList* sel = rule->Selector(); sel; sel = sel->mNext) {
-    ++count;
-  }
-  *aCount = count;
+  *aCount = rule->GetSelectorCount();
+
   return NS_OK;
-}
-
-static nsCSSSelectorList*
-GetSelectorAtIndex(nsIDOMCSSStyleRule* aRule, uint32_t aIndex, ErrorResult& rv)
-{
-  RefPtr<StyleRule> rule = GetRuleFromDOMRule(aRule, rv);
-  if (rv.Failed()) {
-    return nullptr;
-  }
-
-  for (nsCSSSelectorList* sel = rule->Selector(); sel;
-       sel = sel->mNext, --aIndex) {
-    if (aIndex == 0) {
-      return sel;
-    }
-  }
-
-  // Ran out of selectors
-  rv.Throw(NS_ERROR_INVALID_ARG);
-  return nullptr;
 }
 
 NS_IMETHODIMP
@@ -444,31 +429,24 @@ inDOMUtils::GetSelectorText(nsIDOMCSSStyleRule* aRule,
                             nsAString& aText)
 {
   ErrorResult rv;
-  nsCSSSelectorList* sel = GetSelectorAtIndex(aRule, aSelectorIndex, rv);
-  if (rv.Failed()) {
-    return rv.StealNSResult();
-  }
-
-  RefPtr<StyleRule> rule = GetRuleFromDOMRule(aRule, rv);
+  RefPtr<BindingStyleRule> rule = GetRuleFromDOMRule(aRule, rv);
   MOZ_ASSERT(!rv.Failed(), "How could we get a selector but not a rule?");
 
-  sel->mSelectors->ToString(aText, rule->GetStyleSheet(), false);
-  return NS_OK;
+  return rule->GetSelectorText(aSelectorIndex, aText);
 }
 
 NS_IMETHODIMP
 inDOMUtils::GetSpecificity(nsIDOMCSSStyleRule* aRule,
-                            uint32_t aSelectorIndex,
-                            uint64_t* aSpecificity)
+                           uint32_t aSelectorIndex,
+                           uint64_t* aSpecificity)
 {
   ErrorResult rv;
-  nsCSSSelectorList* sel = GetSelectorAtIndex(aRule, aSelectorIndex, rv);
+  RefPtr<BindingStyleRule> rule = GetRuleFromDOMRule(aRule, rv);
   if (rv.Failed()) {
     return rv.StealNSResult();
   }
 
-  *aSpecificity = sel->mWeight;
-  return NS_OK;
+  return rule->GetSpecificity(aSelectorIndex, aSpecificity);
 }
 
 NS_IMETHODIMP
@@ -482,46 +460,13 @@ inDOMUtils::SelectorMatchesElement(nsIDOMElement* aElement,
   NS_ENSURE_ARG_POINTER(element);
 
   ErrorResult rv;
-  nsCSSSelectorList* tail = GetSelectorAtIndex(aRule, aSelectorIndex, rv);
+  RefPtr<BindingStyleRule> rule = GetRuleFromDOMRule(aRule, rv);
   if (rv.Failed()) {
     return rv.StealNSResult();
   }
 
-  // We want just the one list item, not the whole list tail
-  nsAutoPtr<nsCSSSelectorList> sel(tail->Clone(false));
-
-  // Do not attempt to match if a pseudo element is requested and this is not
-  // a pseudo element selector, or vice versa.
-  if (aPseudo.IsEmpty() == sel->mSelectors->IsPseudoElement()) {
-    *aMatches = false;
-    return NS_OK;
-  }
-
-  if (!aPseudo.IsEmpty()) {
-    // We need to make sure that the requested pseudo element type
-    // matches the selector pseudo element type before proceeding.
-    nsCOMPtr<nsIAtom> pseudoElt = NS_Atomize(aPseudo);
-    if (sel->mSelectors->PseudoType() != nsCSSPseudoElements::
-          GetPseudoType(pseudoElt, CSSEnabledState::eIgnoreEnabledState)) {
-      *aMatches = false;
-      return NS_OK;
-    }
-
-    // We have a matching pseudo element, now remove it so we can compare
-    // directly against |element| when proceeding into SelectorListMatches.
-    // It's OK to do this - we just cloned sel and nothing else is using it.
-    sel->RemoveRightmostSelector();
-  }
-
-  element->OwnerDoc()->FlushPendingLinkUpdates();
-  // XXXbz what exactly should we do with visited state here?
-  TreeMatchContext matchingContext(false,
-                                   nsRuleWalker::eRelevantLinkUnvisited,
-                                   element->OwnerDoc(),
-                                   TreeMatchContext::eNeverMatchVisited);
-  *aMatches = nsCSSRuleProcessor::SelectorListMatches(element, matchingContext,
-                                                      sel);
-  return NS_OK;
+  return rule->SelectorMatchesElement(element, aSelectorIndex, aPseudo,
+                                      aMatches);
 }
 
 NS_IMETHODIMP
@@ -665,7 +610,6 @@ static void GetColorsForProperty(const uint32_t aParserVariant,
     }
     InsertNoDuplicates(aArray, NS_LITERAL_STRING("currentColor"));
   }
-  return;
 }
 
 static void GetOtherValuesForProperty(const uint32_t aParserVariant,
@@ -848,6 +792,7 @@ PropertySupportsVariant(nsCSSPropertyID aPropertyID, uint32_t aVariant)
       case eCSSProperty__moz_outline_radius_topright:
       case eCSSProperty__moz_outline_radius_bottomleft:
       case eCSSProperty__moz_outline_radius_bottomright:
+      case eCSSProperty__moz_window_transform_origin:
         supported = VARIANT_LP;
         break;
 
@@ -1170,6 +1115,7 @@ inDOMUtils::SetContentState(nsIDOMElement* aElement,
 NS_IMETHODIMP
 inDOMUtils::RemoveContentState(nsIDOMElement* aElement,
                                EventStates::InternalType aState,
+                               bool aClearActiveDocument,
                                bool* aRetVal)
 {
   NS_ENSURE_ARG_POINTER(aElement);
@@ -1179,6 +1125,15 @@ inDOMUtils::RemoveContentState(nsIDOMElement* aElement,
   NS_ENSURE_TRUE(esm, NS_ERROR_INVALID_ARG);
 
   *aRetVal = esm->SetContentState(nullptr, EventStates(aState));
+
+  if (aClearActiveDocument && EventStates(aState) == NS_EVENT_STATE_ACTIVE) {
+    EventStateManager* activeESM = static_cast<EventStateManager*>(
+      EventStateManager::GetActiveEventStateManager());
+    if (activeESM == esm) {
+      EventStateManager::ClearGlobalActiveContent(nullptr);
+    }
+  }
+
   return NS_OK;
 }
 
@@ -1365,10 +1320,19 @@ NS_IMETHODIMP
 inDOMUtils::ParseStyleSheet(nsIDOMCSSStyleSheet *aSheet,
                             const nsAString& aInput)
 {
-  RefPtr<CSSStyleSheet> sheet = do_QueryObject(aSheet);
-  NS_ENSURE_ARG_POINTER(sheet);
+  RefPtr<CSSStyleSheet> geckoSheet = do_QueryObject(aSheet);
+  if (geckoSheet) {
+    NS_ENSURE_ARG_POINTER(geckoSheet);
+    return geckoSheet->ReparseSheet(aInput);
+  }
 
-  return sheet->ReparseSheet(aInput);
+  RefPtr<ServoStyleSheet> servoSheet = do_QueryObject(aSheet);
+  if (servoSheet) {
+    NS_ENSURE_ARG_POINTER(servoSheet);
+    return servoSheet->ReparseSheet(aInput);
+  }
+
+  return NS_ERROR_INVALID_POINTER;
 }
 
 NS_IMETHODIMP

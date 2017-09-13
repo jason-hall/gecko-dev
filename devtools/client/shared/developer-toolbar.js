@@ -20,16 +20,16 @@ const { PluralForm } = require("devtools/shared/plural-form");
 
 loader.lazyGetter(this, "prefBranch", function () {
   return Services.prefs.getBranch(null)
-                    .QueryInterface(Ci.nsIPrefBranch2);
+                    .QueryInterface(Ci.nsIPrefBranch);
 });
 
 loader.lazyRequireGetter(this, "gcliInit", "devtools/shared/gcli/commands/index");
 loader.lazyRequireGetter(this, "util", "gcli/util/util");
-loader.lazyRequireGetter(this, "ConsoleServiceListener", "devtools/server/actors/utils/webconsole-listeners", true);
+loader.lazyRequireGetter(this, "ConsoleServiceListener", "devtools/server/actors/webconsole/listeners", true);
 loader.lazyRequireGetter(this, "gDevTools", "devtools/client/framework/devtools", true);
 loader.lazyRequireGetter(this, "gDevToolsBrowser", "devtools/client/framework/devtools-browser", true);
 loader.lazyRequireGetter(this, "nodeConstants", "devtools/shared/dom-node-constants");
-loader.lazyRequireGetter(this, "EventEmitter", "devtools/shared/event-emitter");
+loader.lazyRequireGetter(this, "EventEmitter", "devtools/shared/old-event-emitter");
 
 /**
  * A collection of utilities to help working with commands
@@ -226,11 +226,14 @@ DeveloperToolbar.prototype.createToolbar = function () {
   let toolbar = this._doc.createElement("toolbar");
   toolbar.setAttribute("id", "developer-toolbar");
   toolbar.setAttribute("hidden", "true");
+  toolbar.setAttribute("fullscreentoolbar", "true");
 
   let close = this._doc.createElement("toolbarbutton");
   close.setAttribute("id", "developer-toolbar-closebutton");
   close.setAttribute("class", "close-icon");
-  close.setAttribute("oncommand", "DeveloperToolbar.hide();");
+  close.addEventListener("command", (event) => {
+    this.hide();
+  });
   let closeTooltip = L10N.getStr("toolbar.closeButton.tooltip");
   close.setAttribute("tooltiptext", closeTooltip);
 
@@ -377,6 +380,9 @@ DeveloperToolbar.prototype.show = function (focus) {
     // null, so that the spawn call returns a promise before starting
     // to do any real work.
     yield this._hidePromise;
+
+    // Append the browser-level stylesheet to the browser document.
+    yield gDevToolsBrowser.loadBrowserStyleSheet(this._chromeWindow);
 
     this.createToolbar();
 
@@ -625,7 +631,7 @@ DeveloperToolbar.prototype.destroy = function () {
 DeveloperToolbar.prototype._notify = function (topic) {
   let data = { toolbar: this };
   data.wrappedJSObject = data;
-  Services.obs.notifyObservers(data, topic, null);
+  Services.obs.notifyObservers(data, topic);
 };
 
 /**
@@ -1003,7 +1009,7 @@ OutputPanel.prototype._outputChanged = function (ev) {
     this._update();
   } else {
     this.displayedOutput.promise.then(this._update, this._update)
-                                .then(null, console.error);
+                                .catch(console.error);
   }
 };
 

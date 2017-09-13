@@ -7,6 +7,7 @@
 #include "mozilla/Assertions.h"
 
 #include "GeneratedJNIWrappers.h"
+#include "AndroidBuild.h"
 #include "nsAppShell.h"
 
 #ifdef MOZ_CRASHREPORTER
@@ -287,29 +288,40 @@ jclass GetClassRef(JNIEnv* aEnv, const char* aClassName)
     return nullptr;
 }
 
-void DispatchToGeckoPriorityQueue(UniquePtr<AbstractCall>&& aCall)
+void DispatchToGeckoPriorityQueue(already_AddRefed<nsIRunnable> aCall)
 {
-    class AbstractCallEvent : public nsAppShell::Event
+    class RunnableEvent : public nsAppShell::Event
     {
-        UniquePtr<AbstractCall> mCall;
-
+        nsCOMPtr<nsIRunnable> mCall;
     public:
-        AbstractCallEvent(UniquePtr<AbstractCall>&& aCall)
-            : mCall(Move(aCall))
-        {}
-
-        void Run() override
-        {
-            (*mCall)();
-        }
+        RunnableEvent(already_AddRefed<nsIRunnable> aCall) : mCall(aCall) {}
+        void Run() override { NS_ENSURE_SUCCESS_VOID(mCall->Run()); }
     };
 
-    nsAppShell::PostEvent(MakeUnique<AbstractCallEvent>(Move(aCall)));
+    nsAppShell::PostEvent(MakeUnique<RunnableEvent>(Move(aCall)));
 }
 
 bool IsFennec()
 {
     return sIsFennec;
+}
+
+int GetAPIVersion()
+{
+    static int32_t apiVersion = 0;
+    if (!apiVersion && IsAvailable()) {
+        apiVersion = java::sdk::VERSION::SDK_INT();
+    }
+    return apiVersion;
+}
+
+pid_t GetUIThreadId()
+{
+    static pid_t uiThreadId;
+    if (!uiThreadId) {
+        uiThreadId = pid_t(java::GeckoThread::UiThreadId());
+    }
+    return uiThreadId;
 }
 
 } // jni

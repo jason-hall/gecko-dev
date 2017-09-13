@@ -6,8 +6,9 @@
 #ifndef GFX_WEBRENDERCANVASLAYER_H
 #define GFX_WEBRENDERCANVASLAYER_H
 
-#include "ShareableCanvasLayer.h"
-#include "WebRenderLayerManager.h"
+#include "Layers.h"
+#include "mozilla/layers/WebRenderLayer.h"
+#include "mozilla/layers/WebRenderLayerManager.h"
 
 namespace mozilla {
 namespace gfx {
@@ -17,35 +18,26 @@ class SourceSurface;
 namespace layers {
 
 class WebRenderCanvasLayer : public WebRenderLayer,
-                             public ShareableCanvasLayer
+                             public CanvasLayer
 {
 public:
   explicit WebRenderCanvasLayer(WebRenderLayerManager* aLayerManager)
-    : ShareableCanvasLayer(aLayerManager, static_cast<WebRenderLayer*>(this))
-    , mExternalImageId(0)
+    : CanvasLayer(aLayerManager, static_cast<WebRenderLayer*>(this))
   {
     MOZ_COUNT_CTOR(WebRenderCanvasLayer);
   }
 
-  virtual void Initialize(const Data& aData) override;
+  CanvasRenderer* CreateCanvasRendererInternal() override;
 
-  virtual CompositableForwarder* GetForwarder() override;
-
-  virtual void AttachCompositable() override;
+  virtual void ClearCachedResources() override;
 
 protected:
   virtual ~WebRenderCanvasLayer();
-  WebRenderLayerManager* Manager()
-  {
-    return static_cast<WebRenderLayerManager*>(mManager);
-  }
 
 public:
   Layer* GetLayer() override { return this; }
-  void RenderLayer(wr::DisplayListBuilder& aBuilder) override;
-
-protected:
-  uint64_t mExternalImageId;
+  void RenderLayer(wr::DisplayListBuilder& aBuilder,
+                   const StackingContextHelper& aSc) override;
 };
 
 } // namespace layers

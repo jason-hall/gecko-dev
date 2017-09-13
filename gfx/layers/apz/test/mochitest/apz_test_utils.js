@@ -123,7 +123,7 @@ function flushApzRepaints(aCallback, aWindow = window) {
     SpecialPowers.Services.obs.removeObserver(repaintDone, "apz-repaints-flushed");
     setTimeout(aCallback, 0);
   };
-  SpecialPowers.Services.obs.addObserver(repaintDone, "apz-repaints-flushed", false);
+  SpecialPowers.Services.obs.addObserver(repaintDone, "apz-repaints-flushed");
   if (SpecialPowers.getDOMWindowUtils(aWindow).flushApzRepaints()) {
     dump("Flushed APZ repaints, waiting for callback...\n");
   } else {
@@ -273,6 +273,10 @@ function isApzEnabled() {
     SimpleTest.ok(true, "APZ is not enabled; this test will be skipped");
   }
   return enabled;
+}
+
+function isKeyApzEnabled() {
+  return isApzEnabled() && SpecialPowers.getBoolPref("apz.keyboard.enabled");
 }
 
 // Despite what this function name says, this does not *directly* run the

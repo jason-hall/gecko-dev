@@ -60,7 +60,7 @@ var RemoteDebugger = {
   },
 
   _promptForUSB(session) {
-    if (session.authentication !== 'PROMPT') {
+    if (session.authentication !== "PROMPT") {
       // This dialog is not prepared for any other authentication method at
       // this time.
       return DebuggerServer.AuthenticationResult.DENY;
@@ -94,7 +94,7 @@ var RemoteDebugger = {
   },
 
   _promptForTCP(session) {
-    if (session.authentication !== 'OOB_CERT' || !session.client.cert) {
+    if (session.authentication !== "OOB_CERT" || !session.client.cert) {
       // This dialog is not prepared for any other authentication method at
       // this time.
       return DebuggerServer.AuthenticationResult.DENY;
@@ -199,7 +199,7 @@ RemoteDebugger.receiveOOB =
 var USBRemoteDebugger = {
 
   init() {
-    Services.prefs.addObserver("devtools.", this, false);
+    Services.prefs.addObserver("devtools.", this);
 
     if (this.isEnabled) {
       this.start();
@@ -279,7 +279,7 @@ var USBRemoteDebugger = {
 var WiFiRemoteDebugger = {
 
   init() {
-    Services.prefs.addObserver("devtools.", this, false);
+    Services.prefs.addObserver("devtools.", this);
 
     if (this.isEnabled) {
       this.start();

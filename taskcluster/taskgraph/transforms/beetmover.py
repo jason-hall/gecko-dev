@@ -8,6 +8,7 @@ Transform the beetmover task into an actual task description.
 from __future__ import absolute_import, print_function, unicode_literals
 
 from taskgraph.transforms.base import TransformSequence
+from taskgraph.util.attributes import copy_attributes_from_dependent_job
 from taskgraph.util.schema import validate_schema, Schema
 from taskgraph.util.scriptworker import (get_beetmover_bucket_scope,
                                          get_beetmover_action_scope)
@@ -15,11 +16,10 @@ from taskgraph.transforms.task import task_description_schema
 from voluptuous import Any, Required, Optional
 
 
-# For developers: if you are adding any new artifacts here that need to be
-# transfered to S3, please be aware you also need to follow-up with patch in
-# the actual beetmoverscript logic that lies under
-# https://github.com/mozilla-releng/beetmoverscript/. See example in bug
-# 1348286
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US = [
     "balrog_props.json",
     "target.common.tests.zip",
@@ -33,25 +33,40 @@ _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US = [
     "target.awsy.tests.zip",
     "target.test_packages.json",
     "target.txt",
-    "target.web-platform.tests.zip",
+    "target.web-platform.tests.tar.gz",
     "target.xpcshell.tests.zip",
     "target_info.txt",
     "target.jsshell.zip",
     "mozharness.zip",
     "target.langpack.xpi",
-    "host/bin/mar",
-    "host/bin/mbsdiff",
 ]
+
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US = [
     "update/target.complete.mar",
 ]
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_L10N = [
     "target.langpack.xpi",
     "balrog_props.json",
 ]
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_L10N = [
     "target.complete.mar",
 ]
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US = [
     "en-US/target.common.tests.zip",
     "en-US/target.cppunittest.tests.zip",
@@ -64,7 +79,7 @@ _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US = [
     "en-US/target.awsy.tests.zip",
     "en-US/target.test_packages.json",
     "en-US/target.txt",
-    "en-US/target.web-platform.tests.zip",
+    "en-US/target.web-platform.tests.tar.gz",
     "en-US/target.xpcshell.tests.zip",
     "en-US/target_info.txt",
     "en-US/bouncer.apk",
@@ -72,6 +87,10 @@ _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US = [
     "en-US/robocop.apk",
     "en-US/target.jsshell.zip",
 ]
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI = [
     "balrog_props.json",
     "target.common.tests.zip",
@@ -84,7 +103,7 @@ _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI = [
     "target.awsy.tests.zip",
     "target.test_packages.json",
     "target.txt",
-    "target.web-platform.tests.zip",
+    "target.web-platform.tests.tar.gz",
     "target.xpcshell.tests.zip",
     "target_info.txt",
     "bouncer.apk",
@@ -92,28 +111,88 @@ _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI = [
     "robocop.apk",
     "target.jsshell.zip",
 ]
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 _MOBILE_UPSTREAM_ARTIFACTS_SIGNED_EN_US = [
     "en-US/target.apk",
 ]
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 _MOBILE_UPSTREAM_ARTIFACTS_SIGNED_MULTI = [
     "target.apk",
 ]
 
 
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 UPSTREAM_ARTIFACT_UNSIGNED_PATHS = {
-    'linux64-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US,
-    'linux-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US,
+    'linux64-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar",
+        "host/bin/mbsdiff",
+    ],
+    'linux-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar",
+        "host/bin/mbsdiff",
+    ],
+    'linux64-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar",
+        "host/bin/mbsdiff",
+    ],
+    'linux-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar",
+        "host/bin/mbsdiff",
+    ],
     'android-x86-nightly': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US,
-    'android-api-15-nightly': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US,
-    'macosx64-nightly': [],
-
+    'android-aarch64-nightly': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US,
+    'android-api-16-nightly': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US,
+    'android-x86-old-id-nightly': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US,
+    'android-api-16-old-id-nightly': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US,
+    'macosx64-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar",
+        "host/bin/mbsdiff",
+    ],
+    'macosx64-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar",
+        "host/bin/mbsdiff",
+    ],
+    'win32-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar.exe",
+        "host/bin/mbsdiff.exe",
+    ],
+    'win32-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar.exe",
+        "host/bin/mbsdiff.exe",
+    ],
+    'win64-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar.exe",
+        "host/bin/mbsdiff.exe",
+    ],
+    'win64-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_EN_US + [
+        "host/bin/mar.exe",
+        "host/bin/mbsdiff.exe",
+    ],
     'linux64-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_L10N,
     'linux-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_L10N,
     'android-x86-nightly-multi': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI,
-    'android-api-15-nightly-l10n': ["balrog_props.json"],
-    'android-api-15-nightly-multi': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI,
-    'macosx64-nightly-l10n': [],
+    'android-x86-old-id-nightly-multi': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI,
+    'android-aarch64-nightly-multi': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI,
+    'android-api-16-nightly-l10n': ["balrog_props.json"],
+    'android-api-16-nightly-multi': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI,
+    'android-api-16-old-id-nightly-multi': _MOBILE_UPSTREAM_ARTIFACTS_UNSIGNED_MULTI,
+    'macosx64-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_L10N,
+    'win32-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_L10N,
+    'win64-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_UNSIGNED_L10N,
 }
+# Until bug 1331141 is fixed, if you are adding any new artifacts here that
+# need to be transfered to S3, please be aware you also need to follow-up
+# with a beetmover patch in https://github.com/mozilla-releng/beetmoverscript/.
+# See example in bug 1348286
 UPSTREAM_ARTIFACT_SIGNED_PATHS = {
     'linux64-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
         "target.tar.bz2",
@@ -123,10 +202,39 @@ UPSTREAM_ARTIFACT_SIGNED_PATHS = {
         "target.tar.bz2",
         "target.tar.bz2.asc",
     ],
+    'linux64-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
+        "target.tar.bz2",
+        "target.tar.bz2.asc",
+    ],
+    'linux-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
+        "target.tar.bz2",
+        "target.tar.bz2.asc",
+    ],
     'android-x86-nightly': ["en-US/target.apk"],
-    'android-api-15-nightly': ["en-US/target.apk"],
-    'macosx64-nightly': [],
-
+    'android-aarch64-nightly': ["en-US/target.apk"],
+    'android-api-16-nightly': ["en-US/target.apk"],
+    'android-x86-old-id-nightly': ["en-US/target.apk"],
+    'android-api-16-old-id-nightly': ["en-US/target.apk"],
+    'macosx64-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
+        "target.dmg",
+        "target.dmg.asc",
+    ],
+    'macosx64-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
+        "target.dmg",
+        "target.dmg.asc",
+    ],
+    'win32-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
+        "target.zip",
+    ],
+    'win32-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
+        "target.zip",
+    ],
+    'win64-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
+        "target.zip",
+    ],
+    'win64-devedition-nightly': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_EN_US + [
+        "target.zip",
+    ],
     'linux64-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_L10N + [
         "target.tar.bz2",
         "target.tar.bz2.asc",
@@ -136,9 +244,22 @@ UPSTREAM_ARTIFACT_SIGNED_PATHS = {
         "target.tar.bz2.asc",
     ],
     'android-x86-nightly-multi': ["target.apk"],
-    'android-api-15-nightly-l10n': ["target.apk"],
-    'android-api-15-nightly-multi': ["target.apk"],
-    'macosx64-nightly-l10n': [],
+    'android-x86-old-id-nightly-multi': ["target.apk"],
+    'android-aarch64-nightly-multi': ["target.apk"],
+    'android-api-16-nightly-l10n': ["target.apk"],
+    'android-api-16-nightly-multi': ["target.apk"],
+    'android-api-16-old-id-nightly-multi': ["target.apk"],
+    'macosx64-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_L10N + [
+        "target.dmg",
+        "target.dmg.asc",
+    ],
+    'win32-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_L10N + [
+        "target.zip",
+    ],
+    'win64-nightly-l10n': _DESKTOP_UPSTREAM_ARTIFACTS_SIGNED_L10N + [
+        "target.zip",
+    ],
+
 }
 
 # Voluptuous uses marker objects as dictionary *keys*, but they are not
@@ -185,6 +306,7 @@ def validate(config, jobs):
 def make_task_description(config, jobs):
     for job in jobs:
         dep_job = job['dependent-task']
+        attributes = dep_job.attributes
 
         treeherder = job.get('treeherder', {})
         treeherder.setdefault('symbol', 'tc(BM-S)')
@@ -194,7 +316,16 @@ def make_task_description(config, jobs):
                               "{}/opt".format(dep_th_platform))
         treeherder.setdefault('tier', 1)
         treeherder.setdefault('kind', 'build')
-        label = job.get('label', "beetmover-{}".format(dep_job.label))
+        label = job['label']
+        description = (
+            "Beetmover submission for locale '{locale}' for build '"
+            "{build_platform}/{build_type}'".format(
+                locale=attributes.get('locale', 'en-US'),
+                build_platform=attributes.get('build_platform'),
+                build_type=attributes.get('build_type')
+            )
+        )
+
         dependent_kind = str(dep_job.kind)
         dependencies = {dependent_kind: dep_job.label}
 
@@ -204,11 +335,8 @@ def make_task_description(config, jobs):
         signing_dependencies = dep_job.dependencies
         dependencies.update(signing_dependencies)
 
-        attributes = {
-            'nightly': dep_job.attributes.get('nightly', False),
-            'build_platform': dep_job.attributes.get('build_platform'),
-            'build_type': dep_job.attributes.get('build_type'),
-        }
+        attributes = copy_attributes_from_dependent_job(dep_job)
+
         if job.get('locale'):
             attributes['locale'] = job['locale']
 
@@ -217,8 +345,7 @@ def make_task_description(config, jobs):
 
         task = {
             'label': label,
-            'description': "{} Beetmover".format(
-                dep_job.task["metadata"]["description"]),
+            'description': description,
             'worker-type': 'scriptworker-prov-v1/beetmoverworker-v1',
             'scopes': [bucket_scope, action_scope],
             'dependencies': dependencies,

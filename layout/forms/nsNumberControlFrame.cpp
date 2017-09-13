@@ -19,7 +19,6 @@
 #include "mozilla/EventStates.h"
 #include "nsContentUtils.h"
 #include "nsContentCreatorFunctions.h"
-#include "nsContentList.h"
 #include "nsCSSPseudoElements.h"
 #include "nsStyleSet.h"
 #include "mozilla/StyleSetHandle.h"
@@ -50,7 +49,7 @@ NS_QUERYFRAME_HEAD(nsNumberControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 nsNumberControlFrame::nsNumberControlFrame(nsStyleContext* aContext)
-  : nsContainerFrame(aContext)
+  : nsContainerFrame(aContext, kClassID)
   , mHandlingInputEvent(false)
 {
 }
@@ -62,12 +61,12 @@ nsNumberControlFrame::DestroyFrom(nsIFrame* aDestructRoot)
                "nsNumberControlFrame should not have continuations; if it does we "
                "need to call RegUnregAccessKey only for the first");
   nsFormControlFrame::RegUnRegAccessKey(static_cast<nsIFrame*>(this), false);
-  nsContentUtils::DestroyAnonymousContent(&mOuterWrapper);
+  DestroyAnonymousContent(mOuterWrapper.forget());
   nsContainerFrame::DestroyFrom(aDestructRoot);
 }
 
 nscoord
-nsNumberControlFrame::GetMinISize(nsRenderingContext* aRenderingContext)
+nsNumberControlFrame::GetMinISize(gfxContext* aRenderingContext)
 {
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
@@ -85,7 +84,7 @@ nsNumberControlFrame::GetMinISize(nsRenderingContext* aRenderingContext)
 }
 
 nscoord
-nsNumberControlFrame::GetPrefISize(nsRenderingContext* aRenderingContext)
+nsNumberControlFrame::GetPrefISize(gfxContext* aRenderingContext)
 {
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
@@ -303,14 +302,16 @@ class FocusTextField : public Runnable
 {
 public:
   FocusTextField(nsIContent* aNumber, nsIContent* aTextField)
-    : mNumber(aNumber),
-      mTextField(aTextField)
+    : mozilla::Runnable("FocusTextField")
+    , mNumber(aNumber)
+    , mTextField(aTextField)
   {}
 
   NS_IMETHOD Run() override
   {
     if (mNumber->AsElement()->State().HasState(NS_EVENT_STATE_FOCUS)) {
-      HTMLInputElement::FromContent(mTextField)->Focus();
+      IgnoredErrorResult ignored;
+      HTMLInputElement::FromContent(mTextField)->Focus(ignored);
     }
 
     return NS_OK;
@@ -400,9 +401,8 @@ nsNumberControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   }
 
   // Propogate our tabindex:
-  int32_t tabIndex;
-  content->GetTabIndex(&tabIndex);
-  textField->SetTabIndex(tabIndex);
+  IgnoredErrorResult ignored;
+  textField->SetTabIndex(content->TabIndex(), ignored);
 
   // Initialize the text field's placeholder, if ours is set:
   nsAutoString placeholder;
@@ -416,7 +416,7 @@ nsNumberControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
     nsContentUtils::AddScriptRunner(focusJob);
   }
 
-  if (StyleDisplay()->UsedAppearance() == NS_THEME_TEXTFIELD) {
+  if (StyleDisplay()->mAppearance == NS_THEME_TEXTFIELD) {
     // The author has elected to hide the spinner by setting this
     // -moz-appearance. We will reframe if it changes.
     return rv;
@@ -447,12 +447,6 @@ nsNumberControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   SyncDisabledState();
 
   return rv;
-}
-
-nsIAtom*
-nsNumberControlFrame::GetType() const
-{
-  return nsGkAtoms::numberControlFrame;
 }
 
 void
@@ -596,14 +590,15 @@ nsNumberControlFrame::HandleFocusEvent(WidgetEvent* aEvent)
 {
   if (aEvent->mOriginalTarget != mTextField) {
     // Move focus to our text field
-    HTMLInputElement::FromContent(mTextField)->Focus();
+    IgnoredErrorResult ignored;
+    HTMLInputElement::FromContent(mTextField)->Focus(ignored);
   }
 }
 
-nsresult
+void
 nsNumberControlFrame::HandleSelectCall()
 {
-  return HTMLInputElement::FromContent(mTextField)->Select();
+  HTMLInputElement::FromContent(mTextField)->Select();
 }
 
 #define STYLES_DISABLING_NATIVE_THEMING \
@@ -621,11 +616,11 @@ nsNumberControlFrame::ShouldUseNativeStyleForSpinner() const
   nsIFrame* spinDownFrame = mSpinDown->GetPrimaryFrame();
 
   return spinUpFrame &&
-    spinUpFrame->StyleDisplay()->UsedAppearance() == NS_THEME_SPINNER_UPBUTTON &&
+    spinUpFrame->StyleDisplay()->mAppearance == NS_THEME_SPINNER_UPBUTTON &&
     !PresContext()->HasAuthorSpecifiedRules(spinUpFrame,
                                             STYLES_DISABLING_NATIVE_THEMING) &&
     spinDownFrame &&
-    spinDownFrame->StyleDisplay()->UsedAppearance() == NS_THEME_SPINNER_DOWNBUTTON &&
+    spinDownFrame->StyleDisplay()->mAppearance == NS_THEME_SPINNER_DOWNBUTTON &&
     !PresContext()->HasAuthorSpecifiedRules(spinDownFrame,
                                             STYLES_DISABLING_NATIVE_THEMING);
 }

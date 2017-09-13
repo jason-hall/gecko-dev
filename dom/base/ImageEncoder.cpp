@@ -29,7 +29,10 @@ namespace dom {
 // template parameter, we need to move this class outside.
 class SurfaceHelper : public Runnable {
 public:
-  explicit SurfaceHelper(already_AddRefed<layers::Image> aImage) : mImage(aImage) {}
+  explicit SurfaceHelper(already_AddRefed<layers::Image> aImage)
+    : Runnable("SurfaceHelper")
+    , mImage(aImage)
+  {}
 
   // It retrieves a SourceSurface reference and convert color format on main
   // thread and passes DataSourceSurface to caller thread.
@@ -49,9 +52,9 @@ public:
   }
 
   already_AddRefed<gfx::DataSourceSurface> GetDataSurfaceSafe() {
-    nsCOMPtr<nsIThread> mainThread = do_GetMainThread();
-    MOZ_ASSERT(mainThread);
-    SyncRunnable::DispatchToThread(mainThread, this, false);
+    nsCOMPtr<nsIEventTarget> mainTarget = GetMainThreadEventTarget();
+    MOZ_ASSERT(mainTarget);
+    SyncRunnable::DispatchToThread(mainTarget, this, false);
 
     return mDataSourceSurface.forget();
   }
@@ -79,16 +82,17 @@ class EncodingCompleteEvent : public CancelableRunnable
 
 public:
   explicit EncodingCompleteEvent(EncodeCompleteCallback* aEncodeCompleteCallback)
-    : mImgSize(0)
+    : CancelableRunnable("EncodingCompleteEvent")
+    , mImgSize(0)
     , mType()
     , mImgData(nullptr)
     , mEncodeCompleteCallback(aEncodeCompleteCallback)
     , mFailed(false)
   {
     if (!NS_IsMainThread() && workers::GetCurrentThreadWorkerPrivate()) {
-      mCreationThread = NS_GetCurrentThread();
+      mCreationEventTarget = GetCurrentThreadEventTarget();
     } else {
-      NS_GetMainThread(getter_AddRefs(mCreationThread));
+      mCreationEventTarget = GetMainThreadEventTarget();
     }
   }
 
@@ -122,16 +126,16 @@ public:
     mFailed = true;
   }
 
-  nsIThread* GetCreationThread()
+  nsIEventTarget* GetCreationThreadEventTarget()
   {
-    return mCreationThread;
+    return mCreationEventTarget;
   }
 
 private:
   uint64_t mImgSize;
   nsAutoString mType;
   void* mImgData;
-  nsCOMPtr<nsIThread> mCreationThread;
+  nsCOMPtr<nsIEventTarget> mCreationEventTarget;
   RefPtr<EncodeCompleteCallback> mEncodeCompleteCallback;
   bool mFailed;
 };
@@ -152,7 +156,8 @@ public:
                    int32_t aFormat,
                    const nsIntSize aSize,
                    bool aUsingCustomOptions)
-    : mType(aType)
+    : Runnable("EncodingRunnable")
+    , mType(aType)
     , mOptions(aOptions)
     , mImageBuffer(Move(aImageBuffer))
     , mImage(aImage)
@@ -214,7 +219,7 @@ public:
     } else {
       mEncodingCompleteEvent->SetMembers(imgData, imgSize, mType);
     }
-    rv = mEncodingCompleteEvent->GetCreationThread()->
+    rv = mEncodingCompleteEvent->GetCreationThreadEventTarget()->
       Dispatch(mEncodingCompleteEvent, nsIThread::DISPATCH_NORMAL);
     if (NS_FAILED(rv)) {
       // Better to leak than to crash.
@@ -547,9 +552,9 @@ ImageEncoder::EnsureThreadPool()
     sThreadPool = threadPool;
 
     if (!NS_IsMainThread()) {
-      NS_DispatchToMainThread(NS_NewRunnableFunction([]() -> void {
-        RegisterEncoderThreadPoolTerminatorObserver();
-      }));
+      NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "dom::ImageEncoder::EnsureThreadPool",
+        []() -> void { RegisterEncoderThreadPoolTerminatorObserver(); }));
     } else {
       RegisterEncoderThreadPoolTerminatorObserver();
     }

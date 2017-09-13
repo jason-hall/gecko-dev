@@ -159,7 +159,7 @@ Components.utils.import("resource://gre/modules/Promise.jsm");
 
 function run_test() { run_next_test(); }
 
-add_task(function test_task() {
+add_task(function* test_task() {
   yield Promise.resolve(true);
   yield Promise.resolve(false);
 });
@@ -170,11 +170,11 @@ Components.utils.import("resource://gre/modules/Promise.jsm");
 
 function run_test() { run_next_test(); }
 
-add_task(function test_task() {
+add_task(function* test_task() {
   yield Promise.resolve(true);
 });
 
-add_task(function test_2() {
+add_task(function* test_2() {
   yield Promise.resolve(true);
 });
 '''
@@ -184,7 +184,7 @@ Components.utils.import("resource://gre/modules/Promise.jsm");
 
 function run_test() { run_next_test(); }
 
-add_task(function test_failing() {
+add_task(function* test_failing() {
   yield Promise.reject(new Error("I fail."));
 });
 '''
@@ -194,7 +194,7 @@ Components.utils.import("resource://gre/modules/Promise.jsm");
 
 function run_test() { run_next_test(); }
 
-add_task(function test() {
+add_task(function* test() {
   let result = yield Promise.resolve(false);
 
   do_check_true(result);
@@ -224,16 +224,47 @@ add_task(function* this_test_will_fail() {
 });
 '''
 
-ADD_TASK_STACK_TRACE_WITHOUT_STAR = '''
-Components.utils.import("resource://gre/modules/Promise.jsm", this);
+ADD_TASK_SKIP = '''
+add_task(async function skipMeNot1() {
+  Assert.ok(true, "Well well well.");
+});
 
-function run_test() { run_next_test(); }
+add_task(async function skipMe1() {
+  Assert.ok(false, "Not skipped after all.");
+}).skip();
 
-add_task(function this_test_will_fail() {
-  for (let i = 0; i < 10; ++i) {
-    yield Promise.resolve();
-  }
-  Assert.ok(false);
+add_task(async function skipMeNot2() {
+  Assert.ok(true, "Well well well.");
+});
+
+add_task(async function skipMeNot3() {
+  Assert.ok(true, "Well well well.");
+});
+
+add_task(async function skipMe2() {
+  Assert.ok(false, "Not skipped after all.");
+}).skip();
+'''
+
+ADD_TASK_SKIPALL = '''
+add_task(async function skipMe1() {
+  Assert.ok(false, "Not skipped after all.");
+});
+
+add_task(async function skipMe2() {
+  Assert.ok(false, "Not skipped after all.");
+}).skip();
+
+add_task(async function skipMe3() {
+  Assert.ok(false, "Not skipped after all.");
+}).only();
+
+add_task(async function skipMeNot() {
+  Assert.ok(true, "Well well well.");
+}).only();
+
+add_task(async function skipMe4() {
+  Assert.ok(false, "Not skipped after all.");
 });
 '''
 
@@ -286,8 +317,7 @@ function run_test(
 # A test for failure to load a test due to an error other than a syntax error
 LOAD_ERROR_OTHER_ERROR = '''
 function run_test() {
-    yield "foo";
-    return "foo"; // can't use return in a generator!
+    1 = "foo"; // invalid assignment left-hand side
 };
 '''
 
@@ -392,11 +422,11 @@ add_task(function no_run_test_add_task_fail() {
 NO_RUN_TEST_ADD_TASK_MULTIPLE = '''
 Components.utils.import("resource://gre/modules/Promise.jsm");
 
-add_task(function test_task() {
+add_task(function* test_task() {
   yield Promise.resolve(true);
 });
 
-add_task(function test_2() {
+add_task(function* test_2() {
   yield Promise.resolve(true);
 });
 '''
@@ -473,16 +503,18 @@ tail =
         Assert that self.x.runTests with manifest=self.manifest
         returns |expected|.
         """
+        kwargs = {}
+        kwargs['xpcshell'] = xpcshellBin
+        kwargs['symbolsPath'] = self.symbols_path
+        kwargs['manifest'] = self.manifest
+        kwargs['mozInfo'] = mozinfo.info
+        kwargs['shuffle'] = shuffle
+        kwargs['verbose'] = verbose
+        kwargs['sequential'] = True
+        kwargs['testingModulesDir'] = os.path.join(objdir, '_tests', 'modules')
+        kwargs['utility_path'] = self.utility_path
         self.assertEquals(expected,
-                          self.x.runTests(xpcshellBin,
-                                          symbolsPath=self.symbols_path,
-                                          manifest=self.manifest,
-                                          mozInfo=mozinfo.info,
-                                          shuffle=shuffle,
-                                          verbose=verbose,
-                                          sequential=True,
-                                          testingModulesDir=os.path.join(objdir, '_tests', 'modules'),
-                                          utility_path=self.utility_path),
+                          self.x.runTests(kwargs),
                           msg="""Tests should have %s, log:
 ========
 %s
@@ -566,8 +598,6 @@ tail =
         self.assertTrue(any(re.search(line_pat, line) for line in log_lines),
                         "No line resembling a stack frame was found in\n%s" % pprint.pformat(log_lines))
 
-    @unittest.skipIf(mozinfo.info.get('stylo'),
-                     'failing on stylo for some reason') # bug 1337667
     def testChildPass(self):
         """
         Check that a simple test running in a child process passes.
@@ -586,9 +616,6 @@ tail =
         self.assertInLog("CHILD-TEST-COMPLETED")
         self.assertNotInLog(TEST_FAIL_STRING)
 
-
-    @unittest.skipIf(mozinfo.info.get('stylo'),
-                     'failing on stylo for some reason') # bug 1337667
     def testChildFail(self):
         """
         Check that a simple failing test running in a child process fails.
@@ -607,8 +634,6 @@ tail =
         self.assertInLog("CHILD-TEST-COMPLETED")
         self.assertNotInLog(TEST_PASS_STRING)
 
-    @unittest.skipIf(mozinfo.info.get('stylo'),
-                     'failing on stylo for some reason') # bug 1337667
     def testChildHang(self):
         """
         Check that incomplete output from a child process results in a
@@ -628,8 +653,6 @@ tail =
         self.assertNotInLog("CHILD-TEST-COMPLETED")
         self.assertNotInLog(TEST_PASS_STRING)
 
-    @unittest.skipIf(mozinfo.info.get('stylo'),
-                     'failing on stylo for some reason') # bug 1337667
     def testChild(self):
         """
         Checks that calling do_load_child_test_harness without run_test_in_child
@@ -1031,21 +1054,23 @@ add_test({
         self.assertInLog("run_test")
         self.assertNotInLog("Task.jsm")
 
-    def testAddTaskStackTraceWithoutStar(self):
-        """
-        Ensuring that calling Assert.ok(false) from inside add_task()
-        results in a human-readable stack trace. This variant uses deprecated
-        `function()` syntax instead of now standard `function*()`.
-        """
-        self.writeFile("test_add_task_stack_trace_without_star.js",
-            ADD_TASK_STACK_TRACE)
-        self.writeManifest(["test_add_task_stack_trace_without_star.js"])
+    def testAddTaskSkip(self):
+        self.writeFile("test_tasks_skip.js", ADD_TASK_SKIP)
+        self.writeManifest(["test_tasks_skip.js"])
 
-        self.assertTestResult(False)
-        self.assertInLog("this_test_will_fail")
-        self.assertInLog("run_next_test")
-        self.assertInLog("run_test")
-        self.assertNotInLog("Task.jsm")
+        self.assertTestResult(True)
+        self.assertEquals(1, self.x.testCount)
+        self.assertEquals(1, self.x.passCount)
+        self.assertEquals(0, self.x.failCount)
+
+    def testAddTaskSkipAll(self):
+        self.writeFile("test_tasks_skipall.js", ADD_TASK_SKIPALL)
+        self.writeManifest(["test_tasks_skipall.js"])
+
+        self.assertTestResult(True)
+        self.assertEquals(1, self.x.testCount)
+        self.assertEquals(1, self.x.passCount)
+        self.assertEquals(0, self.x.failCount)
 
     def testMissingHeadFile(self):
         """
@@ -1163,8 +1188,8 @@ add_test({
 
         self.assertTestResult(False)
         self.assertInLog(TEST_FAIL_STRING)
-        self.assertInLog("TypeError: generator function can't return a value at")
-        self.assertInLog("test_error.js:4")
+        self.assertInLog("ReferenceError: invalid assignment left-hand side at")
+        self.assertInLog("test_error.js:3")
         self.assertNotInLog(TEST_PASS_STRING)
 
     def testDoPrintWhenVerboseNotExplicit(self):
@@ -1325,8 +1350,6 @@ add_test({
         self.assertInLog(TEST_PASS_STRING)
         self.assertNotInLog(TEST_FAIL_STRING)
 
-    @unittest.skipIf(mozinfo.info.get('stylo'),
-                     'failing on stylo for some reason') # bug 1337667
     def testChildMozinfo(self):
         """
         Check that mozinfo.json is loaded in child process

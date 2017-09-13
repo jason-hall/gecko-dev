@@ -15,9 +15,7 @@ const AUTOCOMPLETE_AFTER_RIGHT_CLICK_THRESHOLD_MS = 400;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
-Cu.import("resource://gre/modules/InsecurePasswordUtils.jsm");
-Cu.import("resource://gre/modules/Promise.jsm");
-Cu.import("resource://gre/modules/Preferences.jsm");
+Cu.import("resource://gre/modules/PromiseUtils.jsm");
 Cu.import("resource://gre/modules/Timer.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "DeferredTask", "resource://gre/modules/DeferredTask.jsm");
@@ -37,6 +35,10 @@ XPCOMUtils.defineLazyServiceGetter(this, "gNetUtil",
 XPCOMUtils.defineLazyGetter(this, "log", () => {
   let logger = LoginHelper.createLogger("LoginManagerContent");
   return logger.log.bind(logger);
+});
+
+Services.cpmm.addMessageListener("clearRecipeCache", () => {
+  LoginRecipesContent._clearRecipeCache();
 });
 
 // These mirror signon.* prefs.
@@ -146,9 +148,9 @@ var observer = {
   },
 };
 
-Services.obs.addObserver(observer, "earlyformsubmit", false);
+Services.obs.addObserver(observer, "earlyformsubmit");
 var prefBranch = Services.prefs.getBranch("signon.");
-prefBranch.addObserver("", observer.onPrefChange, false);
+prefBranch.addObserver("", observer.onPrefChange);
 
 observer.onPrefChange(); // read initial values
 
@@ -247,7 +249,7 @@ var LoginManagerContent = {
 
     messageManager.sendAsyncMessage(name, messageData);
 
-    let deferred = Promise.defer();
+    let deferred = PromiseUtils.defer();
     requestData.promise = deferred;
     this._requests.set(requestId, requestData);
     return deferred.promise;
@@ -401,14 +403,14 @@ var LoginManagerContent = {
       log("Creating a DeferredTask to call _fetchLoginsFromParentAndFillForm soon");
       this._formLikeByRootElement.set(formLike.rootElement, formLike);
 
-      deferredTask = new DeferredTask(function* deferredInputProcessing() {
+      deferredTask = new DeferredTask(() => {
         // Get the updated formLike instead of the one at the time of creating the DeferredTask via
         // a closure since it could be stale since FormLike.elements isn't live.
         let formLike2 = this._formLikeByRootElement.get(formLike.rootElement);
         log("Running deferred processing of onDOMInputPasswordAdded", formLike2);
         this._deferredPasswordAddedTasksByRootElement.delete(formLike2.rootElement);
         this._fetchLoginsFromParentAndFillForm(formLike2, window);
-      }.bind(this), PASSWORD_INPUT_ADDED_COALESCING_THRESHOLD_MS);
+      }, PASSWORD_INPUT_ADDED_COALESCING_THRESHOLD_MS);
 
       this._deferredPasswordAddedTasksByRootElement.set(formLike.rootElement, deferredTask);
     }
@@ -447,7 +449,7 @@ var LoginManagerContent = {
 
     this._getLoginDataFromParent(form, { showMasterPassword: true })
         .then(this.loginsFound.bind(this))
-        .then(null, Cu.reportError);
+        .catch(Cu.reportError);
   },
 
   onPageShow(event, window) {
@@ -562,6 +564,9 @@ var LoginManagerContent = {
     let doc = form.ownerDocument;
     let autofillForm = gAutofillForms && !PrivateBrowsingUtils.isContentWindowPrivate(doc.defaultView);
 
+    let formOrigin = LoginUtils._getPasswordOrigin(doc.documentURI);
+    LoginRecipesContent.cacheRecipes(formOrigin, doc.defaultView, recipes);
+
     this._fillForm(form, loginsFound, recipes, {autofillForm});
   },
 
@@ -633,10 +638,8 @@ var LoginManagerContent = {
     log("onUsernameInput from", event.type);
 
     let doc = acForm.ownerDocument;
-    let messageManager = messageManagerFromWindow(doc.defaultView);
-    let recipes = messageManager.sendSyncMessage("RemoteLogins:findRecipes", {
-      formOrigin: LoginUtils._getPasswordOrigin(doc.documentURI),
-    })[0];
+    let formOrigin = LoginUtils._getPasswordOrigin(doc.documentURI);
+    let recipes = LoginRecipesContent.getRecipes(formOrigin, doc.defaultView);
 
     // Make sure the username field fillForm will use is the
     // same field as the autocomplete was activated on.
@@ -651,7 +654,7 @@ var LoginManagerContent = {
               userTriggered: true,
             });
           })
-          .then(null, Cu.reportError);
+          .catch(Cu.reportError);
     } else {
       // Ignore the event, it's for some input we don't care about.
     }
@@ -930,9 +933,7 @@ var LoginManagerContent = {
     let formSubmitURL = LoginUtils._getActionOrigin(form);
     let messageManager = messageManagerFromWindow(win);
 
-    let recipes = messageManager.sendSyncMessage("RemoteLogins:findRecipes", {
-      formOrigin: hostname,
-    })[0];
+    let recipes = LoginRecipesContent.getRecipes(hostname, win);
 
     // Get the appropriate fields from the form.
     var [usernameField, newPasswordField, oldPasswordField] =
@@ -1276,7 +1277,7 @@ var LoginManagerContent = {
         usernameField.addEventListener("mousedown", observer);
       }
 
-      Services.obs.notifyObservers(form.rootElement, "passwordmgr-processed-form", null);
+      Services.obs.notifyObservers(form.rootElement, "passwordmgr-processed-form");
     }
   },
 
@@ -1347,10 +1348,8 @@ var LoginManagerContent = {
     let form = LoginFormFactory.createFromField(aField);
 
     let doc = aField.ownerDocument;
-    let messageManager = messageManagerFromWindow(doc.defaultView);
-    let recipes = messageManager.sendSyncMessage("RemoteLogins:findRecipes", {
-      formOrigin: LoginUtils._getPasswordOrigin(doc.documentURI),
-    })[0];
+    let formOrigin = LoginUtils._getPasswordOrigin(doc.documentURI);
+    let recipes = LoginRecipesContent.getRecipes(formOrigin, doc.defaultView);
 
     let [usernameField, newPasswordField] =
           this._getFormFields(form, false, recipes);
@@ -1443,8 +1442,7 @@ function UserAutoCompleteResult(aSearchString, matchingLogins, {isSecure, messag
   this.matchCount = matchingLogins.length + this._showInsecureFieldWarning;
   this._messageManager = messageManager;
   this._stringBundle = Services.strings.createBundle("chrome://passwordmgr/locale/passwordmgr.properties");
-  this._dateAndTimeFormatter = new Intl.DateTimeFormat(undefined,
-                              { day: "numeric", month: "short", year: "numeric" });
+  this._dateAndTimeFormatter = Services.intl.createDateTimeFormat(undefined, { dateStyle: "medium" });
 
   this._isPasswordField = isPasswordField;
 
@@ -1504,7 +1502,7 @@ UserAutoCompleteResult.prototype = {
 
     if (this._showInsecureFieldWarning && index === 0) {
       let learnMoreString = getLocalizedString("insecureFieldWarningLearnMore");
-      return getLocalizedString("insecureFieldWarningDescription3", [learnMoreString]);
+      return getLocalizedString("insecureFieldWarningDescription2", [learnMoreString]);
     }
 
     let login = this.logins[index - this._showInsecureFieldWarning];

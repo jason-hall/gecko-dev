@@ -33,12 +33,10 @@ static const int32_t LOW_AUDIO_USECS = 300000;
 
 AudioSink::AudioSink(AbstractThread* aThread,
                      MediaQueue<AudioData>& aAudioQueue,
-                     TimeUnit aStartTime,
-                     const AudioInfo& aInfo,
-                     dom::AudioChannel aChannel)
+                     const TimeUnit& aStartTime,
+                     const AudioInfo& aInfo)
   : mStartTime(aStartTime)
   , mInfo(aInfo)
-  , mChannel(aChannel)
   , mPlaying(true)
   , mMonitor("AudioSink")
   , mWritten(0)
@@ -203,7 +201,7 @@ AudioSink::InitializeAudioStream(const PlaybackParams& aParams)
   // The layout map used here is already processed by mConverter with
   // mOutputChannels into SMPTE format, so there is no need to worry if
   // MediaPrefs::MonoAudio() or MediaPrefs::AudioSinkForceStereo() is applied.
-  nsresult rv = mAudioStream->Init(mOutputChannels, channelMap, mOutputRate, mChannel);
+  nsresult rv = mAudioStream->Init(mOutputChannels, channelMap, mOutputRate);
   if (NS_FAILED(rv)) {
     mAudioStream->Shutdown();
     mAudioStream = nullptr;
@@ -233,9 +231,7 @@ AudioSink::GetEndTime() const
     NS_WARNING("Int overflow calculating audio end time");
     return TimeUnit::Zero();
   }
-  // As we may be resampling, rounding errors may occur. Ensure we never get
-  // past the original end time.
-  return std::min(mLastEndTime, played);
+  return played;
 }
 
 UniquePtr<AudioStream::Chunk>
@@ -285,7 +281,8 @@ AudioSink::PopFrames(uint32_t aFrames)
   auto framesToPop = std::min(aFrames, mCursor->Available());
 
   SINK_LOG_V("playing audio at time=%" PRId64 " offset=%u length=%u",
-             mCurrentData->mTime, mCurrentData->mFrames - mCursor->Available(), framesToPop);
+             mCurrentData->mTime.ToMicroseconds(),
+             mCurrentData->mFrames - mCursor->Available(), framesToPop);
 
   UniquePtr<AudioStream::Chunk> chunk =
     MakeUnique<Chunk>(mCurrentData, framesToPop, mCursor->Ptr());
@@ -406,8 +403,8 @@ AudioSink::NotifyAudioNeeded()
     // audio hardware, so we can play across the gap.
     // Calculate the timestamp of the next chunk of audio in numbers of
     // samples.
-    CheckedInt64 sampleTime = TimeUnitToFrames(
-      TimeUnit::FromMicroseconds(data->mTime) - mStartTime, data->mRate);
+    CheckedInt64 sampleTime =
+      TimeUnitToFrames(data->mTime - mStartTime, data->mRate);
     // Calculate the number of frames that have been pushed onto the audio hardware.
     CheckedInt64 missingFrames = sampleTime - mFramesParsed;
 
@@ -449,7 +446,7 @@ AudioSink::NotifyAudioNeeded()
       }
     }
 
-    mLastEndTime = TimeUnit::FromMicroseconds(data->GetEndTime());
+    mLastEndTime = data->GetEndTime();
     mFramesParsed += data->mFrames;
 
     if (mConverter->InputConfig() != mConverter->OutputConfig()) {
@@ -493,8 +490,8 @@ AudioSink::CreateAudioFromBuffer(AlignedAudioBuffer&& aBuffer,
   if (!frames) {
     return nullptr;
   }
-  CheckedInt64 duration = FramesToUsecs(frames, mOutputRate);
-  if (!duration.isValid()) {
+  auto duration = FramesToTimeUnit(frames, mOutputRate);
+  if (!duration.IsValid()) {
     NS_WARNING("Int overflow in AudioSink");
     mErrored = true;
     return nullptr;
@@ -502,7 +499,7 @@ AudioSink::CreateAudioFromBuffer(AlignedAudioBuffer&& aBuffer,
   RefPtr<AudioData> data =
     new AudioData(aReference->mOffset,
                   aReference->mTime,
-                  duration.value(),
+                  duration,
                   frames,
                   Move(aBuffer),
                   mOutputChannels,

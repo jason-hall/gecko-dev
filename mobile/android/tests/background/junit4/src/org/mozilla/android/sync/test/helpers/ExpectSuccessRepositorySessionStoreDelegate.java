@@ -28,14 +28,19 @@ public class ExpectSuccessRepositorySessionStoreDelegate extends
   }
 
   @Override
-  public void onStoreCompleted(long storeEnd) {
-    log("Record store completed at " + storeEnd);
+  public void onStoreCompleted() {
+    log("Record store completed");
   }
 
   @Override
   public void onStoreFailed(Exception e) {
     log("Store failed.", e);
     performNotify(new AssertionFailedError("onStoreFailed: store should not have failed."));
+  }
+
+  @Override
+  public void onRecordStoreReconciled(String guid, String oldGuid, Integer newVersion) {
+    log("Store reconciled record " + guid);
   }
 
   @Override

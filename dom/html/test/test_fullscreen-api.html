@@ -2,7 +2,6 @@
 <html>
 <head>
   <title>Test for Bug 545812</title>
-  <script type="application/javascript" src="/MochiKit/packed.js"></script>
   <script type="application/javascript" src="/tests/SimpleTest/SimpleTest.js"></script>
   <link rel="stylesheet" type="text/css" href="/tests/SimpleTest/test.css"/>
   <script type="application/javascript" src="/tests/SimpleTest/EventUtils.js"></script>
@@ -78,7 +77,26 @@ function shouldSkipTest(test) {
       }
     }
   }
+  if (SpecialPowers.DOMWindowUtils.isStyledByServo &&
+      SpecialPowers.isDebugBuild &&
+      navigator.platform.indexOf('Mac') >= 0) {
+    if (test == "file_fullscreen-backdrop.html") {
+      todo(false, `${test} skipped due to bug 1387942`);
+      return true;
+    }
+  }
+
   return false;
+}
+
+function waitForEvent(eventTarget, eventName, checkFn, callback) {
+  eventTarget.addEventListener(eventName, function listener(event) {
+    if (checkFn && !checkFn(event)) {
+      return;
+    }
+    eventTarget.removeEventListener(eventName, listener);
+    callback();
+  });
 }
 
 function runNextTest() {
@@ -96,7 +114,18 @@ function runNextTest() {
       // OS X Lion before we run the test.
       testWindow.addEventListener("load", function() {
         SimpleTest.waitForFocus(function() {
-          SimpleTest.waitForFocus(testWindow.begin, testWindow);
+          SimpleTest.waitForFocus(function() {
+            // For the platforms that support reporting occlusion state (e.g. Mac),
+            // we should wait until the docshell has been activated again,
+            // otherwise, the fullscreen request might be denied.
+            if (testWindow.document.hidden) {
+              waitForEvent(testWindow.document, "visibilitychange", (event) => {
+                return !testWindow.document.hidden;
+              }, testWindow.begin);
+              return;
+            }
+            testWindow.begin();
+          }, testWindow);
         });
       }, {once: true});
     }

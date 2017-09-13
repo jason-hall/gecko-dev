@@ -20,6 +20,7 @@
 #include "js/TypeDecls.h"
 #include "js/Value.h"
 #include "js/RootingAPI.h"
+#include "mozilla/BasicEvents.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/TaskCategory.h"
@@ -35,9 +36,12 @@
 #include "mozilla/net/ReferrerPolicy.h"
 #include "mozilla/Logging.h"
 #include "mozilla/NotNull.h"
+#include "mozilla/Maybe.h"
 #include "nsIContentPolicy.h"
 #include "nsIDocument.h"
+#include "nsIDOMMouseEvent.h"
 #include "nsPIDOMWindow.h"
+#include "nsRFPService.h"
 
 #if defined(XP_WIN)
 // Undefine LoadImage to prevent naming conflict with Windows.
@@ -51,6 +55,7 @@ class imgIRequest;
 class imgLoader;
 class imgRequestProxy;
 class nsAutoScriptBlockerSuppressNodeRemoved;
+class nsCacheableFuncStringHTMLCollection;
 class nsHtml5StringParser;
 class nsIChannel;
 class nsIConsoleService;
@@ -66,7 +71,6 @@ class nsIDOMHTMLInputElement;
 class nsIDOMKeyEvent;
 class nsIDOMNode;
 class nsIDragSession;
-class nsIEditor;
 class nsIEventTarget;
 class nsIFragmentContentSink;
 class nsIFrame;
@@ -81,6 +85,7 @@ class nsNameSpaceManager;
 class nsIObserver;
 class nsIParser;
 class nsIParserService;
+class nsIPluginTag;
 class nsIPresShell;
 class nsIPrincipal;
 class nsIRequest;
@@ -121,6 +126,7 @@ namespace mozilla {
 class Dispatcher;
 class ErrorResult;
 class EventListenerManager;
+class HTMLEditor;
 
 namespace dom {
 struct CustomElementDefinition;
@@ -159,8 +165,8 @@ extern const char kLoadAsData[];
 
 // Stolen from nsReadableUtils, but that's OK, since we can declare the same
 // name multiple times.
-const nsAFlatString& EmptyString();
-const nsAFlatCString& EmptyCString();
+const nsString& EmptyString();
+const nsCString& EmptyCString();
 
 enum EventNameType {
   EventNameType_None = 0x0000,
@@ -267,8 +273,10 @@ public:
                                   JS::MutableHandle<JS::PropertyDescriptor> aDesc);
 
   // Check whether we should avoid leaking distinguishing information to JS/CSS.
+  // This function can be called both in the main thread and worker threads.
   static bool ShouldResistFingerprinting();
   static bool ShouldResistFingerprinting(nsIDocShell* aDocShell);
+  static bool ShouldResistFingerprinting(nsIDocument* aDoc);
 
   // A helper function to calculate the rounded window size for fingerprinting
   // resistance. The rounded size is based on the chrome UI size and available
@@ -325,6 +333,26 @@ public:
   static bool ContentIsCrossDocDescendantOf(nsINode* aPossibleDescendant,
                                               nsINode* aPossibleAncestor);
 
+  /**
+   * As with ContentIsCrossDocDescendantOf but crosses shadow boundaries but not
+   * cross document boundaries.
+   *
+   * @see nsINode::GetFlattenedTreeParentNode()
+   */
+  static bool
+  ContentIsFlattenedTreeDescendantOf(const nsINode* aPossibleDescendant,
+                                     const nsINode* aPossibleAncestor);
+
+  /**
+   * Same as `ContentIsFlattenedTreeDescendantOf`, but from the flattened tree
+   * point of view of the style system
+   *
+   * @see nsINode::GetFlattenedTreeParentNodeForStyle()
+   */
+  static bool
+  ContentIsFlattenedTreeDescendantOfForStyle(const nsINode* aPossibleDescendant,
+                                             const nsINode* aPossibleAncestor);
+
   /*
    * This method fills the |aArray| with all ancestor nodes of |aNode|
    * including |aNode| at the zero index.
@@ -356,11 +384,39 @@ public:
                                     nsIDOMNode** aCommonAncestor);
 
   /**
-   * Returns the common ancestor, if any, for two nodes. Returns null if the
-   * nodes are disconnected.
+   * Returns the common ancestor, if any, for two nodes.
+   *
+   * Returns null if the nodes are disconnected.
    */
-  static nsINode* GetCommonAncestor(nsINode* aNode1,
-                                    nsINode* aNode2);
+  static nsINode* GetCommonAncestor(nsINode* aNode1, nsINode* aNode2)
+  {
+    if (aNode1 == aNode2) {
+      return aNode1;
+    }
+
+    return GetCommonAncestorHelper(aNode1, aNode2);
+  }
+
+  /**
+   * Returns the common flattened tree ancestor, if any, for two given content
+   * nodes.
+   */
+  static nsIContent* GetCommonFlattenedTreeAncestor(nsIContent* aContent1,
+                                                    nsIContent* aContent2)
+  {
+    if (aContent1 == aContent2) {
+      return aContent1;
+    }
+
+    return GetCommonFlattenedTreeAncestorHelper(aContent1, aContent2);
+  }
+
+  /**
+   * Returns the common flattened tree ancestor from the point of view of the
+   * style system, if any, for two given content nodes.
+   */
+  static Element* GetCommonFlattenedTreeAncestorForStyle(
+      Element* aElement1, Element* aElement2);
 
   /**
    * Returns true if aNode1 is before aNode2 in the same connected
@@ -376,6 +432,13 @@ public:
    *  NOTE! If the two nodes aren't in the same connected subtree,
    *  the result is 1, and the optional aDisconnected parameter
    *  is set to true.
+   *
+   *  XXX aOffset1 and aOffset2 should be uint32_t since valid offset value is
+   *      between 0 - UINT32_MAX.  However, these methods work even with
+   *      negative offset values!  E.g., when aOffset1 is -1 and aOffset is 0,
+   *      these methods return -1.  Some root callers depend on this behavior.
+   *      On the other hand, nsINode can have ATTRCHILD_ARRAY_MAX_CHILD_COUN
+   *      (0x3FFFFF) at most.  Therefore, they can be int32_t for now.
    */
   static int32_t ComparePoints(nsINode* aParent1, int32_t aOffset1,
                                nsINode* aParent2, int32_t aOffset2,
@@ -482,7 +545,9 @@ public:
     // Set if one or more error flags were set.
     eParseHTMLInteger_Error                 = 1 << 3,
     eParseHTMLInteger_ErrorNoValue          = 1 << 4,
-    eParseHTMLInteger_ErrorOverflow         = 1 << 5
+    eParseHTMLInteger_ErrorOverflow         = 1 << 5,
+    // Use this flag to detect the difference between overflow and underflow
+    eParseHTMLInteger_Negative              = 1 << 6,
   };
   static int32_t ParseHTMLInteger(const nsAString& aValue,
                                   ParseHTMLIntegerResultFlags *aResult);
@@ -582,7 +647,7 @@ public:
   static nsIPrincipal* ObjectPrincipal(JSObject* aObj);
 
   static nsresult GenerateStateKey(nsIContent* aContent,
-                                   const nsIDocument* aDocument,
+                                   nsIDocument* aDocument,
                                    nsACString& aKey);
 
   /**
@@ -596,28 +661,6 @@ public:
                                             nsIURI* aBaseURI);
 
   /**
-   * Convert aInput (in encoding aEncoding) to UTF16 in aOutput.
-   *
-   * @param aEncoding the Gecko-canonical name of the encoding or the empty
-   *                  string (meaning UTF-8)
-   */
-  static nsresult ConvertStringFromEncoding(const nsACString& aEncoding,
-                                            const nsACString& aInput,
-                                            nsAString& aOutput);
-
-  /**
-   * Determine whether a buffer begins with a BOM for UTF-8, UTF-16LE,
-   * UTF-16BE
-   *
-   * @param aBuffer the buffer to check
-   * @param aLength the length of the buffer
-   * @param aCharset empty if not found
-   * @return boolean indicating whether a BOM was detected.
-   */
-  static bool CheckForBOM(const unsigned char* aBuffer, uint32_t aLength,
-                          nsACString& aCharset);
-
-  /**
    * Returns true if |aName| is a valid name to be registered via
    * document.registerElement.
    */
@@ -628,7 +671,7 @@ public:
                              const char16_t** aColon = nullptr);
 
   static nsresult SplitQName(const nsIContent* aNamespaceResolver,
-                             const nsAFlatString& aQName,
+                             const nsString& aQName,
                              int32_t *aNamespace, nsIAtom **aLocalName);
 
   static nsresult GetNodeInfoFromQName(const nsAString& aNamespaceURI,
@@ -751,6 +794,8 @@ public:
    * @param aLoadFlags the load flags to use.  See nsIRequest
    * @param [aContentPolicyType=nsIContentPolicy::TYPE_INTERNAL_IMAGE] (Optional)
    *        The CP content type to use
+   * @param aUseUrgentStartForChannel,(Optional) a flag to mark on channel if it
+   *        is triggered by user input events.
    * @return the imgIRequest for the image load
    */
   static nsresult LoadImage(nsIURI* aURI,
@@ -763,7 +808,8 @@ public:
                             int32_t aLoadFlags,
                             const nsAString& initiatorType,
                             imgRequestProxy** aRequest,
-                            uint32_t aContentPolicyType = nsIContentPolicy::TYPE_INTERNAL_IMAGE);
+                            uint32_t aContentPolicyType = nsIContentPolicy::TYPE_INTERNAL_IMAGE,
+                            bool aUseUrgentStartForChannel = false);
 
   /**
    * Obtain an image loader that respects the given document/channel's privacy status.
@@ -790,7 +836,8 @@ public:
   /**
    * Helper method to call imgIRequest::GetStaticRequest.
    */
-  static already_AddRefed<imgRequestProxy> GetStaticRequest(imgRequestProxy* aRequest);
+  static already_AddRefed<imgRequestProxy> GetStaticRequest(nsIDocument* aLoadingDocument,
+                                                            imgRequestProxy* aRequest);
 
   /**
    * Method that decides whether a content node is draggable
@@ -917,7 +964,7 @@ public:
                                               const nsACString& aCategory,
                                               const nsIDocument* aDocument,
                                               nsIURI* aURI = nullptr,
-                                              const nsAFlatString& aSourceLine
+                                              const nsString& aSourceLine
                                                 = EmptyString(),
                                               uint32_t aLineNumber = 0,
                                               uint32_t aColumnNumber = 0,
@@ -948,7 +995,7 @@ public:
                                             const nsACString& aCategory,
                                             uint64_t aInnerWindowID,
                                             nsIURI* aURI = nullptr,
-                                            const nsAFlatString& aSourceLine
+                                            const nsString& aSourceLine
                                               = EmptyString(),
                                             uint32_t aLineNumber = 0,
                                             uint32_t aColumnNumber = 0,
@@ -999,7 +1046,7 @@ public:
                                   const char16_t **aParams = nullptr,
                                   uint32_t aParamsLength = 0,
                                   nsIURI* aURI = nullptr,
-                                  const nsAFlatString& aSourceLine
+                                  const nsString& aSourceLine
                                     = EmptyString(),
                                   uint32_t aLineNumber = 0,
                                   uint32_t aColumnNumber = 0);
@@ -1011,7 +1058,7 @@ public:
    */
   static nsresult GetLocalizedString(PropertiesFile aFile,
                                      const char* aKey,
-                                     nsXPIDLString& aResult);
+                                     nsAString& aResult);
 
   /**
    * A helper function that parses a sandbox attribute (of an <iframe> or a CSP
@@ -1046,7 +1093,18 @@ public:
    */
   static nsresult GenerateUUIDInPlace(nsID& aUUID);
 
-  static bool PrefetchEnabled(nsIDocShell* aDocShell);
+  static bool PrefetchPreloadEnabled(nsIDocShell* aDocShell);
+
+  static void
+  ExtractErrorValues(JSContext* aCx, JS::Handle<JS::Value> aValue,
+                     nsACString& aSourceSpecOut, uint32_t *aLineOut,
+                     uint32_t *aColumnOut, nsString& aMessageOut);
+
+  /**
+   * Helper function to tell if user ever enabled DevTools explicitely.
+   * Allows making DevTools related API no-op until user do so.
+   */
+  static bool DevToolsEnabled(JSContext* aCx);
 
   /**
    * Fill (with the parameters given) the localized string named |aKey| in
@@ -1057,14 +1115,14 @@ private:
                                         const char* aKey,
                                         const char16_t** aParams,
                                         uint32_t aParamsLength,
-                                        nsXPIDLString& aResult);
+                                        nsAString& aResult);
 
 public:
   template<uint32_t N>
   static nsresult FormatLocalizedString(PropertiesFile aFile,
                                         const char* aKey,
                                         const char16_t* (&aParams)[N],
-                                        nsXPIDLString& aResult)
+                                        nsAString& aResult)
   {
     return FormatLocalizedString(aFile, aKey, aParams, N, aResult);
   }
@@ -1078,7 +1136,7 @@ public:
   static nsresult FormatLocalizedString(PropertiesFile aFile,
                                         const char* aKey,
                                         const nsTArray<nsString>& aParamArray,
-                                        nsXPIDLString& aResult);
+                                        nsAString& aResult);
 
   /**
    * Returns true if aDocument is a chrome document
@@ -1136,7 +1194,8 @@ public:
   /**
    * Map internal content policy types to external ones.
    */
-  static nsContentPolicyType InternalContentPolicyTypeToExternal(nsContentPolicyType aType);
+  static inline nsContentPolicyType
+    InternalContentPolicyTypeToExternal(nsContentPolicyType aType);
 
   /**
    * Map internal content policy types to external ones or preload types:
@@ -1146,7 +1205,8 @@ public:
    *
    * Note: DO NOT call this function unless you know what you're doing!
    */
-  static nsContentPolicyType InternalContentPolicyTypeToExternalOrPreload(nsContentPolicyType aType);
+  static inline nsContentPolicyType
+    InternalContentPolicyTypeToExternalOrPreload(nsContentPolicyType aType);
 
   /**
    * Map internal content policy types to external ones, worker, or preload types:
@@ -1232,6 +1292,33 @@ public:
                                        bool *aDefaultAction = nullptr);
 
   /**
+   * This method creates and dispatches a trusted event using an event message.
+   * @param aDoc           The document which will be used to create the event.
+   * @param aTarget        The target of the event, should be QIable to
+   *                       EventTarget.
+   * @param aEventMessage  The event message.
+   * @param aCanBubble     Whether the event can bubble.
+   * @param aCancelable    Is the event cancelable.
+   * @param aDefaultAction Set to true if default action should be taken,
+   *                       see nsIDOMEventTarget::DispatchEvent.
+   */
+  template <class WidgetEventType>
+  static nsresult DispatchTrustedEvent(nsIDocument* aDoc,
+                                       nsISupports* aTarget,
+                                       mozilla::EventMessage aEventMessage,
+                                       bool aCanBubble,
+                                       bool aCancelable,
+                                       bool *aDefaultAction = nullptr,
+                                       bool aOnlyChromeDispatch = false)
+  {
+    WidgetEventType event(true, aEventMessage);
+    MOZ_ASSERT(GetEventClassIDFromMessage(aEventMessage) == event.mClass);
+    return DispatchEvent(aDoc, aTarget, event, aEventMessage,
+                         aCanBubble, aCancelable, true,
+                         aDefaultAction, aOnlyChromeDispatch);
+  }
+
+  /**
    * This method creates and dispatches a untrusted event.
    * Works only with events which can be created by calling
    * nsIDOMDocument::CreateEvent() with parameter "Events".
@@ -1250,6 +1337,34 @@ public:
                                          bool aCanBubble,
                                          bool aCancelable,
                                          bool *aDefaultAction = nullptr);
+
+
+  /**
+   * This method creates and dispatches a untrusted event using an event message.
+   * @param aDoc           The document which will be used to create the event.
+   * @param aTarget        The target of the event, should be QIable to
+   *                       EventTarget.
+   * @param aEventMessage  The event message.
+   * @param aCanBubble     Whether the event can bubble.
+   * @param aCancelable    Is the event cancelable.
+   * @param aDefaultAction Set to true if default action should be taken,
+   *                       see nsIDOMEventTarget::DispatchEvent.
+   */
+  template <class WidgetEventType>
+  static nsresult DispatchUntrustedEvent(nsIDocument* aDoc,
+                                         nsISupports* aTarget,
+                                         mozilla::EventMessage aEventMessage,
+                                         bool aCanBubble,
+                                         bool aCancelable,
+                                         bool *aDefaultAction = nullptr,
+                                         bool aOnlyChromeDispatch = false)
+  {
+    WidgetEventType event(false, aEventMessage);
+    MOZ_ASSERT(GetEventClassIDFromMessage(aEventMessage) == event.mClass);
+    return DispatchEvent(aDoc, aTarget, event, aEventMessage,
+                         aCanBubble, aCancelable, false,
+                         aDefaultAction, aOnlyChromeDispatch);
+  }
 
   /**
    * This method creates and dispatches a trusted event to the chrome
@@ -1580,12 +1695,6 @@ public:
    */
   static void DestroyMatchString(void* aData);
 
-  /**
-   * Unbinds the content from the tree and nulls it out if it's not null.
-   */
-  static void DestroyAnonymousContent(nsCOMPtr<nsIContent>* aContent);
-  static void DestroyAnonymousContent(nsCOMPtr<Element>* aElement);
-
   /*
    * Notify when the first XUL menu is opened and when the all XUL menus are
    * closed. At opening, aInstalling should be TRUE, otherwise, it should be
@@ -1817,6 +1926,16 @@ public:
    */
   static void RunInMetastableState(already_AddRefed<nsIRunnable> aRunnable);
 
+  /**
+   * Returns a nsISerialEventTarget which will run any event dispatched to it
+   * once the event loop has reached a "stable state". Runnables dispatched to
+   * this event target must not cause any queued events to be processed (i.e.
+   * must not spin the event loop).
+   *
+   * See RunInStableState for more information about stable states
+   */
+  static nsISerialEventTarget* GetStableStateEventTarget();
+
   // Call EnterMicroTask when you're entering JS execution.
   // Usually the best way to do this is to use nsAutoMicroTask.
   static void EnterMicroTask();
@@ -1908,7 +2027,8 @@ public:
                                      bool aCtrl = false,
                                      bool aAlt = false,
                                      bool aShift = false,
-                                     bool aMeta = false);
+                                     bool aMeta = false,
+                                     uint16_t inputSource = nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN);
 
   static bool CheckMayLoad(nsIPrincipal* aPrincipal, nsIChannel* aChannel, bool aAllowIfInheritsPrincipal);
 
@@ -1995,10 +2115,11 @@ public:
   {
     NS_PRECONDITION(aRootNode, "Must have root node");
 
-    return NS_GetFuncStringHTMLCollection(aRootNode, MatchClassNames,
-                                          DestroyClassNameArray,
-                                          AllocClassMatchingInfo,
-                                          aClasses);
+    return GetFuncStringContentList<nsCacheableFuncStringHTMLCollection>(aRootNode,
+                                                                         MatchClassNames,
+                                                                         DestroyClassNameArray,
+                                                                         AllocClassMatchingInfo,
+                                                                         aClasses);
   }
 
   /**
@@ -2016,8 +2137,19 @@ public:
    * Returns the widget for this document if there is one. Looks at all ancestor
    * documents to try to find a widget, so for example this can still find a
    * widget for documents in display:none frames that have no presentation.
+   *
+   * You should probably use WidgetForContent() instead of this, unless you have
+   * a good reason to do otherwise.
    */
   static nsIWidget* WidgetForDocument(const nsIDocument* aDoc);
+
+  /**
+   * Returns the appropriate widget for this element, if there is one. Unlike
+   * WidgetForDocument(), this returns the correct widget for content in popups.
+   *
+   * You should probably use this instead of WidgetForDocument().
+   */
+  static nsIWidget* WidgetForContent(const nsIContent* aContent);
 
   /**
    * Returns a layer manager to use for the given document. Basically we
@@ -2025,12 +2157,25 @@ public:
    * a presentation with an associated widget, and use that widget's
    * layer manager.
    *
+   * You should probably use LayerManagerForContent() instead of this, unless
+   * you have a good reason to do otherwise.
+   *
    * @param aDoc the document for which to return a layer manager.
    * @param aAllowRetaining an outparam that states whether the returned
    * layer manager should be used for retained layers
    */
   static already_AddRefed<mozilla::layers::LayerManager>
   LayerManagerForDocument(const nsIDocument *aDoc);
+
+  /**
+   * Returns a layer manager to use for the given content. Unlike
+   * LayerManagerForDocument(), this returns the correct layer manager for
+   * content in popups.
+   *
+   * You should probably use this instead of LayerManagerForDocument().
+   */
+  static already_AddRefed<mozilla::layers::LayerManager>
+  LayerManagerForContent(const nsIContent *aContent);
 
   /**
    * Returns a layer manager to use for the given document. Basically we
@@ -2137,7 +2282,7 @@ public:
   static bool ResistFingerprinting(mozilla::dom::CallerType aCallerType)
   {
     return aCallerType != mozilla::dom::CallerType::System &&
-           sPrivacyResistFingerprinting;
+           ShouldResistFingerprinting();
   }
 
   /**
@@ -2170,6 +2315,37 @@ public:
   static bool GetBoxQuadsEnabled()
   {
     return sGetBoxQuadsEnabled;
+  }
+
+  /**
+   * Returns true if the requestIdleCallback API should be enabled.
+   */
+  static bool RequestIdleCallbackEnabled()
+  {
+    return sRequestIdleCallbackEnabled;
+  }
+
+  /**
+   * Returns true if CSSOM origin check should be skipped for WebDriver
+   * based crawl to be able to collect data from cross-origin CSS style
+   * sheets. This can be enabled by setting environment variable
+   * MOZ_BYPASS_CSSOM_ORIGIN_CHECK.
+   */
+  static bool BypassCSSOMOriginCheck()
+  {
+#ifdef RELEASE_OR_BETA
+    return false;
+#else
+    return sBypassCSSOMOriginCheck;
+#endif
+  }
+
+  /**
+   * Returns true if the <style scoped> enabling pref is true.
+   */
+  static bool IsScopedStylePrefEnabled()
+  {
+    return sIsScopedStyleEnabled;
   }
 
   /**
@@ -2383,7 +2559,8 @@ public:
   SerializeAutocompleteAttribute(const nsAttrValue* aAttr,
                                  mozilla::dom::AutocompleteInfo& aInfo,
                                  AutocompleteAttrState aCachedState =
-                                   eAutocompleteAttrState_Unknown);
+                                   eAutocompleteAttrState_Unknown,
+                                 bool aGrantAllValidValue = false);
 
   /**
    * This will parse aSource, to extract the value of the pseudo attribute
@@ -2463,7 +2640,13 @@ public:
   static int32_t GetAdjustedOffsetInTextControl(nsIFrame* aOffsetFrame,
                                                 int32_t aOffset);
 
-  static nsIEditor* GetHTMLEditor(nsPresContext* aPresContext);
+  /**
+   * Returns pointer to HTML editor instance for the aPresContext when there is.
+   * The HTML editor is shared by contenteditable elements or used in
+   * designMode.  When there are no contenteditable elements and the document
+   * is not in designMode, this returns nullptr.
+   */
+  static mozilla::HTMLEditor* GetHTMLEditor(nsPresContext* aPresContext);
 
   /**
    * Returns true if the browser.dom.window.dump.enabled pref is set.
@@ -2619,10 +2802,10 @@ public:
    * Get the pixel data from the given source surface and fill it in Shmem.
    * The length and stride will be assigned from the surface.
    */
-  static void GetSurfaceData(mozilla::gfx::DataSourceSurface* aSurface,
-                             size_t* aLength, int32_t* aStride,
-                             mozilla::ipc::IShmemAllocator* aAlloc,
-                             mozilla::ipc::Shmem *aOutShmem);
+  static mozilla::Maybe<mozilla::ipc::Shmem>
+  GetSurfaceData(mozilla::gfx::DataSourceSurface* aSurface,
+                 size_t* aLength, int32_t* aStride,
+                 mozilla::ipc::IShmemAllocator* aAlloc);
 
   // Helpers shared by the implementations of nsContentUtils methods and
   // nsIDOMWindowUtils methods.
@@ -2697,7 +2880,7 @@ public:
                                                 nsIHttpChannel* aChannel,
                                                 mozilla::net::ReferrerPolicy aReferrerPolicy);
 
-    /*
+  /*
    * Parse a referrer policy from a Referrer-Policy header
    * https://www.w3.org/TR/referrer-policy/#parse-referrer-policy-from-header
    *
@@ -2706,7 +2889,11 @@ public:
    */
   static mozilla::net::ReferrerPolicy GetReferrerPolicyFromHeader(const nsAString& aHeader);
 
+  static bool PromiseRejectionEventsEnabled(JSContext* aCx, JSObject* aObj);
+
   static bool PushEnabled(JSContext* aCx, JSObject* aObj);
+
+  static bool StreamsEnabled(JSContext* aCx, JSObject* aObj);
 
   static bool IsNonSubresourceRequest(nsIChannel* aChannel);
 
@@ -2796,6 +2983,11 @@ public:
   static void SetupCustomElement(Element* aElement,
                                  const nsAString* aTypeExtension = nullptr);
 
+  static mozilla::dom::CustomElementDefinition*
+  GetElementDefinitionIfObservingAttr(Element* aCustomElement,
+                                      nsIAtom* aExtensionType,
+                                      nsIAtom* aAttrName);
+
   static void EnqueueLifecycleCallback(nsIDocument* aDoc,
                                        nsIDocument::ElementCallbackType aType,
                                        Element* aCustomElement,
@@ -2818,6 +3010,16 @@ public:
   static void AppendDocumentLevelNativeAnonymousContentTo(
       nsIDocument* aDocument,
       nsTArray<nsIContent*>& aElements);
+
+  /**
+   * Appends all native anonymous content subtree roots generated by `aContent`
+   * to `aKids`.
+   *
+   * See `AllChildrenIterator` for the description of the `aFlags` parameter.
+   */
+  static void AppendNativeAnonymousChildren(const nsIContent* aContent,
+                                            nsTArray<nsIContent*>& aKids,
+                                            uint32_t aFlags);
 
   /**
    * Returns the content policy type that should be used for loading images
@@ -2844,6 +3046,16 @@ public:
   static Element* GetClosestNonNativeAnonymousAncestor(Element* aElement);
 
   /**
+   * Returns the nsIPluginTag for the plugin we should try to use for a given
+   * MIME type.
+   *
+   * @param aMIMEType  The MIME type of the document being loaded.
+   * @param aNoFakePlugin  If false then this method should consider JS plugins.
+   */
+  static already_AddRefed<nsIPluginTag>
+    PluginTagForType(const nsCString& aMIMEType, bool aNoFakePlugin);
+
+  /**
    * Returns one of the nsIObjectLoadingContent::TYPE_ values describing the
    * content type which will be used for the given MIME type when loaded within
    * an nsObjectLoadingContent.
@@ -2852,21 +3064,105 @@ public:
    * take that into account.
    *
    * @param aMIMEType  The MIME type of the document being loaded.
+   * @param aNoFakePlugin  If false then this method should consider JS plugins.
    * @param aContent The nsIContent object which is performing the load. May be
    *                 nullptr in which case the docshell's plugin permissions
    *                 will not be checked.
    */
   static uint32_t
   HtmlObjectContentTypeForMIMEType(const nsCString& aMIMEType,
+                                   bool aNoFakePlugin,
                                    nsIContent* aContent);
 
-  static already_AddRefed<nsIEventTarget>
+  static already_AddRefed<nsISerialEventTarget>
   GetEventTargetByLoadInfo(nsILoadInfo* aLoadInfo, mozilla::TaskCategory aCategory);
+
+  /**
+   * Detect whether a string is a local-url.
+   * https://drafts.csswg.org/css-values/#local-urls
+   */
+  static bool
+  IsLocalRefURL(const nsString& aString);
+
+  static bool
+  IsCustomElementsEnabled() { return sIsCustomElementsEnabled; }
+
+  /**
+   * Compose a tab id with process id and a serial number.
+   */
+  static uint64_t GenerateTabId();
+
+  /**
+   * Check whether we should skip moving the cursor for a same-value .value set
+   * on a text input or textarea.
+   */
+  static bool
+  SkipCursorMoveForSameValueSet() { return sSkipCursorMoveForSameValueSet; }
+
+  /**
+   * Determine whether or not the user is currently interacting with the web
+   * browser. This method is safe to call from off of the main thread.
+   */
+  static bool
+  GetUserIsInteracting();
+
+  // Check pref "privacy.trackingprotection.lower_network_priority" to see
+  // if we want to lower the priority of the channel.
+  static bool IsLowerNetworkPriority() { return sLowerNetworkPriority; }
+
+  // Whether tracker tailing is turned on - "network.http.tailing.enabled".
+  static bool IsTailingEnabled() { return sTailingEnabled; }
+
+  // Check pref "dom.placeholder.show_on_focus" to see
+  // if we want to show the placeholder inside input elements
+  // when they have focus.
+  static bool ShowInputPlaceholderOnFocus() { return sShowInputPlaceholderOnFocus; }
+
+  // Check pref "browser.autofocus" to see if we want to enable autofocusing elements
+  // when the page requests it.
+  static bool AutoFocusEnabled() { return sAutoFocusEnabled; }
+
+  // Check pref "dom.script_loader.bytecode_cache.enabled" to see
+  // if we want to cache JS bytecode on the cache entry.
+  static bool IsBytecodeCacheEnabled() { return sIsBytecodeCacheEnabled; }
+
+  // Check pref "dom.script_loader.bytecode_cache.strategy" to see which
+  // heuristic strategy should be used to trigger the caching of the bytecode.
+  static int32_t BytecodeCacheStrategy() { return sBytecodeCacheStrategy; }
+
+  // Alternate data MIME type used by the ScriptLoader to register and read
+  // bytecode out of the nsCacheInfoChannel.
+  static nsCString& JSBytecodeMimeType() { return *sJSBytecodeMimeType; }
+
+  /**
+   * Checks if the passed-in name should override an existing name on the
+   * window. Values which should not override include: "", "_blank", "_top",
+   * "_parent" and "_self".
+   */
+  static bool IsOverridingWindowName(const nsAString& aName);
+
+  /**
+   * If there is a SourceMap (higher precedence) or X-SourceMap (lower
+   * precedence) response header in |aChannel|, set |aResult| to the
+   * header's value and return true.  Otherwise, return false.
+   *
+   * @param aChannel The HTTP channel
+   * @param aResult The string result.
+   */
+  static bool GetSourceMapURL(nsIHttpChannel* aChannel, nsACString& aResult);
+
+  /**
+   * Returns true if the passed-in mesasge is a pending InputEvent.
+   *
+   * @param aMsg  The message to check
+   */
+  static bool IsMessageInputEvent(const IPC::Message& aMsg);
 
 private:
   static bool InitializeEventTable();
 
   static nsresult EnsureStringBundle(PropertiesFile aFile);
+  static void AsyncPrecreateStringBundles();
 
   static bool CanCallerAccess(nsIPrincipal* aSubjectPrincipal,
                                 nsIPrincipal* aPrincipal);
@@ -2885,6 +3181,16 @@ private:
                                 bool *aDefaultAction = nullptr,
                                 bool aOnlyChromeDispatch = false);
 
+  static nsresult DispatchEvent(nsIDocument* aDoc,
+                                nsISupports* aTarget,
+                                mozilla::WidgetEvent& aWidgetEvent,
+                                mozilla::EventMessage aEventMessage,
+                                bool aCanBubble,
+                                bool aCancelable,
+                                bool aTrusted,
+                                bool *aDefaultAction = nullptr,
+                                bool aOnlyChromeDispatch = false);
+
   static void InitializeModifierStrings();
 
   static void DropFragmentParsers();
@@ -2896,13 +3202,27 @@ private:
   static void* AllocClassMatchingInfo(nsINode* aRootNode,
                                       const nsString* aClasses);
 
+  static mozilla::EventClassID
+  GetEventClassIDFromMessage(mozilla::EventMessage aEventMessage);
+
   // Fills in aInfo with the tokens from the supplied autocomplete attribute.
   static AutocompleteAttrState InternalSerializeAutocompleteAttribute(const nsAttrValue* aAttrVal,
-                                                                      mozilla::dom::AutocompleteInfo& aInfo);
+                                                                      mozilla::dom::AutocompleteInfo& aInfo,
+                                                                      bool aGrantAllValidValue = false);
 
   static bool CallOnAllRemoteChildren(nsIMessageBroadcaster* aManager,
                                       CallOnRemoteChildFunction aCallback,
                                       void* aArg);
+
+  /**
+   * Gets the current cookie lifetime policy and cookie behavior for a given
+   * principal by checking with preferences and the permission manager.
+   *
+   * Used in the implementation of InternalStorageAllowedForPrincipal.
+   */
+  static void GetCookieBehaviorForPrincipal(nsIPrincipal* aPrincipal,
+                                            uint32_t* aLifetimePolicy,
+                                            uint32_t* aBehavior);
 
   /*
    * Checks if storage for a given principal is permitted by the user's
@@ -2915,6 +3235,10 @@ private:
    */
   static StorageAccess InternalStorageAllowedForPrincipal(nsIPrincipal* aPrincipal,
                                                           nsPIDOMWindowInner* aWindow);
+
+  static nsINode* GetCommonAncestorHelper(nsINode* aNode1, nsINode* aNode2);
+  static nsIContent* GetCommonFlattenedTreeAncestorHelper(nsIContent* aContent1,
+                                                          nsIContent* aContent2);
 
   static nsIXPConnect *sXPConnect;
 
@@ -2968,19 +3292,35 @@ private:
   static bool sIsResourceTimingEnabled;
   static bool sIsUserTimingLoggingEnabled;
   static bool sIsFrameTimingPrefEnabled;
-  static bool sIsExperimentalAutocompleteEnabled;
+  static bool sIsFormAutofillAutocompleteEnabled;
   static bool sIsWebComponentsEnabled;
-  static bool sPrivacyResistFingerprinting;
+  static bool sIsCustomElementsEnabled;
+  static bool sDevToolsEnabled;
   static bool sSendPerformanceTimingNotifications;
   static bool sUseActivityCursor;
   static bool sAnimationsAPICoreEnabled;
   static bool sAnimationsAPIElementAnimateEnabled;
   static bool sGetBoxQuadsEnabled;
+  static bool sSkipCursorMoveForSameValueSet;
+  static bool sRequestIdleCallbackEnabled;
+  static bool sLowerNetworkPriority;
+  static bool sTailingEnabled;
+  static bool sShowInputPlaceholderOnFocus;
+  static bool sAutoFocusEnabled;
+#ifndef RELEASE_OR_BETA
+  static bool sBypassCSSOMOriginCheck;
+#endif
+  static bool sIsScopedStyleEnabled;
+  static bool sIsBytecodeCacheEnabled;
+  static int32_t sBytecodeCacheStrategy;
   static uint32_t sCookiesLifetimePolicy;
   static uint32_t sCookiesBehavior;
 
   static int32_t sPrivacyMaxInnerWidth;
   static int32_t sPrivacyMaxInnerHeight;
+
+  class UserInteractionObserver;
+  static UserInteractionObserver* sUserInteractionObserver;
 
   static nsHtml5StringParser* sHTMLFragmentParser;
   static nsIParser* sXMLFragmentParser;
@@ -2991,6 +3331,8 @@ private:
    */
   static bool sFragmentParsingActive;
 
+  static nsISerialEventTarget* sStableStateEventTarget;
+
   static nsString* sShiftText;
   static nsString* sControlText;
   static nsString* sMetaText;
@@ -2998,12 +3340,75 @@ private:
   static nsString* sAltText;
   static nsString* sModifierSeparator;
 
+  // Alternate data mime type, used by the ScriptLoader to register and read the
+  // bytecode out of the nsCacheInfoChannel.
+  static nsCString* sJSBytecodeMimeType;
+
 #if !(defined(DEBUG) || defined(MOZ_ENABLE_JS_DUMP))
   static bool sDOMWindowDumpEnabled;
 #endif
   static bool sDoNotTrackEnabled;
   static mozilla::LazyLogModule sDOMDumpLog;
 };
+
+/* static */ inline
+nsContentPolicyType
+nsContentUtils::InternalContentPolicyTypeToExternal(nsContentPolicyType aType)
+{
+  switch (aType) {
+  case nsIContentPolicy::TYPE_INTERNAL_SCRIPT:
+  case nsIContentPolicy::TYPE_INTERNAL_SCRIPT_PRELOAD:
+  case nsIContentPolicy::TYPE_INTERNAL_WORKER:
+  case nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER:
+  case nsIContentPolicy::TYPE_INTERNAL_SERVICE_WORKER:
+  case nsIContentPolicy::TYPE_INTERNAL_WORKER_IMPORT_SCRIPTS:
+    return nsIContentPolicy::TYPE_SCRIPT;
+
+  case nsIContentPolicy::TYPE_INTERNAL_EMBED:
+  case nsIContentPolicy::TYPE_INTERNAL_OBJECT:
+    return nsIContentPolicy::TYPE_OBJECT;
+
+  case nsIContentPolicy::TYPE_INTERNAL_FRAME:
+  case nsIContentPolicy::TYPE_INTERNAL_IFRAME:
+    return nsIContentPolicy::TYPE_SUBDOCUMENT;
+
+  case nsIContentPolicy::TYPE_INTERNAL_AUDIO:
+  case nsIContentPolicy::TYPE_INTERNAL_VIDEO:
+  case nsIContentPolicy::TYPE_INTERNAL_TRACK:
+    return nsIContentPolicy::TYPE_MEDIA;
+
+  case nsIContentPolicy::TYPE_INTERNAL_XMLHTTPREQUEST:
+  case nsIContentPolicy::TYPE_INTERNAL_EVENTSOURCE:
+    return nsIContentPolicy::TYPE_XMLHTTPREQUEST;
+
+  case nsIContentPolicy::TYPE_INTERNAL_IMAGE:
+  case nsIContentPolicy::TYPE_INTERNAL_IMAGE_PRELOAD:
+  case nsIContentPolicy::TYPE_INTERNAL_IMAGE_FAVICON:
+    return nsIContentPolicy::TYPE_IMAGE;
+
+  case nsIContentPolicy::TYPE_INTERNAL_STYLESHEET:
+  case nsIContentPolicy::TYPE_INTERNAL_STYLESHEET_PRELOAD:
+    return nsIContentPolicy::TYPE_STYLESHEET;
+
+  default:
+    return aType;
+  }
+}
+
+/* static */ inline
+nsContentPolicyType
+nsContentUtils::InternalContentPolicyTypeToExternalOrWorker(nsContentPolicyType aType)
+{
+  switch (aType) {
+  case nsIContentPolicy::TYPE_INTERNAL_WORKER:
+  case nsIContentPolicy::TYPE_INTERNAL_SHARED_WORKER:
+  case nsIContentPolicy::TYPE_INTERNAL_SERVICE_WORKER:
+    return aType;
+
+  default:
+    return InternalContentPolicyTypeToExternal(aType);
+  }
+}
 
 class MOZ_RAII nsAutoScriptBlocker {
 public:

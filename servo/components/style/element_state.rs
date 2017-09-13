@@ -58,7 +58,7 @@ bitflags! {
         /// Non-standard: https://developer.mozilla.org/en-US/docs/Web/CSS/:-moz-suppressed
         const IN_SUPPRESSED_STATE = 1 << 16,
         /// Non-standard: https://developer.mozilla.org/en-US/docs/Web/CSS/:-moz-loading
-        const IN_LOADING_STATE = 1 << 18,
+        const IN_LOADING_STATE = 1 << 17,
         /// Non-standard: https://developer.mozilla.org/en-US/docs/Web/CSS/:-moz-handler-blocked
         const IN_HANDLER_BLOCKED_STATE = 1 << 18,
         /// Non-standard: https://developer.mozilla.org/en-US/docs/Web/CSS/:-moz-handler-disabled
@@ -115,5 +115,39 @@ bitflags! {
         const IN_HANDLER_VULNERABLE_NO_UPDATE_STATE = 1 << 42,
         /// https://drafts.csswg.org/selectors-4/#the-focus-within-pseudo
         const IN_FOCUS_WITHIN_STATE = 1 << 43,
+        /// :dir matching; the states are used for dynamic change detection.
+        /// State that elements that match :dir(ltr) are in.
+        const IN_LTR_STATE = 1 << 44,
+        /// State that elements that match :dir(rtl) are in.
+        const IN_RTL_STATE = 1 << 45,
+        /// State that HTML elements that have a "dir" attr are in.
+        const IN_HAS_DIR_ATTR_STATE = 1 << 46,
+        /// State that HTML elements with dir="ltr" (or something
+        /// case-insensitively equal to "ltr") are in.
+        const IN_HAS_DIR_ATTR_LTR_STATE = 1 << 47,
+        /// State that HTML elements with dir="rtl" (or something
+        /// case-insensitively equal to "rtl") are in.
+        const IN_HAS_DIR_ATTR_RTL_STATE = 1 << 48,
+        /// State that HTML <bdi> elements without a valid-valued "dir" attr or
+        /// any HTML elements (including <bdi>) with dir="auto" (or something
+        /// case-insensitively equal to "auto") are in.
+        const IN_HAS_DIR_ATTR_LIKE_AUTO_STATE = 1 << 49,
+        /// Non-standard & undocumented.
+        const IN_AUTOFILL_STATE = 1 << 50,
+        /// Non-standard & undocumented.
+        const IN_AUTOFILL_PREVIEW_STATE = 1 << 51,
+    }
+}
+
+bitflags! {
+    /// Event-based document states.
+    ///
+    /// NB: Is important for this to remain in sync with Gecko's
+    /// dom/base/nsIDocument.h.
+    pub flags DocumentState: u64 {
+        /// RTL locale: specific to the XUL localedir attribute
+        const NS_DOCUMENT_STATE_RTL_LOCALE = 1 << 0,
+        /// Window activation status
+        const NS_DOCUMENT_STATE_WINDOW_INACTIVE = 1 << 1,
     }
 }

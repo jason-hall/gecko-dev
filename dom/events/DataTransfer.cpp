@@ -318,7 +318,7 @@ DataTransfer::GetTypes(nsTArray<nsString>& aTypes, CallerType aCallerType) const
   // When called from bindings, aTypes will be empty, but since we might have
   // Gecko-internal callers too, clear it to be safe.
   aTypes.Clear();
-  
+
   const nsTArray<RefPtr<DataTransferItem>>* items = mItems->MozItemsAt(0);
   if (NS_WARN_IF(!items)) {
     return;
@@ -337,8 +337,8 @@ DataTransfer::GetTypes(nsTArray<nsString>& aTypes, CallerType aCallerType) const
     // reasons.
     nsAutoString type;
     item->GetInternalType(type);
-    if (item->Kind() == DataTransferItem::KIND_STRING || type.EqualsASCII(kFileMime)) {
-      // If the entry has kind KIND_STRING, we want to add it to the list.
+    if (item->Kind() != DataTransferItem::KIND_FILE || type.EqualsASCII(kFileMime)) {
+      // If the entry has kind KIND_STRING or KIND_OTHER we want to add it to the list.
       aTypes.AppendElement(type);
     }
   }

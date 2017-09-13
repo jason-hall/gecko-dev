@@ -40,11 +40,10 @@ SizeOfFramePrefix = {
     'JitFrame_BaselineJS': 'JitFrameLayout',
     'JitFrame_BaselineStub': 'BaselineStubFrameLayout',
     'JitFrame_IonStub': 'JitStubFrameLayout',
-    # Technically EntryFrameLayout, but that doesn't wind up in the
-    # debuginfo because there are no uses of it.
     'JitFrame_Entry': 'JitFrameLayout',
     'JitFrame_Rectifier': 'RectifierFrameLayout',
     'JitFrame_IonAccessorIC': 'IonAccessorICFrameLayout',
+    'JitFrame_IonICCall': 'IonICCallFrameLayout',
     'JitFrame_Exit': 'ExitFrameLayout',
     'JitFrame_Bailout': 'JitFrameLayout',
 }
@@ -331,12 +330,12 @@ class UnwinderState(object):
             return not self.text_address_claimed(pc)
 
         cx = self.get_tls_context()
-        runtime = cx['runtime_']
-        if runtime == 0:
+        runtime = cx['runtime_']['value']
+        if long(runtime.address) == 0:
             return False
 
         jitRuntime = runtime['jitRuntime_']
-        if jitRuntime == 0:
+        if long(jitRuntime.address) == 0:
             return False
 
         execAllocators = [jitRuntime['execAlloc_'], jitRuntime['backedgeExecAlloc_']]
@@ -436,17 +435,16 @@ class UnwinderState(object):
         elif self.activation is None:
             cx = self.get_tls_context()
             self.activation = cx['jitActivation']
-            jittop = cx['jitTop']
         else:
-            jittop = self.activation['prevJitTop_']
             self.activation = self.activation['prevJitActivation_']
 
-        if jittop == 0:
+        exitFP = self.activation['exitFP_']
+        if exitFP == 0:
             return None
 
         exit_sp = pending_frame.read_register(self.SP_REGISTER)
         frame_type = self.typecache.JitFrame_Exit
-        return self.create_frame(pc, exit_sp, jittop, frame_type, pending_frame)
+        return self.create_frame(pc, exit_sp, exitFP, frame_type, pending_frame)
 
     # A wrapper for unwind_entry_frame_registers that handles
     # architecture-independent boilerplate.

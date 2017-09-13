@@ -23,8 +23,11 @@ const FRAME_SCRIPT_URL = ROOT_TEST_DIR + "doc_frame_script.js";
 const STYLE_INSPECTOR_L10N
       = new LocalizationHelper("devtools/shared/locales/styleinspector.properties");
 
+Services.prefs.setBoolPref("devtools.inspector.shapesHighlighter.enabled", true);
+
 registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.defaultColorUnit");
+  Services.prefs.clearUserPref("devtools.inspector.shapesHighlighter.enabled");
 });
 
 /**
@@ -175,7 +178,7 @@ var openColorPickerAndSelectColor = Task.async(function* (view, ruleIndex,
   let ruleEditor = getRuleViewRuleEditor(view, ruleIndex);
   let propEditor = ruleEditor.rule.textProps[propIndex].editor;
   let swatch = propEditor.valueSpan.querySelector(".ruleview-colorswatch");
-  let cPicker = view.tooltips.colorPicker;
+  let cPicker = view.tooltips.getTooltip("colorPicker");
 
   info("Opening the colorpicker by clicking the color swatch");
   let onColorPickerReady = cPicker.once("ready");
@@ -213,7 +216,7 @@ var openCubicBezierAndChangeCoords = Task.async(function* (view, ruleIndex,
   let ruleEditor = getRuleViewRuleEditor(view, ruleIndex);
   let propEditor = ruleEditor.rule.textProps[propIndex].editor;
   let swatch = propEditor.valueSpan.querySelector(".ruleview-bezierswatch");
-  let bezierTooltip = view.tooltips.cubicBezier;
+  let bezierTooltip = view.tooltips.getTooltip("cubicBezier");
 
   info("Opening the cubicBezier by clicking the swatch");
   let onBezierWidgetReady = bezierTooltip.once("ready");
@@ -289,7 +292,7 @@ var addProperty = Task.async(function* (view, ruleIndex, name, value,
   // triggers a ruleview-changed event (see bug 1209295).
   let onPreview = view.once("ruleview-changed");
   editor.input.value = value;
-  view.throttle.flush();
+  view.debounce.flush();
   yield onPreview;
 
   let onValueAdded = view.once("ruleview-changed");
@@ -328,7 +331,7 @@ var setProperty = Task.async(function* (view, textProp, value,
   } else {
     EventUtils.sendString(value, view.styleWindow);
   }
-  view.throttle.flush();
+  view.debounce.flush();
   yield onPreview;
 
   let onValueDone = view.once("ruleview-changed");
@@ -495,16 +498,6 @@ function* clickSelectorIcon(icon, view) {
   let onToggled = view.once("ruleview-selectorhighlighter-toggled");
   EventUtils.synthesizeMouseAtCenter(icon, {}, view.styleWindow);
   yield onToggled;
-}
-
-/**
- * Make sure window is properly focused before sending a key event.
- * @param {Window} win
- * @param {Event} key
- */
-function focusAndSendKey(win, key) {
-  win.document.documentElement.focus();
-  EventUtils.sendKey(key, win);
 }
 
 /**

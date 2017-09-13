@@ -18,6 +18,8 @@ class VsyncParent;
 
 namespace ipc {
 
+using mozilla::extensions::PStreamFilterParent;
+
 // Instances of this class should never be created directly. This class is meant
 // to be inherited in BackgroundImpl.
 class BackgroundParentImpl : public PBackgroundParent
@@ -63,21 +65,41 @@ protected:
   virtual mozilla::ipc::IPCResult
   RecvFlushPendingFileDeletions() override;
 
-  virtual PBlobParent*
-  AllocPBlobParent(const BlobConstructorParams& aParams) override;
-
-  virtual bool
-  DeallocPBlobParent(PBlobParent* aActor) override;
-
-  virtual PMemoryStreamParent*
-  AllocPMemoryStreamParent(const uint64_t& aSize) override;
-
-  virtual bool
-  DeallocPMemoryStreamParent(PMemoryStreamParent* aActor) override;
+  virtual PBackgroundStorageParent*
+  AllocPBackgroundStorageParent(const nsString& aProfilePath) override;
 
   virtual mozilla::ipc::IPCResult
-  RecvPBlobConstructor(PBlobParent* aActor,
-                       const BlobConstructorParams& params) override;
+  RecvPBackgroundStorageConstructor(PBackgroundStorageParent* aActor,
+                                    const nsString& aProfilePath) override;
+
+  virtual bool
+  DeallocPBackgroundStorageParent(PBackgroundStorageParent* aActor) override;
+
+  virtual mozilla::ipc::IPCResult
+  RecvBroadcastLocalStorageChange(const nsString& aDocumentURI,
+                                  const nsString& aKey,
+                                  const nsString& aOldValue,
+                                  const nsString& aNewValue,
+                                  const PrincipalInfo& aPrincipalInfo,
+                                  const bool& aIsPrivate) override;
+
+  virtual PPendingIPCBlobParent*
+  AllocPPendingIPCBlobParent(const IPCBlob& aBlob) override;
+
+  virtual bool
+  DeallocPPendingIPCBlobParent(PPendingIPCBlobParent* aActor) override;
+
+  virtual PIPCBlobInputStreamParent*
+  AllocPIPCBlobInputStreamParent(const nsID& aID,
+                                 const uint64_t& aSize) override;
+
+  virtual mozilla::ipc::IPCResult
+  RecvPIPCBlobInputStreamConstructor(PIPCBlobInputStreamParent* aActor,
+                                     const nsID& aID,
+                                     const uint64_t& aSize) override;
+
+  virtual bool
+  DeallocPIPCBlobInputStreamParent(PIPCBlobInputStreamParent* aActor) override;
 
   virtual PFileDescriptorSetParent*
   AllocPFileDescriptorSetParent(const FileDescriptor& aFileDescriptor)
@@ -182,6 +204,18 @@ protected:
                             const nsID& aDestinationUUID,
                             const uint32_t& aSequenceID) override;
 
+  virtual PStreamFilterParent*
+  AllocPStreamFilterParent(const uint64_t& aChannelId,
+                           const nsString& aAddonId) override;
+
+  virtual mozilla::ipc::IPCResult
+  RecvPStreamFilterConstructor(PStreamFilterParent* aActor,
+                               const uint64_t& aChannelId,
+                               const nsString& aAddonId) override;
+
+  virtual bool
+  DeallocPStreamFilterParent(PStreamFilterParent* aActor) override;
+
   virtual PAsmJSCacheEntryParent*
   AllocPAsmJSCacheEntryParent(const dom::asmjscache::OpenMode& aOpenMode,
                               const dom::asmjscache::WriteParams& aWriteParams,
@@ -218,6 +252,21 @@ protected:
 
   virtual bool
   DeallocPGamepadTestChannelParent(PGamepadTestChannelParent* aActor) override;
+
+  virtual PWebAuthnTransactionParent*
+  AllocPWebAuthnTransactionParent() override;
+
+  virtual bool
+  DeallocPWebAuthnTransactionParent(PWebAuthnTransactionParent* aActor) override;
+
+  virtual PHttpBackgroundChannelParent*
+  AllocPHttpBackgroundChannelParent(const uint64_t& aChannelId) override;
+
+  virtual mozilla::ipc::IPCResult
+  RecvPHttpBackgroundChannelConstructor(PHttpBackgroundChannelParent *aActor,
+                                        const uint64_t& aChannelId) override;
+  virtual bool
+  DeallocPHttpBackgroundChannelParent(PHttpBackgroundChannelParent *aActor) override;
 };
 
 } // namespace ipc

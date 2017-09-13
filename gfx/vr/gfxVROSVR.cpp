@@ -6,7 +6,6 @@
 #include <math.h>
 
 #include "prlink.h"
-#include "prmem.h"
 #include "prenv.h"
 #include "gfxPrefs.h"
 #include "nsString.h"
@@ -116,18 +115,16 @@ LoadOSVRRuntime()
   static PRLibrary* osvrClientLib = nullptr;
   static PRLibrary* osvrClientKitLib = nullptr;
   //this looks up the path in the about:config setting, from greprefs.js or modules\libpref\init\all.js
-  nsAdoptingCString osvrUtilPath =
-    mozilla::Preferences::GetCString("gfx.vr.osvr.utilLibPath");
-  nsAdoptingCString osvrCommonPath =
-    mozilla::Preferences::GetCString("gfx.vr.osvr.commonLibPath");
-  nsAdoptingCString osvrClientPath =
-    mozilla::Preferences::GetCString("gfx.vr.osvr.clientLibPath");
-  nsAdoptingCString osvrClientKitPath =
-    mozilla::Preferences::GetCString("gfx.vr.osvr.clientKitLibPath");
-
   //we need all the libs to be valid
-  if ((!osvrUtilPath) || (!osvrCommonPath) || (!osvrClientPath) ||
-      (!osvrClientKitPath)) {
+  nsAutoCString osvrUtilPath, osvrCommonPath, osvrClientPath, osvrClientKitPath;
+  if (NS_FAILED(mozilla::Preferences::GetCString("gfx.vr.osvr.utilLibPath",
+                                                 osvrUtilPath)) ||
+      NS_FAILED(mozilla::Preferences::GetCString("gfx.vr.osvr.commonLibPath",
+                                                 osvrCommonPath)) ||
+      NS_FAILED(mozilla::Preferences::GetCString("gfx.vr.osvr.clientLibPath",
+                                                 osvrClientPath)) ||
+      NS_FAILED(mozilla::Preferences::GetCString("gfx.vr.osvr.clientKitLibPath",
+                                                 osvrClientKitPath))) {
     return false;
   }
 
@@ -292,7 +289,6 @@ VRDisplayOSVR::GetSensorState()
 
   VRHMDSensorState result;
   OSVR_TimeValue timestamp;
-  result.Clear();
 
   OSVR_OrientationState orientation;
 
@@ -300,6 +296,7 @@ VRDisplayOSVR::GetSensorState()
     osvr_GetOrientationState(*m_iface, &timestamp, &orientation);
 
   result.timestamp = timestamp.seconds;
+  result.inputFrameID = mDisplayInfo.mFrameId;
 
   if (ret == OSVR_RETURN_SUCCESS) {
     result.flags |= VRDisplayCapabilityFlags::Cap_Orientation;
@@ -323,14 +320,26 @@ VRDisplayOSVR::GetSensorState()
 
 #if defined(XP_WIN)
 
-void
+bool
 VRDisplayOSVR::SubmitFrame(TextureSourceD3D11* aSource,
   const IntSize& aSize,
-  const VRHMDSensorState& aSensorState,
   const gfx::Rect& aLeftEyeRect,
   const gfx::Rect& aRightEyeRect)
 {
   // XXX Add code to submit frame
+  return false;
+}
+
+#elif defined(XP_MACOSX)
+
+bool
+VRDisplayOSVR::SubmitFrame(MacIOSurface* aMacIOSurface,
+                           const IntSize& aSize,
+                           const gfx::Rect& aLeftEyeRect,
+                           const gfx::Rect& aRightEyeRect)
+{
+  // XXX Add code to submit frame
+  return false;
 }
 
 #endif
@@ -515,21 +524,23 @@ VRSystemManagerOSVR::Shutdown()
   osvr_ClientShutdown(m_ctx);
 }
 
-void
+bool
 VRSystemManagerOSVR::GetHMDs(nsTArray<RefPtr<VRDisplayHost>>& aHMDResult)
 {
   // make sure context, interface and display are initialized
   CheckOSVRStatus();
 
   if (!Init()) {
-    return;
+    return false;
   }
 
   mHMDInfo = new VRDisplayOSVR(&m_ctx, &m_iface, &m_display);
 
   if (mHMDInfo) {
     aHMDResult.AppendElement(mHMDInfo);
+    return true;
   }
+  return false;
 }
 
 bool
@@ -537,7 +548,7 @@ VRSystemManagerOSVR::GetIsPresenting()
 {
   if (mHMDInfo) {
     VRDisplayInfo displayInfo(mHMDInfo->GetDisplayInfo());
-    return displayInfo.GetIsPresenting();
+    return displayInfo.GetPresentingGroups() != kVRGroupNone;
   }
 
   return false;

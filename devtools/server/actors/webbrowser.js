@@ -9,12 +9,13 @@
 var { Ci } = require("chrome");
 var Services = require("Services");
 var promise = require("promise");
+const defer = require("devtools/shared/defer");
 var { DebuggerServer } = require("devtools/server/main");
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 
 loader.lazyRequireGetter(this, "RootActor", "devtools/server/actors/root", true);
 loader.lazyRequireGetter(this, "BrowserAddonActor", "devtools/server/actors/addon", true);
-loader.lazyRequireGetter(this, "WebExtensionActor", "devtools/server/actors/webextension", true);
+loader.lazyRequireGetter(this, "WebExtensionParentActor", "devtools/server/actors/webextension-parent", true);
 loader.lazyRequireGetter(this, "WorkerActorList", "devtools/server/actors/worker-list", true);
 loader.lazyRequireGetter(this, "ServiceWorkerRegistrationActorList", "devtools/server/actors/worker-list", true);
 loader.lazyRequireGetter(this, "ProcessActorList", "devtools/server/actors/process", true);
@@ -355,7 +356,8 @@ BrowserTabList.prototype.getTab = function ({ outerWindowID, tabId }) {
   } else if (typeof tabId == "number") {
     // Tabs OOP
     for (let browser of this._getBrowsers()) {
-      if (browser.frameLoader.tabParent &&
+      if (browser.frameLoader &&
+          browser.frameLoader.tabParent &&
           browser.frameLoader.tabParent.tabId === tabId) {
         return this._getActorForBrowser(browser);
       }
@@ -671,7 +673,7 @@ DevToolsUtils.makeInfallible(function (window) {
    * a nsIWindowMediatorListener's onCloseWindow hook (bug 873589), so
    * handle the close in a different tick.
    */
-  Services.tm.currentThread.dispatch(DevToolsUtils.makeInfallible(() => {
+  Services.tm.dispatchToMainThread(DevToolsUtils.makeInfallible(() => {
     /*
      * Scan the entire map for actors representing tabs that were in this
      * top-level window, and exit them.
@@ -682,7 +684,7 @@ DevToolsUtils.makeInfallible(function (window) {
         this._handleActorClose(actor, browser);
       }
     }
-  }, "BrowserTabList.prototype.onCloseWindow's delayed body"), 0);
+  }, "BrowserTabList.prototype.onCloseWindow's delayed body"));
 }, "BrowserTabList.prototype.onCloseWindow");
 
 exports.BrowserTabList = BrowserTabList;
@@ -741,7 +743,7 @@ BrowserTabActor.prototype = {
     // so only request form update if some code is still listening on the other
     // side.
     if (!this.exited) {
-      this._deferredUpdate = promise.defer();
+      this._deferredUpdate = defer();
       let onFormUpdate = msg => {
         // There may be more than just one childtab.js up and running
         if (this._form.actor != msg.json.actor) {
@@ -828,13 +830,13 @@ function BrowserAddonList(connection) {
 }
 
 BrowserAddonList.prototype.getList = function () {
-  let deferred = promise.defer();
+  let deferred = defer();
   AddonManager.getAllAddons((addons) => {
     for (let addon of addons) {
       let actor = this._actorByAddonId.get(addon.id);
       if (!actor) {
         if (addon.isWebExtension) {
-          actor = new WebExtensionActor(this._connection, addon);
+          actor = new WebExtensionParentActor(this._connection, addon);
         } else {
           actor = new BrowserAddonActor(this._connection, addon);
         }
@@ -842,8 +844,10 @@ BrowserAddonList.prototype.getList = function () {
         this._actorByAddonId.set(addon.id, actor);
       }
     }
+
     deferred.resolve([...this._actorByAddonId].map(([_, actor]) => actor));
   });
+
   return deferred.promise;
 };
 

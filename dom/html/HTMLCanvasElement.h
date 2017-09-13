@@ -30,6 +30,7 @@ class WebGLContext;
 
 namespace layers {
 class AsyncCanvasRenderer;
+class CanvasRenderer;
 class CanvasLayer;
 class Image;
 class Layer;
@@ -124,6 +125,7 @@ class HTMLCanvasElement final : public nsGenericHTMLElement,
   };
 
   typedef layers::AsyncCanvasRenderer AsyncCanvasRenderer;
+  typedef layers::CanvasRenderer CanvasRenderer;
   typedef layers::CanvasLayer CanvasLayer;
   typedef layers::Layer Layer;
   typedef layers::LayerManager LayerManager;
@@ -254,7 +256,8 @@ public:
   bool GetIsOpaque();
   virtual bool GetOpaqueAttr() override;
 
-  virtual already_AddRefed<gfx::SourceSurface> GetSurfaceSnapshot(bool* aPremultAlpha = nullptr);
+  virtual already_AddRefed<gfx::SourceSurface>
+  GetSurfaceSnapshot(gfxAlphaType* aOutAlphaType = nullptr);
 
   /*
    * Register a FrameCaptureListener with this canvas.
@@ -292,22 +295,10 @@ public:
                                 nsAttrValue& aResult) override;
   nsChangeHint GetAttributeChangeHint(const nsIAtom* aAttribute, int32_t aModType) const override;
 
-  // SetAttr override.  C++ is stupid, so have to override both
-  // overloaded methods.
-  nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                   const nsAString& aValue, bool aNotify)
-  {
-    return SetAttr(aNameSpaceID, aName, nullptr, aValue, aNotify);
-  }
-  virtual nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                           nsIAtom* aPrefix, const nsAString& aValue,
-                           bool aNotify) override;
-
-  virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                             bool aNotify) override;
-
-  virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const override;
-  nsresult CopyInnerTo(mozilla::dom::Element* aDest);
+  virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
+                         bool aPreallocateChildren) const override;
+  nsresult CopyInnerTo(mozilla::dom::Element* aDest,
+                       bool aPreallocateChildren);
 
   virtual nsresult GetEventTargetParent(
                      mozilla::EventChainPreVisitor& aVisitor) override;
@@ -319,6 +310,8 @@ public:
   already_AddRefed<Layer> GetCanvasLayer(nsDisplayListBuilder* aBuilder,
                                          Layer *aOldLayer,
                                          LayerManager *aManager);
+  bool InitializeCanvasRenderer(nsDisplayListBuilder* aBuilder,
+                                CanvasRenderer* aRenderer);
   // Should return true if the canvas layer should always be marked inactive.
   // We should return true here if we can't do accelerated compositing with
   // a non-BasicCanvasLayer.
@@ -374,6 +367,14 @@ protected:
                             File** aResult);
   void CallPrintCallback();
 
+  virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
+                                const nsAttrValue* aValue,
+                                const nsAttrValue* aOldValue,
+                                bool aNotify) override;
+  virtual nsresult OnAttrSetButNotChanged(int32_t aNamespaceID, nsIAtom* aName,
+                                          const nsAttrValueOrString& aValue,
+                                          bool aNotify) override;
+
   AsyncCanvasRenderer* GetAsyncCanvasRenderer();
 
   bool mResetLayer;
@@ -407,6 +408,18 @@ public:
   CanvasContextType GetCurrentContextType() {
     return mCurrentContextType;
   }
+
+private:
+  /**
+   * This function is called by AfterSetAttr and OnAttrSetButNotChanged.
+   * This function will be called by AfterSetAttr whether the attribute is being
+   * set or unset.
+   *
+   * @param aNamespaceID the namespace of the attr being set
+   * @param aName the localname of the attribute being set
+   * @param aNotify Whether we plan to notify document observers.
+   */
+  void AfterMaybeChangeAttr(int32_t aNamespaceID, nsIAtom* aName, bool aNotify);
 };
 
 class HTMLCanvasPrintState final : public nsWrapperCache

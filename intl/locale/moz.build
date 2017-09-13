@@ -23,9 +23,6 @@ XPIDL_SOURCES += [
     'mozILocaleService.idl',
     'mozIOSPreferences.idl',
     'nsICollation.idl',
-    'nsILocale.idl',
-    'nsILocaleService.idl',
-    'nsIScriptableDateFormat.idl',
 ]
 
 XPIDL_MODULE = 'locale'
@@ -33,11 +30,9 @@ XPIDL_MODULE = 'locale'
 EXPORTS += [
     'DateTimeFormat.h',
     'nsCollationCID.h',
-    'nsILanguageAtomService.h',
     'nsIPlatformCharset.h',
-    'nsPosixLocale.h',
+    'nsLanguageAtomService.h',
     'nsUConvPropertySearch.h',
-    'nsWin32Locale.h',
 ]
 
 EXPORTS.mozilla.intl += [
@@ -49,12 +44,10 @@ UNIFIED_SOURCES += [
     'LocaleService.cpp',
     'nsCollationFactory.cpp',
     'nsLanguageAtomService.cpp',
-    'nsLocale.cpp',
-    'nsLocaleService.cpp',
-    'nsScriptableDateFormat.cpp',
     'nsUConvPropertySearch.cpp',
     'OSPreferences.cpp',
 ]
+
 
 if CONFIG['ENABLE_INTL_API']:
     UNIFIED_SOURCES += [
@@ -78,16 +71,21 @@ LOCAL_INCLUDES += [
 ]
 
 RESOURCE_FILES += [
-    'langGroups.properties',
     'language.properties',
 ]
 
-GENERATED_FILES += [
-    'langGroups.properties.h',
-]
-langgroups = GENERATED_FILES['langGroups.properties.h']
-langgroups.script = 'props2arrays.py'
-langgroups.inputs = ['langGroups.properties']
+prefixes = (
+    'encodingsgroups',
+    'langGroups',
+)
+
+for prefix in prefixes:
+    input_file = prefix + '.properties'
+    header = prefix + '.properties.h'
+    GENERATED_FILES += [header]
+    props = GENERATED_FILES[header]
+    props.script = 'props2arrays.py'
+    props.inputs = [input_file]
 
 if CONFIG['ENABLE_TESTS']:
     DIRS += ['tests/gtest']

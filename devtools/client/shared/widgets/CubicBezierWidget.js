@@ -25,7 +25,7 @@
 
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/shared/old-event-emitter");
 const {
   PREDEFINED,
   PRESETS,
@@ -873,8 +873,7 @@ function parseTimingFunction(value) {
   return result;
 }
 
-// This is exported for testing.
-exports._parseTimingFunction = parseTimingFunction;
+exports.parseTimingFunction = parseTimingFunction;
 
 /**
  * Removes a class from a node and adds it to another.

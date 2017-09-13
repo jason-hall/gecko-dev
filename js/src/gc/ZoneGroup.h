@@ -45,7 +45,7 @@ class ZoneGroup
     CooperatingContext& ownerContext() { return ownerContext_.ref(); }
     void* addressOfOwnerContext() { return &ownerContext_.ref().cx; }
 
-    void enter();
+    void enter(JSContext* cx);
     void leave();
     bool ownedByCurrentThread();
 
@@ -64,9 +64,6 @@ class ZoneGroup
     bool init();
 
     inline Nursery& nursery();
-
-    // Queue a thunk to run after the next minor GC.
-    inline void callAfterMinorGC(void (*thunk)(void* data), void* data);
 
     inline bool isCollecting();
     inline bool isGCScheduled();

@@ -42,14 +42,12 @@ const Ci = Components.interfaces;
 const Cu = Components.utils;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
                                   "resource://gre/modules/PluralForm.jsm");
 
-this.__defineGetter__("gDecimalSymbol", function() {
-    delete this.gDecimalSymbol;
-      return this.gDecimalSymbol = Number(5.4).toLocaleString().match(/\D/);
-});
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 var localeNumberFormatCache = new Map();
 function getLocaleNumberFormat(fractionDigits) {
@@ -92,11 +90,15 @@ var gStr = {
 };
 
 // This lazily initializes the string bundle upon first use.
-this.__defineGetter__("gBundle", function() {
-  delete this.gBundle;
-  return this.gBundle = Cc["@mozilla.org/intl/stringbundle;1"].
-                        getService(Ci.nsIStringBundleService).
-                        createBundle(kDownloadProperties);
+Object.defineProperty(this, "gBundle", {
+  configurable: true,
+  enumerable: true,
+  get() {
+    delete this.gBundle;
+    return this.gBundle = Cc["@mozilla.org/intl/stringbundle;1"].
+                          getService(Ci.nsIStringBundleService).
+                          createBundle(kDownloadProperties);
+  },
 });
 
 // Keep track of at most this many second/lastSec pairs so that multiple calls
@@ -342,47 +344,34 @@ this.DownloadUtils = {
       aNow = new Date();
     }
 
-    let dts = Cc["@mozilla.org/intl/scriptabledateformat;1"]
-              .getService(Ci.nsIScriptableDateFormat);
-
     // Figure out when today begins
     let today = new Date(aNow.getFullYear(), aNow.getMonth(), aNow.getDate());
 
-    // Figure out if the time is from today, yesterday, this week, etc.
     let dateTimeCompact;
+    let dateTimeFull;
+
+    // Figure out if the time is from today, yesterday, this week, etc.
     if (aDate >= today) {
-      // After today started, show the time
-      dateTimeCompact = dts.FormatTime("",
-                                       dts.timeFormatNoSeconds,
-                                       aDate.getHours(),
-                                       aDate.getMinutes(),
-                                       0);
-    } else if (today - aDate < (24 * 60 * 60 * 1000)) {
+      let dts = Services.intl.createDateTimeFormat(undefined, {
+        timeStyle: "short"
+      });
+      dateTimeCompact = dts.format(aDate);
+    } else if (today - aDate < (MS_PER_DAY)) {
       // After yesterday started, show yesterday
       dateTimeCompact = gBundle.GetStringFromName(gStr.yesterday);
-    } else if (today - aDate < (6 * 24 * 60 * 60 * 1000)) {
+    } else if (today - aDate < (6 * MS_PER_DAY)) {
       // After last week started, show day of week
-      dateTimeCompact = typeof Intl === "undefined"
-                        ? aDate.toLocaleFormat("%A")
-                        : aDate.toLocaleDateString(undefined, { weekday: "long" });
+      dateTimeCompact = aDate.toLocaleDateString(undefined, { weekday: "long" });
     } else {
       // Show month/day
-      let month = typeof Intl === "undefined"
-                  ? aDate.toLocaleFormat("%B")
-                  : aDate.toLocaleDateString(undefined, { month: "long" });
+      let month = aDate.toLocaleDateString(undefined, { month: "long" });
       let date = aDate.getDate();
       dateTimeCompact = gBundle.formatStringFromName(gStr.monthDate, [month, date], 2);
     }
 
-    let dateTimeFull = dts.FormatDateTime("",
-                                          dts.dateFormatLong,
-                                          dts.timeFormatNoSeconds,
-                                          aDate.getFullYear(),
-                                          aDate.getMonth() + 1,
-                                          aDate.getDate(),
-                                          aDate.getHours(),
-                                          aDate.getMinutes(),
-                                          0);
+    const dtOptions = { dateStyle: "long", timeStyle: "short" };
+    dateTimeFull =
+      Services.intl.createDateTimeFormat(undefined, dtOptions).format(aDate);
 
     return [dateTimeCompact, dateTimeFull];
   },
@@ -481,15 +470,8 @@ this.DownloadUtils = {
     // Don't try to format Infinity values using NumberFormat.
     if (aBytes === Infinity) {
       aBytes = "Infinity";
-    } else if (typeof Intl != "undefined") {
-      aBytes = getLocaleNumberFormat(fractionDigits)
-                 .format(aBytes);
     } else {
-      // FIXME: Fall back to the old hack, will be fixed in bug 1344543.
-      aBytes = aBytes.toFixed(fractionDigits);
-      if (gDecimalSymbol != ".") {
-        aBytes = aBytes.replace(".", gDecimalSymbol);
-      }
+      aBytes = getLocaleNumberFormat(fractionDigits).format(aBytes);
     }
 
     return [aBytes, gBundle.GetStringFromName(gStr.units[unitIndex])];

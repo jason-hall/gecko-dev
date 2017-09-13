@@ -11,7 +11,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Messaging.jsm");
 
-function promiseLoadEvent(browser, url, eventType="load", runBeforeLoad) {
+function promiseLoadEvent(browser, url, eventType = "load", runBeforeLoad) {
   return new Promise((resolve, reject) => {
     do_print("Wait browser event: " + eventType);
 
@@ -92,7 +92,7 @@ add_task(function* test_tracking_pb() {
   let browser = BrowserApp.addTab("about:blank", { selected: true, parentId: BrowserApp.selectedTab.id, isPrivate: true }).browser;
   yield new Promise((resolve, reject) => {
     browser.addEventListener("load", function(event) {
-      Services.tm.mainThread.dispatch(resolve, Ci.nsIThread.DISPATCH_NORMAL);
+      Services.tm.dispatchToMainThread(resolve);
     }, {capture: true, once: true});
   });
 
@@ -147,7 +147,7 @@ add_task(function* test_tracking_not_pb() {
   let browser = BrowserApp.addTab("about:blank", { selected: true }).browser;
   yield new Promise((resolve, reject) => {
     browser.addEventListener("load", function(event) {
-      Services.tm.mainThread.dispatch(resolve, Ci.nsIThread.DISPATCH_NORMAL);
+      Services.tm.dispatchToMainThread(resolve);
     }, {capture: true, once: true});
   });
 

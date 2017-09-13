@@ -4,7 +4,7 @@
 
 #![deny(unsafe_code)]
 #![feature(box_syntax)]
-#![feature(step_by)]
+#![feature(iterator_step_by)]
 
 extern crate base64;
 extern crate brotli;
@@ -28,9 +28,7 @@ extern crate net_traits;
 extern crate openssl;
 extern crate parse_hosts;
 extern crate profile_traits;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
+#[macro_use] extern crate serde;
 extern crate serde_json;
 extern crate servo_config;
 extern crate servo_url;
@@ -40,7 +38,7 @@ extern crate tinyfiledialogs;
 extern crate unicase;
 extern crate url;
 extern crate uuid;
-extern crate webrender_traits;
+extern crate webrender_api;
 extern crate websocket;
 
 mod blob_loader;
@@ -52,7 +50,7 @@ mod data_loader;
 pub mod filemanager_thread;
 mod hosts;
 pub mod hsts;
-mod http_loader;
+pub mod http_loader;
 pub mod image_cache;
 pub mod mime_classifier;
 pub mod resource_thread;

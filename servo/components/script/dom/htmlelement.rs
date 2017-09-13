@@ -6,7 +6,6 @@ use dom::activation::{ActivationSource, synthetic_click_activation};
 use dom::attr::Attr;
 use dom::bindings::codegen::Bindings::ElementBinding::ElementMethods;
 use dom::bindings::codegen::Bindings::EventHandlerBinding::EventHandlerNonNull;
-use dom::bindings::codegen::Bindings::EventHandlerBinding::OnErrorEventHandlerNonNull;
 use dom::bindings::codegen::Bindings::HTMLElementBinding;
 use dom::bindings::codegen::Bindings::HTMLElementBinding::HTMLElementMethods;
 use dom::bindings::codegen::Bindings::WindowBinding::WindowMethods;
@@ -30,9 +29,8 @@ use dom::node::{document_from_node, window_from_node};
 use dom::nodelist::NodeList;
 use dom::virtualmethods::VirtualMethods;
 use dom_struct::dom_struct;
-use html5ever_atoms::LocalName;
+use html5ever::{LocalName, Prefix};
 use std::ascii::AsciiExt;
-use std::borrow::ToOwned;
 use std::default::Default;
 use std::rc::Rc;
 use style::attr::AttrValue;
@@ -46,13 +44,13 @@ pub struct HTMLElement {
 }
 
 impl HTMLElement {
-    pub fn new_inherited(tag_name: LocalName, prefix: Option<DOMString>,
+    pub fn new_inherited(tag_name: LocalName, prefix: Option<Prefix>,
                          document: &Document) -> HTMLElement {
         HTMLElement::new_inherited_with_state(ElementState::empty(), tag_name, prefix, document)
     }
 
     pub fn new_inherited_with_state(state: ElementState, tag_name: LocalName,
-                                    prefix: Option<DOMString>, document: &Document)
+                                    prefix: Option<Prefix>, document: &Document)
                                     -> HTMLElement {
         HTMLElement {
             element:
@@ -63,7 +61,7 @@ impl HTMLElement {
     }
 
     #[allow(unrooted_must_root)]
-    pub fn new(local_name: LocalName, prefix: Option<DOMString>, document: &Document) -> Root<HTMLElement> {
+    pub fn new(local_name: LocalName, prefix: Option<Prefix>, document: &Document) -> Root<HTMLElement> {
         Node::reflect_node(box HTMLElement::new_inherited(local_name, prefix, document),
                            document,
                            HTMLElementBinding::Wrap)
@@ -374,12 +372,16 @@ impl HTMLElementMethods for HTMLElement {
 
 // https://html.spec.whatwg.org/multipage/#attr-data-*
 
+static DATA_PREFIX: &str = "data-";
+static DATA_HYPHEN_SEPARATOR: char = '\x2d';
+
 fn to_snake_case(name: DOMString) -> DOMString {
-    let mut attr_name = "data-".to_owned();
+    let mut attr_name = String::with_capacity(name.len() + DATA_PREFIX.len());
+    attr_name.push_str(DATA_PREFIX);
     for ch in name.chars() {
-        if ch.is_uppercase() {
-            attr_name.push('\x2d');
-            attr_name.extend(ch.to_lowercase());
+        if ch.is_ascii_uppercase() {
+            attr_name.push(DATA_HYPHEN_SEPARATOR);
+            attr_name.push(ch.to_ascii_lowercase());
         } else {
             attr_name.push(ch);
         }
@@ -394,23 +396,21 @@ fn to_snake_case(name: DOMString) -> DOMString {
 // without the data prefix.
 
 fn to_camel_case(name: &str) -> Option<DOMString> {
-    if !name.starts_with("data-") {
+    if !name.starts_with(DATA_PREFIX) {
         return None;
     }
     let name = &name[5..];
-    let has_uppercase = name.chars().any(|curr_char| {
-        curr_char.is_ascii() && curr_char.is_uppercase()
-    });
+    let has_uppercase = name.chars().any(|curr_char| curr_char.is_ascii_uppercase());
     if has_uppercase {
         return None;
     }
-    let mut result = "".to_owned();
+    let mut result = String::with_capacity(name.len().saturating_sub(DATA_PREFIX.len()));
     let mut name_chars = name.chars();
     while let Some(curr_char) = name_chars.next() {
         //check for hyphen followed by character
-        if curr_char == '\x2d' {
+        if curr_char == DATA_HYPHEN_SEPARATOR {
             if let Some(next_char) = name_chars.next() {
-                if next_char.is_ascii() && next_char.is_lowercase() {
+                if next_char.is_ascii_lowercase() {
                     result.push(next_char.to_ascii_uppercase());
                 } else {
                     result.push(curr_char);

@@ -23,7 +23,6 @@ import android.view.View;
 import android.view.InputDevice;
 
 class NativePanZoomController extends JNIObject implements PanZoomController {
-    private final PanZoomTarget mTarget;
     private final LayerView mView;
     private boolean mDestroyed;
     private Overscroll mOverscroll;
@@ -49,9 +48,6 @@ class NativePanZoomController extends JNIObject implements PanZoomController {
     private native boolean handleMouseEvent(
             int action, long time, int metaState,
             float x, float y, int buttons);
-
-    @WrapForJNI(calledFrom = "ui")
-    private native void handleMotionEventVelocity(long time, float ySpeed);
 
     private boolean handleMotionEvent(MotionEvent event) {
         if (mDestroyed) {
@@ -111,7 +107,8 @@ class NativePanZoomController extends JNIObject implements PanZoomController {
         final MotionEvent.PointerCoords coords = new MotionEvent.PointerCoords();
         event.getPointerCoords(0, coords);
         final float x = coords.x;
-        final float y = coords.y;
+        // Scroll events are not adjusted by the AndroidDyanmicToolbarAnimator so adjust the offset here.
+        final float y = coords.y - mView.getCurrentToolbarHeight();
 
         final float flipFactor = mNegateWheelScroll ? -1.0f : 1.0f;
         final float hScroll = event.getAxisValue(MotionEvent.AXIS_HSCROLL) * flipFactor * mPointerScrollFactor;
@@ -134,16 +131,16 @@ class NativePanZoomController extends JNIObject implements PanZoomController {
         final MotionEvent.PointerCoords coords = new MotionEvent.PointerCoords();
         event.getPointerCoords(0, coords);
         final float x = coords.x;
-        final float y = coords.y;
+        // Mouse events are not adjusted by the AndroidDyanmicToolbarAnimator so adjust the offset
+        // here.
+        final float y = coords.y - mView.getCurrentToolbarHeight();
 
         return handleMouseEvent(event.getActionMasked(), event.getEventTime(), event.getMetaState(), x, y, event.getButtonState());
     }
 
 
-    NativePanZoomController(PanZoomTarget target, View view) {
-        mTarget = target;
+    NativePanZoomController(View view) {
         mView = (LayerView) view;
-        mDestroyed = true;
 
         String[] prefs = { "ui.scrolling.negate_wheel_scroll" };
         mPrefsObserver = new PrefsHelper.PrefHandlerBase() {
@@ -197,27 +194,17 @@ class NativePanZoomController extends JNIObject implements PanZoomController {
         }
     }
 
-    @Override
-    public void onMotionEventVelocity(final long aEventTime, final float aSpeedY) {
-        handleMotionEventVelocity(aEventTime, aSpeedY);
-    }
-
     @Override @WrapForJNI(calledFrom = "ui") // PanZoomController
     public void destroy() {
         if (mPrefsObserver != null) {
             PrefsHelper.removeObserver(mPrefsObserver);
             mPrefsObserver = null;
         }
-        if (mDestroyed || !mTarget.isGeckoReady()) {
+        if (mDestroyed || !mView.isGeckoReady()) {
             return;
         }
         mDestroyed = true;
         disposeNative();
-    }
-
-    @Override
-    public void attach() {
-        mDestroyed = false;
     }
 
     @WrapForJNI(calledFrom = "ui", dispatchTo = "gecko_priority") @Override // JNIObject
@@ -236,15 +223,6 @@ class NativePanZoomController extends JNIObject implements PanZoomController {
         if (!mDestroyed) {
             nativeSetIsLongpressEnabled(isLongpressEnabled);
         }
-    }
-
-    @WrapForJNI(calledFrom = "ui")
-    private native void adjustScrollForSurfaceShift(float aX, float aY);
-
-    @Override // PanZoomController
-    public ImmutableViewportMetrics adjustScrollForSurfaceShift(ImmutableViewportMetrics aMetrics, PointF aShift) {
-        adjustScrollForSurfaceShift(aShift.x, aShift.y);
-        return aMetrics.offsetViewportByAndClamp(aShift.x, aShift.y);
     }
 
     @WrapForJNI
@@ -282,11 +260,6 @@ class NativePanZoomController extends JNIObject implements PanZoomController {
                 });
             }
         }
-    }
-
-    @WrapForJNI(calledFrom = "ui")
-    private void setScrollingRootContent(final boolean isRootContent) {
-        mTarget.setScrollingRootContent(isRootContent);
     }
 
     /**

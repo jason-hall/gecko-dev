@@ -25,6 +25,7 @@ PrintTarget::PrintTarget(cairo_surface_t* aCairoSurface, const IntSize& aSize)
   , mIsFinished(false)
 #ifdef DEBUG
   , mHasActivePage(false)
+  , mRecorder(nullptr)
 #endif
 
 {
@@ -81,7 +82,7 @@ PrintTarget::MakeDrawTarget(const IntSize& aSize,
   }
 
   if (aRecorder) {
-    dt = CreateRecordingDrawTarget(aRecorder, dt);
+    dt = CreateWrapAndRecordDrawTarget(aRecorder, dt);
     if (!dt || !dt->IsValid()) {
       return nullptr;
     }
@@ -132,21 +133,35 @@ PrintTarget::GetReferenceDrawTarget(DrawEventRecorder* aRecorder)
     if (!dt || !dt->IsValid()) {
       return nullptr;
     }
+    mRefDT = dt.forget();
+  }
 
-    if (aRecorder) {
-      dt = CreateRecordingDrawTarget(aRecorder, dt);
+  if (aRecorder) {
+    if (!mRecordingRefDT) {
+      RefPtr<DrawTarget> dt = CreateWrapAndRecordDrawTarget(aRecorder, mRefDT);
       if (!dt || !dt->IsValid()) {
         return nullptr;
       }
+      mRecordingRefDT = dt.forget();
+#ifdef DEBUG
+      mRecorder = aRecorder;
+#endif
     }
+#ifdef DEBUG
+    else {
+      MOZ_ASSERT(aRecorder == mRecorder,
+                 "Caching mRecordingRefDT assumes the aRecorder is an invariant");
+    }
+#endif
 
-    mRefDT = dt.forget();
+    return do_AddRef(mRecordingRefDT);
   }
+
   return do_AddRef(mRefDT);
 }
 
-already_AddRefed<DrawTarget>
-PrintTarget::CreateRecordingDrawTarget(DrawEventRecorder* aRecorder,
+/* static */ already_AddRefed<DrawTarget>
+PrintTarget::CreateWrapAndRecordDrawTarget(DrawEventRecorder* aRecorder,
                                        DrawTarget* aDrawTarget)
 {
   MOZ_ASSERT(aRecorder);
@@ -156,7 +171,7 @@ PrintTarget::CreateRecordingDrawTarget(DrawEventRecorder* aRecorder,
 
   if (aRecorder) {
     // It doesn't really matter what we pass as the DrawTarget here.
-    dt = gfx::Factory::CreateRecordingDrawTarget(aRecorder, aDrawTarget);
+    dt = gfx::Factory::CreateWrapAndRecordDrawTarget(aRecorder, aDrawTarget);
   }
 
   if (!dt || !dt->IsValid()) {

@@ -22,20 +22,73 @@ public final class GeckoViewSettings {
         }
     }
 
+    public enum DisplayMode {
+        // This needs to match nsIDocShell.idl
+        BROWSER(0),
+        MINIMAL_UI(1),
+        STANDALONE(2),
+        FULLSCREEN(3);
+
+        private final int mMode;
+
+        DisplayMode(int mode) {
+            mMode = mode;
+        }
+
+        public int value() {
+            return mMode;
+        }
+    }
+
+    /*
+     * Key to enabled and disable tracking protection.
+     */
     public static final Key<Boolean> USE_TRACKING_PROTECTION =
         new Key<Boolean>("useTrackingProtection");
+    /*
+     * Key to enabled and disable private mode browsing.
+     */
+    public static final Key<Boolean> USE_PRIVATE_MODE =
+        new Key<Boolean>("usePrivateMode");
+
+    /*
+     * Key to enabled and disable multiprocess browsing (e10s).
+     * Note: can only be set during GeckoView initialization, changes during an
+     * active GeckoView session will be ignored.
+     */
+    public static final Key<Boolean> USE_MULTIPROCESS =
+        new Key<Boolean>("useMultiprocess");
+
+    /*
+     * Key to specify which display-mode we should use
+     */
+    public static final Key<Boolean> DISPLAY_MODE =
+        new Key<Boolean>("displayMode");
+
 
     private final EventDispatcher mEventDispatcher;
     private final GeckoBundle mBundle;
+
+    public GeckoViewSettings() {
+        this(null);
+    }
 
     /* package */ GeckoViewSettings(EventDispatcher eventDispatcher) {
         mEventDispatcher = eventDispatcher;
         mBundle = new GeckoBundle();
 
         setBoolean(USE_TRACKING_PROTECTION, false);
+        setBoolean(USE_PRIVATE_MODE, false);
+        setBoolean(USE_MULTIPROCESS, true);
+        setInt(DISPLAY_MODE, DisplayMode.BROWSER.value());
     }
 
-    public void setBoolean(Key<Boolean> key, boolean value) {
+    /* package */ GeckoViewSettings(GeckoViewSettings settings, EventDispatcher eventDispatcher) {
+        mBundle = new GeckoBundle(settings.mBundle);
+        mEventDispatcher = eventDispatcher;
+    }
+
+    public void setBoolean(final Key<Boolean> key, boolean value) {
         synchronized (mBundle) {
             final Object old = mBundle.get(key.text);
             if (old != null && old.equals(value)) {
@@ -46,9 +99,26 @@ public final class GeckoViewSettings {
         dispatchUpdate();
     }
 
-    public Object getBoolean(Key<Boolean> key) {
+    public boolean getBoolean(final Key<Boolean> key) {
         synchronized (mBundle) {
             return mBundle.getBoolean(key.text);
+        }
+    }
+
+    public void setInt(final Key<Boolean> key, int value) {
+        synchronized (mBundle) {
+            final Object old = mBundle.get(key.text);
+            if (old != null && old.equals(value)) {
+                return;
+            }
+            mBundle.putInt(key.text, value);
+        }
+        dispatchUpdate();
+    }
+
+    public int getInt(final Key<Boolean> key) {
+        synchronized (mBundle) {
+            return mBundle.getInt(key.text);
         }
     }
 
@@ -57,6 +127,8 @@ public final class GeckoViewSettings {
     }
 
     private void dispatchUpdate() {
-        mEventDispatcher.dispatch("GeckoView:UpdateSettings", null);
+        if (mEventDispatcher != null) {
+            mEventDispatcher.dispatch("GeckoView:UpdateSettings", null);
+        }
     }
 }

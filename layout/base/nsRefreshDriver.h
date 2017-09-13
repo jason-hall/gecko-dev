@@ -33,9 +33,11 @@ class nsIDocument;
 class imgIRequest;
 class nsIDOMEvent;
 class nsINode;
+class nsIRunnable;
 
 namespace mozilla {
 class RefreshDriverTimer;
+class Runnable;
 namespace layout {
 class VsyncChild;
 } // namespace layout
@@ -124,6 +126,9 @@ public:
   bool RemoveRefreshObserver(nsARefreshObserver *aObserver,
                              mozilla::FlushType aFlushType);
 
+  void PostScrollEvent(mozilla::Runnable* aScrollEvent);
+  void DispatchScrollEvents();
+
   /**
    * Add an observer that will be called after each refresh. The caller
    * must remove the observer before it is deleted. This does not trigger
@@ -189,6 +194,17 @@ public:
   }
   bool IsLayoutFlushObserver(nsIPresShell* aShell) {
     return mLayoutFlushObservers.Contains(aShell);
+  }
+
+  /**
+   * "Early Runner" runnables will be called as the first step when refresh
+   * driver tick is triggered. Runners shouldn't keep other objects alive,
+   * since it isn't guaranteed they will ever get called.
+   */
+  void AddEarlyRunner(nsIRunnable* aRunnable)
+  {
+    mEarlyRunners.AppendElement(aRunnable);
+    EnsureTimerStarted();
   }
 
   /**
@@ -305,7 +321,7 @@ public:
   static bool GetJankLevels(mozilla::Vector<uint64_t>& aJank);
 
   // mozilla::layers::TransactionIdAllocator
-  uint64_t GetTransactionId() override;
+  uint64_t GetTransactionId(bool aThrottle) override;
   uint64_t LastTransactionId() const override;
   void NotifyTransactionCompleted(uint64_t aTransactionId) override;
   void RevokeTransactionId(uint64_t aTransactionId) override;
@@ -324,37 +340,24 @@ public:
    * Compute the time when the currently active refresh driver timer
    * will start its next tick.
    *
-   * Returns 'Nothing' if the refresh driver timer hasn't been
-   * initialized or if we can't tell when the next tick will happen.
+   * Expects a non-null default value that is the upper bound of the
+   * expected deadline. If the next expected deadline is later than
+   * the default value, the default value is returned.
    *
-   * Returns Some(TimeStamp()), i.e. the null time, if the next tick is late.
-   *
-   * Otherwise returns Some(TimeStamp(t)), where t is the time of the next tick.
-   *
-   * Using these three types of return values it is possible to
-   * estimate three different things about the idleness of the
-   * currently active group of refresh drivers. This information is
-   * used by nsThread to schedule lower priority "idle tasks".
-   *
-   * The 'Nothing' return value indicates to nsThread that the
-   * currently active refresh drivers will be idle for a time
-   * significantly longer than the current refresh rate and that it is
-   * free to schedule longer periods for executing idle tasks. This is the
-   * expected result when we aren't animating.
-
-   * Returning the null time indicates to nsThread that we are very
-   * busy and that it should definitely not schedule idle tasks at
-   * all. This is the expected result when we are animating, but
-   * aren't able to keep up with the animation and hence need to skip
-   * paints. Since catching up to missed paints will happen as soon as
-   * possible, this is the expected result if any of the refresh
-   * drivers attached to the current refresh driver misses a paint.
-   *
-   * Returning Some(TimeStamp(t)) indicates to nsThread that we will
-   * be idle until. This is usually the case when we're animating
-   * without skipping paints.
+   * If we're animating and we have skipped paints a time in the past
+   * is returned.
    */
-  static mozilla::Maybe<mozilla::TimeStamp> GetIdleDeadlineHint();
+  static mozilla::TimeStamp GetIdleDeadlineHint(mozilla::TimeStamp aDefault);
+
+  /**
+   * It returns the expected timestamp of the next tick or nothing if the next
+   * tick is missed.
+   */
+  static mozilla::Maybe<mozilla::TimeStamp> GetNextTickHint();
+
+  static void DispatchIdleRunnableAfterTick(nsIRunnable* aRunnable,
+                                            uint32_t aDelay);
+  static void CancelIdleRunnable(nsIRunnable* aRunnable);
 
   bool SkippedPaints() const
   {
@@ -363,6 +366,7 @@ public:
 
 private:
   typedef nsTObserverArray<nsARefreshObserver*> ObserverArray;
+  typedef nsTArray<RefPtr<mozilla::Runnable>> ScrollEventArray;
   typedef nsTHashtable<nsISupportsHashKey> RequestTable;
   struct ImageStartData {
     ImageStartData()
@@ -465,9 +469,11 @@ private:
   mozilla::TimeStamp mNextRecomputeVisibilityTick;
 
   // separate arrays for each flush type we support
-  ObserverArray mObservers[3];
+  ObserverArray mObservers[4];
   RequestTable mRequests;
   ImageStartTable mStartTable;
+  AutoTArray<nsCOMPtr<nsIRunnable>, 16> mEarlyRunners;
+  ScrollEventArray mScrollEvents;
 
   struct PendingEvent {
     nsCOMPtr<nsINode> mTarget;

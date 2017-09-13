@@ -131,7 +131,7 @@ var progressListener = {
       }
     },
 
-	  onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {
+    onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {
       // we can ignore this notification
     },
 
@@ -204,7 +204,7 @@ function onLoad() {
     }
 
     dialog = {};
-    dialog.strings = new Array;
+    dialog.strings = [];
     dialog.title        = document.getElementById("dialog.title");
     dialog.titleLabel   = document.getElementById("dialog.titleLabel");
     dialog.progress     = document.getElementById("dialog.progress");

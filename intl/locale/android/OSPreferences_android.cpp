@@ -15,13 +15,25 @@ OSPreferences::ReadSystemLocales(nsTArray<nsCString>& aLocaleList)
   //XXX: This is a quite sizable hack to work around the fact that we cannot
   //     retrieve OS locale in C++ without reaching out to JNI.
   //     Once we fix this (bug 1337078), this hack should not be necessary.
+  //
+  //XXX: Notice, this value may be empty on an early read. In that case
+  //     we won't add anything to the return list so that it doesn't get
+  //     cached in mSystemLocales.
   nsAutoCString locale;
-  if (!NS_SUCCEEDED(Preferences::GetCString("intl.locale.os", &locale)) ||
-      locale.IsEmpty()) {
-    locale.AssignLiteral("en-US");
+  Preferences::GetCString("intl.locale.os", locale);
+  if (!locale.IsEmpty()) {
     aLocaleList.AppendElement(locale);
+    return true;
   }
-  return true;
+  return false;
+}
+
+bool
+OSPreferences::ReadRegionalPrefsLocales(nsTArray<nsCString>& aLocaleList)
+{
+  // For now we're just taking System Locales since we don't know of any better
+  // API for regional prefs.
+  return ReadSystemLocales(aLocaleList);
 }
 
 bool

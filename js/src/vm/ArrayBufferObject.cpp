@@ -109,9 +109,8 @@ CreateArrayBufferPrototype(JSContext* cx, JSProtoKey key)
 static const ClassOps ArrayBufferObjectClassOps = {
     nullptr,        /* addProperty */
     nullptr,        /* delProperty */
-    nullptr,        /* getProperty */
-    nullptr,        /* setProperty */
     nullptr,        /* enumerate */
+    nullptr,        /* newEnumerate */
     nullptr,        /* resolve */
     nullptr,        /* mayResolve */
     ArrayBufferObject::finalize,
@@ -284,8 +283,7 @@ ArrayBufferObject::class_constructor(JSContext* cx, unsigned argc, Value* vp)
     // Step 3 (Inlined 24.1.1.1 AllocateArrayBuffer).
     // 24.1.1.1, step 1 (Inlined 9.1.14 OrdinaryCreateFromConstructor).
     RootedObject proto(cx);
-    RootedObject newTarget(cx, &args.newTarget().toObject());
-    if (!GetPrototypeFromConstructor(cx, newTarget, &proto))
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto))
         return false;
 
     // 24.1.1.1, step 3 (Inlined 6.2.6.1 CreateByteDataBlock, step 2).
@@ -576,7 +574,6 @@ class js::WasmArrayRawBuffer
         VALGRIND_ENABLE_ADDR_ERROR_REPORTING_IN_RANGE((unsigned char*)dataEnd, delta);
 #  endif
 
-        MemProfiler::SampleNative(dataEnd, delta);
         return true;
     }
 
@@ -661,7 +658,6 @@ WasmArrayRawBuffer::Allocate(uint32_t numBytes, const Maybe<uint32_t>& maxSize)
         return nullptr;
     }
 # endif  // !XP_WIN
-    MemProfiler::SampleNative(data, numBytesWithHeader);
 
 #  if defined(MOZ_VALGRIND) && defined(VALGRIND_DISABLE_ADDR_ERROR_REPORTING_IN_RANGE)
     VALGRIND_DISABLE_ADDR_ERROR_REPORTING_IN_RANGE((unsigned char*)data + numBytesWithHeader,
@@ -681,12 +677,11 @@ WasmArrayRawBuffer::Release(void* mem)
     WasmArrayRawBuffer* header = (WasmArrayRawBuffer*)((uint8_t*)mem - sizeof(WasmArrayRawBuffer));
     uint8_t* base = header->basePointer();
     MOZ_RELEASE_ASSERT(header->mappedSize() <= SIZE_MAX - gc::SystemPageSize());
-    size_t mappedSizeWithHeader = header->mappedSize() + gc::SystemPageSize();
 
-    MemProfiler::RemoveNative(base);
 # ifdef XP_WIN
     VirtualFree(base, 0, MEM_RELEASE);
 # else  // XP_WIN
+    size_t mappedSizeWithHeader = header->mappedSize() + gc::SystemPageSize();
     munmap(base, mappedSizeWithHeader);
 # endif  // !XP_WIN
 
@@ -710,6 +705,7 @@ ArrayBufferObject::createForWasm(JSContext* cx, uint32_t initialSize,
 {
     MOZ_ASSERT(initialSize % wasm::PageSize == 0);
     MOZ_RELEASE_ASSERT(wasm::HaveSignalHandlers());
+    MOZ_RELEASE_ASSERT((initialSize / wasm::PageSize) <= wasm::MaxMemoryInitialPages);
 
     // Prevent applications specifying a large max (like UINT32_MAX) from
     // unintentially OOMing the browser on 32-bit: they just want "a lot of
@@ -832,7 +828,6 @@ ArrayBufferObject::BufferContents
 ArrayBufferObject::createMappedContents(int fd, size_t offset, size_t length)
 {
     void* data = AllocateMappedContent(fd, offset, length, ARRAY_BUFFER_ALIGNMENT);
-    MemProfiler::SampleNative(data, length);
     return BufferContents::create<MAPPED>(data);
 }
 
@@ -864,7 +859,6 @@ ArrayBufferObject::releaseData(FreeOp* fop)
         fop->free_(dataPointer());
         break;
       case MAPPED:
-        MemProfiler::RemoveNative(dataPointer());
         DeallocateMappedContent(dataPointer(), byteLength());
         break;
       case WASM:
@@ -1073,7 +1067,7 @@ ArrayBufferObject::create(JSContext* cx, uint32_t nbytes, BufferContents content
         MOZ_ASSERT(ownsState == OwnsData);
         size_t usableSlots = NativeObject::MAX_FIXED_SLOTS - reservedSlots;
         if (nbytes <= usableSlots * sizeof(Value)) {
-            int newSlots = (nbytes - 1) / sizeof(Value) + 1;
+            int newSlots = JS_HOWMANY(nbytes, sizeof(Value));
             MOZ_ASSERT(int(nbytes) <= newSlots * int(sizeof(Value)));
             nslots = reservedSlots + newSlots;
             contents = BufferContents::createPlain(nullptr);
@@ -1614,7 +1608,7 @@ JS_GetArrayBufferByteLength(JSObject* obj)
 }
 
 JS_FRIEND_API(uint8_t*)
-JS_GetArrayBufferData(JSObject* obj, bool* isSharedMemory, const JS::AutoCheckCannotGC&)
+JS_GetArrayBufferData(JSObject* obj, bool* isSharedMemory, const JS::AutoRequireNoGC&)
 {
     obj = CheckedUnwrap(obj);
     if (!obj)
@@ -1816,7 +1810,6 @@ JS_CreateMappedArrayBufferContents(int fd, size_t offset, size_t length)
 JS_PUBLIC_API(void)
 JS_ReleaseMappedArrayBufferContents(void* contents, size_t length)
 {
-    MemProfiler::RemoveNative(contents);
     DeallocateMappedContent(contents, length);
 }
 
@@ -1831,7 +1824,7 @@ JS_IsMappedArrayBufferObject(JSObject* obj)
 }
 
 JS_FRIEND_API(void*)
-JS_GetArrayBufferViewData(JSObject* obj, bool* isSharedMemory, const JS::AutoCheckCannotGC&)
+JS_GetArrayBufferViewData(JSObject* obj, bool* isSharedMemory, const JS::AutoRequireNoGC&)
 {
     obj = CheckedUnwrap(obj);
     if (!obj)
@@ -1873,6 +1866,17 @@ JS_GetArrayBufferViewByteLength(JSObject* obj)
     return obj->is<DataViewObject>()
            ? obj->as<DataViewObject>().byteLength()
            : obj->as<TypedArrayObject>().byteLength();
+}
+
+JS_FRIEND_API(uint32_t)
+JS_GetArrayBufferViewByteOffset(JSObject* obj)
+{
+    obj = CheckedUnwrap(obj);
+    if (!obj)
+        return 0;
+    return obj->is<DataViewObject>()
+           ? obj->as<DataViewObject>().byteOffset()
+           : obj->as<TypedArrayObject>().byteOffset();
 }
 
 JS_FRIEND_API(JSObject*)

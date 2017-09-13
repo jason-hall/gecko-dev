@@ -15,11 +15,11 @@
 #include "nsLayoutUtils.h"
 #include "nsPlaceholderFrame.h"
 #include "nsPresContext.h"
-#include "nsRenderingContext.h"
 #include "nsStyleContext.h"
 #include "mozilla/CSSOrderAwareFrameIterator.h"
 #include "mozilla/Logging.h"
 #include <algorithm>
+#include "gfxContext.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/UniquePtr.h"
@@ -97,7 +97,7 @@ IsDisplayValueLegacyBox(const nsStyleDisplay* aStyleDisp)
 static bool
 IsLegacyBox(const nsIFrame* aFlexContainer)
 {
-  MOZ_ASSERT(aFlexContainer->GetType() == nsGkAtoms::flexContainerFrame,
+  MOZ_ASSERT(aFlexContainer->IsFlexContainerFrame(),
              "only flex containers may be passed to this function");
   return aFlexContainer->HasAnyStateBits(NS_STATE_FLEX_IS_LEGACY_WEBKIT_BOX);
 }
@@ -1226,7 +1226,7 @@ nsFlexContainerFrame::GenerateFlexItemForChild(
     bool canOverride = true;
     aPresContext->GetTheme()->
       GetMinimumWidgetSize(aPresContext, aChildFrame,
-                           disp->UsedAppearance(),
+                           disp->mAppearance,
                            &widgetMinSize, &canOverride);
 
     nscoord widgetMainMinSize =
@@ -1646,8 +1646,8 @@ nsFlexContainerFrame::MeasureAscentAndHeightForFlexItem(
   nsPresContext* aPresContext,
   ReflowInput& aChildReflowInput)
 {
-  const FrameProperties props = aItem.Frame()->Properties();
-  if (const auto* cachedResult = props.Get(CachedFlexMeasuringReflow())) {
+  if (const auto* cachedResult =
+        aItem.Frame()->GetProperty(CachedFlexMeasuringReflow())) {
     if (cachedResult->IsValidFor(aChildReflowInput)) {
       return *cachedResult;
     }
@@ -1677,7 +1677,7 @@ nsFlexContainerFrame::MeasureAscentAndHeightForFlexItem(
   auto result =
     new CachedMeasuringReflowResult(aChildReflowInput, childDesiredSize);
 
-  props.Set(CachedFlexMeasuringReflow(), result);
+  aItem.Frame()->SetProperty(CachedFlexMeasuringReflow(), result);
   return *result;
 }
 
@@ -1685,7 +1685,7 @@ nsFlexContainerFrame::MeasureAscentAndHeightForFlexItem(
 nsFlexContainerFrame::MarkIntrinsicISizesDirty()
 {
   for (nsIFrame* childFrame : mFrames) {
-    childFrame->Properties().Delete(CachedFlexMeasuringReflow());
+    childFrame->DeleteProperty(CachedFlexMeasuringReflow());
   }
   nsContainerFrame::MarkIntrinsicISizesDirty();
 }
@@ -1763,7 +1763,7 @@ FlexItem::FlexItem(ReflowInput& aFlexItemReflowInput,
     // mAlignSelf, see below
 {
   MOZ_ASSERT(mFrame, "expecting a non-null child frame");
-  MOZ_ASSERT(mFrame->GetType() != nsGkAtoms::placeholderFrame,
+  MOZ_ASSERT(!mFrame->IsPlaceholderFrame(),
              "placeholder frames should not be treated as flex items");
   MOZ_ASSERT(!(mFrame->GetStateBits() & NS_FRAME_OUT_OF_FLOW),
              "out-of-flow frames should not be treated as flex items");
@@ -1861,7 +1861,7 @@ FlexItem::FlexItem(nsIFrame* aChildFrame, nscoord aCrossSize,
   MOZ_ASSERT(NS_STYLE_VISIBILITY_COLLAPSE ==
              mFrame->StyleVisibility()->mVisible,
              "Should only make struts for children with 'visibility:collapse'");
-  MOZ_ASSERT(mFrame->GetType() != nsGkAtoms::placeholderFrame,
+  MOZ_ASSERT(!mFrame->IsPlaceholderFrame(),
              "placeholder frames should not be treated as flex items");
   MOZ_ASSERT(!(mFrame->GetStateBits() & NS_FRAME_OUT_OF_FLOW),
              "out-of-flow frames should not be treated as flex items");
@@ -2204,13 +2204,6 @@ nsFlexContainerFrame::Init(nsIContent*       aContent,
   }
 }
 
-/* virtual */
-nsIAtom*
-nsFlexContainerFrame::GetType() const
-{
-  return nsGkAtoms::flexContainerFrame;
-}
-
 #ifdef DEBUG_FRAME_DUMP
 nsresult
 nsFlexContainerFrame::GetFrameName(nsAString& aResult) const
@@ -2252,7 +2245,6 @@ GetDisplayFlagsForFlexItem(nsIFrame* aFrame)
 
 void
 nsFlexContainerFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                       const nsRect&           aDirtyRect,
                                        const nsDisplayListSet& aLists)
 {
   DisplayBorderBackgroundOutline(aBuilder, aLists);
@@ -2273,7 +2265,7 @@ nsFlexContainerFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                   OrderingPropertyForIter(this));
   for (; !iter.AtEnd(); iter.Next()) {
     nsIFrame* childFrame = *iter;
-    BuildDisplayListForChild(aBuilder, childFrame, aDirtyRect, childLists,
+    BuildDisplayListForChild(aBuilder, childFrame, childLists,
                              GetDisplayFlagsForFlexItem(childFrame));
   }
 }
@@ -3589,7 +3581,7 @@ nsFlexContainerFrame::GenerateFlexLines(
   for (; !iter.AtEnd(); iter.Next()) {
     nsIFrame* childFrame = *iter;
     // Don't create flex items / lines for placeholder frames:
-    if (childFrame->GetType() == nsGkAtoms::placeholderFrame) {
+    if (childFrame->IsPlaceholderFrame()) {
       aPlaceholders.AppendElement(childFrame);
       continue;
     }
@@ -3907,7 +3899,7 @@ nsFlexContainerFrame::SizeItemInCrossAxis(
     // XXXdholbert Once we've fixed bug 765861, we should upgrade this to an
     // assertion that trivially passes if bug 765861's flag has been flipped.
     NS_WARNING_ASSERTION(
-      !aItem.Frame()->GetType(),
+      aItem.Frame()->Type() == LayoutFrameType::None,
       "Child should at least request space for border/padding");
     aItem.SetCrossSize(0);
   } else {
@@ -4051,25 +4043,26 @@ class MOZ_RAII AutoFlexItemMainSizeOverride final
 public:
   explicit AutoFlexItemMainSizeOverride(FlexItem& aItem
                                         MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-    : mItemProps(aItem.Frame()->Properties())
+    : mItemFrame(aItem.Frame())
   {
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 
-    MOZ_ASSERT(!mItemProps.Has(nsIFrame::FlexItemMainSizeOverride()),
+    MOZ_ASSERT(!mItemFrame->HasProperty(nsIFrame::FlexItemMainSizeOverride()),
                "FlexItemMainSizeOverride prop shouldn't be set already; "
                "it should only be set temporarily (& not recursively)");
     NS_ASSERTION(aItem.HasIntrinsicRatio(),
                  "This should only be needed for items with an aspect ratio");
 
-    mItemProps.Set(nsIFrame::FlexItemMainSizeOverride(), aItem.GetMainSize());
+    mItemFrame->SetProperty(nsIFrame::FlexItemMainSizeOverride(),
+                            aItem.GetMainSize());
   }
 
   ~AutoFlexItemMainSizeOverride() {
-    mItemProps.Remove(nsIFrame::FlexItemMainSizeOverride());
+    mItemFrame->RemoveProperty(nsIFrame::FlexItemMainSizeOverride());
   }
 
 private:
-  const FrameProperties mItemProps;
+  nsIFrame* mItemFrame;
   MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
@@ -4483,8 +4476,7 @@ nsFlexContainerFrame::MoveFlexItemToFinalPosition(
   // If item is relpos, look up its offsets (cached from prev reflow)
   LogicalMargin logicalOffsets(outerWM);
   if (NS_STYLE_POSITION_RELATIVE == aItem.Frame()->StyleDisplay()->mPosition) {
-    FrameProperties props = aItem.Frame()->Properties();
-    nsMargin* cachedOffsets = props.Get(nsIFrame::ComputedOffsetProperty());
+    nsMargin* cachedOffsets = aItem.Frame()->GetProperty(nsIFrame::ComputedOffsetProperty());
     MOZ_ASSERT(cachedOffsets,
                "relpos previously-reflowed frame should've cached its offsets");
     logicalOffsets = LogicalMargin(outerWM, *cachedOffsets);
@@ -4613,7 +4605,7 @@ nsFlexContainerFrame::ReflowPlaceholders(nsPresContext* aPresContext,
   // As noted in this method's documentation, we'll reflow every entry in
   // |aPlaceholders| at the container's content-box origin.
   for (nsIFrame* placeholder : aPlaceholders) {
-    MOZ_ASSERT(placeholder->GetType() == nsGkAtoms::placeholderFrame,
+    MOZ_ASSERT(placeholder->IsPlaceholderFrame(),
                "placeholders array should only contain placeholder frames");
     WritingMode wm = placeholder->GetWritingMode();
     LogicalSize availSize = aReflowInput.ComputedSize(wm);
@@ -4638,7 +4630,7 @@ nsFlexContainerFrame::ReflowPlaceholders(nsPresContext* aPresContext,
 }
 
 /* virtual */ nscoord
-nsFlexContainerFrame::GetMinISize(nsRenderingContext* aRenderingContext)
+nsFlexContainerFrame::GetMinISize(gfxContext* aRenderingContext)
 {
   nscoord minISize = 0;
   DISPLAY_MIN_WIDTH(this, minISize);
@@ -4668,7 +4660,7 @@ nsFlexContainerFrame::GetMinISize(nsRenderingContext* aRenderingContext)
 }
 
 /* virtual */ nscoord
-nsFlexContainerFrame::GetPrefISize(nsRenderingContext* aRenderingContext)
+nsFlexContainerFrame::GetPrefISize(gfxContext* aRenderingContext)
 {
   nscoord prefISize = 0;
   DISPLAY_PREF_WIDTH(this, prefISize);

@@ -5,7 +5,6 @@
 "use strict";
 
 const { Ci } = require("chrome");
-const promise = require("promise");
 const { Task } = require("devtools/shared/task");
 const { tunnelToInnerBrowser } = require("./tunnel");
 
@@ -69,6 +68,19 @@ function swapToInnerBrowser({ tab, containerURL, getInnerBrowser }) {
       });
       gBrowser.hideTab(containerTab);
       let containerBrowser = containerTab.linkedBrowser;
+      // Even though we load the `containerURL` with `LOAD_FLAGS_BYPASS_HISTORY` below,
+      // `SessionHistory.jsm` has a fallback path for tabs with no history which
+      // fabricates a history entry by reading the current URL, and this can cause the
+      // container URL to be recorded in the session store.  To avoid this, we send a
+      // bogus `epoch` value to our container tab, which causes all future history
+      // messages to be ignored.  (Actual navigations are still correctly recorded because
+      // this only affects the container frame, not the content.)  A better fix would be
+      // to just not load the `content-sessionStore.js` frame script at all in the
+      // container tab, but it's loaded for all tab browsers, so this seems a bit harder
+      // to achieve in a nice way.
+      containerBrowser.messageManager.sendAsyncMessage("SessionStore:flush", {
+        epoch: -1,
+      });
       // Prevent the `containerURL` from ending up in the tab's history.
       containerBrowser.loadURIWithFlags(containerURL, {
         flags: Ci.nsIWebNavigation.LOAD_FLAGS_BYPASS_HISTORY,
@@ -316,19 +328,18 @@ function addXULBrowserDecorations(browser) {
 }
 
 function tabLoaded(tab) {
-  let deferred = promise.defer();
-
-  function handle(event) {
-    if (event.originalTarget != tab.linkedBrowser.contentDocument ||
-        event.target.location.href == "about:blank") {
-      return;
+  return new Promise(resolve => {
+    function handle(event) {
+      if (event.originalTarget != tab.linkedBrowser.contentDocument ||
+          event.target.location.href == "about:blank") {
+        return;
+      }
+      tab.linkedBrowser.removeEventListener("load", handle, true);
+      resolve(event);
     }
-    tab.linkedBrowser.removeEventListener("load", handle, true);
-    deferred.resolve(event);
-  }
 
-  tab.linkedBrowser.addEventListener("load", handle, true);
-  return deferred.promise;
+    tab.linkedBrowser.addEventListener("load", handle, true);
+  });
 }
 
 exports.swapToInnerBrowser = swapToInnerBrowser;

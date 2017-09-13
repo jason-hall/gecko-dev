@@ -59,7 +59,10 @@ class SourceFile(object):
                         "support",
                         "tools"])
 
-    dir_path_non_test = {("css21", "archive")}
+    dir_path_non_test = {("css21", "archive"),
+                         ("css", "CSS2", "archive"),
+                         ("css", "common"),
+                         ("css", "work-in-progress")}
 
     def __init__(self, tests_root, rel_path, url_base, contents=None):
         """Object representing a file in a source tree.
@@ -150,14 +153,10 @@ class SourceFile(object):
 
         parts = self.dir_path.split(os.path.sep)
 
-        if parts[0] in self.root_dir_non_test:
+        if (parts[0] in self.root_dir_non_test or
+            any(item in self.dir_non_test for item in parts) or
+            any(parts[:len(path)] == list(path) for path in self.dir_path_non_test)):
             return True
-        elif any(item in self.dir_non_test for item in parts):
-            return True
-        else:
-            for path in self.dir_path_non_test:
-                if parts[:len(path)] == list(path):
-                    return True
         return False
 
     def in_conformance_checker_dir(self):
@@ -171,6 +170,7 @@ class SourceFile(object):
         return (self.is_dir() or
                 self.name_prefix("MANIFEST") or
                 self.filename.startswith(".") or
+                self.type_flag == "support" or
                 self.in_non_test_dir())
 
     @property
@@ -213,6 +213,12 @@ class SourceFile(object):
         return "worker" in self.meta_flags and self.ext == ".js"
 
     @property
+    def name_is_window(self):
+        """Check if the file name matches the conditions for the file to
+        be a window js test file"""
+        return "window" in self.meta_flags and self.ext == ".js"
+
+    @property
     def name_is_webdriver(self):
         """Check if the file name matches the conditions for the file to
         be a webdriver spec test file"""
@@ -221,7 +227,7 @@ class SourceFile(object):
         rel_dir_tree = self.rel_path.split(os.path.sep)
         return (rel_dir_tree[0] == "webdriver" and
                 len(rel_dir_tree) > 1 and
-                self.filename != "__init__.py" and
+                self.filename not in ("__init__.py", "conftest.py") and
                 fnmatch(self.filename, wd_pattern))
 
     @property
@@ -278,7 +284,7 @@ class SourceFile(object):
 
     @cached_property
     def script_metadata(self):
-        if self.name_is_worker or self.name_is_multi_global:
+        if self.name_is_worker or self.name_is_multi_global or self.name_is_window:
             regexp = js_meta_re
         elif self.name_is_webdriver:
             regexp = python_meta_re
@@ -499,6 +505,11 @@ class SourceFile(object):
         elif self.name_is_worker:
             rv = (TestharnessTest.item_type,
                   [TestharnessTest(self, replace_end(self.url, ".worker.js", ".worker.html"),
+                                   timeout=self.timeout)])
+
+        elif self.name_is_window:
+            rv = (TestharnessTest.item_type,
+                  [TestharnessTest(self, replace_end(self.url, ".window.js", ".window.html"),
                                    timeout=self.timeout)])
 
         elif self.name_is_webdriver:

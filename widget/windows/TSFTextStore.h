@@ -6,13 +6,16 @@
 #ifndef TSFTextStore_h_
 #define TSFTextStore_h_
 
-#include "mozilla/RefPtr.h"
-#include "nsString.h"
 #include "nsCOMPtr.h"
 #include "nsIWidget.h"
+#include "nsString.h"
 #include "nsWindowBase.h"
+
 #include "WinUtils.h"
+#include "WritingModes.h"
+
 #include "mozilla/Attributes.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/TextEventDispatcher.h"
 #include "mozilla/TextRange.h"
@@ -43,6 +46,7 @@ class nsWindow;
 namespace mozilla {
 namespace widget {
 
+class TSFStaticSink;
 struct MSGResult;
 
 /*
@@ -53,6 +57,7 @@ class TSFTextStore final : public ITextStoreACP
                          , public ITfContextOwnerCompositionSink
                          , public ITfMouseTrackerACP
 {
+  friend class TSFStaticSink;
 private:
   typedef IMENotification::SelectionChangeDataBase SelectionChangeDataBase;
   typedef IMENotification::SelectionChangeData SelectionChangeData;
@@ -185,7 +190,7 @@ public:
     return textStore->OnMouseButtonEventInternal(aIMENotification);
   }
 
-  static nsIMEUpdatePreference GetIMEUpdatePreference();
+  static IMENotificationRequests GetIMENotificationRequests();
 
   // Returns the address of the pointer so that the TSF automatic test can
   // replace the system object with a custom implementation for testing.
@@ -203,11 +208,6 @@ public:
       default:
         return nullptr;
     }
-  }
-
-  static ITfMessagePump* GetMessagePump()
-  {
-    return sMessagePump;
   }
 
   static void* GetThreadManager()
@@ -235,7 +235,25 @@ public:
     return (IsComposing() && sEnabledTextStore->mWidget == aWidget);
   }
 
-  static bool IsIMM_IME();
+  static nsWindowBase* GetEnabledWindowBase()
+  {
+    return sEnabledTextStore ? sEnabledTextStore->mWidget.get() : nullptr;
+  }
+
+  /**
+   * Returns true if active keyboard layout is a legacy IMM-IME.
+   */
+  static bool IsIMM_IMEActive();
+
+  /**
+   * Returns true if active TIP is MS-IME for Japanese.
+   */
+  static bool IsMSJapaneseIMEActive();
+
+  /**
+   * Returns true if TSF may crash if GetSelection() returns E_FAIL.
+   */
+  static bool DoNotReturnErrorFromGetSelection();
 
 #ifdef DEBUG
   // Returns true when keyboard layout has IME (TIP).
@@ -248,6 +266,8 @@ protected:
 
   static bool CreateAndSetFocus(nsWindowBase* aFocusedWidget,
                                 const InputContext& aContext);
+  static void EnsureToDestroyAndReleaseEnabledTextStoreIf(
+                RefPtr<TSFTextStore>& aTextStore);
   static void MarkContextAsKeyboardDisabled(ITfContext* aContext);
   static void MarkContextAsEmpty(ITfContext* aContext);
 
@@ -984,14 +1004,24 @@ protected:
 
   // TSF thread manager object for the current application
   static StaticRefPtr<ITfThreadMgr> sThreadMgr;
+  static already_AddRefed<ITfThreadMgr> GetThreadMgr();
   // sMessagePump is QI'ed from sThreadMgr
   static StaticRefPtr<ITfMessagePump> sMessagePump;
+public:
+  // Expose GetMessagePump() for WinUtils.
+  static already_AddRefed<ITfMessagePump> GetMessagePump();
+private:
   // sKeystrokeMgr is QI'ed from sThreadMgr
   static StaticRefPtr<ITfKeystrokeMgr> sKeystrokeMgr;
   // TSF display attribute manager
   static StaticRefPtr<ITfDisplayAttributeMgr> sDisplayAttrMgr;
+  static already_AddRefed<ITfDisplayAttributeMgr> GetDisplayAttributeMgr();
   // TSF category manager
   static StaticRefPtr<ITfCategoryMgr> sCategoryMgr;
+  static already_AddRefed<ITfCategoryMgr> GetCategoryMgr();
+  // Compartment for (Get|Set)IMEOpenState()
+  static StaticRefPtr<ITfCompartment> sCompartmentForOpenClose;
+  static already_AddRefed<ITfCompartment> GetCompartmentForOpenClose();
 
   // Current text store which is managing a keyboard enabled editor (i.e.,
   // editable editor).  Currently only ONE TSFTextStore instance is ever used,
@@ -1004,21 +1034,11 @@ protected:
   static StaticRefPtr<ITfContext> sDisabledContext;
 
   static StaticRefPtr<ITfInputProcessorProfiles> sInputProcessorProfiles;
+  static already_AddRefed<ITfInputProcessorProfiles>
+           GetInputProcessorProfiles();
 
   // TSF client ID for the current application
   static DWORD sClientId;
-
-  // Enables/Disables hack for specific TIP.
-  static bool sCreateNativeCaretForLegacyATOK;
-  static bool sDoNotReturnNoLayoutErrorToATOKOfCompositionString;
-  static bool sDoNotReturnNoLayoutErrorToMSSimplifiedTIP;
-  static bool sDoNotReturnNoLayoutErrorToMSTraditionalTIP;
-  static bool sDoNotReturnNoLayoutErrorToFreeChangJie;
-  static bool sDoNotReturnNoLayoutErrorToEasyChangjei;
-  static bool sDoNotReturnNoLayoutErrorToMSJapaneseIMEAtFirstChar;
-  static bool sDoNotReturnNoLayoutErrorToMSJapaneseIMEAtCaret;
-  static bool sHackQueryInsertForMSSimplifiedTIP;
-  static bool sHackQueryInsertForMSTraditionalTIP;
 };
 
 } // namespace widget

@@ -29,10 +29,10 @@ class nsICSSDeclaration;
 class nsIDocShell;
 class nsIDocShellLoadInfo;
 class nsIDocument;
-class nsIEventTarget;
 class nsIIdleObserver;
 class nsIPrincipal;
 class nsIScriptTimeoutHandler;
+class nsISerialEventTarget;
 class nsIURI;
 class nsPIDOMWindowInner;
 class nsPIDOMWindowOuter;
@@ -65,6 +65,7 @@ enum class CallerType : uint32_t;
 enum PopupControlState {
   openAllowed = 0,  // open that window without worries
   openControlled,   // it's a popup, but allow it
+  openBlocked,      // it's a popup, but not from an allowed event
   openAbused,       // it's a popup. disallow it, but allow domain override.
   openOverridden    // disallow window open
 };
@@ -91,6 +92,9 @@ enum class FullscreenReason
 
 namespace mozilla {
 namespace dom {
+
+class Location;
+
 // The states in this enum represent the different possible outcomes which the
 // window could be experiencing of loading a document with the
 // Large-Allocation header. The NONE case represents the case where no
@@ -176,11 +180,7 @@ public:
     mIsActive = aActive;
   }
 
-  virtual void SetIsBackground(bool aIsBackground)
-  {
-    MOZ_ASSERT(IsOuterWindow());
-    mIsBackground = aIsBackground;
-  }
+  virtual void SetIsBackground(bool aIsBackground) = 0;
 
   mozilla::dom::EventTarget* GetChromeEventHandler() const
   {
@@ -313,7 +313,12 @@ public:
   virtual void SetOpenerWindow(nsPIDOMWindowOuter* aOpener,
                                bool aOriginalOpener) = 0;
 
-  virtual void EnsureSizeUpToDate() = 0;
+  /**
+   * Ensure the size and position of this window are up-to-date by doing
+   * a layout flush in the parent (which will in turn, do a layout flush
+   * in its parent, etc.).
+   */
+  virtual void EnsureSizeAndPositionUpToDate() = 0;
 
   /**
    * Callback for notifying a window about a modal dialog being
@@ -325,11 +330,6 @@ public:
   // Outer windows only.
   virtual bool CanClose() = 0;
   virtual void ForceClose() = 0;
-
-  bool IsModalContentWindow() const
-  {
-    return mIsModalContentWindow;
-  }
 
   /**
    * Call this to indicate that some node (this window, its document,
@@ -359,6 +359,24 @@ public:
       mMayHaveTouchEventListener = true;
       MaybeUpdateTouchState();
     }
+  }
+
+  /**
+   * Call this to indicate that some node (this window, its document,
+   * or content in that document) has a selectionchange event listener.
+   */
+  void SetHasSelectionChangeEventListeners()
+  {
+    mMayHaveSelectionChangeEventListener = true;
+  }
+
+  /**
+   * Call this to check whether some node (this window, its document,
+   * or content in that document) has a selectionchange event listener.
+   */
+  bool HasSelectionChangeEventListeners()
+  {
+    return mMayHaveSelectionChangeEventListener;
   }
 
   /**
@@ -467,31 +485,13 @@ public:
    */
   virtual void DisableDeviceSensor(uint32_t aType) = 0;
 
-#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
+#if defined(MOZ_WIDGET_ANDROID)
   virtual void EnableOrientationChangeListener() = 0;
   virtual void DisableOrientationChangeListener() = 0;
 #endif
 
   virtual void EnableTimeChangeNotifications() = 0;
   virtual void DisableTimeChangeNotifications() = 0;
-
-#ifdef MOZ_B2G
-  /**
-   * Tell the window that it should start to listen to the network event of the
-   * given aType.
-   *
-   * Inner windows only.
-   */
-  virtual void EnableNetworkEvent(mozilla::EventMessage aEventMessage) = 0;
-
-  /**
-   * Tell the window that it should stop to listen to the network event of the
-   * given aType.
-   *
-   * Inner windows only.
-   */
-  virtual void DisableNetworkEvent(mozilla::EventMessage aEventMessage) = 0;
-#endif // MOZ_B2G
 
   /**
    * Tell this window that there is an observer for gamepad input
@@ -565,7 +565,7 @@ public:
 
   virtual nsIDOMScreen* GetScreen() = 0;
   virtual nsIDOMNavigator* GetNavigator() = 0;
-  virtual nsIDOMLocation* GetLocation() = 0;
+  virtual mozilla::dom::Location* GetLocation() = 0;
   virtual nsresult GetPrompter(nsIPrompt** aPrompt) = 0;
   virtual nsresult GetControllers(nsIControllers** aControllers) = 0;
   virtual already_AddRefed<nsISelection> GetSelection() = 0;
@@ -605,7 +605,7 @@ public:
 
   mozilla::dom::DocGroup* GetDocGroup() const;
 
-  virtual nsIEventTarget*
+  virtual nsISerialEventTarget*
   EventTargetFor(mozilla::TaskCategory aCategory) const = 0;
 
 protected:
@@ -658,11 +658,14 @@ protected:
   // These variables are only used on inner windows.
   uint32_t               mMutationBits;
 
+  uint32_t               mActivePeerConnections;
+
   bool                   mIsDocumentLoaded;
   bool                   mIsHandlingResizeEvent;
   bool                   mIsInnerWindow;
   bool                   mMayHavePaintEventListener;
   bool                   mMayHaveTouchEventListener;
+  bool                   mMayHaveSelectionChangeEventListener;
   bool                   mMayHaveMouseEnterLeaveEventListener;
   bool                   mMayHavePointerEnterLeaveEventListener;
 
@@ -671,10 +674,6 @@ protected:
   // This member is only used by inner windows.
   bool                   mInnerObjectsFreed;
 
-
-  // This variable is used on both inner and outer windows (and they
-  // should match).
-  bool                   mIsModalContentWindow;
 
   // Tracks activation state that's used for :-moz-window-inactive.
   // Only used on outer windows.
@@ -738,9 +737,23 @@ protected:
 
   mozilla::dom::LargeAllocStatus mLargeAllocStatus; // Outer window only
 
-  // When there is any created alive media component, we can consider to resume
-  // the media content in the window.
-  bool mShouldResumeOnFirstActiveMediaComponent;
+  // mTopInnerWindow is only used on inner windows for tab-wise check by timeout
+  // throttling. It could be null.
+  nsCOMPtr<nsPIDOMWindowInner> mTopInnerWindow;
+
+  // The evidence that we have tried to cache mTopInnerWindow only once from
+  // SetNewDocument(). Note: We need this extra flag because mTopInnerWindow
+  // could be null and we don't want it to be set multiple times.
+  bool mHasTriedToCacheTopInnerWindow;
+
+  // The number of active IndexedDB databases. Inner window only.
+  uint32_t mNumOfIndexedDBDatabases;
+
+  // The number of open WebSockets. Inner window only.
+  uint32_t mNumOfOpenWebSockets;
+
+  // The number of active user media. Inner window only.
+  uint32_t mNumOfActiveUserMedia;
 };
 
 #define NS_PIDOMWINDOWINNER_IID \
@@ -883,11 +896,54 @@ public:
   // window.
   void SyncStateFromParentWindow();
 
+  /**
+   * Increment active peer connection count.
+   */
+  void AddPeerConnection();
+
+  /**
+   * Decrement active peer connection count.
+   */
+  void RemovePeerConnection();
+
+  /**
+   * Check whether the active peer connection count is non-zero.
+   */
+  bool HasActivePeerConnections();
+
   bool IsPlayingAudio();
+
+  bool IsDocumentLoaded() const;
 
   mozilla::dom::TimeoutManager& TimeoutManager();
 
   bool IsRunningTimeout();
+
+  // To cache top inner-window if available after constructed for tab-wised
+  // indexedDB counters.
+  void TryToCacheTopInnerWindow();
+
+  // Increase/Decrease the number of active IndexedDB transactions/databases for
+  // the decision making of TabGroup scheduling and timeout-throttling.
+  void UpdateActiveIndexedDBTransactionCount(int32_t aDelta);
+  void UpdateActiveIndexedDBDatabaseCount(int32_t aDelta);
+
+  // Return true if there is any active IndexedDB databases which could block
+  // timeout-throttling.
+  bool HasActiveIndexedDBDatabases();
+
+  // Increase/Decrease the number of open WebSockets.
+  void UpdateWebSocketCount(int32_t aDelta);
+
+  // Return true if there are any open WebSockets that could block
+  // timeout-throttling.
+  bool HasOpenWebSockets() const;
+
+  // Increase/Decrease the number of active user media.
+  void UpdateUserMediaCount(int32_t aDelta);
+
+  // Return true if there are any currently ongoing user media.
+  bool HasActiveUserMedia() const;
 
 protected:
   void CreatePerformanceObjectIfNeeded();
@@ -969,7 +1025,6 @@ public:
   float GetAudioVolume() const;
   nsresult SetAudioVolume(float aVolume);
 
-  void NotifyCreatedNewMediaComponent();
   void MaybeActiveMediaComponents();
 
   void SetServiceWorkersTestingEnabled(bool aEnabled);

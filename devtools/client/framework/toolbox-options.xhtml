@@ -41,14 +41,6 @@
         <legend>&options.selectDevToolsTheme.label2;</legend>
       </fieldset>
 
-      <fieldset id="commonprefs-options" class="options-groupbox">
-        <legend>&options.commonPrefs.label;</legend>
-        <label title="&options.enablePersistentLogs.tooltip;">
-          <input type="checkbox" data-pref="devtools.webconsole.persistlog" />
-          <span>&options.enablePersistentLogs.label;</span>
-        </label>
-      </fieldset>
-
       <fieldset id="inspector-options" class="options-groupbox">
         <legend>&options.context.inspector;</legend>
         <label title="&options.showUserAgentStyles.tooltip;">
@@ -94,6 +86,14 @@
         </label>
       </fieldset>
 
+      <fieldset id="netmonitor-options" class="options-groupbox">
+        <legend>&options.netmonitor.label;</legend>
+        <label title="&options.netmonitor.enablePersistentLogs.tooltip;">
+          <input type="checkbox" data-pref="devtools.netmonitor.persistlog" />
+          <span>&options.netmonitor.enablePersistentLogs.label;</span>
+        </label>
+      </fieldset>
+
       <fieldset id="styleeditor-options" class="options-groupbox">
         <legend>&options.styleeditor.label;</legend>
         <label title="&options.stylesheetSourceMaps.tooltip;">
@@ -109,9 +109,7 @@
       </fieldset>
 
       <fieldset id="screenshot-options" class="options-groupbox">
-        <legend>&options.screenshot.label;
-          <button id="screenshot-icon" disabled="true" class="devtools-button"></button>
-        </legend>
+        <legend>&options.screenshot.label;</legend>
         <label title="&options.screenshot.clipboard.tooltip;">
           <input type="checkbox"
                  id="devtools-screenshot-clipboard"
@@ -203,11 +201,6 @@
             <input type="checkbox"
                    data-pref="devtools.debugger.remote-enabled"/>
             <span>&options.enableRemote.label3;</span>
-          </label>
-          <label title="&options.enableWorkers.tooltip;">
-            <input type="checkbox"
-                   data-pref="devtools.debugger.workers"/>
-            <span>&options.enableWorkers.label;</span>
           </label>
           <span class="options-citation-label theme-comment"
           >&options.context.triggersPageRefresh;</span>

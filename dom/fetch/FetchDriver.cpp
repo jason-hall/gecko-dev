@@ -14,6 +14,7 @@
 #include "nsIHttpChannel.h"
 #include "nsIHttpChannelInternal.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsISupportsPriority.h"
 #include "nsIThreadRetargetableRequest.h"
 #include "nsIUploadChannel2.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -30,6 +31,7 @@
 
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/workers/Workers.h"
+#include "mozilla/EventStateManager.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/Unused.h"
 
@@ -41,15 +43,33 @@
 namespace mozilla {
 namespace dom {
 
+namespace {
+
+bool
+ShouldCheckSRI(const InternalRequest* const aRequest,
+               const InternalResponse* const aResponse)
+{
+  MOZ_DIAGNOSTIC_ASSERT(aRequest);
+  MOZ_DIAGNOSTIC_ASSERT(aResponse);
+
+  return !aRequest->GetIntegrity().IsEmpty() &&
+         aResponse->Type() != ResponseType::Error;
+}
+
+} // anonymous namespace
+
 NS_IMPL_ISUPPORTS(FetchDriver,
                   nsIStreamListener, nsIChannelEventSink, nsIInterfaceRequestor,
                   nsIThreadRetargetableStreamListener)
 
 FetchDriver::FetchDriver(InternalRequest* aRequest, nsIPrincipal* aPrincipal,
-                         nsILoadGroup* aLoadGroup)
+                         nsILoadGroup* aLoadGroup, nsIEventTarget* aMainThreadEventTarget,
+                         bool aIsTrackingFetch)
   : mPrincipal(aPrincipal)
   , mLoadGroup(aLoadGroup)
   , mRequest(aRequest)
+  , mMainThreadEventTarget(aMainThreadEventTarget)
+  , mIsTrackingFetch(aIsTrackingFetch)
 #ifdef DEBUG
   , mResponseAvailableCalled(false)
   , mFetchCalled(false)
@@ -57,6 +77,7 @@ FetchDriver::FetchDriver(InternalRequest* aRequest, nsIPrincipal* aPrincipal,
 {
   MOZ_ASSERT(aRequest);
   MOZ_ASSERT(aPrincipal);
+  MOZ_ASSERT(aMainThreadEventTarget);
 }
 
 FetchDriver::~FetchDriver()
@@ -67,7 +88,7 @@ FetchDriver::~FetchDriver()
 }
 
 nsresult
-FetchDriver::Fetch(FetchSignal* aSignal, FetchDriverObserver* aObserver)
+FetchDriver::Fetch(AbortSignal* aSignal, FetchDriverObserver* aObserver)
 {
   workers::AssertIsOnMainThread();
 #ifdef DEBUG
@@ -98,7 +119,7 @@ FetchDriver::Fetch(FetchSignal* aSignal, FetchDriverObserver* aObserver)
   // the operation.
   if (aSignal) {
     if (aSignal->Aborted()) {
-      Aborted();
+      Abort();
       return NS_OK;
     }
 
@@ -255,6 +276,13 @@ FetchDriver::HttpFetch()
 #endif
   chan->SetNotificationCallbacks(this);
 
+  nsCOMPtr<nsIClassOfService> cos(do_QueryInterface(chan));
+  // Mark channel as urgent-start if the Fetch is triggered by user input
+  // events.
+  if (cos && EventStateManager::IsHandlingUserInput()) {
+    cos->AddClassFlags(nsIClassOfService::UrgentStart);
+  }
+
   // Step 3.5 begins "HTTP network or cache fetch".
   // HTTP network or cache fetch
   // ---------------------------
@@ -365,6 +393,18 @@ FetchDriver::HttpFetch()
     }
   }
 
+  if (mIsTrackingFetch && nsContentUtils::IsTailingEnabled()) {
+    cos->AddClassFlags(nsIClassOfService::Throttleable |
+                       nsIClassOfService::Tail);
+  }
+
+  if (mIsTrackingFetch && nsContentUtils::IsLowerNetworkPriority()) {
+    nsCOMPtr<nsISupportsPriority> p = do_QueryInterface(chan);
+    if (p) {
+      p->SetPriority(nsISupportsPriority::PRIORITY_LOWEST);
+    }
+  }
+
   rv = chan->AsyncOpen2(this);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -403,8 +443,7 @@ FetchDriver::BeginAndGetFilteredResponse(InternalResponse* aResponse,
 
   MOZ_ASSERT(filteredResponse);
   MOZ_ASSERT(mObserver);
-  if (filteredResponse->Type() == ResponseType::Error ||
-      mRequest->GetIntegrity().IsEmpty()) {
+  if (!ShouldCheckSRI(mRequest, filteredResponse)) {
     mObserver->OnResponseAvailable(filteredResponse);
   #ifdef DEBUG
     mResponseAvailableCalled = true;
@@ -576,13 +615,11 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
   // sure the Response is fully initialized before calling this.
   mResponse = BeginAndGetFilteredResponse(response, foundOpaqueRedirect);
 
-  // From "Main Fetch" step 17: SRI-part1.
-  if (mResponse->Type() != ResponseType::Error &&
-      !mRequest->GetIntegrity().IsEmpty() &&
-      mSRIMetadata.IsEmpty()) {
-    nsIConsoleReportCollector* aReporter = nullptr;
+  // From "Main Fetch" step 19: SRI-part1.
+  if (ShouldCheckSRI(mRequest, mResponse) && mSRIMetadata.IsEmpty()) {
+    nsIConsoleReportCollector* reporter = nullptr;
     if (mObserver) {
-      aReporter = mObserver->GetReporter();
+      reporter = mObserver->GetReporter();
     }
 
     nsAutoCString sourceUri;
@@ -592,9 +629,9 @@ FetchDriver::OnStartRequest(nsIRequest* aRequest,
       sourceUri.Assign(mWorkerScript);
     }
     SRICheck::IntegrityMetadata(mRequest->GetIntegrity(), sourceUri,
-                                aReporter, &mSRIMetadata);
+                                reporter, &mSRIMetadata);
     mSRIDataVerifier = new SRICheckDataVerifier(mSRIMetadata, sourceUri,
-                                                aReporter);
+                                                reporter);
 
     // Do not retarget off main thread when using SRI API.
     return NS_OK;
@@ -623,7 +660,8 @@ class DataAvailableRunnable final : public Runnable
 
 public:
   explicit DataAvailableRunnable(FetchDriverObserver* aObserver)
-    : mObserver(aObserver)
+    : Runnable("dom::DataAvailableRunnable")
+    , mObserver(aObserver)
   {
      MOZ_ASSERT(aObserver);
   }
@@ -636,6 +674,53 @@ public:
     return NS_OK;
   }
 };
+
+struct SRIVerifierAndOutputHolder {
+  SRIVerifierAndOutputHolder(SRICheckDataVerifier* aVerifier,
+                             nsIOutputStream* aOutputStream)
+    : mVerifier(aVerifier)
+    , mOutputStream(aOutputStream)
+  {}
+
+  SRICheckDataVerifier* mVerifier;
+  nsIOutputStream* mOutputStream;
+
+private:
+  SRIVerifierAndOutputHolder() = delete;
+};
+
+// Just like NS_CopySegmentToStream, but also sends the data into an
+// SRICheckDataVerifier.
+nsresult
+CopySegmentToStreamAndSRI(nsIInputStream* aInStr,
+                          void* aClosure,
+                          const char* aBuffer,
+                          uint32_t aOffset,
+                          uint32_t aCount,
+                          uint32_t* aCountWritten)
+{
+  auto holder = static_cast<SRIVerifierAndOutputHolder*>(aClosure);
+  MOZ_DIAGNOSTIC_ASSERT(holder && holder->mVerifier && holder->mOutputStream,
+                        "Bogus holder");
+  nsresult rv =
+    holder->mVerifier->Update(aCount,
+                              reinterpret_cast<const uint8_t*>(aBuffer));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // The rest is just like NS_CopySegmentToStream.
+  *aCountWritten = 0;
+  while (aCount) {
+    uint32_t n = 0;
+    rv = holder->mOutputStream->Write(aBuffer, aCount, &n);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+    aBuffer += n;
+    aCount -= n;
+    *aCountWritten += n;
+  }
+  return NS_OK;
+}
 
 } // anonymous namespace
 
@@ -655,7 +740,8 @@ FetchDriver::OnDataAvailable(nsIRequest* aRequest,
       mObserver->OnDataAvailable();
     } else {
       RefPtr<Runnable> runnable = new DataAvailableRunnable(mObserver);
-      nsresult rv = NS_DispatchToMainThread(runnable);
+      nsresult rv =
+        mMainThreadEventTarget->Dispatch(runnable.forget(), NS_DISPATCH_NORMAL);
       if (NS_WARN_IF(NS_FAILED(rv))) {
         return rv;
       }
@@ -666,44 +752,16 @@ FetchDriver::OnDataAvailable(nsIRequest* aRequest,
   MOZ_ASSERT(mResponse);
   MOZ_ASSERT(mPipeOutputStream);
 
-  // From "Main Fetch" step 17: SRI-part2.
-  if (mResponse->Type() != ResponseType::Error &&
-      !mRequest->GetIntegrity().IsEmpty()) {
+  // From "Main Fetch" step 19: SRI-part2.
+  // Note: Avoid checking the hidden opaque body.
+  if (mResponse->Type() != ResponseType::Opaque &&
+      ShouldCheckSRI(mRequest, mResponse)) {
     MOZ_ASSERT(mSRIDataVerifier);
 
-    uint32_t aWrite;
-    nsTArray<uint8_t> buffer;
-    nsresult rv;
-    buffer.SetCapacity(aCount);
-    while (aCount > 0) {
-      rv = aInputStream->Read(reinterpret_cast<char*>(buffer.Elements()),
-                              aCount, &aRead);
-      if (NS_WARN_IF(NS_FAILED(rv))) {
-        return rv;
-      }
-
-      rv = mSRIDataVerifier->Update(aRead, (uint8_t*)buffer.Elements());
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      while (aRead > 0) {
-        rv = mPipeOutputStream->Write(reinterpret_cast<char*>(buffer.Elements()),
-                                      aRead, &aWrite);
-        if (NS_WARN_IF(NS_FAILED(rv))) {
-          return rv;
-        }
-
-        if (aRead < aWrite) {
-          return NS_ERROR_FAILURE;
-        }
-
-        aRead -= aWrite;
-      }
-
-
-      aCount -= aWrite;
-    }
-
-    return NS_OK;
+    SRIVerifierAndOutputHolder holder(mSRIDataVerifier, mPipeOutputStream);
+    nsresult rv = aInputStream->ReadSegments(CopySegmentToStreamAndSRI,
+                                             &holder, aCount, &aRead);
+    return rv;
   }
 
   nsresult rv = aInputStream->ReadSegments(NS_CopySegmentToStream,
@@ -718,7 +776,11 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest,
                            nsresult aStatusCode)
 {
   workers::AssertIsOnMainThread();
-  if (NS_FAILED(aStatusCode)) {
+
+  // We need to check mObserver, which is nulled by FailWithNetworkError(),
+  // because in the case of "error" redirect mode, aStatusCode may be NS_OK but
+  // mResponse will definitely be null so we must not take the else branch.
+  if (NS_FAILED(aStatusCode) || !mObserver) {
     nsCOMPtr<nsIAsyncOutputStream> outputStream = do_QueryInterface(mPipeOutputStream);
     if (outputStream) {
       outputStream->CloseWithStatus(NS_BINDING_FAILED);
@@ -730,16 +792,15 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest,
     MOZ_ASSERT(mResponse);
     MOZ_ASSERT(!mResponse->IsError());
 
-    // From "Main Fetch" step 17: SRI-part3.
-    if (mResponse->Type() != ResponseType::Error &&
-        !mRequest->GetIntegrity().IsEmpty()) {
+    // From "Main Fetch" step 19: SRI-part3.
+    if (ShouldCheckSRI(mRequest, mResponse)) {
       MOZ_ASSERT(mSRIDataVerifier);
 
       nsCOMPtr<nsIChannel> channel = do_QueryInterface(aRequest);
 
-      nsIConsoleReportCollector* aReporter = nullptr;
+      nsIConsoleReportCollector* reporter = nullptr;
       if (mObserver) {
-        aReporter = mObserver->GetReporter();
+        reporter = mObserver->GetReporter();
       }
 
       nsAutoCString sourceUri;
@@ -749,7 +810,7 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest,
         sourceUri.Assign(mWorkerScript);
       }
       nsresult rv = mSRIDataVerifier->Verify(mSRIMetadata, channel, sourceUri,
-                                             aReporter);
+                                             reporter);
       if (NS_FAILED(rv)) {
         FailWithNetworkError();
         // Cancel request.
@@ -763,9 +824,8 @@ FetchDriver::OnStopRequest(nsIRequest* aRequest,
   }
 
   if (mObserver) {
-    if (mResponse->Type() != ResponseType::Error &&
-        !mRequest->GetIntegrity().IsEmpty()) {
-      //From "Main Fetch" step 23: Process response.
+    // From "Main Fetch" step 19.1, 19.2: Process response.
+    if (ShouldCheckSRI(mRequest, mResponse)) {
       MOZ_ASSERT(mResponse);
       mObserver->OnResponseAvailable(mResponse);
       #ifdef DEBUG
@@ -846,7 +906,7 @@ FetchDriver::AsyncOnChannelRedirect(nsIChannel* aOldChannel,
 NS_IMETHODIMP
 FetchDriver::CheckListenerChain()
 {
-  return NS_OK;
+  return NS_ERROR_NO_INTERFACE;
 }
 
 NS_IMETHODIMP
@@ -923,7 +983,7 @@ FetchDriver::SetRequestHeaders(nsIHttpChannel* aChannel) const
 }
 
 void
-FetchDriver::Aborted()
+FetchDriver::Abort()
 {
   if (mObserver) {
   #ifdef DEBUG

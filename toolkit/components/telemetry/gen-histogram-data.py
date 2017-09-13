@@ -6,7 +6,7 @@
 # in a file provided as a command-line argument.
 
 from __future__ import print_function
-from shared_telemetry_utils import StringTable, static_assert
+from shared_telemetry_utils import StringTable, static_assert, ParserError
 
 import sys
 import histogram_tools
@@ -16,11 +16,12 @@ banner = """/* This file is auto-generated, see gen-histogram-data.py.  */
 """
 
 
-def print_array_entry(output, histogram, name_index, exp_index, label_index, label_count):
+def print_array_entry(output, histogram, name_index, exp_index, label_index,
+                      label_count, key_index, key_count):
     cpp_guard = histogram.cpp_guard()
     if cpp_guard:
         print("#if defined(%s)" % cpp_guard, file=output)
-    print("  { %s, %s, %s, %s, %d, %d, %s, %d, %d, %s },"
+    print("  { %s, %s, %s, %s, %d, %d, %s, %d, %d, %d, %d, %s, %s },"
           % (histogram.low(),
              histogram.high(),
              histogram.n_buckets(),
@@ -30,6 +31,9 @@ def print_array_entry(output, histogram, name_index, exp_index, label_index, lab
              histogram.dataset(),
              label_index,
              label_count,
+             key_index,
+             key_count,
+             " | ".join(histogram.record_in_processes_enum()),
              "true" if histogram.keyed() else "false"), file=output)
     if cpp_guard:
         print("#endif", file=output)
@@ -39,8 +43,10 @@ def write_histogram_table(output, histograms):
     string_table = StringTable()
     label_table = []
     label_count = 0
+    keys_table = []
+    keys_count = 0
 
-    print("const HistogramInfo gHistograms[] = {", file=output)
+    print("constexpr HistogramInfo gHistogramInfos[] = {", file=output)
     for histogram in histograms:
         name_index = string_table.stringIndex(histogram.name())
         exp_index = string_table.stringIndex(histogram.expiration())
@@ -52,9 +58,15 @@ def write_histogram_table(output, histograms):
             label_table.append((histogram.name(), string_table.stringIndexes(labels)))
             label_count += len(labels)
 
-        print_array_entry(output, histogram,
-                          name_index, exp_index,
-                          label_index, len(labels))
+        keys = histogram.keys()
+        key_index = 0
+        if len(keys) > 0:
+            key_index = keys_count
+            keys_table.append((histogram.name(), string_table.stringIndexes(keys)))
+            keys_count += len(keys)
+
+        print_array_entry(output, histogram, name_index, exp_index,
+                          label_index, len(labels), key_index, len(keys))
     print("};\n", file=output)
 
     strtab_name = "gHistogramStringTable"
@@ -64,6 +76,11 @@ def write_histogram_table(output, histograms):
 
     print("\nconst uint32_t gHistogramLabelTable[] = {", file=output)
     for name, indexes in label_table:
+        print("/* %s */ %s," % (name, ", ".join(map(str, indexes))), file=output)
+    print("};", file=output)
+
+    print("\nconst uint32_t gHistogramKeyTable[] = {", file=output)
+    for name, indexes in keys_table:
         print("/* %s */ %s," % (name, ", ".join(map(str, indexes))), file=output)
     print("};", file=output)
 
@@ -99,8 +116,8 @@ def shared_static_asserts(output, histogram):
     static_assert(output, "%s < %s" % (low, high), "low >= high for %s" % name)
     static_assert(output, "%s > 2" % n_buckets, "Not enough values for %s" % name)
     static_assert(output, "%s >= 1" % low, "Incorrect low value for %s" % name)
-    static_assert(output, "%s > %s" % (high, n_buckets),
-                  "high must be > number of buckets for %s; you may want an enumerated histogram" % name)
+    static_assert(output, "%s > %s" % (high, n_buckets), "high must be > number of buckets for %s;"
+                  " you may want an enumerated histogram" % name)
 
 
 def static_asserts_for_linear(output, histogram):
@@ -125,11 +142,45 @@ def write_histogram_static_asserts(output, histograms):
         'categorical': static_asserts_for_enumerated,
         'linear': static_asserts_for_linear,
         'exponential': static_asserts_for_exponential,
-        }
+    }
 
     for histogram in histograms:
-        histogram_tools.table_dispatch(histogram.kind(), table,
-                                       lambda f: f(output, histogram))
+        kind = histogram.kind()
+        if kind not in table:
+            raise Exception('Unknown kind "%s" for histogram "%s".' % (kind, histogram.name()))
+        fn = table[kind]
+        fn(output, histogram)
+
+
+def write_exponential_histogram_ranges(output, histograms):
+    # For now we use this as a special cache only for exponential histograms,
+    # which require exp and log calls that show up in profiles. Initialization
+    # of other histograms also shows up in profiles, but it's unlikely that we
+    # would see much speedup since calculating their buckets is fairly trivial,
+    # and grabbing them from static data would likely incur a CPU cache miss.
+    print("const int gExponentialBucketLowerBounds[] = {", file=output)
+    for histogram in histograms:
+        if histogram.kind() == 'exponential':
+            ranges = histogram.ranges()
+            print(','.join(map(str, ranges)), ',', file=output)
+    print("};", file=output)
+
+    print("const int gExponentialBucketLowerBoundIndex[] = {", file=output)
+    offset = 0
+    for histogram in histograms:
+        cpp_guard = histogram.cpp_guard()
+        if cpp_guard:
+            print("#if defined(%s)" % cpp_guard, file=output)
+
+        if histogram.kind() == 'exponential':
+            print("%d," % offset, file=output)
+            offset += histogram.n_buckets()
+        else:
+            print("-1,", file=output)
+
+        if cpp_guard:
+            print("#endif", file=output)
+    print("};", file=output)
 
 
 def write_debug_histogram_ranges(output, histograms):
@@ -178,12 +229,18 @@ def write_debug_histogram_ranges(output, histograms):
 
 
 def main(output, *filenames):
-    histograms = list(histogram_tools.from_files(filenames))
+    try:
+        histograms = list(histogram_tools.from_files(filenames))
+    except ParserError as ex:
+        print("\nError processing histograms:\n" + str(ex) + "\n")
+        sys.exit(1)
 
     print(banner, file=output)
     write_histogram_table(output, histograms)
+    write_exponential_histogram_ranges(output, histograms)
     write_histogram_static_asserts(output, histograms)
     write_debug_histogram_ranges(output, histograms)
+
 
 if __name__ == '__main__':
     main(sys.stdout, *sys.argv[1:])

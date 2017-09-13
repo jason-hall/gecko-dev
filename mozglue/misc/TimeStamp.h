@@ -229,10 +229,7 @@ public:
   }
   double operator/(const BaseTimeDuration& aOther) const
   {
-#ifndef MOZ_B2G
-    // Bug 1066388 - This fails on B2G ICS Emulator
     MOZ_ASSERT(aOther.mValue != 0, "Division by zero");
-#endif
     return ValueCalculator::DivideDouble(mValue, aOther.mValue);
   }
   BaseTimeDuration operator%(const BaseTimeDuration& aOther) const
@@ -427,8 +424,7 @@ public:
    * So it is same value of TimeStamp posix implementation.
    * UNTESTED ON OTHER PLATFORMS
    */
-#if defined(MOZ_WIDGET_GONK) || defined(XP_DARWIN) || \
-    defined(MOZ_WIDGET_ANDROID)
+#if defined(XP_DARWIN) || defined(MOZ_WIDGET_ANDROID)
   static TimeStamp FromSystemTime(int64_t aSystemTime)
   {
     static_assert(sizeof(aSystemTime) == sizeof(TimeStampValue),
@@ -474,12 +470,12 @@ public:
    * the @a aIsInconsistent parameter will be set to true, the returned
    * timestamp however will still be valid though inaccurate.
    *
-   * @param aIsInconsistent Set to true if an inconsistency was detected in the
-   * process creation time
+   * @param aIsInconsistent If non-null, set to true if an inconsistency was
+   * detected in the process creation time
    * @returns A timestamp representing the time when the process was created,
    * this timestamp is always valid even when errors are reported
    */
-  static MFBT_API TimeStamp ProcessCreation(bool& aIsInconsistent);
+  static MFBT_API TimeStamp ProcessCreation(bool* aIsInconsistent = nullptr);
 
   /**
    * Records a process restart. After this call ProcessCreation() will return

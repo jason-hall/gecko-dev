@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+/* eslint-disable mozilla/no-arbitrary-setTimeout */
 
 function test() {
   /** Test for Bug 506482 **/
@@ -14,7 +15,7 @@ function test() {
                     get("ProfD", Ci.nsIFile);
   function getSessionstoreFile() {
     let sessionStoreJS = profilePath.clone();
-    sessionStoreJS.append("sessionstore.js");
+    sessionStoreJS.append("sessionstore.jsonlz4");
     return sessionStoreJS;
   }
   function getSessionstorejsModificationTime() {
@@ -45,7 +46,7 @@ function test() {
   let mtime0 = getSessionstorejsModificationTime();
 
   // create and select a first tab
-  let tab = gBrowser.addTab(TEST_URL);
+  let tab = BrowserTestUtils.addTab(gBrowser, TEST_URL);
   promiseBrowserLoaded(tab.linkedBrowser).then(() => {
     // step1: the above has triggered some saveStateDelayed(), sleep until
     // it's done, and get the initial sessionstore.js mtime

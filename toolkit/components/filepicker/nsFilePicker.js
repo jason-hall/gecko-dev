@@ -27,7 +27,7 @@ const APPSHELL_SERV_CONTRACTID  = "@mozilla.org/appshell/appShellService;1";
 const STRBUNDLE_SERV_CONTRACTID = "@mozilla.org/intl/stringbundle;1";
 
 const nsIAppShellService    = Components.interfaces.nsIAppShellService;
-const nsILocalFile          = Components.interfaces.nsILocalFile;
+const nsIFile          = Components.interfaces.nsIFile;
 const nsIFileURL            = Components.interfaces.nsIFileURL;
 const nsISupports           = Components.interfaces.nsISupports;
 const nsIFactory            = Components.interfaces.nsIFactory;
@@ -52,12 +52,13 @@ function nsFilePicker() {
   /* attributes */
   this.mDefaultString = "";
   this.mFilterIndex = 0;
-  this.mFilterTitles = new Array();
-  this.mFilters = new Array();
+  this.mFilterTitles = [];
+  this.mFilters = [];
   this.mDisplayDirectory = null;
+  this.mDisplaySpecialDirectory = null;
   if (lastDirectory) {
     try {
-      var dir = Components.classes[LOCAL_FILE_CONTRACTID].createInstance(nsILocalFile);
+      var dir = Components.classes[LOCAL_FILE_CONTRACTID].createInstance(nsIFile);
       dir.initWithPath(lastDirectory);
       this.mDisplayDirectory = dir;
     } catch (e) {}
@@ -76,18 +77,26 @@ nsFilePicker.prototype = {
   },
 
 
-  /* attribute nsILocalFile displayDirectory; */
+  /* attribute nsIFile displayDirectory; */
   set displayDirectory(a) {
     this.mDisplayDirectory = a &&
-      a.clone().QueryInterface(nsILocalFile);
+      a.clone().QueryInterface(nsIFile);
   },
   get displayDirectory() {
     return this.mDisplayDirectory &&
            this.mDisplayDirectory.clone()
-               .QueryInterface(nsILocalFile);
+               .QueryInterface(nsIFile);
   },
 
-  /* readonly attribute nsILocalFile file; */
+  /* attribute AString displaySpecialDirectory; */
+  set displaySpecialDirectory(a) {
+    this.mDisplaySpecialDirectory = a;
+  },
+  get displaySpecialDirectory() {
+    return this.mDisplaySpecialDirectory;
+  },
+
+  /* readonly attribute nsIFile file; */
   get file() { return this.mFilesEnumerator.mFiles[0]; },
 
   /* readonly attribute nsISimpleEnumerator files; */
@@ -201,7 +210,7 @@ nsFilePicker.prototype = {
   open(aFilePickerShownCallback) {
     var tm = Components.classes["@mozilla.org/thread-manager;1"]
                        .getService(Components.interfaces.nsIThreadManager);
-    tm.mainThread.dispatch(() => {
+    tm.dispatchToMainThread(() => {
       let result = Components.interfaces.nsIFilePicker.returnCancel;
       try {
         result = this.show();
@@ -248,7 +257,7 @@ nsFilePicker.prototype = {
           aFilePickerShownCallback.done(result);
         }
       });
-    }, Components.interfaces.nsIThread.DISPATCH_NORMAL);
+    });
   },
 
   show() {
@@ -256,6 +265,7 @@ nsFilePicker.prototype = {
     o.title = this.mTitle;
     o.mode = this.mMode;
     o.displayDirectory = this.mDisplayDirectory;
+    o.displaySpecialDirectory = this.mDisplaySpecialDirectory;
     o.defaultString = this.mDefaultString;
     o.filterIndex = this.mFilterIndex;
     o.filters = {};
@@ -321,7 +331,7 @@ function srGetStrBundle(path) {
 
   strBundle = strBundleService.createBundle(path);
   if (!strBundle) {
-	dump("\n--** strBundle createInstance failed **--\n");
+    dump("\n--** strBundle createInstance failed **--\n");
   }
   return strBundle;
 }

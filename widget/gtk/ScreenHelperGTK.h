@@ -9,7 +9,6 @@
 
 #include "mozilla/widget/ScreenManager.h"
 
-#include "prlink.h"
 #include "gdk/gdk.h"
 #ifdef MOZ_X11
 #include <X11/Xlib.h>
@@ -24,9 +23,7 @@ public:
   ScreenHelperGTK();
   ~ScreenHelperGTK() override;
 
-  float GetSystemDefaultScale() override;
-
-  static gint GetGTKMonitorScaleFactor();
+  static gint GetGTKMonitorScaleFactor(gint aMonitorNum = 0);
 
 #ifdef MOZ_X11
   Atom NetWorkareaAtom() { return mNetWorkareaAtom; }
@@ -36,7 +33,6 @@ public:
   void RefreshScreens();
 
 private:
-  PRLibrary* mXineramalib;
   GdkWindow* mRootWindow;
 #ifdef MOZ_X11
   Atom mNetWorkareaAtom;

@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import logging
 import re
 import os
 import platform
@@ -46,7 +45,7 @@ parser.add_argument('--timeout', '-t', type=int, metavar='TIMEOUT',
                     default=10800,
                     help='kill job after TIMEOUT seconds')
 parser.add_argument('--objdir', type=str, metavar='DIR',
-                    default=env.get('OBJDIR', 'obj-spider'),
+                    default=env.get('OBJDIR', os.path.join(DIR.source, 'obj-spider')),
                     help='object directory')
 group = parser.add_mutually_exclusive_group()
 group.add_argument('--optimize', action='store_true',
@@ -62,6 +61,14 @@ group.add_argument('--no-debug', action='store_false',
                    dest='debug',
                    help='generate a non-debug build. Overrides variant setting.')
 group.set_defaults(debug=None)
+group = parser.add_mutually_exclusive_group()
+group.add_argument('--jemalloc', action='store_true',
+                   dest='jemalloc',
+                   help='use mozilla\'s jemalloc instead of the default allocator')
+group.add_argument('--no-jemalloc', action='store_false',
+                   dest='jemalloc',
+                   help='use the default allocator instead of mozilla\'s jemalloc')
+group.set_defaults(jemalloc=None)
 parser.add_argument('--run-tests', '--tests', type=str, metavar='TESTSUITE',
                     default='',
                     help="comma-separated set of test suites to add to the variant's default set")
@@ -78,6 +85,14 @@ parser.add_argument('--nobuild', action='store_true',
 parser.add_argument('variant', type=str,
                     help='type of job requested, see variants/ subdir')
 args = parser.parse_args()
+
+OBJDIR = args.objdir
+OUTDIR = os.path.join(OBJDIR, "out")
+POBJDIR = posixpath.join(PDIR.source, args.objdir)
+AUTOMATION = env.get('AUTOMATION', False)
+MAKE = env.get('MAKE', 'make')
+MAKEFLAGS = env.get('MAKEFLAGS', '-j6' + ('' if AUTOMATION else ' -s'))
+UNAME_M = subprocess.check_output(['uname', '-m']).strip()
 
 
 def set_vars_from_script(script, vars):
@@ -125,11 +140,15 @@ def set_vars_from_script(script, vars):
                 env[var] = "%s;%s" % (env[var], originals[var])
 
 
-def ensure_dir_exists(name, clobber=True):
+def ensure_dir_exists(name, clobber=True, creation_marker_filename="CREATED-BY-AUTOSPIDER"):
+    marker = os.path.join(name, creation_marker_filename)
     if clobber:
+        if not AUTOMATION and os.path.exists(name) and not os.path.exists(marker):
+            raise Exception("Refusing to delete objdir %s because it was not created by autospider" % name)
         shutil.rmtree(name, ignore_errors=True)
     try:
         os.mkdir(name)
+        open(marker, 'a').close()
     except OSError:
         if clobber:
             raise
@@ -142,16 +161,11 @@ if args.variant == 'nonunified':
     # Note that this modifies the current checkout.
     for dirpath, dirnames, filenames in os.walk(DIR.js_src):
         if 'moz.build' in filenames:
-            subprocess.check_call(['sed', '-i', 's/UNIFIED_SOURCES/SOURCES/',
-                                   os.path.join(dirpath, 'moz.build')])
-
-OBJDIR = os.path.join(DIR.source, args.objdir)
-OUTDIR = os.path.join(OBJDIR, "out")
-POBJDIR = posixpath.join(PDIR.source, args.objdir)
-AUTOMATION = env.get('AUTOMATION', False)
-MAKE = env.get('MAKE', 'make')
-MAKEFLAGS = env.get('MAKEFLAGS', '-j6' + ('' if AUTOMATION else ' -s'))
-UNAME_M = subprocess.check_output(['uname', '-m']).strip()
+            in_place = ['-i']
+            if platform.system() == 'Darwin':
+                in_place.append('')
+            subprocess.check_call(['sed'] + in_place + ['s/UNIFIED_SOURCES/SOURCES/',
+                                                        os.path.join(dirpath, 'moz.build')])
 
 CONFIGURE_ARGS = variant['configure-args']
 
@@ -169,6 +183,10 @@ if opt is None:
     opt = variant.get('debug')
 if opt is not None:
     CONFIGURE_ARGS += (" --enable-debug" if opt else " --disable-debug")
+
+opt = args.jemalloc
+if opt is not None:
+    CONFIGURE_ARGS += (" --enable-jemalloc" if opt else " --disable-jemalloc")
 
 # Any jobs that wish to produce additional output can save them into the upload
 # directory if there is such a thing, falling back to OBJDIR.
@@ -432,13 +450,8 @@ if args.variant in ('tsan', 'msan'):
             print >> outfh, "%d %s" % (count, location)
     print(open(summary_filename, 'rb').read())
 
-    max_allowed = None
     if 'max-errors' in variant:
         max_allowed = variant['max-errors']
-    elif 'expect-errors' in variant:
-        max_allowed = len(variant['expect-errors'])
-
-    if max_allowed is not None:
         print("Found %d errors out of %d allowed" % (len(sites), max_allowed))
         if len(sites) > max_allowed:
             results.append(1)
@@ -467,12 +480,18 @@ if args.variant in ('tsan', 'msan'):
             # expect-errors is an array of (filename, function) tuples.
             expect = tuple(expect)
             if remaining[expect] == 0:
-                print("Did not see expected error in %s function %s" % expect)
+                print("Did not see known error in %s function %s" % expect)
             else:
                 remaining[expect] -= 1
 
+        status = 0
         for filename, function in (e for e, c in remaining.items() if c > 0):
-            print("*** tsan error in %s function %s" % (filename, function))
+            if AUTOMATION:
+                print("TinderboxPrint: tsan error<br/>%s function %s" % (filename, function))
+                status = 1
+            else:
+                print("*** tsan error in %s function %s" % (filename, function))
+        results.append(status)
 
     # Gather individual results into a tarball. Note that these are
     # distinguished only by pid of the JS process running within each test, so

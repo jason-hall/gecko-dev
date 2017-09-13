@@ -8,6 +8,7 @@
 
 #include "FFmpegAudioDecoder.h"
 #include "TimeUnits.h"
+#include "VideoUtils.h"
 
 #define MAX_CHANNELS 16
 
@@ -137,7 +138,7 @@ FFmpegAudioDecoder<LIBAV_VER>::ProcessDecode(MediaRawData* aSample)
   }
 
   int64_t samplePosition = aSample->mOffset;
-  media::TimeUnit pts = media::TimeUnit::FromMicroseconds(aSample->mTime);
+  media::TimeUnit pts = aSample->mTime;
 
   DecodedData results;
   while (packet.size > 0) {
@@ -153,20 +154,20 @@ FFmpegAudioDecoder<LIBAV_VER>::ProcessDecode(MediaRawData* aSample)
         __func__);
     }
 
-    if (mFrame->format != AV_SAMPLE_FMT_FLT &&
-        mFrame->format != AV_SAMPLE_FMT_FLTP &&
-        mFrame->format != AV_SAMPLE_FMT_S16 &&
-        mFrame->format != AV_SAMPLE_FMT_S16P &&
-        mFrame->format != AV_SAMPLE_FMT_S32 &&
-        mFrame->format != AV_SAMPLE_FMT_S32P) {
-      return DecodePromise::CreateAndReject(
-        MediaResult(
-          NS_ERROR_DOM_MEDIA_DECODE_ERR,
-          RESULT_DETAIL("FFmpeg audio decoder outputs unsupported audio format")),
-        __func__);
-    }
-
     if (decoded) {
+      if (mFrame->format != AV_SAMPLE_FMT_FLT &&
+          mFrame->format != AV_SAMPLE_FMT_FLTP &&
+          mFrame->format != AV_SAMPLE_FMT_S16 &&
+          mFrame->format != AV_SAMPLE_FMT_S16P &&
+          mFrame->format != AV_SAMPLE_FMT_S32 &&
+          mFrame->format != AV_SAMPLE_FMT_S32P) {
+        return DecodePromise::CreateAndReject(
+          MediaResult(
+            NS_ERROR_DOM_MEDIA_DECODE_ERR,
+            RESULT_DETAIL(
+              "FFmpeg audio decoder outputs unsupported audio format")),
+          __func__);
+      }
       uint32_t numChannels = mCodecContext->channels;
       AudioConfig::ChannelLayout layout(numChannels);
       if (!layout.IsValid()) {
@@ -204,7 +205,7 @@ FFmpegAudioDecoder<LIBAV_VER>::ProcessDecode(MediaRawData* aSample)
       }
 
       results.AppendElement(new AudioData(
-        samplePosition, pts.ToMicroseconds(), duration.ToMicroseconds(),
+        samplePosition, pts, duration,
         mFrame->nb_samples, Move(audio), numChannels, samplingRate));
 
       pts = newpts;

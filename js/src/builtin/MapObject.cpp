@@ -85,7 +85,7 @@ HashValue(const Value& v, const mozilla::HashCodeScrambler& hcs)
         return hcs.scramble(v.asRawBits());
 
     MOZ_ASSERT(!v.isGCThing(), "do not reveal pointers via hash codes");
-    return v.asRawBits();
+    return mozilla::HashGeneric(v.asRawBits());
 }
 
 HashNumber
@@ -129,9 +129,8 @@ namespace {
 static const ClassOps MapIteratorObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     MapIteratorObject::finalize
@@ -287,9 +286,8 @@ CreateMapPrototype(JSContext* cx, JSProtoKey key)
 const ClassOps MapObject::classOps_ = {
     nullptr, // addProperty
     nullptr, // delProperty
-    nullptr, // getProperty
-    nullptr, // setProperty
     nullptr, // enumerate
+    nullptr, // newEnumerate
     nullptr, // resolve
     nullptr, // mayResolve
     finalize,
@@ -565,8 +563,7 @@ MapObject::construct(JSContext* cx, unsigned argc, Value* vp)
         return false;
 
     RootedObject proto(cx);
-    RootedObject newTarget(cx, &args.newTarget().toObject());
-    if (!GetPrototypeFromConstructor(cx, newTarget, &proto))
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto))
         return false;
 
     Rooted<MapObject*> obj(cx, MapObject::create(cx, proto));
@@ -786,7 +783,10 @@ MapObject::iterator(JSContext* cx, IteratorKind kind,
 {
     ValueMap& map = extract(obj);
     Rooted<JSObject*> iterobj(cx, MapIteratorObject::create(cx, obj, &map, kind));
-    return iterobj && (iter.setObject(*iterobj), true);
+    if (!iterobj)
+        return false;
+    iter.setObject(*iterobj);
+    return true;
 }
 
 bool
@@ -867,9 +867,8 @@ MapObject::clear(JSContext* cx, HandleObject obj)
 static const ClassOps SetIteratorObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     SetIteratorObject::finalize
@@ -960,7 +959,7 @@ SetIteratorObject::next(Handle<SetIteratorObject*> setIterator, HandleArrayObjec
     // Check invariants for inlined _GetNextSetEntryForIterator.
 
     // The array should be tenured, so that post-barrier can be done simply.
-    MOZ_ASSERT(resultObj->isTenured());
+    //MOZ_ASSERT(resultObj->isTenured());
 
     // The array elements should be fixed.
     MOZ_ASSERT(resultObj->hasFixedElements());
@@ -1012,9 +1011,8 @@ CreateSetPrototype(JSContext* cx, JSProtoKey key)
 const ClassOps SetObject::classOps_ = {
     nullptr, // addProperty
     nullptr, // delProperty
-    nullptr, // getProperty
-    nullptr, // setProperty
     nullptr, // enumerate
+    nullptr, // newEnumerate
     nullptr, // resolve
     nullptr, // mayResolve
     finalize,
@@ -1164,8 +1162,7 @@ SetObject::construct(JSContext* cx, unsigned argc, Value* vp)
         return false;
 
     RootedObject proto(cx);
-    RootedObject newTarget(cx, &args.newTarget().toObject());
-    if (!GetPrototypeFromConstructor(cx, newTarget, &proto))
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto))
         return false;
 
     Rooted<SetObject*> obj(cx, SetObject::create(cx, proto));
@@ -1371,7 +1368,10 @@ SetObject::iterator(JSContext *cx, IteratorKind kind,
     MOZ_ASSERT(SetObject::is(obj));
     ValueSet &set = extract(obj);
     Rooted<JSObject*> iterobj(cx, SetIteratorObject::create(cx, obj, &set, kind));
-    return iterobj && (iter.setObject(*iterobj), true);
+    if (!iterobj)
+        return false;
+    iter.setObject(*iterobj);
+    return true;
 }
 
 bool

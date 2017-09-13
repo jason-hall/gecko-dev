@@ -8,7 +8,7 @@
 #include "nsIDocumentEncoder.h"
 #include "nsISupports.h"
 #include "nsIContent.h"
-#include "nsIComponentManager.h" 
+#include "nsIComponentManager.h"
 #include "nsIServiceManager.h"
 #include "nsIClipboard.h"
 #include "nsIFormControl.h"
@@ -400,17 +400,17 @@ nsresult
 nsCopySupport::GetContents(const nsACString& aMimeType, uint32_t aFlags, nsISelection *aSel, nsIDocument *aDoc, nsAString& outdata)
 {
   nsresult rv = NS_OK;
-  
+
   nsCOMPtr<nsIDocumentEncoder> docEncoder;
 
   nsAutoCString encoderContractID(NS_DOC_ENCODER_CONTRACTID_BASE);
   encoderContractID.Append(aMimeType);
-    
+
   docEncoder = do_CreateInstance(encoderContractID.get());
   NS_ENSURE_TRUE(docEncoder, NS_ERROR_FAILURE);
 
   uint32_t flags = aFlags | nsIDocumentEncoder::SkipInvisibleContent;
-  
+
   if (aMimeType.EqualsLiteral("text/plain"))
     flags |= nsIDocumentEncoder::OutputPreformatted;
 
@@ -421,13 +421,13 @@ nsCopySupport::GetContents(const nsACString& aMimeType, uint32_t aFlags, nsISele
 
   rv = docEncoder->Init(domDoc, unicodeMimeType, flags);
   if (NS_FAILED(rv)) return rv;
-  
+
   if (aSel)
   {
     rv = docEncoder->SetSelection(aSel);
     if (NS_FAILED(rv)) return rv;
-  } 
-  
+  }
+
   // encode the selection
   return docEncoder->EncodeToString(outdata);
 }
@@ -559,7 +559,7 @@ static nsresult AppendDOMNode(nsITransferable *aTransferable,
   // init encoder with document and node
   rv = docEncoder->NativeInit(document, NS_LITERAL_STRING(kHTMLMime),
                               nsIDocumentEncoder::OutputAbsoluteLinks |
-                              nsIDocumentEncoder::OutputEncodeW3CEntities);
+                              nsIDocumentEncoder::OutputEncodeBasicEntities);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = docEncoder->SetNativeNode(aDOMNode);
@@ -602,6 +602,13 @@ static nsresult AppendImagePromise(nsITransferable* aTransferable,
     return NS_OK;
   }
 
+  bool isMultipart;
+  rv = aImgRequest->GetMultipart(&isMultipart);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (isMultipart) {
+    return NS_OK;
+  }
+
   nsCOMPtr<nsINode> node = do_QueryInterface(aImageElement, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -621,7 +628,7 @@ static nsresult AppendImagePromise(nsITransferable* aTransferable,
   rv = imgUrl->GetFileExtension(extension);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsXPIDLCString mimeType;
+  nsCString mimeType;
   rv = aImgRequest->GetMimeType(getter_Copies(mimeType));
   NS_ENSURE_SUCCESS(rv, rv);
 

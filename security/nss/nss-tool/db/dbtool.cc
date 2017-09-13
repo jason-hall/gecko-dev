@@ -7,7 +7,6 @@
 #include "scoped_ptrs.h"
 #include "util.h"
 
-#include <dirent.h>
 #include <iomanip>
 #include <iostream>
 #include <regex>
@@ -171,24 +170,24 @@ bool DBTool::PathHasDBFiles(std::string path) {
   std::regex certDBPattern("cert.*\\.db");
   std::regex keyDBPattern("key.*\\.db");
 
-  DIR *dir;
-  if (!(dir = opendir(path.c_str()))) {
+  PRDir *dir = PR_OpenDir(path.c_str());
+  if (!dir) {
     std::cerr << "Directory " << path << " could not be accessed!" << std::endl;
     return false;
   }
 
-  struct dirent *ent;
+  PRDirEntry *ent;
   bool dbFileExists = false;
-  while ((ent = readdir(dir))) {
-    if (std::regex_match(ent->d_name, certDBPattern) ||
-        std::regex_match(ent->d_name, keyDBPattern) ||
-        "secmod.db" == std::string(ent->d_name)) {
+  while ((ent = PR_ReadDir(dir, PR_SKIP_BOTH))) {
+    if (std::regex_match(ent->name, certDBPattern) ||
+        std::regex_match(ent->name, keyDBPattern) ||
+        "secmod.db" == std::string(ent->name)) {
       dbFileExists = true;
       break;
     }
   }
 
-  closedir(dir);
+  (void)PR_CloseDir(dir);
   return dbFileExists;
 }
 
@@ -264,10 +263,10 @@ bool DBTool::ImportCertificate(const ArgParser &parser) {
     return false;
   }
 
-  std::vector<char> certData = ReadInputData(derFilePath);
+  std::vector<uint8_t> certData = ReadInputData(derFilePath);
 
-  ScopedCERTCertificate cert(
-      CERT_DecodeCertFromPackage(certData.data(), certData.size()));
+  ScopedCERTCertificate cert(CERT_DecodeCertFromPackage(
+      reinterpret_cast<char *>(certData.data()), certData.size()));
   if (cert.get() == nullptr) {
     std::cerr << "Error: Could not decode certificate!" << std::endl;
     return false;
@@ -379,7 +378,7 @@ bool DBTool::ImportKey(const ArgParser &parser) {
     return false;
   }
 
-  std::vector<char> privKeyData = ReadInputData(privKeyFilePath);
+  std::vector<uint8_t> privKeyData = ReadInputData(privKeyFilePath);
   if (privKeyData.empty()) {
     return false;
   }

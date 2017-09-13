@@ -9,12 +9,15 @@
 #include <stdint.h>                     // for int32_t
 #include "Layers.h"
 #include "gfxContext.h"                 // for gfxContext
+#include "gfxPrefs.h"
 #include "mozilla/Attributes.h"         // for override
 #include "mozilla/LinkedList.h"         // For LinkedList
 #include "mozilla/WidgetUtils.h"        // for ScreenRotation
 #include "mozilla/gfx/Rect.h"           // for Rect
 #include "mozilla/layers/CompositorTypes.h"
+#include "mozilla/layers/FocusTarget.h"  // for FocusTarget
 #include "mozilla/layers/LayersTypes.h"  // for BufferMode, LayersBackend, etc
+#include "mozilla/layers/PaintThread.h" // For PaintThread
 #include "mozilla/layers/ShadowLayers.h"  // for ShadowLayerForwarder, etc
 #include "mozilla/layers/APZTestData.h" // for APZTestData
 #include "nsCOMPtr.h"                   // for already_AddRefed
@@ -29,7 +32,13 @@
 class nsDisplayListBuilder;
 
 namespace mozilla {
+
+namespace dom {
+class TabGroup;
+}
 namespace layers {
+
+using dom::TabGroup;
 
 class ClientPaintedLayer;
 class CompositorBridgeChild;
@@ -63,6 +72,8 @@ public:
   {
     return this;
   }
+
+  TabGroup* GetTabGroup();
 
   virtual int32_t GetMaxTextureSize() const override;
 
@@ -106,7 +117,8 @@ public:
   }
 
   virtual void FlushRendering() override;
-  void SendInvalidRegion(const nsIntRegion& aRegion);
+  virtual void WaitOnTransactionProcessed() override;
+  virtual void SendInvalidRegion(const nsIntRegion& aRegion) override;
 
   virtual uint32_t StartFrameTimeRecording(int32_t aBufferSize) override;
 
@@ -123,6 +135,8 @@ public:
   virtual bool HasShadowManagerInternal() const override { return HasShadowManager(); }
 
   virtual void SetIsFirstPaint() override;
+
+  virtual void SetFocusTarget(const FocusTarget& aFocusTarget) override;
 
   /**
    * Pass through call to the forwarder for nsPresContext's
@@ -145,6 +159,7 @@ public:
   bool IsRepeatTransaction() { return mIsRepeatTransaction; }
 
   void SetTransactionIncomplete() { mTransactionIncomplete = true; }
+  void SetNeedTextureSyncOnPaintThread() { mTextureSyncOnPaintThread = true; }
 
   bool HasShadowTarget() { return !!mShadowTarget; }
 
@@ -172,13 +187,13 @@ public:
 #endif
   bool InTransaction() { return mPhase != PHASE_NONE; }
 
-  void SetNeedsComposite(bool aNeedsComposite)
+  virtual void SetNeedsComposite(bool aNeedsComposite) override
   {
     mNeedsComposite = aNeedsComposite;
   }
-  bool NeedsComposite() const { return mNeedsComposite; }
+  virtual bool NeedsComposite() const override { return mNeedsComposite; }
 
-  virtual void Composite() override;
+  virtual void ScheduleComposite() override;
   virtual void GetFrameUniformity(FrameUniformityData* aFrameUniformityData) override;
 
   virtual void DidComposite(uint64_t aTransactionId,
@@ -186,6 +201,7 @@ public:
                             const mozilla::TimeStamp& aCompositeEnd) override;
 
   virtual bool AreComponentAlphaLayersEnabled() override;
+  virtual bool SupportsBackdropCopyForComponentAlpha() override;
 
   // Log APZ test data for the current paint. We supply the paint sequence
   // number ourselves, and take care of calling APZTestData::StartNewPaint()
@@ -194,6 +210,7 @@ public:
                                   const std::string& aKey,
                                   const std::string& aValue)
   {
+    MOZ_ASSERT(gfxPrefs::APZTestLoggingEnabled(), "don't call me");
     mApzTestData.LogTestDataForPaint(mPaintSequenceNumber, aScrollId, aKey, aValue);
   }
 
@@ -210,6 +227,7 @@ public:
                                     const std::string& aKey,
                                     const std::string& aValue)
   {
+    MOZ_ASSERT(gfxPrefs::APZTestLoggingEnabled(), "don't call me");
     mApzTestData.LogTestDataForRepaintRequest(aSequenceNumber, aScrollId, aKey, aValue);
   }
 
@@ -229,8 +247,6 @@ public:
   float RequestProperty(const nsAString& aProperty) override;
 
   bool AsyncPanZoomEnabled() const override;
-
-  void SetNextPaintSyncId(int32_t aSyncId);
 
   virtual void SetLayerObserverEpoch(uint64_t aLayerObserverEpoch) override;
 
@@ -335,6 +351,7 @@ private:
   bool mTransactionIncomplete;
   bool mCompositorMightResample;
   bool mNeedsComposite;
+  bool mTextureSyncOnPaintThread;
 
   // An incrementing sequence number for paints.
   // Incremented in BeginTransaction(), but not for repeat transactions.

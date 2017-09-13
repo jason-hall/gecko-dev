@@ -36,7 +36,7 @@ function make_uri(aUrl)
 {
   var ios = Cc["@mozilla.org/network/io-service;1"].
             getService(Ci.nsIIOService);
-  return ios.newURI(aUrl, null, null);
+  return ios.newURI(aUrl);
 }
 
 function resource_handler(aMetadata, aResponse)
@@ -74,11 +74,6 @@ function run_test()
 {
   do_get_profile();
   evict_cache_entries();
-
-  if (!newCacheBackEndUsed()) {
-    do_check_true(true, "This test doesn't run when the old cache back end is used since it depends on the new APIs.");
-    return;
-  }
 
   do_test_pending();
 

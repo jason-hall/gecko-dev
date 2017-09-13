@@ -1,5 +1,3 @@
-#line 1
-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,12 +5,11 @@
 void main(void) {
 #ifdef WR_FEATURE_TRANSFORM
     float alpha = 0.0;
-    vec2 pos = init_transform_fs(vLocalPos, vLocalRect, alpha);
+    vec2 pos = init_transform_fs(vLocalPos, alpha);
 
     // We clamp the texture coordinate calculation here to the local rectangle boundaries,
     // which makes the edge of the texture stretch instead of repeat.
-    vec2 relative_pos_in_rect =
-         clamp(pos, vLocalRect.xy, vLocalRect.xy + vLocalRect.zw) - vLocalRect.xy;
+    vec2 relative_pos_in_rect = clamp(pos, vLocalBounds.xy, vLocalBounds.zw) - vLocalBounds.xy;
 #else
     float alpha = 1.0;
     vec2 relative_pos_in_rect = vLocalPos;
@@ -29,10 +26,5 @@ void main(void) {
 
     alpha = alpha * float(all(bvec2(step(position_in_tile, vStretchSize))));
 
-#ifdef WR_FEATURE_TEXTURE_RECT
-    // textureLod doesn't support sampler2DRect. Use texture() instead.
-    oFragColor = vec4(alpha) * texture(sColor0, st);
-#else
-    oFragColor = vec4(alpha) * textureLod(sColor0, st, 0.0);
-#endif
+    oFragColor = vec4(alpha) * TEX_SAMPLE(sColor0, vec3(st, vLayer));
 }

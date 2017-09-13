@@ -13,6 +13,7 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/OperatorNewExtensions.h"
 #include "nsAlgorithm.h"
+#include "nsPointerHashKeys.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ChaosMode.h"
@@ -72,7 +73,7 @@ PLDHashTable::HashStringKey(const void* aKey)
 /* static */ PLDHashNumber
 PLDHashTable::HashVoidPtrKeyStub(const void* aKey)
 {
-  return (PLDHashNumber)(ptrdiff_t)aKey >> 2;
+  return nsPtrHashKey<void>::HashKey(aKey);
 }
 
 /* static */ bool
@@ -253,15 +254,27 @@ PLDHashTable::Hash1(PLDHashNumber aHash0)
   return aHash0 >> mHashShift;
 }
 
-// Double hashing needs the second hash code to be relatively prime to table
-// size, so we simply make hash2 odd.
 void
-PLDHashTable::Hash2(PLDHashNumber aHash,
+PLDHashTable::Hash2(PLDHashNumber aHash0,
                     uint32_t& aHash2Out, uint32_t& aSizeMaskOut)
 {
   uint32_t sizeLog2 = kHashBits - mHashShift;
-  aHash2Out = ((aHash << sizeLog2) >> mHashShift) | 1;
-  aSizeMaskOut = (PLDHashNumber(1) << sizeLog2) - 1;
+  uint32_t sizeMask = (PLDHashNumber(1) << sizeLog2) - 1;
+  aSizeMaskOut = sizeMask;
+
+  // The incoming aHash0 always has the low bit unset (since we leave it
+  // free for the collision flag), and should have reasonably random
+  // data in the other 31 bits.  We used the high bits of aHash0 for
+  // Hash1, so we use the low bits here.  If the table size is large,
+  // the bits we use may overlap, but that's still more random than
+  // filling with 0s.
+  //
+  // Double hashing needs the second hash code to be relatively prime to table
+  // size, so we simply make hash2 odd.
+  //
+  // This also conveniently covers up the fact that we have the low bit
+  // unset since aHash0 has the low bit unset.
+  aHash2Out = (aHash0 & sizeMask) | 1;
 }
 
 // Reserve mKeyHash 0 for free entries and 1 for removed-entry sentinels. Note

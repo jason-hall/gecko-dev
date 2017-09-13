@@ -9,6 +9,9 @@ with Files("**"):
 
 EXPORTS += [
     'BRNameMatchingPolicy.h',
+    'BTInclusionProof.h',
+    'BTVerifier.h',
+    'Buffer.h',
     'CertVerifier.h',
     'CTLog.h',
     'CTPolicyEnforcer.h',
@@ -20,6 +23,8 @@ EXPORTS += [
 
 UNIFIED_SOURCES += [
     'BRNameMatchingPolicy.cpp',
+    'BTVerifier.cpp',
+    'Buffer.cpp',
     'CertVerifier.cpp',
     'CTDiversityPolicy.cpp',
     'CTLogVerifier.cpp',
@@ -39,6 +44,9 @@ if not CONFIG['NSS_NO_EV_CERTS']:
     UNIFIED_SOURCES += [
         'ExtendedValidation.cpp',
     ]
+
+for var in ('DLL_PREFIX', 'DLL_SUFFIX'):
+    DEFINES[var] = '"%s"' % CONFIG[var]
 
 LOCAL_INCLUDES += [
     '/security/manager/ssl',
@@ -92,6 +100,17 @@ if CONFIG['_MSC_VER']:
     CXXFLAGS += [
         '-wd4456', # declaration of 'rv' hides previous local declaration
         '-wd4458', # declaration of 'input' hides class member
+    ]
+
+    # The following warnings are disabled because MSVC 2017 headers aren't
+    # warning free at the -Wall level.
+    CXXFLAGS += [
+        '-wd4061', # enumerator 'identifier' in switch of enum 'enumeration' is
+                   # not explicitly handled by a case label
+        '-wd4365', # 'action' : conversion from 'type_1' to 'type_2',
+                   # signed/unsigned mismatch
+        '-wd4774', # '<function>' : format string expected in argument
+                   # <position> is not a string literal
     ]
 
     # Gecko headers aren't warning-free enough for us to enable these warnings

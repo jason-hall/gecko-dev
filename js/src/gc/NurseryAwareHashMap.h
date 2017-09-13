@@ -7,6 +7,12 @@
 #ifndef gc_NurseryAwareHashMap_h
 #define gc_NurseryAwareHashMap_h
 
+#include "gc/Barrier.h"
+#include "gc/Marking.h"
+#include "js/GCHashTable.h"
+#include "js/GCPolicyAPI.h"
+#include "js/HashTable.h"
+
 namespace js {
 
 namespace detail {
@@ -68,15 +74,21 @@ template <typename Key,
           typename AllocPolicy = TempAllocPolicy>
 class NurseryAwareHashMap
 {
-	using BarrieredValue = detail::UnsafeBareReadBarriered<Value>;
-	using MapType = GCRekeyableHashMap<Key, BarrieredValue, HashPolicy, AllocPolicy>;
-	MapType map;
-	
+    using BarrieredValue = detail::UnsafeBareReadBarriered<Value>;
+    using MapType = GCRekeyableHashMap<Key, BarrieredValue, HashPolicy, AllocPolicy>;
+    MapType map;
+
+    // Keep a list of all keys for which JS::GCPolicy<Key>::isTenured is false.
+    // This lets us avoid a full traveral of the map on each minor GC, keeping
+    // the minor GC times proportional to the nursery heap size.
+    Vector<Key, 0, AllocPolicy> nurseryEntries;
+
   public:
     using Lookup = typename MapType::Lookup;
     using Ptr = typename MapType::Ptr;
     using Range = typename MapType::Range;
-	
+    using Entry = typename MapType::Entry;
+
     explicit NurseryAwareHashMap(AllocPolicy a = AllocPolicy()) : map(a) {}
 
     MOZ_MUST_USE bool init(uint32_t len = 16) { return map.init(len); }
@@ -89,10 +101,12 @@ class NurseryAwareHashMap
         explicit Enum(NurseryAwareHashMap& namap) : MapType::Enum(namap.map) {}
     };
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-        return map.sizeOfExcludingThis(mallocSizeOf);
+        return map.sizeOfExcludingThis(mallocSizeOf) +
+               nurseryEntries.sizeOfExcludingThis(mallocSizeOf);
     }
     size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-        return map.sizeOfIncludingThis(mallocSizeOf);
+        return map.sizeOfIncludingThis(mallocSizeOf) +
+               nurseryEntries.sizeOfIncludingThis(mallocSizeOf);
     }
 
     MOZ_MUST_USE bool put(const Key& k, const Value& v) {
@@ -101,19 +115,23 @@ class NurseryAwareHashMap
             p->value() = v;
             return true;
         }
-        return map.add(p, k, v);
+
+        bool ok = map.add(p, k, v);
+        if (!ok)
+            return false;
+
+        return true;
     }
 
     void sweepAfterMinorGC(JSTracer* trc) {
     }
 
     void sweep() {
-		map.sweep();
+        map.sweep();
     }
 };
 
 } // namespace js
-
 
 namespace JS {
 template <typename T>

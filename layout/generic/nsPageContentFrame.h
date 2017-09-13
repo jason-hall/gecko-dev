@@ -12,10 +12,10 @@ class nsPageFrame;
 class nsSharedPageData;
 
 // Page frame class used by the simple page sequence frame
-class nsPageContentFrame : public mozilla::ViewportFrame {
-
+class nsPageContentFrame final : public mozilla::ViewportFrame
+{
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsPageContentFrame)
 
   friend nsPageContentFrame* NS_NewPageContentFrame(nsIPresShell* aPresShell,
                                                     nsStyleContext* aContext);
@@ -24,7 +24,7 @@ public:
   // nsIFrame
   virtual void Reflow(nsPresContext*      aPresContext,
                       ReflowOutput& aDesiredSize,
-                      const ReflowInput& aMaxSize,
+                      const ReflowInput& aReflowInput,
                       nsReflowStatus&      aStatus) override;
 
   virtual bool IsFrameOfType(uint32_t aFlags) const override
@@ -38,11 +38,9 @@ public:
   virtual bool HasTransformGetter() const override { return true; }
 
   /**
-   * Get the "type" of the frame
-   *
-   * @see nsGkAtoms::pageContentFrame
+   * Return our canvas frame.
    */
-  virtual nsIAtom* GetType() const override;
+  void AppendDirectlyOwnedAnonBoxes(nsTArray<OwnedAnonBox>& aResult) override;
 
 #ifdef DEBUG_FRAME_DUMP
   // Debugging
@@ -50,7 +48,9 @@ public:
 #endif
 
 protected:
-  explicit nsPageContentFrame(nsStyleContext* aContext) : ViewportFrame(aContext) {}
+  explicit nsPageContentFrame(nsStyleContext* aContext)
+    : ViewportFrame(aContext, kClassID)
+  {}
 
   nsSharedPageData*         mPD;
 };

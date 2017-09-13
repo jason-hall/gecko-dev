@@ -491,14 +491,13 @@
      */ \
     macro(JSOP_STRICTSPREADEVAL,      50, "strict-spreadeval", NULL,         1,  3,  1, JOF_BYTE|JOF_INVOKE|JOF_TYPESET|JOF_CHECKSTRICT) \
     /*
-     * Writes the [[Prototype]] objects for both a class and its .prototype to
-     * the stack, given the result of a heritage expression.
+     * Ensures the result of a class's heritage expression is either null or a constructor.
      *   Category: Literals
      *   Type: Object
      *   Operands:
-     *   Stack: heritage => funcProto, objProto
+     *   Stack: heritage => heritage
      */ \
-    macro(JSOP_CLASSHERITAGE,  51, "classheritage",   NULL,         1,  1,  2,  JOF_BYTE) \
+    macro(JSOP_CHECKCLASSHERITAGE,  51, "checkclassheritage",   NULL, 1,  1,  1,  JOF_BYTE) \
     /*
      * Pushes a clone of a function with a given [[Prototype]] onto the stack.
      *   Category: Statements
@@ -813,7 +812,7 @@
      * Pushes the value of local variable onto the stack.
      *   Category: Variables and Scopes
      *   Type: Local Variables
-     *   Operands: uint32_t localno
+     *   Operands: uint24_t localno
      *   Stack: => val
      */ \
     macro(JSOP_GETLOCAL,  86,"getlocal",    NULL,         4,  0,  1,  JOF_LOCAL|JOF_NAME) \
@@ -821,7 +820,7 @@
      * Stores the top stack value to the given local.
      *   Category: Variables and Scopes
      *   Type: Local Variables
-     *   Operands: uint32_t localno
+     *   Operands: uint24_t localno
      *   Stack: v => v
      */ \
     macro(JSOP_SETLOCAL,  87,"setlocal",    NULL,         4,  1,  1,  JOF_LOCAL|JOF_NAME|JOF_DETECTING) \
@@ -1019,7 +1018,7 @@
      *   Operands: uint32_t nameIndex
      *   Stack: receiver, obj => obj[name]
      */ \
-    macro(JSOP_GETPROP_SUPER,   104, "getprop-super", NULL, 5,  2,  1, JOF_ATOM|JOF_PROP) \
+    macro(JSOP_GETPROP_SUPER,   104, "getprop-super", NULL, 5,  2,  1, JOF_ATOM|JOF_PROP|JOF_TYPESET) \
     /*
      * Pops the top three values on the stack as 'val' and 'obj', and 'receiver',
      * and performs 'obj.prop = val', pushing 'val' back onto the stack.
@@ -1280,9 +1279,9 @@
      *   Category: Literals
      *   Type: Object
      *   Operands:
-     *   Stack: receiver, obj, propval => obj[propval]
+     *   Stack: propval, receiver, obj => obj[propval]
      */ \
-    macro(JSOP_GETELEM_SUPER, 125, "getelem-super", NULL, 1,  3,  1, JOF_BYTE |JOF_ELEM|JOF_LEFTASSOC) \
+    macro(JSOP_GETELEM_SUPER, 125, "getelem-super", NULL, 1,  3,  1, JOF_BYTE|JOF_ELEM|JOF_TYPESET|JOF_LEFTASSOC) \
     /*
      * Pushes newly created array for a spread call onto the stack. This has
      * the same semantics as JSOP_NEWARRAY, but is distinguished to avoid
@@ -1429,7 +1428,7 @@
      * JS_UNINITIALIZED_LEXICAL magic, throwing an error if so.
      *   Category: Variables and Scopes
      *   Type: Local Variables
-     *   Operands: uint32_t localno
+     *   Operands: uint24_t localno
      *   Stack: =>
      */ \
     macro(JSOP_CHECKLEXICAL,  138, "checklexical", NULL,     4,  0,  0, JOF_LOCAL|JOF_NAME) \
@@ -1438,7 +1437,7 @@
      * value.
      *   Category: Variables and Scopes
      *   Type: Local Variables
-     *   Operands: uint32_t localno
+     *   Operands: uint24_t localno
      *   Stack: v => v
      */ \
     macro(JSOP_INITLEXICAL,   139, "initlexical",  NULL,      4,  1,  1, JOF_LOCAL|JOF_NAME|JOF_DETECTING) \
@@ -1748,7 +1747,7 @@
      *
      *   Category: Variables and Scopes
      *   Type: Local Variables
-     *   Operands: uint32_t localno
+     *   Operands: uint24_t localno
      *   Stack: v => v
      */ \
     macro(JSOP_THROWSETCONST,        169, "throwsetconst",        NULL, 4,  1,  1, JOF_LOCAL|JOF_NAME|JOF_DETECTING) \
@@ -2161,7 +2160,17 @@
      *   Stack: iter => asynciter
      */ \
     macro(JSOP_TOASYNCITER,   210, "toasynciter",  NULL,  1,  1,  1,  JOF_BYTE) \
-    macro(JSOP_UNUSED211,     211, "unused211",    NULL,  1,  0,  0,  JOF_BYTE) \
+    /*
+     * Pops the top two values 'id' and 'obj' from the stack, then pushes
+     * obj.hasOwnProperty(id)
+     *
+     * Note that 'obj' is the top value.
+     *   Category: Other
+     *   Type:
+     *   Operands:
+     *   Stack: id, obj => (obj.hasOwnProperty(id))
+     */ \
+    macro(JSOP_HASOWN,        211, "hasown",     NULL,    1,  2,  1, JOF_BYTE) \
     /*
      * Initializes generator frame, creates a generator and pushes it on the
      * stack.
@@ -2241,8 +2250,25 @@
      *   Stack: obj => obj
      */ \
     macro(JSOP_CHECKISCALLABLE, 219, "checkiscallable", NULL, 2, 1, 1, JOF_UINT8) \
-    macro(JSOP_UNUSED220,     220,"unused220",     NULL,  1,  0,  0,  JOF_BYTE) \
-    macro(JSOP_UNUSED221,     221,"unused221",     NULL,  1,  0,  0,  JOF_BYTE) \
+    \
+    /*
+     * No-op used by the exception unwinder to determine the correct
+     * environment to unwind to when performing IteratorClose due to
+     * destructuring.
+     *   Category: Other
+     *   Operands:
+     *   Stack: =>
+     */ \
+    macro(JSOP_TRY_DESTRUCTURING_ITERCLOSE, 220, "try-destructuring-iterclose", NULL, 1, 0, 0, JOF_BYTE) \
+    \
+    /*
+     * Pushes the current global's builtin prototype for a given proto key
+     *   Category: Literals
+     *   Type: Constants
+     *   Operands: uint8_t kind
+     *   Stack: => %BuiltinPrototype%
+     */ \
+    macro(JSOP_BUILTINPROTO, 221, "builtinproto", NULL, 2,  0,  1,  JOF_UINT8) \
     macro(JSOP_UNUSED222,     222,"unused222",     NULL,  1,  0,  0,  JOF_BYTE) \
     macro(JSOP_UNUSED223,     223,"unused223",     NULL,  1,  0,  0,  JOF_BYTE) \
     \

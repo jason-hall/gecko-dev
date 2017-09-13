@@ -11,12 +11,11 @@ const NS_IOSERVICE_CONTRACTID = "@mozilla.org/network/io-service;1";
 const nsIFileView = Components.interfaces.nsIFileView;
 const NS_FILEVIEW_CONTRACTID = "@mozilla.org/filepicker/fileview;1";
 const nsITreeView = Components.interfaces.nsITreeView;
-const nsILocalFile = Components.interfaces.nsILocalFile;
 const nsIFile = Components.interfaces.nsIFile;
 const NS_LOCAL_FILE_CONTRACTID = "@mozilla.org/file/local;1";
 const NS_PROMPTSERVICE_CONTRACTID = "@mozilla.org/embedcomp/prompt-service;1";
 
-var sfile = Components.classes[NS_LOCAL_FILE_CONTRACTID].createInstance(nsILocalFile);
+var sfile = Components.classes[NS_LOCAL_FILE_CONTRACTID].createInstance(nsIFile);
 var retvals;
 var filePickerMode;
 var homeDir;
@@ -47,6 +46,7 @@ function filepickerLoad() {
     if (o.displayDirectory) {
       var directory = o.displayDirectory.path;
     }
+    var specialDirectory = o.displaySpecialDirectory;
 
     const initialText = o.defaultString;
     var filterTitles = o.filters.titles;
@@ -133,21 +133,23 @@ function filepickerLoad() {
   // This allows the window to show onscreen before we begin
   // loading the file list
 
-  setTimeout(setInitialDirectory, 0, directory);
+  setTimeout(setInitialDirectory, 0, { directory, specialDirectory });
 }
 
-function setInitialDirectory(directory) {
+function setInitialDirectory(directories) {
   // Start in the user's home directory
   var dirService = Components.classes[NS_DIRECTORYSERVICE_CONTRACTID]
                              .getService(nsIProperties);
-  homeDir = dirService.get("Home", Components.interfaces.nsIFile);
+  homeDir = dirService.get(directories.specialDirectory
+                             ? directories.specialDirectory : "Home",
+                           Components.interfaces.nsIFile);
 
-  if (directory) {
-    sfile.initWithPath(directory);
+  if (directories.directory) {
+    sfile.initWithPath(directories.directory);
     if (!sfile.exists() || !sfile.isDirectory())
-      directory = false;
+      directories.directory = false;
   }
-  if (!directory) {
+  if (!directories.directory) {
     sfile.initWithPath(homeDir.path);
   }
 
@@ -568,7 +570,7 @@ function onTextFieldFocus() {
 function onDirectoryChanged(target) {
   var path = target.getAttribute("label");
 
-  var file = Components.classes[NS_LOCAL_FILE_CONTRACTID].createInstance(nsILocalFile);
+  var file = Components.classes[NS_LOCAL_FILE_CONTRACTID].createInstance(nsIFile);
   file.initWithPath(path);
 
   if (!sfile.equals(file)) {
@@ -716,7 +718,7 @@ function toggleShowHidden(event) {
 // returns an array of the files listed,
 // or false if an error occurred.
 function processPath(path) {
-  var fileArray = new Array();
+  var fileArray = [];
   var strLength = path.length;
 
   if (path[0] == '"' && filePickerMode == nsIFilePicker.modeOpenMultiple &&
@@ -773,7 +775,7 @@ function processPathEntry(path, fileArray) {
   var file;
 
   try {
-    file = sfile.clone().QueryInterface(nsILocalFile);
+    file = sfile.clone().QueryInterface(nsIFile);
   } catch (e) {
     dump("Couldn't clone\n" + e);
     return false;

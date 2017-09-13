@@ -15,14 +15,28 @@
 
 "use strict";
 
-function* testProxyScript(script, expected) {
+async function testProxyScript(script, expected) {
   let extension = ExtensionTestUtils.loadExtension({
     background() {
+      let errorReceived = false;
       browser.proxy.onProxyError.addListener(error => {
-        browser.test.sendMessage("proxy-error-received", error);
+        if (!errorReceived) {
+          errorReceived = true;
+          browser.test.sendMessage("proxy-error-received", error);
+        }
       });
 
-      browser.proxy.registerProxyScript("proxy_script.js");
+      browser.proxy.register("proxy_script.js").then(() => {
+        browser.test.sendMessage("ready");
+      });
+
+      browser.test.onMessage.addListener(msg => {
+        if (msg === "unregister-proxy-script") {
+          browser.proxy.unregister().then(() => {
+            browser.test.notifyPass("proxy");
+          });
+        }
+      });
     },
     manifest: {
       "permissions": ["proxy"],
@@ -32,10 +46,11 @@ function* testProxyScript(script, expected) {
     },
   });
 
-  yield extension.startup();
+  await extension.startup();
+  await extension.awaitMessage("ready");
 
   let win = window.open("http://example.com/");
-  let error = yield extension.awaitMessage("proxy-error-received");
+  let error = await extension.awaitMessage("proxy-error-received");
   is(error.message, expected.message, "Correct error message received");
 
   if (expected.errorInfo) {
@@ -44,18 +59,20 @@ function* testProxyScript(script, expected) {
     ok(error.stack.includes("proxy_script.js:3:9"), "Error should include stack trace");
   }
 
-  yield extension.unload();
+  extension.sendMessage("unregister-proxy-script");
+  await extension.awaitFinish("proxy");
 
   win.close();
+  await extension.unload();
 }
 
-add_task(function* test_invalid_FindProxyForURL_type() {
-  yield testProxyScript(
+add_task(async function test_invalid_FindProxyForURL_type() {
+  await testProxyScript(
     () => { }, {
       message: "The proxy script must define FindProxyForURL as a function",
     });
 
-  yield testProxyScript(
+  await testProxyScript(
     () => {
       var FindProxyForURL = 5; // eslint-disable-line mozilla/var-only-at-top-level
     }, {
@@ -63,8 +80,8 @@ add_task(function* test_invalid_FindProxyForURL_type() {
     });
 });
 
-add_task(function* test_invalid_FindProxyForURL_return_type() {
-  yield testProxyScript(
+add_task(async function test_invalid_FindProxyForURL_return_types() {
+  await testProxyScript(
     () => {
       function FindProxyForURL() {
         return 5;
@@ -73,18 +90,81 @@ add_task(function* test_invalid_FindProxyForURL_return_type() {
       message: "FindProxyForURL: Return type must be a string",
     });
 
-  yield testProxyScript(
+  await testProxyScript(
     () => {
       function FindProxyForURL() {
         return "INVALID";
       }
     }, {
-      message: "FindProxyForURL: Invalid Proxy Rule: INVALID",
+      message: "FindProxyForURL: Unrecognized proxy type: \"INVALID\"",
+    });
+
+  await testProxyScript(
+    () => {
+      function FindProxyForURL() {
+        return "SOCKS";
+      }
+    }, {
+      message: "FindProxyForURL: Missing argument for proxy type: \"SOCKS\"",
+    });
+
+  await testProxyScript(
+    () => {
+      function FindProxyForURL() {
+        return "PROXY 1.2.3.4:8080 EXTRA";
+      }
+    }, {
+      message: "FindProxyForURL: Too many arguments passed for proxy rule: \"PROXY 1.2.3.4:8080 EXTRA\"",
+    });
+
+  await testProxyScript(
+    () => {
+      function FindProxyForURL() {
+        return "PROXY :";
+      }
+    }, {
+      message: "FindProxyForURL: Unable to parse host and port from proxy rule: \"PROXY :\"",
+    });
+
+  await testProxyScript(
+    () => {
+      function FindProxyForURL() {
+        return "PROXY :8080";
+      }
+    }, {
+      message: "FindProxyForURL: Unable to parse host and port from proxy rule: \"PROXY :8080\"",
+    });
+
+  await testProxyScript(
+    () => {
+      function FindProxyForURL() {
+        return "PROXY ::";
+      }
+    }, {
+      message: "FindProxyForURL: Unable to parse host and port from proxy rule: \"PROXY ::\"",
+    });
+
+  await testProxyScript(
+    () => {
+      function FindProxyForURL() {
+        return "PROXY 1.2.3.4:";
+      }
+    }, {
+      message: "FindProxyForURL: Unable to parse host and port from proxy rule: \"PROXY 1.2.3.4:\"",
+    });
+
+  await testProxyScript(
+    () => {
+      function FindProxyForURL() {
+        return "DIRECT 1.2.3.4:8080";
+      }
+    }, {
+      message: "FindProxyForURL: Invalid argument for proxy type: \"DIRECT\"",
     });
 });
 
-add_task(function* test_runtime_error_in_FindProxyForURL() {
-  yield testProxyScript(
+add_task(async function test_runtime_error_in_FindProxyForURL() {
+  await testProxyScript(
     () => {
       function FindProxyForURL() {
         return not_defined; // eslint-disable-line no-undef

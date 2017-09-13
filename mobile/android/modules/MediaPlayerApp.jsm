@@ -68,9 +68,9 @@ function RemoteMedia(id, listener) {
   this._listener = listener;
 
   if ("onRemoteMediaStart" in this._listener) {
-    Services.tm.mainThread.dispatch((function() {
+    Services.tm.dispatchToMainThread(() => {
       this._listener.onRemoteMediaStart(this);
-    }).bind(this), Ci.nsIThread.DISPATCH_NORMAL);
+    });
   }
 }
 
@@ -133,7 +133,7 @@ RemoteMedia.prototype = {
     return this._status;
   },
 
-  onEvent: function (event, message, callback) {
+  onEvent: function(event, message, callback) {
     switch (event) {
       case "MediaPlayer:Playing":
         if (this._status !== "started") {

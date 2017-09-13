@@ -539,6 +539,12 @@ NullHttpChannel::SetLoadFlags(nsLoadFlags aLoadFlags)
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
+NS_IMETHODIMP
+NullHttpChannel::GetIsDocument(bool *aIsDocument)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 //-----------------------------------------------------------------------------
 // NullHttpChannel::nsITimedChannel
 //-----------------------------------------------------------------------------
@@ -546,7 +552,8 @@ NullHttpChannel::SetLoadFlags(nsLoadFlags aLoadFlags)
 NS_IMETHODIMP
 NullHttpChannel::GetTimingEnabled(bool *aTimingEnabled)
 {
-  *aTimingEnabled = true;
+  // We don't want to report timing for null channels.
+  *aTimingEnabled = false;
   return NS_OK;
 }
 
@@ -583,6 +590,90 @@ NullHttpChannel::GetAsyncOpen(mozilla::TimeStamp *aAsyncOpen)
 }
 
 NS_IMETHODIMP
+NullHttpChannel::GetLaunchServiceWorkerStart(mozilla::TimeStamp *_retval)
+{
+  MOZ_ASSERT(_retval);
+  *_retval = mAsyncOpenTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::SetLaunchServiceWorkerStart(mozilla::TimeStamp aTimeStamp)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetLaunchServiceWorkerEnd(mozilla::TimeStamp *_retval)
+{
+  MOZ_ASSERT(_retval);
+  *_retval = mAsyncOpenTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::SetLaunchServiceWorkerEnd(mozilla::TimeStamp aTimeStamp)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetDispatchFetchEventStart(mozilla::TimeStamp *_retval)
+{
+  MOZ_ASSERT(_retval);
+  *_retval = mAsyncOpenTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::SetDispatchFetchEventStart(mozilla::TimeStamp aTimeStamp)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetDispatchFetchEventEnd(mozilla::TimeStamp *_retval)
+{
+  MOZ_ASSERT(_retval);
+  *_retval = mAsyncOpenTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::SetDispatchFetchEventEnd(mozilla::TimeStamp aTimeStamp)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetHandleFetchEventStart(mozilla::TimeStamp *_retval)
+{
+  MOZ_ASSERT(_retval);
+  *_retval = mAsyncOpenTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::SetHandleFetchEventStart(mozilla::TimeStamp aTimeStamp)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetHandleFetchEventEnd(mozilla::TimeStamp *_retval)
+{
+  MOZ_ASSERT(_retval);
+  *_retval = mAsyncOpenTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::SetHandleFetchEventEnd(mozilla::TimeStamp aTimeStamp)
+{
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 NullHttpChannel::GetDomainLookupStart(mozilla::TimeStamp *aDomainLookupStart)
 {
   *aDomainLookupStart = mAsyncOpenTime;
@@ -600,6 +691,13 @@ NS_IMETHODIMP
 NullHttpChannel::GetConnectStart(mozilla::TimeStamp *aConnectStart)
 {
   *aConnectStart = mAsyncOpenTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+NullHttpChannel::GetSecureConnectionStart(mozilla::TimeStamp *aSecureConnectionStart)
+{
+  *aSecureConnectionStart = mAsyncOpenTime;
   return NS_OK;
 }
 
@@ -756,6 +854,12 @@ NullHttpChannel::SetIsMainDocumentChannel(bool aValue)
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
+NS_IMETHODIMP
+NullHttpChannel::LogBlockedCORSRequest(const nsAString& aMessage)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 #define IMPL_TIMING_ATTR(name)                                 \
 NS_IMETHODIMP                                                  \
 NullHttpChannel::Get##name##Time(PRTime* _retval) {            \
@@ -772,9 +876,16 @@ NullHttpChannel::Get##name##Time(PRTime* _retval) {            \
 
 IMPL_TIMING_ATTR(ChannelCreation)
 IMPL_TIMING_ATTR(AsyncOpen)
+IMPL_TIMING_ATTR(LaunchServiceWorkerStart)
+IMPL_TIMING_ATTR(LaunchServiceWorkerEnd)
+IMPL_TIMING_ATTR(DispatchFetchEventStart)
+IMPL_TIMING_ATTR(DispatchFetchEventEnd)
+IMPL_TIMING_ATTR(HandleFetchEventStart)
+IMPL_TIMING_ATTR(HandleFetchEventEnd)
 IMPL_TIMING_ATTR(DomainLookupStart)
 IMPL_TIMING_ATTR(DomainLookupEnd)
 IMPL_TIMING_ATTR(ConnectStart)
+IMPL_TIMING_ATTR(SecureConnectionStart)
 IMPL_TIMING_ATTR(ConnectEnd)
 IMPL_TIMING_ATTR(RequestStart)
 IMPL_TIMING_ATTR(ResponseStart)

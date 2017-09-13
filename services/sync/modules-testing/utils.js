@@ -5,7 +5,6 @@
 "use strict";
 
 this.EXPORTED_SYMBOLS = [
-  "btoa", // It comes from a module import.
   "encryptPayload",
   "makeIdentityConfig",
   "makeFxAccountsInternalMock",
@@ -18,6 +17,7 @@ this.EXPORTED_SYMBOLS = [
   "MockFxaStorageManager",
   "AccountState", // from a module import
   "sumHistogram",
+  "getLoginTelemetryScalar",
 ];
 
 var {utils: Cu} = Components;
@@ -76,7 +76,7 @@ MockFxaStorageManager.prototype = {
 /**
  * First wait >100ms (nsITimers can take up to that much time to fire, so
  * we can account for the timer in delayedAutoconnect) and then two event
- * loop ticks (to account for the Utils.nextTick() in autoConnect).
+ * loop ticks (to account for the CommonUtils.nextTick() in autoConnect).
  */
 this.waitForZeroTimer = function waitForZeroTimer(callback) {
   let ticks = 2;
@@ -99,7 +99,7 @@ this.promiseZeroTimer = function() {
 
 this.promiseNamedTimer = function(wait, thisObj, name) {
   return new Promise(resolve => {
-    Utils.namedTimer(resolve, wait, thisObj, name);
+    CommonUtils.namedTimer(resolve, wait, thisObj, name);
   });
 }
 
@@ -220,6 +220,9 @@ this.configureIdentity = async function(identityOverrides, server) {
 
   configureFxAccountIdentity(ns.Service.identity, config);
   await ns.Service.identity.initializeWithCurrentIdentity();
+  // The token is fetched in the background, whenReadyToAuthenticate is resolved
+  // when we are ready.
+  await ns.Service.identity.whenReadyToAuthenticate.promise;
   // and cheat to avoid requiring each test do an explicit login - give it
   // a cluster URL.
   if (config.fxaccount.token.endpoint) {
@@ -266,4 +269,10 @@ this.sumHistogram = function(name, options = {}) {
   }
   histogram.clear();
   return sum;
+}
+
+this.getLoginTelemetryScalar = function() {
+  let dataset = Services.telemetry.DATASET_RELEASE_CHANNEL_OPTOUT;
+  let snapshot = Services.telemetry.snapshotKeyedScalars(dataset, true);
+  return snapshot.parent ? snapshot.parent["services.sync.sync_login_state_transitions"] : {};
 }

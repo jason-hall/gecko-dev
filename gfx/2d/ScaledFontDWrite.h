@@ -15,10 +15,13 @@ struct gfxFontStyle;
 namespace mozilla {
 namespace gfx {
 
+class NativeFontResourceDWrite;
+class UnscaledFontDWrite;
+
 class ScaledFontDWrite final : public ScaledFontBase
 {
 public:
-  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(ScaledFontDwrite)
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(ScaledFontDWrite, override)
   ScaledFontDWrite(IDWriteFontFace *aFont,
                    const RefPtr<UnscaledFont>& aUnscaledFont,
                    Float aSize)
@@ -26,6 +29,8 @@ public:
     , mFontFace(aFont)
     , mUseEmbeddedBitmap(false)
     , mForceGDIMode(false)
+    , mGamma(2.2f)
+    , mContrast(1.0f)
   {}
 
   ScaledFontDWrite(IDWriteFontFace *aFontFace,
@@ -33,57 +38,70 @@ public:
                    Float aSize,
                    bool aUseEmbeddedBitmap,
                    bool aForceGDIMode,
-                   const gfxFontStyle* aStyle);
+                   IDWriteRenderingParams *aParams,
+                   Float aGamma,
+                   Float aContrast,
+                   const gfxFontStyle* aStyle = nullptr);
 
-  virtual FontType GetType() const { return FontType::DWRITE; }
+  FontType GetType() const override { return FontType::DWRITE; }
 
-  virtual already_AddRefed<Path> GetPathForGlyphs(const GlyphBuffer &aBuffer, const DrawTarget *aTarget);
-  virtual void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, const Matrix *aTransformHint);
+  already_AddRefed<Path> GetPathForGlyphs(const GlyphBuffer &aBuffer, const DrawTarget *aTarget) override;
+  void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, const Matrix *aTransformHint) override;
 
   void CopyGlyphsToSink(const GlyphBuffer &aBuffer, ID2D1GeometrySink *aSink);
 
-  virtual void GetGlyphDesignMetrics(const uint16_t* aGlyphIndices, uint32_t aNumGlyphs, GlyphMetrics* aGlyphMetrics);
+  void GetGlyphDesignMetrics(const uint16_t* aGlyphIndices, uint32_t aNumGlyphs, GlyphMetrics* aGlyphMetrics) override;
 
-  virtual bool GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton);
+  bool CanSerialize() override { return true; }
 
-  virtual bool CanSerialize() override { return true; }
+  bool GetFontInstanceData(FontInstanceDataOutput aCb, void* aBaton) override;
 
-  virtual AntialiasMode GetDefaultAAMode() override;
+  AntialiasMode GetDefaultAAMode() override;
 
   bool UseEmbeddedBitmaps() { return mUseEmbeddedBitmap; }
   bool ForceGDIMode() { return mForceGDIMode; }
 
 #ifdef USE_SKIA
-  virtual SkTypeface* GetSkTypeface();
+  SkTypeface* GetSkTypeface() override;
   SkFontStyle mStyle;
 #endif
 
   RefPtr<IDWriteFontFace> mFontFace;
   bool mUseEmbeddedBitmap;
   bool mForceGDIMode;
+  // DrawTargetD2D1 requires the IDWriteRenderingParams,
+  // but we also separately need to store the gamma and contrast
+  // since Skia needs to be able to access these without having
+  // to use the full set of DWrite parameters (which would be
+  // required to recreate an IDWriteRenderingParams) in a
+  // DrawTargetRecording playback.
+  RefPtr<IDWriteRenderingParams> mParams;
+  Float mGamma;
+  Float mContrast;
 
 protected:
 #ifdef USE_CAIRO_SCALED_FONT
   cairo_font_face_t* GetCairoFontFace() override;
 #endif
-};
-
-class GlyphRenderingOptionsDWrite : public GlyphRenderingOptions
-{
-public:
-  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GlyphRenderingOptionsDWrite)
-  explicit GlyphRenderingOptionsDWrite(IDWriteRenderingParams *aParams)
-    : mParams(aParams)
-  {
-  }
-
-  virtual FontType GetType() const { return FontType::DWRITE; }
 
 private:
-  friend class DrawTargetD2D;
-  friend class DrawTargetD2D1;
+  friend class NativeFontResourceDWrite;
+  friend class UnscaledFontDWrite;
 
-  RefPtr<IDWriteRenderingParams> mParams;
+  struct InstanceData
+  {
+    explicit InstanceData(ScaledFontDWrite* aScaledFont)
+      : mUseEmbeddedBitmap(aScaledFont->mUseEmbeddedBitmap)
+      , mForceGDIMode(aScaledFont->mForceGDIMode)
+      , mGamma(aScaledFont->mGamma)
+      , mContrast(aScaledFont->mContrast)
+    {}
+
+    bool mUseEmbeddedBitmap;
+    bool mForceGDIMode;
+    Float mGamma;
+    Float mContrast;
+  };
 };
 
 }

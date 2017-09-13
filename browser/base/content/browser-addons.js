@@ -3,6 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// This file is loaded into the browser window scope.
+/* eslint-env mozilla/browser-window */
+
 // Removes a doorhanger notification if all of the installs it was notifying
 // about have ended in some way.
 function removeNotificationOnEnd(notification, installs) {
@@ -29,7 +32,7 @@ function removeNotificationOnEnd(notification, installs) {
   }
 }
 
-const gXPInstallObserver = {
+var gXPInstallObserver = {
   _findChildShell(aDocShell, aSoughtShell) {
     if (aDocShell == aSoughtShell)
       return aDocShell;
@@ -183,8 +186,8 @@ const gXPInstallObserver = {
     messageString = messageString.replace("#2", installInfo.installs.length);
 
     let action = {
-      label: gNavigatorBundle.getString("addonInstall.acceptButton.label"),
-      accessKey: gNavigatorBundle.getString("addonInstall.acceptButton.accesskey"),
+      label: gNavigatorBundle.getString("addonInstall.acceptButton2.label"),
+      accessKey: gNavigatorBundle.getString("addonInstall.acceptButton2.accesskey"),
       callback: acceptInstallation,
     };
 
@@ -324,7 +327,7 @@ const gXPInstallObserver = {
             let notificationElement = [...this.owner.panel.childNodes]
                                       .find(n => n.notification == this);
             if (notificationElement) {
-              if (Preferences.get("xpinstall.customConfirmationUI", false)) {
+              if (Services.prefs.getBoolPref("xpinstall.customConfirmationUI", false)) {
                 notificationElement.setAttribute("mainactiondisabled", "true");
               } else {
                 notificationElement.button.hidden = true;
@@ -338,8 +341,8 @@ const gXPInstallObserver = {
         }
       };
       action = {
-        label: gNavigatorBundle.getString("addonInstall.acceptButton.label"),
-        accessKey: gNavigatorBundle.getString("addonInstall.acceptButton.accesskey"),
+        label: gNavigatorBundle.getString("addonInstall.acceptButton2.label"),
+        accessKey: gNavigatorBundle.getString("addonInstall.acceptButton2.accesskey"),
         callback: () => {},
       };
       let secondaryAction = {
@@ -482,7 +485,7 @@ const gXPInstallObserver = {
   }
 };
 
-const gExtensionsNotifications = {
+var gExtensionsNotifications = {
   initialized: false,
   init() {
     this.updateAlerts();
@@ -500,41 +503,37 @@ const gExtensionsNotifications = {
     ExtensionsUI.off("change", this.boundUpdate);
   },
 
+  _createAddonButton(text, icon, callback) {
+    let button = document.createElement("toolbarbutton");
+    button.setAttribute("label", text);
+    const DEFAULT_EXTENSION_ICON =
+      "chrome://mozapps/skin/extensions/extensionGeneric.svg";
+    button.setAttribute("image", icon || DEFAULT_EXTENSION_ICON);
+    button.className = "addon-banner-item";
+
+    button.addEventListener("click", callback);
+    PanelUI.addonNotificationContainer.appendChild(button);
+  },
+
   updateAlerts() {
     let sideloaded = ExtensionsUI.sideloaded;
     let updates = ExtensionsUI.updates;
-    if (sideloaded.size + updates.size == 0) {
-      PanelUI.removeNotification("addon-alert");
-    } else {
-      PanelUI.showBadgeOnlyNotification("addon-alert");
-    }
 
-    let container = document.getElementById("PanelUI-footer-addons");
+    let container = PanelUI.addonNotificationContainer;
 
     while (container.firstChild) {
       container.firstChild.remove();
     }
 
-    const DEFAULT_EXTENSION_ICON =
-      "chrome://mozapps/skin/extensions/extensionGeneric.svg";
     let items = 0;
     for (let update of updates) {
       if (++items > 4) {
         break;
       }
-
-      let button = document.createElement("toolbarbutton");
       let text = gNavigatorBundle.getFormattedString("webextPerms.updateMenuItem", [update.addon.name]);
-      button.setAttribute("label", text);
-
-      let icon = update.addon.iconURL || DEFAULT_EXTENSION_ICON;
-      button.setAttribute("image", icon);
-
-      button.addEventListener("click", evt => {
+      this._createAddonButton(text, update.addon.iconURL, evt => {
         ExtensionsUI.showUpdate(gBrowser, update);
       });
-
-      container.appendChild(button);
     }
 
     let appName;
@@ -547,18 +546,10 @@ const gExtensionsNotifications = {
         appName = brandBundle.getString("brandShortName");
       }
 
-      let button = document.createElement("toolbarbutton");
       let text = gNavigatorBundle.getFormattedString("webextPerms.sideloadMenuItem", [addon.name, appName]);
-      button.setAttribute("label", text);
-
-      let icon = addon.iconURL || DEFAULT_EXTENSION_ICON;
-      button.setAttribute("image", icon);
-
-      button.addEventListener("click", evt => {
+      this._createAddonButton(text, addon.iconURL, evt => {
         ExtensionsUI.showSideloaded(gBrowser, addon);
       });
-
-      container.appendChild(button);
     }
   },
 };

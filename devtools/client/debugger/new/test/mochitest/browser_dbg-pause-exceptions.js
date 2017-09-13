@@ -16,11 +16,10 @@ function caughtException() {
   3. pause on a caught error
   4. skip a caught error
 */
-add_task(function* () {
+add_task(function*() {
   const dbg = yield initDebugger("doc-exceptions.html");
 
   // test skipping an uncaught exception
-  yield togglePauseOnExceptions(dbg, false, false);
   yield uncaughtException();
   ok(!isPaused(dbg));
 
@@ -28,19 +27,19 @@ add_task(function* () {
   yield togglePauseOnExceptions(dbg, true, false);
   uncaughtException();
   yield waitForPaused(dbg);
-  assertPausedLocation(dbg, "exceptions.js", 2);
+  assertPausedLocation(dbg);
   yield resume(dbg);
 
   // Test pausing on a caught Error
   caughtException();
   yield waitForPaused(dbg);
-  assertPausedLocation(dbg, "exceptions.js", 15);
+  assertPausedLocation(dbg);
   yield resume(dbg);
 
   // Test skipping a caught error
   yield togglePauseOnExceptions(dbg, true, true);
   caughtException();
   yield waitForPaused(dbg);
-  assertPausedLocation(dbg, "exceptions.js", 17);
+  assertPausedLocation(dbg);
   yield resume(dbg);
 });

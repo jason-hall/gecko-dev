@@ -33,9 +33,9 @@
 #include "mozilla/LoadContext.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
-#include "mozilla/SizePrintfMacros.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
+#include "mozilla/intl/LocaleService.h"
 
 #include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
@@ -50,18 +50,19 @@
 #include "nsThreadUtils.h"
 
 #include "nsIContentPolicy.h"
+#include "nsICryptoHash.h"
 #include "nsILoadInfo.h"
 #include "nsContentUtils.h"
 #include "nsWeakReference.h"
-#include "nsCharSeparatedTokenizer.h"
+#include "nsIRedirectHistoryEntry.h"
 
-using namespace mozilla::downloads;
 using mozilla::ArrayLength;
 using mozilla::BasePrincipal;
 using mozilla::OriginAttributes;
 using mozilla::Preferences;
 using mozilla::TimeStamp;
 using mozilla::Telemetry::Accumulate;
+using mozilla::intl::LocaleService;
 using safe_browsing::ClientDownloadRequest;
 using safe_browsing::ClientDownloadRequest_CertificateChain;
 using safe_browsing::ClientDownloadRequest_Resource;
@@ -73,7 +74,6 @@ using safe_browsing::ClientDownloadRequest_SignatureInfo;
 #define PREF_SB_DOWNLOADS_ENABLED "browser.safebrowsing.downloads.enabled"
 #define PREF_SB_DOWNLOADS_REMOTE_ENABLED "browser.safebrowsing.downloads.remote.enabled"
 #define PREF_SB_DOWNLOADS_REMOTE_TIMEOUT "browser.safebrowsing.downloads.remote.timeout_ms"
-#define PREF_GENERAL_LOCALE "general.useragent.locale"
 #define PREF_DOWNLOAD_BLOCK_TABLE "urlclassifier.downloadBlockTable"
 #define PREF_DOWNLOAD_ALLOW_TABLE "urlclassifier.downloadAllowTable"
 
@@ -87,98 +87,6 @@ using safe_browsing::ClientDownloadRequest_SignatureInfo;
 mozilla::LazyLogModule ApplicationReputationService::prlog("ApplicationReputation");
 #define LOG(args) MOZ_LOG(ApplicationReputationService::prlog, mozilla::LogLevel::Debug, args)
 #define LOG_ENABLED() MOZ_LOG_TEST(ApplicationReputationService::prlog, mozilla::LogLevel::Debug)
-
-namespace mozilla {
-namespace downloads {
-
-enum class TelemetryMatchInfo : uint8_t
-{
-  eNoMatch   = 0x00,
-  eV2Match   = 0x01,
-  eV4Match   = 0x02,
-  eBothMatch = eV2Match | eV4Match,
-};
-
-MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(TelemetryMatchInfo)
-
-// Given a comma-separated list of tables which matched a URL, check to see if
-// at least one of these tables is present in the given pref.
-bool
-LookupTablesInPrefs(const nsACString& tables, const char* aPref)
-{
-  nsAutoCString prefList;
-  Preferences::GetCString(aPref, &prefList);
-  if (prefList.IsEmpty()) {
-    return false;
-  }
-
-  // Check if V2 and V4 are enabled in preference
-  // If V2 and V4 are both enabled, then we should do a telemetry record
-  // Both V2 and V4 begin with "goog" but V4 ends with "-proto"
-  nsCCharSeparatedTokenizer prefTokens(prefList, ',');
-  nsCString prefToken;
-  bool isV4Enabled = false;
-  bool isV2Enabled = false;
-
-  while (prefTokens.hasMoreTokens()) {
-    prefToken = prefTokens.nextToken();
-    if (StringBeginsWith(prefToken, NS_LITERAL_CSTRING("goog"))) {
-      if (StringEndsWith(prefToken, NS_LITERAL_CSTRING("-proto"))) {
-        isV4Enabled = true;
-      } else {
-        isV2Enabled = true;
-      }
-    }
-  }
-
-  bool shouldRecordTelemetry = isV2Enabled && isV4Enabled;
-  TelemetryMatchInfo telemetryInfo = TelemetryMatchInfo::eNoMatch;
-
-  // Parsed tables separated by "," into tokens then lookup each token
-  // in preference list
-  nsCCharSeparatedTokenizer tokens(tables, ',');
-  nsCString table;
-  bool found = false;
-
-  while (tokens.hasMoreTokens()) {
-    table = tokens.nextToken();
-    if (table.IsEmpty()) {
-      continue;
-    }
-
-    if (!FindInReadable(table, prefList)) {
-      continue;
-    }
-    found = true;
-
-    if (!shouldRecordTelemetry) {
-      return found;
-    }
-
-    // We are checking if the table found is V2 or V4 to record telemetry
-    // Both V2 and V4 begin with "goog" but V4 ends with "-proto"
-    if (StringBeginsWith(prefToken, NS_LITERAL_CSTRING("goog"))) {
-      if (StringEndsWith(prefToken, NS_LITERAL_CSTRING("-proto"))) {
-        telemetryInfo |= TelemetryMatchInfo::eV4Match;
-      } else {
-        telemetryInfo |= TelemetryMatchInfo::eV2Match;
-      }
-    }
-  }
-
-  // Record telemetry for matching allow list and block list
-  if (!strcmp(aPref, PREF_DOWNLOAD_BLOCK_TABLE)) {
-    Accumulate(mozilla::Telemetry::APPLICATION_REPUTATION_BLOCKLIST_MATCH,
-               static_cast<uint8_t>(telemetryInfo));
-  } else if (!strcmp(aPref, PREF_DOWNLOAD_ALLOW_TABLE)) {
-    Accumulate(mozilla::Telemetry::APPLICATION_REPUTATION_ALLOWLIST_MATCH,
-               static_cast<uint8_t>(telemetryInfo));
-  }
-
-  return found;
-}
-} // namespace downloads
-} // namespace mozilla
 
 class PendingDBLookup;
 
@@ -277,8 +185,11 @@ private:
                                  bool* aShouldBlock,
                                  uint32_t* aVerdict);
 
+  // Return the hex-encoded hash of the whole URI.
+  nsresult GetSpecHash(nsACString& aSpec, nsACString& hexEncodedHash);
+
   // Strip url parameters, fragments, and user@pass fields from the URI spec
-  // using nsIURL. If aURI is not an nsIURL, returns the original nsIURI.spec.
+  // using nsIURL. Hash data URIs and return blob URIs unfiltered.
   nsresult GetStrippedSpec(nsIURI* aUri, nsACString& spec);
 
   // Escape '/' and '%' in certificate attribute values.
@@ -387,8 +298,11 @@ PendingDBLookup::LookupSpec(const nsACString& aSpec,
   mAllowlistOnly = aAllowlistOnly;
   nsresult rv = LookupSpecInternal(aSpec);
   if (NS_FAILED(rv)) {
-    LOG(("Error in LookupSpecInternal"));
-    return mPendingLookup->OnComplete(false, NS_OK);
+    nsAutoCString errorName;
+    mozilla::GetErrorName(rv, errorName);
+    LOG(("Error in LookupSpecInternal() [rv = %s, this = %p]",
+         errorName.get(), this));
+    return mPendingLookup->LookupNext(); // ignore this lookup and move to next
   }
   // LookupSpecInternal has called nsIUrlClassifierCallback.lookup, which is
   // guaranteed to call HandleEvent.
@@ -421,12 +335,12 @@ PendingDBLookup::LookupSpecInternal(const nsACString& aSpec)
 
   nsAutoCString tables;
   nsAutoCString allowlist;
-  Preferences::GetCString(PREF_DOWNLOAD_ALLOW_TABLE, &allowlist);
+  Preferences::GetCString(PREF_DOWNLOAD_ALLOW_TABLE, allowlist);
   if (!allowlist.IsEmpty()) {
     tables.Append(allowlist);
   }
   nsAutoCString blocklist;
-  Preferences::GetCString(PREF_DOWNLOAD_BLOCK_TABLE, &blocklist);
+  Preferences::GetCString(PREF_DOWNLOAD_BLOCK_TABLE, blocklist);
   if (!mAllowlistOnly && !blocklist.IsEmpty()) {
     tables.Append(',');
     tables.Append(blocklist);
@@ -441,7 +355,9 @@ PendingDBLookup::HandleEvent(const nsACString& tables)
   // 1) PendingLookup::OnComplete if the URL matches the blocklist, or
   // 2) PendingLookup::LookupNext if the URL does not match the blocklist.
   // Blocklisting trumps allowlisting.
-  if (!mAllowlistOnly && LookupTablesInPrefs(tables, PREF_DOWNLOAD_BLOCK_TABLE)) {
+  nsAutoCString blockList;
+  Preferences::GetCString(PREF_DOWNLOAD_BLOCK_TABLE, blockList);
+  if (!mAllowlistOnly && FindInReadable(blockList, tables)) {
     mPendingLookup->mBlocklistCount++;
     Accumulate(mozilla::Telemetry::APPLICATION_REPUTATION_LOCAL, BLOCK_LIST);
     LOG(("Found principal %s on blocklist [this = %p]", mSpec.get(), this));
@@ -449,7 +365,9 @@ PendingDBLookup::HandleEvent(const nsACString& tables)
       nsIApplicationReputationService::VERDICT_DANGEROUS);
   }
 
-  if (LookupTablesInPrefs(tables, PREF_DOWNLOAD_ALLOW_TABLE)) {
+  nsAutoCString allowList;
+  Preferences::GetCString(PREF_DOWNLOAD_ALLOW_TABLE, allowList);
+  if (FindInReadable(allowList, tables)) {
     mPendingLookup->mAllowlistCount++;
     Accumulate(mozilla::Telemetry::APPLICATION_REPUTATION_LOCAL, ALLOW_LIST);
     LOG(("Found principal %s on allowlist [this = %p]", mSpec.get(), this));
@@ -555,6 +473,8 @@ static const char16_t* const kBinaryFileExtensions[] = {
     u".hlp", // Windows Help
     u".hqx", // Mac archive
     u".hta", // HTML trusted application
+    u".htm",
+    u".html",
     u".htt", // MS HTML template
     u".img", // Mac disk image
     u".imgpart", // Mac disk image
@@ -1027,7 +947,11 @@ PendingLookup::AddRedirects(nsIArray* aRedirects)
     rv = iter->GetNext(getter_AddRefs(supports));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIPrincipal> principal = do_QueryInterface(supports, &rv);
+    nsCOMPtr<nsIRedirectHistoryEntry> redirectEntry = do_QueryInterface(supports, &rv);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    nsCOMPtr<nsIPrincipal> principal;
+    rv = redirectEntry->GetPrincipal(getter_AddRefs(principal));
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsCOMPtr<nsIURI> uri;
@@ -1065,16 +989,82 @@ PendingLookup::StartLookup()
 }
 
 nsresult
-PendingLookup::GetStrippedSpec(nsIURI* aUri, nsACString& escaped)
+PendingLookup::GetSpecHash(nsACString& aSpec, nsACString& hexEncodedHash)
 {
-  // If aURI is not an nsIURL, we do not want to check the lists or send a
-  // remote query.
   nsresult rv;
-  nsCOMPtr<nsIURL> url = do_QueryInterface(aUri, &rv);
+
+  nsCOMPtr<nsICryptoHash> cryptoHash =
+    do_CreateInstance("@mozilla.org/security/hash;1", &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+  rv = cryptoHash->Init(nsICryptoHash::SHA256);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = url->GetScheme(escaped);
+  rv = cryptoHash->Update(reinterpret_cast<const uint8_t*>(aSpec.BeginReading()),
+                          aSpec.Length());
   NS_ENSURE_SUCCESS(rv, rv);
+
+  nsAutoCString binaryHash;
+  rv = cryptoHash->Finish(false, binaryHash);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // This needs to match HexEncode() in Chrome's
+  // src/base/strings/string_number_conversions.cc
+  static const char* const hex = "0123456789ABCDEF";
+  hexEncodedHash.SetCapacity(2 * binaryHash.Length());
+  for (size_t i = 0; i < binaryHash.Length(); ++i) {
+    auto c = static_cast<const unsigned char>(binaryHash[i]);
+    hexEncodedHash.Append(hex[(c >> 4) & 0x0F]);
+    hexEncodedHash.Append(hex[c & 0x0F]);
+  }
+
+  return NS_OK;
+}
+
+nsresult
+PendingLookup::GetStrippedSpec(nsIURI* aUri, nsACString& escaped)
+{
+  if (NS_WARN_IF(!aUri)) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  nsresult rv;
+  rv = aUri->GetScheme(escaped);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (escaped.EqualsLiteral("blob")) {
+    aUri->GetSpec(escaped);
+    LOG(("PendingLookup::GetStrippedSpec(): blob URL left unstripped as '%s' [this = %p]",
+         PromiseFlatCString(escaped).get(), this));
+    return NS_OK;
+
+  } else if (escaped.EqualsLiteral("data")) {
+    // Replace URI with "data:<everything before comma>,SHA256(<whole URI>)"
+    aUri->GetSpec(escaped);
+    int32_t comma = escaped.FindChar(',');
+    if (comma > -1 &&
+        static_cast<nsCString::size_type>(comma) < escaped.Length() - 1) {
+      MOZ_ASSERT(comma > 4, "Data URIs start with 'data:'");
+      nsAutoCString hexEncodedHash;
+      rv = GetSpecHash(escaped, hexEncodedHash);
+      if (NS_SUCCEEDED(rv)) {
+        escaped.Truncate(comma + 1);
+        escaped.Append(hexEncodedHash);
+      }
+    }
+
+    LOG(("PendingLookup::GetStrippedSpec(): data URL stripped to '%s' [this = %p]",
+         PromiseFlatCString(escaped).get(), this));
+    return NS_OK;
+  }
+
+  // If aURI is not an nsIURL, we do not want to check the lists or send a
+  // remote query.
+  nsCOMPtr<nsIURL> url = do_QueryInterface(aUri, &rv);
+  if (NS_FAILED(rv)) {
+    LOG(("PendingLookup::GetStrippedSpec(): scheme '%s' is not supported [this = %p]",
+         PromiseFlatCString(escaped).get(), this));
+    return rv;
+  }
 
   nsCString temp;
   rv = url->GetHostPort(temp);
@@ -1089,6 +1079,8 @@ PendingLookup::GetStrippedSpec(nsIURI* aUri, nsACString& escaped)
   // nsIUrl.filePath starts with '/'
   escaped.Append(temp);
 
+  LOG(("PendingLookup::GetStrippedSpec(): URL stripped to '%s' [this = %p]",
+       PromiseFlatCString(escaped).get(), this));
   return NS_OK;
 }
 
@@ -1263,8 +1255,8 @@ PendingLookup::SendRemoteQueryInternal()
     return NS_ERROR_NOT_AVAILABLE;
   }
   // If the remote lookup URL is empty or absent, bail.
-  nsCString serviceUrl;
-  NS_ENSURE_SUCCESS(Preferences::GetCString(PREF_SB_APP_REP_URL, &serviceUrl),
+  nsAutoCString serviceUrl;
+  NS_ENSURE_SUCCESS(Preferences::GetCString(PREF_SB_APP_REP_URL, serviceUrl),
                     NS_ERROR_NOT_AVAILABLE);
   if (serviceUrl.IsEmpty()) {
     LOG(("Remote lookup URL is empty [this = %p]", this));
@@ -1276,26 +1268,23 @@ PendingLookup::SendRemoteQueryInternal()
   {
     nsAutoCString table;
     NS_ENSURE_SUCCESS(Preferences::GetCString(PREF_DOWNLOAD_BLOCK_TABLE,
-                                              &table),
+                                              table),
                       NS_ERROR_NOT_AVAILABLE);
     if (table.IsEmpty()) {
       LOG(("Blocklist is empty [this = %p]", this));
       return NS_ERROR_NOT_AVAILABLE;
     }
   }
-#ifdef XP_WIN
-  // The allowlist is only needed to do signature verification on Windows
   {
     nsAutoCString table;
     NS_ENSURE_SUCCESS(Preferences::GetCString(PREF_DOWNLOAD_ALLOW_TABLE,
-                                              &table),
+                                              table),
                       NS_ERROR_NOT_AVAILABLE);
     if (table.IsEmpty()) {
       LOG(("Allowlist is empty [this = %p]", this));
       return NS_ERROR_NOT_AVAILABLE;
     }
   }
-#endif
 
   LOG(("Sending remote query for application reputation [this = %p]",
        this));
@@ -1319,8 +1308,8 @@ PendingLookup::SendRemoteQueryInternal()
   mRequest.set_user_initiated(true);
 
   nsCString locale;
-  NS_ENSURE_SUCCESS(Preferences::GetCString(PREF_GENERAL_LOCALE, &locale),
-                    NS_ERROR_NOT_AVAILABLE);
+  rv = LocaleService::GetInstance()->GetAppLocaleAsLangTag(locale);
+  NS_ENSURE_SUCCESS(rv, rv);
   mRequest.set_locale(locale.get());
   nsCString sha256Hash;
   rv = mQuery->GetSha256Hash(sha256Hash);
@@ -1347,7 +1336,7 @@ PendingLookup::SendRemoteQueryInternal()
   if (!mRequest.SerializeToString(&serialized)) {
     return NS_ERROR_UNEXPECTED;
   }
-  LOG(("Serialized protocol buffer [this = %p]: (length=%" PRIuSIZE ") %s", this,
+  LOG(("Serialized protocol buffer [this = %p]: (length=%zu) %s", this,
        serialized.length(), serialized.c_str()));
 
   // Set the input stream to the serialized protocol buffer
@@ -1594,7 +1583,6 @@ ApplicationReputationService::QueryReputation(
   NS_ENSURE_ARG_POINTER(aQuery);
   NS_ENSURE_ARG_POINTER(aCallback);
 
-  Accumulate(mozilla::Telemetry::APPLICATION_REPUTATION_COUNT, true);
   nsresult rv = QueryReputationInternal(aQuery, aCallback);
   if (NS_FAILED(rv)) {
     Accumulate(mozilla::Telemetry::APPLICATION_REPUTATION_SHOULD_BLOCK,

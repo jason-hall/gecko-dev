@@ -8,59 +8,19 @@
 
 #![deny(missing_docs)]
 
-pub use cssparser::{RGBA, Parser};
+use Atom;
+pub use cssparser::{RGBA, Token, Parser, serialize_identifier, BasicParseError, CowRcStr};
 use parser::{Parse, ParserContext};
+use selectors::parser::SelectorParseError;
+use std::ascii::AsciiExt;
 use std::fmt::{self, Debug};
-use style_traits::ToCss;
+use std::hash;
+use style_traits::{ToCss, ParseError, StyleParseError};
 
-macro_rules! define_numbered_css_keyword_enum {
-    ($name: ident: $( $css: expr => $variant: ident = $value: expr ),+,) => {
-        define_numbered_css_keyword_enum!($name: $( $css => $variant = $value ),+);
-    };
-    ($name: ident: $( $css: expr => $variant: ident = $value: expr ),+) => {
-        #[allow(non_camel_case_types, missing_docs)]
-        #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-        #[cfg_attr(feature = "servo", derive(HeapSizeOf, Deserialize, Serialize))]
-        pub enum $name {
-            $( $variant = $value ),+
-        }
-
-        impl Parse for $name {
-            #[allow(missing_docs)]
-            fn parse(_context: &ParserContext, input: &mut ::cssparser::Parser) -> Result<$name, ()> {
-                match_ignore_ascii_case! { &try!(input.expect_ident()),
-                    $( $css => Ok($name::$variant), )+
-                    _ => Err(())
-                }
-            }
-        }
-
-        impl ToCss for $name {
-            fn to_css<W>(&self, dest: &mut W) -> ::std::fmt::Result
-                where W: ::std::fmt::Write,
-            {
-                match *self {
-                    $( $name::$variant => dest.write_str($css) ),+
-                }
-            }
-        }
-    }
-}
-
-/// A macro used to implement HasViewportPercentage trait
-/// for a given type that may never contain viewport units.
-macro_rules! no_viewport_percentage {
-    ($name: ident) => {
-        impl HasViewportPercentage for $name {
-            #[inline]
-            fn has_viewport_percentage(&self) -> bool {
-                false
-            }
-        }
-    };
-}
-
+pub mod animated;
 pub mod computed;
+pub mod distance;
+pub mod generics;
 pub mod specified;
 
 /// A CSS float value.
@@ -72,58 +32,44 @@ pub type CSSInteger = i32;
 /// The default font size.
 pub const FONT_MEDIUM_PX: i32 = 16;
 
-/// A trait used to query whether this value has viewport units.
-pub trait HasViewportPercentage {
-    /// Returns true if this value has viewport units.
-    fn has_viewport_percentage(&self) -> bool;
-}
-
-impl<T: HasViewportPercentage> HasViewportPercentage for Box<T> {
-    #[inline]
-    fn has_viewport_percentage(&self) -> bool {
-        (**self).has_viewport_percentage()
-    }
-}
-
-use self::computed::ComputedValueAsSpecified;
-
-macro_rules! define_keyword_type {
-    ($name: ident, $css: expr) => {
-        #[derive(Clone, PartialEq, Copy)]
-        #[cfg_attr(feature = "servo", derive(HeapSizeOf))]
-        #[allow(missing_docs)]
-        pub struct $name;
-
-        impl ::style_traits::ToCss for $name {
-            fn to_css<W>(&self, dest: &mut W) -> ::std::fmt::Result where W: ::std::fmt::Write {
-                write!(dest, $css)
-            }
-        }
-
-        impl fmt::Debug for $name {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                write!(f, $css)
-            }
-        }
-
-        impl Parse for $name {
-            fn parse(_context: &ParserContext, input: &mut ::cssparser::Parser) -> Result<$name, ()> {
-                input.expect_ident_matching($css).map(|_| $name)
-            }
-        }
-
-        impl ComputedValueAsSpecified for $name {}
-        no_viewport_percentage!($name);
-    };
-}
-
 define_keyword_type!(None_, "none");
 define_keyword_type!(Auto, "auto");
 define_keyword_type!(Normal, "normal");
 
-#[derive(Clone, PartialEq, Copy)]
-#[cfg_attr(feature = "servo", derive(HeapSizeOf))]
+/// Serialize a normalized value into percentage.
+pub fn serialize_percentage<W>(value: CSSFloat, dest: &mut W)
+    -> fmt::Result where W: fmt::Write
+{
+    (value * 100.).to_css(dest)?;
+    dest.write_str("%")
+}
+
+/// Serialize a value with given unit into dest.
+pub fn serialize_dimension<W>(value: CSSFloat, unit: &str, dest: &mut W)
+    -> fmt::Result where W: fmt::Write
+{
+    value.to_css(dest)?;
+    dest.write_str(unit)
+}
+
+/// Convenience void type to disable some properties and values through types.
+#[cfg_attr(feature = "servo", derive(Deserialize, HeapSizeOf, Serialize))]
+#[derive(Clone, Copy, Debug, PartialEq, ToComputedValue, ToCss)]
+pub enum Impossible {}
+
+impl Parse for Impossible {
+    fn parse<'i, 't>(
+        _context: &ParserContext,
+        _input: &mut Parser<'i, 't>)
+    -> Result<Self, ParseError<'i>> {
+        Err(StyleParseError::UnspecifiedError.into())
+    }
+}
+
 /// A struct representing one of two kinds of values.
+#[cfg_attr(feature = "servo", derive(HeapSizeOf))]
+#[derive(Animate, Clone, ComputeSquaredDistance, Copy)]
+#[derive(PartialEq, ToAnimatedValue, ToAnimatedZero, ToComputedValue, ToCss)]
 pub enum Either<A, B> {
     /// The first value.
     First(A),
@@ -140,26 +86,9 @@ impl<A: Debug, B: Debug> Debug for Either<A, B> {
     }
 }
 
-impl<A: ToCss, B: ToCss> ToCss for Either<A, B> {
-    fn to_css<W>(&self, dest: &mut W) -> fmt::Result where W: fmt::Write {
-        match *self {
-            Either::First(ref v) => v.to_css(dest),
-            Either::Second(ref v) => v.to_css(dest),
-        }
-    }
-}
-
-impl<A: HasViewportPercentage, B: HasViewportPercentage> HasViewportPercentage for Either<A, B> {
-    fn has_viewport_percentage(&self) -> bool {
-        match *self {
-            Either::First(ref v) => v.has_viewport_percentage(),
-            Either::Second(ref v) => v.has_viewport_percentage(),
-        }
-    }
-}
-
 impl<A: Parse, B: Parse> Parse for Either<A, B> {
-    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Either<A, B>, ()> {
+    fn parse<'i, 't>(context: &ParserContext, input: &mut Parser<'i, 't>)
+                     -> Result<Either<A, B>, ParseError<'i>> {
         if let Ok(v) = input.try(|i| A::parse(context, i)) {
             Ok(Either::First(v))
         } else {
@@ -168,23 +97,94 @@ impl<A: Parse, B: Parse> Parse for Either<A, B> {
     }
 }
 
-use self::computed::{Context, ToComputedValue};
+/// https://drafts.csswg.org/css-values-4/#custom-idents
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[cfg_attr(feature = "servo", derive(HeapSizeOf))]
+pub struct CustomIdent(pub Atom);
 
-impl<A: ToComputedValue, B: ToComputedValue> ToComputedValue for Either<A, B> {
-    type ComputedValue = Either<A::ComputedValue, B::ComputedValue>;
+impl CustomIdent {
+    /// Parse an already-tokenizer identifier
+    pub fn from_ident<'i>(ident: &CowRcStr<'i>, excluding: &[&str]) -> Result<Self, ParseError<'i>> {
+        let valid = match_ignore_ascii_case! { ident,
+            "initial" | "inherit" | "unset" | "default" => false,
+            _ => true
+        };
+        if !valid {
+            return Err(SelectorParseError::UnexpectedIdent(ident.clone()).into());
+        }
+        if excluding.iter().any(|s| ident.eq_ignore_ascii_case(s)) {
+            Err(StyleParseError::UnspecifiedError.into())
+        } else {
+            Ok(CustomIdent(Atom::from(ident.as_ref())))
+        }
+    }
+}
 
-    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
-        match *self {
-            Either::First(ref a) => Either::First(a.to_computed_value(context)),
-            Either::Second(ref a) => Either::Second(a.to_computed_value(context)),
+impl ToCss for CustomIdent {
+    fn to_css<W>(&self, dest: &mut W) -> fmt::Result where W: fmt::Write {
+        serialize_identifier(&self.0.to_string(), dest)
+    }
+}
+
+/// https://drafts.csswg.org/css-animations/#typedef-keyframes-name
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "servo", derive(HeapSizeOf))]
+pub enum KeyframesName {
+    /// <custom-ident>
+    Ident(CustomIdent),
+    /// <string>
+    QuotedString(Atom),
+}
+
+impl KeyframesName {
+    /// https://drafts.csswg.org/css-animations/#dom-csskeyframesrule-name
+    pub fn from_ident(value: &str) -> Self {
+        let custom_ident = CustomIdent::from_ident(&value.into(), &["none"]).ok();
+        match custom_ident {
+            Some(ident) => KeyframesName::Ident(ident),
+            None => KeyframesName::QuotedString(value.into()),
         }
     }
 
-    #[inline]
-    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
-        match *computed {
-            Either::First(ref a) => Either::First(ToComputedValue::from_computed_value(a)),
-            Either::Second(ref a) => Either::Second(ToComputedValue::from_computed_value(a)),
+    /// The name as an Atom
+    pub fn as_atom(&self) -> &Atom {
+        match *self {
+            KeyframesName::Ident(ref ident) => &ident.0,
+            KeyframesName::QuotedString(ref atom) => atom,
+        }
+    }
+}
+
+impl Eq for KeyframesName {}
+
+impl PartialEq for KeyframesName {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_atom() == other.as_atom()
+    }
+}
+
+impl hash::Hash for KeyframesName {
+    fn hash<H>(&self, state: &mut H) where H: hash::Hasher {
+        self.as_atom().hash(state)
+    }
+}
+
+impl Parse for KeyframesName {
+    fn parse<'i, 't>(_context: &ParserContext, input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i>> {
+        match input.next() {
+            Ok(&Token::Ident(ref s)) => Ok(KeyframesName::Ident(CustomIdent::from_ident(s, &["none"])?)),
+            Ok(&Token::QuotedString(ref s)) => Ok(KeyframesName::QuotedString(Atom::from(s.as_ref()))),
+            Ok(t) => Err(BasicParseError::UnexpectedToken(t.clone()).into()),
+            Err(e) => Err(e.into()),
+        }
+    }
+}
+
+impl ToCss for KeyframesName {
+    fn to_css<W>(&self, dest: &mut W) -> fmt::Result where W: fmt::Write {
+        match *self {
+            KeyframesName::Ident(ref ident) => ident.to_css(dest),
+            KeyframesName::QuotedString(ref atom) => atom.to_string().to_css(dest),
         }
     }
 }
@@ -192,7 +192,7 @@ impl<A: ToComputedValue, B: ToComputedValue> ToComputedValue for Either<A, B> {
 // A type for possible values for min- and max- flavors of width,
 // height, block-size, and inline-size.
 define_css_keyword_enum!(ExtremumLength:
-                         "max-content" => MaxContent,
-                         "min-content" => MinContent,
-                         "fit-content" => FitContent,
-                         "fill-available" => FillAvailable);
+                         "-moz-max-content" => MaxContent,
+                         "-moz-min-content" => MinContent,
+                         "-moz-fit-content" => FitContent,
+                         "-moz-available" => FillAvailable);

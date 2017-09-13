@@ -36,11 +36,9 @@ struct EnterJITRegs
     double f22;
     double f20;
 
-    // empty slot for alignment
-    uintptr_t align;
-
     // non-volatile registers.
     uintptr_t ra;
+    uintptr_t fp;
     uintptr_t s7;
     uintptr_t s6;
     uintptr_t s5;
@@ -80,6 +78,7 @@ GenerateReturn(MacroAssembler& masm, int returnCode)
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, s5)), s5);
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, s6)), s6);
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, s7)), s7);
+    masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, fp)), fp);
     masm.loadPtr(Address(StackPointer, offsetof(EnterJITRegs, ra)), ra);
 
     // Restore non-volatile floating point registers
@@ -110,6 +109,7 @@ GeneratePrologue(MacroAssembler& masm)
     masm.storePtr(s5, Address(StackPointer, offsetof(EnterJITRegs, s5)));
     masm.storePtr(s6, Address(StackPointer, offsetof(EnterJITRegs, s6)));
     masm.storePtr(s7, Address(StackPointer, offsetof(EnterJITRegs, s7)));
+    masm.storePtr(fp, Address(StackPointer, offsetof(EnterJITRegs, fp)));
     masm.storePtr(ra, Address(StackPointer, offsetof(EnterJITRegs, ra)));
 
     masm.as_sd(f20, StackPointer, offsetof(EnterJITRegs, f20));
@@ -255,7 +255,7 @@ JitRuntime::generateEnterJIT(JSContext* cx, EnterJitType type)
 
         // No GC things to mark, push a bare token.
         masm.loadJSContext(scratch);
-        masm.enterFakeExitFrame(scratch, ExitFrameLayoutBareToken);
+        masm.enterFakeExitFrame(scratch, scratch, ExitFrameLayoutBareToken);
 
         masm.reserveStack(2 * sizeof(uintptr_t));
         masm.storePtr(framePtr, Address(StackPointer, sizeof(uintptr_t))); // BaselineFrame
@@ -738,7 +738,7 @@ JitRuntime::generateVMWrapper(JSContext* cx, const VMFunction& f)
 
     // We're aligned to an exit frame, so link it up.
     masm.loadJSContext(cxreg);
-    masm.enterExitFrame(cxreg, &f);
+    masm.enterExitFrame(cxreg, regs.getAny(), &f);
 
     // Save the base of the argument set stored on the stack.
     Register argsBase = InvalidReg;
@@ -860,6 +860,8 @@ JitRuntime::generateVMWrapper(JSContext* cx, const VMFunction& f)
       case Type_Bool:
         // Called functions return bools, which are 0/false and non-zero/true
         masm.branchIfFalseBool(v0, masm.failureLabel());
+        break;
+      case Type_Void:
         break;
       default:
         MOZ_CRASH("unknown failure kind");

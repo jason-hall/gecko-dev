@@ -6,11 +6,12 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import unittest
 
-from ..optimize import optimize_task_graph, resolve_task_references, optimization
-from ..optimize import annotate_task_graph, get_subgraph
-from ..taskgraph import TaskGraph
-from .. import graph
-from ..task import Task
+from taskgraph.optimize import optimize_task_graph, resolve_task_references, optimization
+from taskgraph.optimize import annotate_task_graph, get_subgraph
+from taskgraph.taskgraph import TaskGraph
+from taskgraph import graph
+from taskgraph.task import Task
+from mozunit import main
 
 
 class TestResolveTaskReferences(unittest.TestCase):
@@ -60,10 +61,9 @@ class TestOptimize(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # set up some simple optimization functions
-        optimization('no-optimize')(lambda self, params: (False, None))
-        optimization('optimize-away')(lambda self, params: (True, None))
-        optimization('optimize-to-task')(lambda self, params, task: (True, task))
-        optimization('false-with-taskid')(lambda self, params: (False, 'some-taskid'))
+        optimization('no-optimize')(lambda self, params: False)
+        optimization('optimize-away')(lambda self, params: True)
+        optimization('optimize-to-task')(lambda self, params, task: task)
 
     def make_task(self, label, optimization=None, task_def=None, optimized=None, task_id=None):
         task_def = task_def or {'sample': 'task-def'}
@@ -85,7 +85,7 @@ class TestOptimize(unittest.TestCase):
         def repl(task_id):
             return 'SLUGID' if task_id and len(task_id) == 22 else task_id
         got_annotations = {
-            t.label: (t.optimized, repl(t.task_id)) for t in graph.tasks.itervalues()
+            t.label: repl(t.task_id) or t.optimized for t in graph.tasks.itervalues()
         }
         self.assertEqual(got_annotations, annotations)
 
@@ -101,17 +101,9 @@ class TestOptimize(unittest.TestCase):
         annotate_task_graph(graph, {}, set(), graph.graph.named_links_dict(), {}, None)
         self.assert_annotations(
             graph,
-            task1=(False, None),
-            task2=(False, None),
-            task3=(False, None)
-        )
-
-    def test_annotate_task_graph_taskid_without_optimize(self):
-        "raises exception if kind returns a taskid without optimizing"
-        graph = self.make_graph(self.make_task('task1', ['false-with-taskid']))
-        self.assertRaises(
-            Exception,
-            lambda: annotate_task_graph(graph, {}, set(), graph.graph.named_links_dict(), {}, None)
+            task1=False,
+            task2=False,
+            task3=False
         )
 
     def test_annotate_task_graph_optimize_away_dependency(self):
@@ -138,8 +130,8 @@ class TestOptimize(unittest.TestCase):
                             graph.graph.named_links_dict(), label_to_taskid, None)
         self.assert_annotations(
             graph,
-            task1=(False, None),
-            task2=(False, None)
+            task1=False,
+            task2=False
         )
         self.assertEqual
 
@@ -156,9 +148,9 @@ class TestOptimize(unittest.TestCase):
                             graph.graph.named_links_dict(), {}, None)
         self.assert_annotations(
             graph,
-            task1=(False, None),
-            task2=(True, 'taskid'),
-            task3=(True, 'taskid')
+            task1=False,
+            task2='taskid',
+            task3='taskid'
         )
 
     def test_get_subgraph_single_dep(self):
@@ -251,3 +243,7 @@ class TestOptimize(unittest.TestCase):
         self.assertEqual(opt.graph, graph.Graph(
             {label_to_taskid['task2'], label_to_taskid['task3']},
             {(label_to_taskid['task2'], label_to_taskid['task3'], 'image')}))
+
+
+if __name__ == '__main__':
+    main()

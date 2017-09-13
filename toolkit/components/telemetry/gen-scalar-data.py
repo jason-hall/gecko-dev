@@ -6,7 +6,7 @@
 # in a file provided as a command-line argument.
 
 from __future__ import print_function
-from shared_telemetry_utils import StringTable, static_assert
+from shared_telemetry_utils import StringTable, static_assert, ParserError
 
 import parse_scalars
 import sys
@@ -82,13 +82,19 @@ def main(output, *filenames):
     # Load the scalars first.
     if len(filenames) > 1:
         raise Exception('We don\'t support loading from more than one file.')
-    scalars = parse_scalars.load_scalars(filenames[0])
+
+    try:
+        scalars = parse_scalars.load_scalars(filenames[0])
+    except ParserError as ex:
+        print("\nError processing scalars:\n" + str(ex) + "\n")
+        sys.exit(1)
 
     # Write the scalar data file.
     print(banner, file=output)
     print(file_header, file=output)
     write_scalar_tables(scalars, output)
     print(file_footer, file=output)
+
 
 if __name__ == '__main__':
     main(sys.stdout, *sys.argv[1:])

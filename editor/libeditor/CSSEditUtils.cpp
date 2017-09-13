@@ -549,15 +549,13 @@ CSSEditUtils::GetCSSInlinePropertyBase(nsINode* aNode,
   if (!decl) {
     return NS_OK;
   }
-  if (decl->IsServo()) {
-    MOZ_CRASH("stylo: not implemented");
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
+
   nsCSSPropertyID prop =
     nsCSSProps::LookupProperty(nsDependentAtomString(aProperty),
                                CSSEnabledState::eForAllContent);
   MOZ_ASSERT(prop != eCSSProperty_UNKNOWN);
-  decl->AsGecko()->GetPropertyValueByID(prop, aValue);
+
+  decl->GetPropertyValueByID(prop, aValue);
 
   return NS_OK;
 }
@@ -615,7 +613,7 @@ void
 CSSEditUtils::GetDefaultBackgroundColor(nsAString& aColor)
 {
   if (Preferences::GetBool("editor.use_custom_colors", false)) {
-    nsresult rv = Preferences::GetString("editor.background_color", &aColor);
+    nsresult rv = Preferences::GetString("editor.background_color", aColor);
     // XXX Why don't you validate the pref value?
     if (NS_FAILED(rv)) {
       NS_WARNING("failed to get editor.background_color");
@@ -629,7 +627,7 @@ CSSEditUtils::GetDefaultBackgroundColor(nsAString& aColor)
   }
 
   nsresult rv =
-    Preferences::GetString("browser.display.background_color", &aColor);
+    Preferences::GetString("browser.display.background_color", aColor);
   // XXX Why don't you validate the pref value?
   if (NS_FAILED(rv)) {
     NS_WARNING("failed to get browser.display.background_color");
@@ -642,7 +640,7 @@ void
 CSSEditUtils::GetDefaultLengthUnit(nsAString& aLengthUnit)
 {
   nsresult rv =
-    Preferences::GetString("editor.css.default_length_unit", &aLengthUnit);
+    Preferences::GetString("editor.css.default_length_unit", aLengthUnit);
   // XXX Why don't you validate the pref value?
   if (NS_FAILED(rv)) {
     aLengthUnit.AssignLiteral("px");

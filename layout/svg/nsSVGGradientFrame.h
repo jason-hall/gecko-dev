@@ -8,6 +8,7 @@
 
 #include "mozilla/Attributes.h"
 #include "gfxMatrix.h"
+#include "gfxRect.h"
 #include "nsCOMPtr.h"
 #include "nsFrame.h"
 #include "nsLiteralString.h"
@@ -19,8 +20,6 @@ class nsIContent;
 class nsIFrame;
 class nsIPresShell;
 class nsStyleContext;
-
-struct gfxRect;
 
 namespace mozilla {
 class nsSVGAnimatedTransformList;
@@ -40,20 +39,20 @@ class nsSVGGradientFrame : public nsSVGPaintServerFrame
   typedef mozilla::gfx::ExtendMode ExtendMode;
 
 protected:
-  explicit nsSVGGradientFrame(nsStyleContext* aContext);
+  nsSVGGradientFrame(nsStyleContext* aContext, ClassID aID);
 
 public:
   NS_DECL_ABSTRACT_FRAME(nsSVGGradientFrame)
 
   // nsSVGPaintServerFrame methods:
-  virtual mozilla::Pair<DrawResult, RefPtr<gfxPattern>>
-    GetPaintServerPattern(nsIFrame* aSource,
+  virtual already_AddRefed<gfxPattern>
+    GetPaintServerPattern(nsIFrame *aSource,
                           const DrawTarget* aDrawTarget,
                           const gfxMatrix& aContextMatrix,
                           nsStyleSVGPaint nsStyleSVG::*aFillOrStroke,
-                          float aGraphicOpacity,
-                          const gfxRect* aOverrideBounds,
-                          uint32_t aFlags) override;
+                          float aOpacity,
+                          imgDrawingParams& aImgParams,
+                          const gfxRect* aOverrideBounds) override;
 
   // nsIFrame interface:
   virtual nsresult AttributeChanged(int32_t         aNameSpaceID,
@@ -127,10 +126,11 @@ class nsSVGLinearGradientFrame : public nsSVGGradientFrame
                                                 nsStyleContext* aContext);
 protected:
   explicit nsSVGLinearGradientFrame(nsStyleContext* aContext)
-    : nsSVGGradientFrame(aContext) {}
+    : nsSVGGradientFrame(aContext, kClassID)
+  {}
 
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsSVGLinearGradientFrame)
 
   // nsIFrame interface:
 #ifdef DEBUG
@@ -138,8 +138,6 @@ public:
                     nsContainerFrame* aParent,
                     nsIFrame*         aPrevInFlow) override;
 #endif
-
-  virtual nsIAtom* GetType() const override;  // frame type: nsGkAtoms::svgLinearGradientFrame
 
   virtual nsresult AttributeChanged(int32_t         aNameSpaceID,
                                     nsIAtom*        aAttribute,
@@ -170,10 +168,11 @@ class nsSVGRadialGradientFrame : public nsSVGGradientFrame
                                                 nsStyleContext* aContext);
 protected:
   explicit nsSVGRadialGradientFrame(nsStyleContext* aContext)
-    : nsSVGGradientFrame(aContext) {}
+    : nsSVGGradientFrame(aContext, kClassID)
+  {}
 
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsSVGRadialGradientFrame)
 
   // nsIFrame interface:
 #ifdef DEBUG
@@ -181,8 +180,6 @@ public:
                     nsContainerFrame* aParent,
                     nsIFrame*         aPrevInFlow) override;
 #endif
-
-  virtual nsIAtom* GetType() const override;  // frame type: nsGkAtoms::svgRadialGradientFrame
 
   virtual nsresult AttributeChanged(int32_t         aNameSpaceID,
                                     nsIAtom*        aAttribute,

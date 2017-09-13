@@ -98,10 +98,24 @@ SharedArrayMappedSize(uint32_t allocSize)
 static mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire> numLive;
 static const uint32_t maxLive = 1000;
 
+#ifdef DEBUG
+static mozilla::Atomic<int32_t> liveBuffers_;
+#endif
+
 static uint32_t
 SharedArrayAllocSize(uint32_t length)
 {
     return AlignBytes(length + gc::SystemPageSize(), gc::SystemPageSize());
+}
+
+int32_t
+SharedArrayRawBuffer::liveBuffers()
+{
+#ifdef DEBUG
+    return liveBuffers_;
+#else
+    return 0;
+#endif
 }
 
 SharedArrayRawBuffer*
@@ -123,9 +137,8 @@ SharedArrayRawBuffer::New(JSContext* cx, uint32_t length)
         // Test >= to guard against the case where multiple extant runtimes
         // race to allocate.
         if (++numLive >= maxLive) {
-            JSRuntime* rt = cx->runtime();
-            if (rt->largeAllocationFailureCallback)
-                rt->largeAllocationFailureCallback(rt->largeAllocationFailureCallbackData);
+            if (OnLargeAllocationFailure)
+                OnLargeAllocationFailure();
             if (numLive >= maxLive) {
                 numLive--;
                 return nullptr;
@@ -162,6 +175,9 @@ SharedArrayRawBuffer::New(JSContext* cx, uint32_t length)
     uint8_t* base = buffer - sizeof(SharedArrayRawBuffer);
     SharedArrayRawBuffer* rawbuf = new (base) SharedArrayRawBuffer(buffer, length, preparedForAsmJS);
     MOZ_ASSERT(rawbuf->length == length); // Deallocation needs this
+#ifdef DEBUG
+    liveBuffers_++;
+#endif
     return rawbuf;
 }
 
@@ -195,6 +211,10 @@ SharedArrayRawBuffer::dropReference()
         return;
 
     // If this was the final reference, release the buffer.
+
+#ifdef DEBUG
+    liveBuffers_--;
+#endif
 
     SharedMem<uint8_t*> p = this->dataPointerShared() - gc::SystemPageSize();
     MOZ_ASSERT(p.asValue() % gc::SystemPageSize() == 0);
@@ -253,8 +273,7 @@ SharedArrayBufferObject::class_constructor(JSContext* cx, unsigned argc, Value* 
     // Step 3 (Inlined 24.2.1.1 AllocateSharedArrayBuffer).
     // 24.2.1.1, step 1 (Inlined 9.1.14 OrdinaryCreateFromConstructor).
     RootedObject proto(cx);
-    RootedObject newTarget(cx, &args.newTarget().toObject());
-    if (!GetPrototypeFromConstructor(cx, newTarget, &proto))
+    if (!GetPrototypeFromBuiltinConstructor(cx, args, &proto))
         return false;
 
     // 24.2.1.1, step 3 (Inlined 6.2.7.2 CreateSharedByteDataBlock, step 2).
@@ -376,9 +395,8 @@ CreateSharedArrayBufferPrototype(JSContext* cx, JSProtoKey key)
 static const ClassOps SharedArrayBufferObjectClassOps = {
     nullptr, /* addProperty */
     nullptr, /* delProperty */
-    nullptr, /* getProperty */
-    nullptr, /* setProperty */
     nullptr, /* enumerate */
+    nullptr, /* newEnumerate */
     nullptr, /* resolve */
     nullptr, /* mayResolve */
     SharedArrayBufferObject::Finalize,
@@ -493,7 +511,7 @@ JS_IsSharedArrayBufferObject(JSObject* obj)
 }
 
 JS_FRIEND_API(uint8_t*)
-JS_GetSharedArrayBufferData(JSObject* obj, bool* isSharedMemory, const JS::AutoCheckCannotGC&)
+JS_GetSharedArrayBufferData(JSObject* obj, bool* isSharedMemory, const JS::AutoRequireNoGC&)
 {
     obj = CheckedUnwrap(obj);
     if (!obj)

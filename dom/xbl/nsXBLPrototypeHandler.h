@@ -7,6 +7,7 @@
 #ifndef nsXBLPrototypeHandler_h__
 #define nsXBLPrototypeHandler_h__
 
+#include "mozilla/EventForwards.h"
 #include "nsIAtom.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
@@ -27,10 +28,18 @@ class nsIObjectOutputStream;
 class nsXBLPrototypeBinding;
 
 namespace mozilla {
+
+struct IgnoreModifierState;
+
 namespace dom {
 class AutoJSAPI;
 class EventTarget;
 } // namespace dom
+
+namespace layers {
+class KeyboardShortcut;
+} // namespace layers
+
 } // namespace mozilla
 
 #define NS_HANDLER_TYPE_XBL_JS              (1 << 0)
@@ -46,29 +55,11 @@ class EventTarget;
 #define NS_PHASE_TARGET             2
 #define NS_PHASE_BUBBLING           3
 
-namespace mozilla {
-namespace dom {
-
-struct IgnoreModifierState
-{
-  // When mShift is true, Shift key state will be ignored.
-  bool mShift;
-  // When mOS is true, OS key state will be ignored.
-  bool mOS;
-
-  IgnoreModifierState()
-    : mShift(false)
-    , mOS(false)
-  {
-  }
-};
-
-} // namespace dom
-} // namespace mozilla
-
 class nsXBLPrototypeHandler
 {
-  typedef mozilla::dom::IgnoreModifierState IgnoreModifierState;
+  typedef mozilla::IgnoreModifierState IgnoreModifierState;
+  typedef mozilla::layers::KeyboardShortcut KeyboardShortcut;
+  typedef mozilla::Modifiers Modifiers;
 
 public:
   // This constructor is used by XBL handlers (both the JS and command shorthand variety)
@@ -89,6 +80,17 @@ public:
   explicit nsXBLPrototypeHandler(nsXBLPrototypeBinding* aBinding);
 
   ~nsXBLPrototypeHandler();
+
+  /**
+   * Try and convert this XBL handler into an APZ KeyboardShortcut for handling
+   * key events on the compositor thread. This only works for XBL handlers that
+   * represent scroll commands.
+   *
+   * @param aOut the converted KeyboardShortcut, must be non null
+   * @return whether the handler was converted into a KeyboardShortcut
+   */
+  bool TryConvertToKeyboardShortcut(
+          KeyboardShortcut* aOut) const;
 
   bool EventTypeEquals(nsIAtom* aEventType) const
   {
@@ -186,6 +188,10 @@ protected:
   nsresult DispatchXULKeyCommand(nsIDOMEvent* aEvent);
   nsresult EnsureEventHandler(mozilla::dom::AutoJSAPI& jsapi, nsIAtom* aName,
                               JS::MutableHandle<JSObject*> aHandler);
+
+  Modifiers GetModifiers() const;
+  Modifiers GetModifiersMask() const;
+
   static int32_t KeyToMask(int32_t key);
   static int32_t AccelKeyMask();
 
@@ -216,7 +222,7 @@ protected:
   };
 
   uint32_t mLineNumber;  // The line number we started at in the XBL file
-  
+
   // The following four values make up 32 bits.
   uint8_t mPhase;            // The phase (capturing, bubbling)
   uint8_t mType;             // The type of the handler.  The handler is either a XUL key
@@ -231,7 +237,7 @@ protected:
 
   int32_t mKeyMask;          // Which modifier keys this event handler expects to have down
                              // in order to be matched.
- 
+
   // The primary filter information for mouse/key events.
   int32_t mDetail;           // For key events, contains a charcode or keycode. For
                              // mouse events, stores the button info.

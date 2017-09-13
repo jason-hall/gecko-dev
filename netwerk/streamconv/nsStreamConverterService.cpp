@@ -2,21 +2,7 @@
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
- *
- *
- * This Original Code has been modified by IBM Corporation.
- * Modifications made by IBM described herein are
- * Copyright (c) International Business Machines
- * Corporation, 2000
- *
- * Modifications to Mozilla code or documentation
- * identified per MPL Section 3.3
- *
- * Date         Modified by     Description of modification
- * 03/27/2000   IBM Corp.       Added PR_CALLBACK for Optlink
- *                               use in OS2
- */
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsStreamConverterService.h"
 #include "nsIComponentRegistrar.h"
@@ -196,7 +182,7 @@ public:
     void* operator()(void* anObject) override {
         nsCString *string = (nsCString*)anObject;
         delete string;
-        return 0;
+        return nullptr;
     }
 };
 
@@ -378,7 +364,7 @@ nsStreamConverterService::CanConvert(const char* aFromType,
 
 NS_IMETHODIMP
 nsStreamConverterService::Convert(nsIInputStream *aFromStream,
-                                  const char *aFromType, 
+                                  const char *aFromType,
                                   const char *aToType,
                                   nsISupports *aContext,
                                   nsIInputStream **_retval) {
@@ -455,8 +441,8 @@ nsStreamConverterService::Convert(nsIInputStream *aFromStream,
 
 
 NS_IMETHODIMP
-nsStreamConverterService::AsyncConvertData(const char *aFromType, 
-                                           const char *aToType, 
+nsStreamConverterService::AsyncConvertData(const char *aFromType,
+                                           const char *aToType,
                                            nsIStreamListener *aListener,
                                            nsISupports *aContext,
                                            nsIStreamListener **_retval) {
@@ -489,7 +475,7 @@ nsStreamConverterService::AsyncConvertData(const char *aFromType,
         }
 
         // aListener is the listener that wants the final, converted, data.
-        // we initialize finalListener w/ aListener so it gets put at the 
+        // we initialize finalListener w/ aListener so it gets put at the
         // tail end of the chain, which in the loop below, means the *first*
         // converter created.
         nsCOMPtr<nsIStreamListener> finalListener = aListener;

@@ -76,7 +76,10 @@ Symbol::for_(JSContext* cx, HandleString description)
     Symbol* sym;
     {
         AutoAtomsCompartment ac(cx, lock);
-        sym = newInternal(cx, SymbolCode::InSymbolRegistry, atom->hash(), atom, lock);
+        // Rehash the hash of the atom to give the corresponding symbol a hash
+        // that is different than the hash of the corresponding atom.
+        HashNumber hash = mozilla::HashGeneric(atom->hash());
+        sym = newInternal(cx, SymbolCode::InSymbolRegistry, hash, atom, lock);
         if (!sym)
             return nullptr;
 
@@ -139,20 +142,6 @@ js::SymbolDescriptiveString(JSContext* cx, Symbol* sym, MutableHandleValue resul
     result.setString(str);
     return true;
 }
-
-bool
-js::IsSymbolOrSymbolWrapper(const Value& v)
-{
-    return v.isSymbol() || (v.isObject() && v.toObject().is<SymbolObject>());
-}
-
-JS::Symbol*
-js::ToSymbolPrimitive(const Value& v)
-{
-    MOZ_ASSERT(IsSymbolOrSymbolWrapper(v));
-    return v.isSymbol() ? v.toSymbol() : v.toObject().as<SymbolObject>().unbox();
-}
-
 
 JS::ubi::Node::Size
 JS::ubi::Concrete<JS::Symbol>::size(mozilla::MallocSizeOf mallocSizeOf) const

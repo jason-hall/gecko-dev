@@ -27,7 +27,7 @@ var dragDirections = { LEFT: 0, UP: 1, RIGHT: 2, DOWN: 3 };
  */
 function synthesizeDragWithDirection(aElement, aExpectedDragData, aDirection, aCallback) {
   // Dragstart listener function.
-  gBookmarksToolbar.addEventListener("dragstart", function(event) {
+  gBookmarksToolbar.addEventListener("dragstart", function listener(event) {
     info("A dragstart event has been trapped.");
     var dataTransfer = event.dataTransfer;
     is(dataTransfer.mozItemCount, aExpectedDragData.length,
@@ -54,7 +54,7 @@ function synthesizeDragWithDirection(aElement, aExpectedDragData, aDirection, aC
     event.preventDefault();
     event.stopPropagation();
 
-    gBookmarksToolbar.removeEventListener("dragstart", arguments.callee);
+    gBookmarksToolbar.removeEventListener("dragstart", listener);
 
     // This is likely to cause a click event, and, in case we are dragging a
     // bookmark, an unwanted page visit.  Prevent the click event.
@@ -165,7 +165,7 @@ var gTests = [
               synthesizeDragWithDirection(element, expectedData, dragDirections.UP,
                 function() {
                   info("Dragging down");
-                  synthesizeDragWithDirection(element, new Array(), dragDirections.DOWN,
+                  synthesizeDragWithDirection(element, [], dragDirections.DOWN,
                     function() {
                       // Cleanup.
                       PlacesUtils.bookmarks.removeItem(folderId);
@@ -245,4 +245,3 @@ function test() {
     nextTest();
   }
 }
-

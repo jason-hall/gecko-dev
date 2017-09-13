@@ -37,7 +37,7 @@ struct ModuleEnvironment
 {
     ModuleKind                kind;
     MemoryUsage               memoryUsage;
-    mozilla::Atomic<uint32_t> minMemoryLength;
+    Atomic<uint32_t>          minMemoryLength;
     Maybe<uint32_t>           maxMemoryLength;
 
     SigWithIdVector           sigs;
@@ -242,12 +242,15 @@ class Encoder
         return writeFixedU8(uint8_t(type));
     }
     MOZ_MUST_USE bool writeOp(Op op) {
-        static_assert(size_t(Op::Limit) <= 2 * UINT8_MAX, "fits");
+        static_assert(size_t(Op::Limit) == 256, "fits");
         MOZ_ASSERT(size_t(op) < size_t(Op::Limit));
-        if (size_t(op) < UINT8_MAX)
-            return writeFixedU8(uint8_t(op));
-        return writeFixedU8(UINT8_MAX) &&
-               writeFixedU8(size_t(op) - UINT8_MAX);
+        return writeFixedU8(uint8_t(op));
+    }
+    MOZ_MUST_USE bool writeOp(MozOp op) {
+        static_assert(size_t(MozOp::Limit) <= 256, "fits");
+        MOZ_ASSERT(size_t(op) < size_t(MozOp::Limit));
+        return writeFixedU8(uint8_t(Op::MozPrefix)) &&
+               writeFixedU8(uint8_t(op));
     }
 
     // Fixed-length encodings that allow back-patching.
@@ -496,18 +499,19 @@ class Decoder
         static_assert(size_t(TypeCode::Limit) <= UINT8_MAX, "fits");
         return readFixedU8(type);
     }
-    MOZ_MUST_USE bool readOp(uint16_t* op) {
-        static_assert(size_t(Op::Limit) <= 2 * UINT8_MAX, "fits");
+    MOZ_MUST_USE bool readOp(OpBytes* op) {
+        static_assert(size_t(Op::Limit) == 256, "fits");
         uint8_t u8;
         if (!readFixedU8(&u8))
             return false;
-        if (MOZ_LIKELY(u8 != UINT8_MAX)) {
-            *op = u8;
+        op->b0 = u8;
+        if (MOZ_LIKELY(!IsPrefixByte(u8)))
             return true;
-        }
-        if (!readFixedU8(&u8))
+        if (!readFixedU8(&u8)) {
+            op->b1 = 0;         // Make it sane
             return false;
-        *op = uint16_t(u8) + UINT8_MAX;
+        }
+        op->b1 = u8;
         return true;
     }
 
@@ -555,6 +559,11 @@ class Decoder
     void finishCustomSection(uint32_t sectionStart, uint32_t sectionSize);
     MOZ_MUST_USE bool skipCustomSection(ModuleEnvironment* env);
 
+    // The Name section has its own subsections. Like startSection, NotStart is
+    // returned as the endOffset if the given name subsection wasn't present.
+
+    MOZ_MUST_USE bool startNameSubsection(NameType nameType, uint32_t* endOffset);
+    MOZ_MUST_USE bool finishNameSubsection(uint32_t endOffset);
 
     // The infallible "unchecked" decoding functions can be used when we are
     // sure that the bytes are well-formed (by construction or due to previous
@@ -610,7 +619,7 @@ class Decoder
         return (ValType)uncheckedReadFixedU8();
     }
     Op uncheckedReadOp() {
-        static_assert(size_t(Op::Limit) <= 2 * UINT8_MAX, "fits");
+        static_assert(size_t(Op::Limit) == 256, "fits");
         uint8_t u8 = uncheckedReadFixedU8();
         return u8 != UINT8_MAX
                ? Op(u8)

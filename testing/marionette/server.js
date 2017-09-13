@@ -6,31 +6,49 @@
 
 const {Constructor: CC, classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
-const loader = Cc["@mozilla.org/moz/jssubscript-loader;1"].getService(Ci.mozIJSSubScriptLoader);
-const ServerSocket = CC("@mozilla.org/network/server-socket;1", "nsIServerSocket", "initSpecialConnection");
+const loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
+    .getService(Ci.mozIJSSubScriptLoader);
+const ServerSocket = CC(
+    "@mozilla.org/network/server-socket;1",
+    "nsIServerSocket",
+    "initSpecialConnection");
 
 Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Task.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 Cu.import("chrome://marionette/content/assert.js");
-Cu.import("chrome://marionette/content/driver.js");
-Cu.import("chrome://marionette/content/error.js");
+const {GeckoDriver} = Cu.import("chrome://marionette/content/driver.js", {});
+const {
+  error,
+  UnknownCommandError,
+} = Cu.import("chrome://marionette/content/error.js", {});
 Cu.import("chrome://marionette/content/message.js");
+const {DebuggerTransport} =
+    Cu.import("chrome://marionette/content/transport.js", {});
 
-// Bug 1083711: Load transport.js as an SDK module instead of subscript
-loader.loadSubScript("resource://devtools/shared/transport/transport.js");
+XPCOMUtils.defineLazyServiceGetter(
+    this, "env", "@mozilla.org/process/environment;1", "nsIEnvironment");
 
 const logger = Log.repository.getLogger("Marionette");
 
+const {KeepWhenOffline, LoopbackOnly} = Ci.nsIServerSocket;
+
 this.EXPORTED_SYMBOLS = ["server"];
+
+/** @namespace */
 this.server = {};
 
 const PROTOCOL_VERSION = 3;
 
+const ENV_ENABLED = "MOZ_MARIONETTE";
+
 const PREF_CONTENT_LISTENER = "marionette.contentListener";
+const PREF_PORT = "marionette.port";
 const PREF_RECOMMENDED = "marionette.prefs.recommended";
+
+const NOTIFY_RUNNING = "remote-active";
 
 // Marionette sets preferences recommended for automation when it starts,
 // unless |marionette.prefs.recommended| has been set to false.
@@ -92,17 +110,13 @@ const RECOMMENDED_PREFS = new Map([
   // thumbnails in general cannot hurt
   ["browser.pagethumbnails.capturing_disabled", true],
 
-  // Avoid performing Reader Mode intros during tests
-  ["browser.reader.detectedFirstArticle", true],
-
   // Disable safebrowsing components.
   //
   // These should also be set in the profile prior to starting Firefox,
   // as it is picked up at runtime.
   ["browser.safebrowsing.blockedURIs.enabled", false],
   ["browser.safebrowsing.downloads.enabled", false],
-  ["browser.safebrowsing.enabled", false],
-  ["browser.safebrowsing.forbiddenURIs.enabled", false],
+  ["browser.safebrowsing.passwords.enabled", false],
   ["browser.safebrowsing.malware.enabled", false],
   ["browser.safebrowsing.phishing.enabled", false],
 
@@ -126,8 +140,8 @@ const RECOMMENDED_PREFS = new Map([
   // Do not redirect user when a milstone upgrade of Firefox is detected
   ["browser.startup.homepage_override.mstone", "ignore"],
 
-  // Disable tab animation
-  ["browser.tabs.animate", false],
+  // Disable browser animations
+  ["toolkit.cosmeticAnimations.enabled", false],
 
   // Do not allow background tabs to be zombified, otherwise for tests
   // that open additional tabs, the test harness tab itself might get
@@ -150,8 +164,14 @@ const RECOMMENDED_PREFS = new Map([
 
   // Do not show datareporting policy notifications which can
   // interfere with tests
-  ["datareporting.healthreport.about.reportUrl", "http://%(server)s/dummy/abouthealthreport/"],
-  ["datareporting.healthreport.documentServerURI", "http://%(server)s/dummy/healthreport/"],
+  [
+    "datareporting.healthreport.about.reportUrl",
+    "http://%(server)s/dummy/abouthealthreport/",
+  ],
+  [
+    "datareporting.healthreport.documentServerURI",
+    "http://%(server)s/dummy/healthreport/",
+  ],
   ["datareporting.healthreport.logging.consoleEnabled", false],
   ["datareporting.healthreport.service.enabled", false],
   ["datareporting.healthreport.service.firstRun", false],
@@ -162,6 +182,9 @@ const RECOMMENDED_PREFS = new Map([
 
   // Disable popup-blocker
   ["dom.disable_open_during_load", false],
+
+  // Enabling the support for File object creation in the content process
+  ["dom.file.createInChild", true],
 
   // Disable the ProcessHangMonitor
   ["dom.ipc.reportProcessHangs", false],
@@ -193,7 +216,10 @@ const RECOMMENDED_PREFS = new Map([
   ["extensions.update.notifyUser", false],
 
   // Make sure opening about:addons will not hit the network
-  ["extensions.webservice.discoverURL", "http://%(server)s/dummy/discoveryURL"],
+  [
+    "extensions.webservice.discoverURL",
+    "http://%(server)s/dummy/discoveryURL",
+  ],
 
   // Allow the application to have focus even it runs in the background
   ["focusmanager.testmode", true],
@@ -213,9 +239,6 @@ const RECOMMENDED_PREFS = new Map([
 
   // Show chrome errors and warnings in the error console
   ["javascript.options.showInConsole", true],
-
-  // Make sure the disk cache doesn't get auto disabled
-  ["network.http.bypass-cachelock-threshold", 200000],
 
   // Do not prompt for temporary redirects
   ["network.http.prompt-temp-redirect", false],
@@ -268,13 +291,10 @@ server.TCPListener = class {
   /**
    * @param {number} port
    *     Port for server to listen to.
-   * @param {boolean=} forceLocal
-   *     Listen only to connections from loopback if true (default).
-   *     When false, accept all connections.
    */
-  constructor (port, forceLocal = true) {
+  constructor(port) {
     this.port = port;
-    this.forceLocal = forceLocal;
+    this.socket = null;
     this.conns = new Set();
     this.nextConnID = 0;
     this.alive = false;
@@ -285,17 +305,17 @@ server.TCPListener = class {
   /**
    * Function produces a GeckoDriver.
    *
-   * Determines application nameto initialise the driver with.
+   * Determines application name to initialise the driver with.
    *
    * @return {GeckoDriver}
    *     A driver instance.
    */
-  driverFactory () {
+  driverFactory() {
     Preferences.set(PREF_CONTENT_LISTENER, false);
     return new GeckoDriver(Services.appinfo.name, this);
   }
 
-  set acceptConnections (value) {
+  set acceptConnections(value) {
     if (!value) {
       logger.info("New connections will no longer be accepted");
     } else {
@@ -305,10 +325,19 @@ server.TCPListener = class {
     this._acceptConnections = value;
   }
 
-  start () {
+  /**
+   * Bind this listener to |port| and start accepting incoming socket
+   * connections on |onSocketAccepted|.
+   *
+   * The marionette.port preference will be populated with the value
+   * of |this.port|.
+   */
+  start() {
     if (this.alive) {
       return;
     }
+
+    Services.obs.notifyObservers(this, NOTIFY_RUNNING, true);
 
     if (Preferences.get(PREF_RECOMMENDED)) {
       // set recommended prefs if they are not already user-defined
@@ -321,41 +350,40 @@ server.TCPListener = class {
       }
     }
 
-    let flags = Ci.nsIServerSocket.KeepWhenOffline;
-    if (this.forceLocal) {
-      flags |= Ci.nsIServerSocket.LoopbackOnly;
-    } else {
-      logger.warn("Server socket is not limited to loopback connections");
-    }
-    this.listener = new ServerSocket(this.port, flags, 1);
-    this.listener.asyncListen(this);
+    const flags = KeepWhenOffline | LoopbackOnly;
+    const backlog = 1;
+    this.socket = new ServerSocket(this.port, flags, backlog);
+    this.socket.asyncListen(this);
+    this.port = this.socket.port;
+    Preferences.set(PREF_PORT, this.port);
 
     this.alive = true;
     this._acceptConnections = true;
+    env.set(ENV_ENABLED, "1");
   }
 
-  stop () {
+  stop() {
     if (!this.alive) {
       return;
     }
+
+    this._acceptConnections = false;
+
+    this.socket.close();
+    this.socket = null;
 
     for (let k of this.alteredPrefs) {
       logger.debug(`Resetting recommended pref ${k}`);
       Preferences.reset(k);
     }
-    this.closeListener();
-
     this.alteredPrefs.clear();
+
+    Services.obs.notifyObservers(this, NOTIFY_RUNNING);
+
     this.alive = false;
-    this._acceptConnections = false;
   }
 
-  closeListener () {
-    this.listener.close();
-    this.listener = null;
-  }
-
-  onSocketAccepted (serverSocket, clientSocket) {
+  onSocketAccepted(serverSocket, clientSocket) {
     if (!this._acceptConnections) {
       logger.warn("New connections are currently not accepted");
       return;
@@ -370,12 +398,13 @@ server.TCPListener = class {
     conn.onclose = this.onConnectionClosed.bind(this);
     this.conns.add(conn);
 
-    logger.debug(`Accepted connection ${conn.id} from ${clientSocket.host}:${clientSocket.port}`);
+    logger.debug(`Accepted connection ${conn.id} ` +
+        `from ${clientSocket.host}:${clientSocket.port}`);
     conn.sayHello();
     transport.ready();
   }
 
-  onConnectionClosed (conn) {
+  onConnectionClosed(conn) {
     logger.debug(`Closed connection ${conn.id}`);
     this.conns.delete(conn);
   }
@@ -395,7 +424,7 @@ server.TCPListener = class {
  *     Factory function that produces a |GeckoDriver|.
  */
 server.TCPConnection = class {
-  constructor (connID, transport, driverFactory) {
+  constructor(connID, transport, driverFactory) {
     this.id = connID;
     this.conn = transport;
 
@@ -419,7 +448,7 @@ server.TCPConnection = class {
    * Debugger transport callback that cleans up
    * after a connection is closed.
    */
-  onClosed (reason) {
+  onClosed(reason) {
     this.driver.deleteSession();
     if (this.onclose) {
       this.onclose(this);
@@ -438,7 +467,7 @@ server.TCPConnection = class {
    *     message type, message ID, method name or error, and parameters
    *     or result.
    */
-  onPacket (data) {
+  onPacket(data) {
     // unable to determine how to respond
     if (!Array.isArray(data)) {
       let e = new TypeError(
@@ -467,77 +496,86 @@ server.TCPConnection = class {
 
     // execute new command
     } else if (msg instanceof Command) {
-      this.lastID = msg.id;
-      this.execute(msg);
+      (async () => {
+        await this.execute(msg);
+      })();
     }
   }
 
   /**
-   * Executes a WebDriver command and sends back a response when it has
-   * finished executing.
-   *
-   * Commands implemented in GeckoDriver and registered in its
-   * {@code GeckoDriver.commands} attribute.  The return values from
-   * commands are expected to be Promises.  If the resolved value of said
-   * promise is not an object, the response body will be wrapped in
-   * an object under a "value" field.
+   * Executes a Marionette command and sends back a response when it
+   * has finished executing.
    *
    * If the command implementation sends the response itself by calling
-   * {@code resp.send()}, the response is guaranteed to not be sent twice.
+   * <code>resp.send()</code>, the response is guaranteed to not be
+   * sent twice.
    *
    * Errors thrown in commands are marshaled and sent back, and if they
-   * are not WebDriverError instances, they are additionally propagated
-   * and reported to {@code Components.utils.reportError}.
+   * are not {@link WebDriverError} instances, they are additionally
+   * propagated and reported to {@link Components.utils.reportError}.
    *
    * @param {Command} cmd
-   *     The requested command to execute.
+   *     Command to execute.
    */
-  execute (cmd) {
+  async execute(cmd) {
     let resp = this.createResponse(cmd.id);
     let sendResponse = () => resp.sendConditionally(resp => !resp.sent);
     let sendError = resp.sendError.bind(resp);
 
-    let req = Task.spawn(function* () {
-      let fn = this.driver.commands[cmd.name];
-      if (typeof fn == "undefined") {
-        throw new UnknownCommandError(cmd.name);
+    await this.despatch(cmd, resp)
+        .then(sendResponse, sendError).catch(error.report);
+  }
+
+  /**
+   * Despatches command to appropriate Marionette service.
+   *
+   * @param {Command} cmd
+   *     Command to run.
+   * @param {Response} resp
+   *     Mutable response where the command's return value will be
+   *     assigned.
+   *
+   * @throws {Error}
+   *     A command's implementation may throw at any time.
+   */
+  async despatch(cmd, resp) {
+    let fn = this.driver.commands[cmd.name];
+    if (typeof fn == "undefined") {
+      throw new UnknownCommandError(cmd.name);
+    }
+
+    if (!["newSession", "WebDriver:NewSession"].includes(cmd.name)) {
+      assert.session(this.driver);
+    }
+
+    let rv = await fn.bind(this.driver)(cmd, resp);
+
+    if (typeof rv != "undefined") {
+      if (typeof rv != "object") {
+        resp.body = {value: rv};
+      } else {
+        resp.body = rv;
       }
-
-      if (cmd.name !== "newSession") {
-        assert.session(this.driver);
-      }
-
-      let rv = yield fn.bind(this.driver)(cmd, resp);
-
-      if (typeof rv != "undefined") {
-        if (typeof rv != "object") {
-          resp.body = {value: rv};
-        } else {
-          resp.body = rv;
-        }
-      }
-    }.bind(this));
-
-    req.then(sendResponse, sendError).catch(error.report);
+    }
   }
 
   /**
    * Fail-safe creation of a new instance of |message.Response|.
    *
-   * @param {?} msgID
+   * @param {number} msgID
    *     Message ID to respond to.  If it is not a number, -1 is used.
    *
    * @return {message.Response}
    *     Response to the message with |msgID|.
    */
-  createResponse (msgID) {
+  createResponse(msgID) {
     if (typeof msgID != "number") {
       msgID = -1;
     }
     return new Response(msgID, this.send.bind(this));
   }
 
-  sendError (err, cmdID) {
+  sendError(err, cmdID) {
     let resp = new Response(cmdID, this.send.bind(this));
     resp.sendError(err);
   }
@@ -549,13 +587,13 @@ server.TCPConnection = class {
    * This is the only message sent by Marionette that does not follow
    * the regular message format.
    */
-  sayHello () {
+  sayHello() {
     let whatHo = {
       applicationType: "gecko",
       marionetteProtocol: PROTOCOL_VERSION,
     };
     this.sendRaw(whatHo);
-  };
+  }
 
   /**
    * Delegates message to client based on the provided  {@code cmdID}.
@@ -567,10 +605,10 @@ server.TCPConnection = class {
    * Whilst responses to commands are synchronous and must be sent in the
    * correct order.
    *
-   * @param {Command,Response} msg
+   * @param {Message} msg
    *     The command or response to send.
    */
-  send (msg) {
+  send(msg) {
     msg.origin = MessageOrigin.Server;
     if (msg instanceof Command) {
       this.commands_.set(msg.id, msg);
@@ -588,18 +626,18 @@ server.TCPConnection = class {
    * @param {Response} resp
    *     The response to send back to the client.
    */
-  sendToClient (resp) {
+  sendToClient(resp) {
     this.driver.responseCompleted();
     this.sendMessage(resp);
-  };
+  }
 
   /**
    * Marshal message to the Marionette message format and send it.
    *
-   * @param {Command,Response} msg
+   * @param {Message} msg
    *     The message to send.
    */
-  sendMessage (msg) {
+  sendMessage(msg) {
     this.log_(msg);
     let payload = msg.toMsg();
     this.sendRaw(payload);
@@ -609,20 +647,20 @@ server.TCPConnection = class {
    * Send the given payload over the debugger transport socket to the
    * connected client.
    *
-   * @param {Object} payload
+   * @param {Object.<string, ?>} payload
    *     The payload to ship.
    */
-  sendRaw (payload) {
+  sendRaw(payload) {
     this.conn.send(payload);
   }
 
-  log_ (msg) {
+  log_(msg) {
     let a = (msg.origin == MessageOrigin.Client ? " -> " : " <- ");
     let s = JSON.stringify(msg.toMsg());
     logger.trace(this.id + a + s);
   }
 
-  toString () {
+  toString() {
     return `[object server.TCPConnection ${this.id}]`;
   }
 };

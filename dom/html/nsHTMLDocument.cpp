@@ -11,7 +11,7 @@
 #include "mozilla/dom/HTMLAllCollection.h"
 #include "nsCOMPtr.h"
 #include "nsGlobalWindow.h"
-#include "nsXPIDLString.h"
+#include "nsString.h"
 #include "nsPrintfCString.h"
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
@@ -57,7 +57,6 @@
 #include "nsIComponentManager.h"
 #include "nsParserCIID.h"
 #include "nsIDOMHTMLElement.h"
-#include "nsIDOMHTMLHeadElement.h"
 #include "nsNameSpaceManager.h"
 #include "nsGenericHTMLElement.h"
 #include "mozilla/css/Loader.h"
@@ -82,14 +81,13 @@
 //AHMED 12-2
 #include "nsBidiUtils.h"
 
-#include "mozilla/dom/EncodingUtils.h"
 #include "mozilla/dom/FallbackEncoding.h"
+#include "mozilla/Encoding.h"
+#include "mozilla/HTMLEditor.h"
 #include "mozilla/LoadInfo.h"
 #include "nsIEditingSession.h"
-#include "nsIEditor.h"
 #include "nsNodeInfoManager.h"
 #include "nsIPlaintextEditor.h"
-#include "nsIHTMLEditor.h"
 #include "nsIEditorStyleSheets.h"
 #include "nsIInlineSpellChecker.h"
 #include "nsRange.h"
@@ -150,6 +148,12 @@ static bool ConvertToMidasInternalCommand(const nsAString & inCommandID,
 // =
 // ==================================================================
 
+static bool
+IsAsciiCompatible(const Encoding* aEncoding)
+{
+  return aEncoding->IsAsciiCompatible() || aEncoding == ISO_2022_JP_ENCODING;
+}
+
 nsresult
 NS_NewHTMLDocument(nsIDocument** aInstancePtrResult, bool aLoadedAsData)
 {
@@ -199,7 +203,6 @@ NS_IMPL_CYCLE_COLLECTION_INHERITED(nsHTMLDocument, nsDocument,
                                    mAnchors,
                                    mScripts,
                                    mForms,
-                                   mFormControls,
                                    mWyciwygChannel,
                                    mMidasCommandManager)
 
@@ -272,29 +275,26 @@ nsHTMLDocument::ResetToURI(nsIURI *aURI, nsILoadGroup *aLoadGroup,
 
 void
 nsHTMLDocument::TryHintCharset(nsIContentViewer* aCv,
-                               int32_t& aCharsetSource, nsACString& aCharset)
+                               int32_t& aCharsetSource,
+                               NotNull<const Encoding*>& aEncoding)
 {
   if (aCv) {
     int32_t requestCharsetSource;
     nsresult rv = aCv->GetHintCharacterSetSource(&requestCharsetSource);
 
     if(NS_SUCCEEDED(rv) && kCharsetUninitialized != requestCharsetSource) {
-      nsAutoCString requestCharset;
-      rv = aCv->GetHintCharacterSet(requestCharset);
+      auto requestCharset = aCv->GetHintCharset();
       aCv->SetHintCharacterSetSource((int32_t)(kCharsetUninitialized));
 
-      if(requestCharsetSource <= aCharsetSource)
+      if (requestCharsetSource <= aCharsetSource)
         return;
 
-      if(NS_SUCCEEDED(rv) && EncodingUtils::IsAsciiCompatible(requestCharset)) {
+      if (requestCharset && IsAsciiCompatible(requestCharset)) {
         aCharsetSource = requestCharsetSource;
-        aCharset = requestCharset;
-
-        return;
+        aEncoding = WrapNotNull(requestCharset);
       }
     }
   }
-  return;
 }
 
 
@@ -302,42 +302,38 @@ void
 nsHTMLDocument::TryUserForcedCharset(nsIContentViewer* aCv,
                                      nsIDocShell*  aDocShell,
                                      int32_t& aCharsetSource,
-                                     nsACString& aCharset)
+                                     NotNull<const Encoding*>& aEncoding)
 {
-  nsresult rv = NS_OK;
-
   if(kCharsetFromUserForced <= aCharsetSource)
     return;
 
-  // mCharacterSet not updated yet for channel, so check aCharset, too.
-  if (WillIgnoreCharsetOverride() || !EncodingUtils::IsAsciiCompatible(aCharset)) {
+  // mCharacterSet not updated yet for channel, so check aEncoding, too.
+  if (WillIgnoreCharsetOverride() || !IsAsciiCompatible(aEncoding)) {
     return;
   }
 
-  nsAutoCString forceCharsetFromDocShell;
+  const Encoding* forceCharsetFromDocShell = nullptr;
   if (aCv) {
     // XXX mailnews-only
-    rv = aCv->GetForceCharacterSet(forceCharsetFromDocShell);
+    forceCharsetFromDocShell = aCv->GetForceCharset();
   }
 
-  if(NS_SUCCEEDED(rv) &&
-     !forceCharsetFromDocShell.IsEmpty() &&
-     EncodingUtils::IsAsciiCompatible(forceCharsetFromDocShell)) {
-    aCharset = forceCharsetFromDocShell;
+  if(forceCharsetFromDocShell &&
+     IsAsciiCompatible(forceCharsetFromDocShell)) {
+    aEncoding = WrapNotNull(forceCharsetFromDocShell);
     aCharsetSource = kCharsetFromUserForced;
     return;
   }
 
   if (aDocShell) {
     // This is the Character Encoding menu code path in Firefox
-    nsAutoCString charset;
-    rv = aDocShell->GetForcedCharset(charset);
+    auto encoding = nsDocShell::Cast(aDocShell)->GetForcedCharset();
 
-    if (NS_SUCCEEDED(rv) && !charset.IsEmpty()) {
-      if (!EncodingUtils::IsAsciiCompatible(charset)) {
+    if (encoding) {
+      if (!IsAsciiCompatible(encoding)) {
         return;
       }
-      aCharset = charset;
+      aEncoding = WrapNotNull(encoding);
       aCharsetSource = kCharsetFromUserForced;
       aDocShell->SetForcedCharset(NS_LITERAL_CSTRING(""));
     }
@@ -347,7 +343,7 @@ nsHTMLDocument::TryUserForcedCharset(nsIContentViewer* aCv,
 void
 nsHTMLDocument::TryCacheCharset(nsICachingChannel* aCachingChannel,
                                 int32_t& aCharsetSource,
-                                nsACString& aCharset)
+                                NotNull<const Encoding*>& aEncoding)
 {
   nsresult rv;
 
@@ -357,22 +353,28 @@ nsHTMLDocument::TryCacheCharset(nsICachingChannel* aCachingChannel,
 
   nsCString cachedCharset;
   rv = aCachingChannel->GetCacheTokenCachedCharset(cachedCharset);
-  // Check EncodingUtils::IsAsciiCompatible() even in the cache case, because the value
+  if (NS_FAILED(rv) || cachedCharset.IsEmpty()) {
+    return;
+  }
+  // The canonical names changed, so the cache may have an old name.
+  const Encoding* encoding = Encoding::ForLabelNoReplacement(cachedCharset);
+  if (!encoding) {
+    return;
+  }
+  // Check IsAsciiCompatible() even in the cache case, because the value
   // might be stale and in the case of a stale charset that is not a rough
   // ASCII superset, the parser has no way to recover.
-  if (NS_SUCCEEDED(rv) &&
-      !cachedCharset.IsEmpty() &&
-      EncodingUtils::IsAsciiCompatible(cachedCharset))
-  {
-    aCharset = cachedCharset;
-    aCharsetSource = kCharsetFromCache;
+  if (!encoding->IsAsciiCompatible() && encoding != ISO_2022_JP_ENCODING) {
+    return;
   }
+  aEncoding = WrapNotNull(encoding);
+  aCharsetSource = kCharsetFromCache;
 }
 
 void
 nsHTMLDocument::TryParentCharset(nsIDocShell*  aDocShell,
                                  int32_t& aCharsetSource,
-                                 nsACString& aCharset)
+                                 NotNull<const Encoding*>& aEncoding)
 {
   if (!aDocShell) {
     return;
@@ -382,22 +384,22 @@ nsHTMLDocument::TryParentCharset(nsIDocShell*  aDocShell,
   }
 
   int32_t parentSource;
-  nsAutoCString parentCharset;
+  const Encoding* parentCharset;
   nsCOMPtr<nsIPrincipal> parentPrincipal;
   aDocShell->GetParentCharset(parentCharset,
                               &parentSource,
                               getter_AddRefs(parentPrincipal));
-  if (parentCharset.IsEmpty()) {
+  if (!parentCharset) {
     return;
   }
   if (kCharsetFromParentForced == parentSource ||
       kCharsetFromUserForced == parentSource) {
     if (WillIgnoreCharsetOverride() ||
-        !EncodingUtils::IsAsciiCompatible(aCharset) || // if channel said UTF-16
-        !EncodingUtils::IsAsciiCompatible(parentCharset)) {
+        !IsAsciiCompatible(aEncoding) || // if channel said UTF-16
+        !IsAsciiCompatible(parentCharset)) {
       return;
     }
-    aCharset.Assign(parentCharset);
+    aEncoding = WrapNotNull(parentCharset);
     aCharsetSource = kCharsetFromParentForced;
     return;
   }
@@ -409,17 +411,18 @@ nsHTMLDocument::TryParentCharset(nsIDocShell*  aDocShell,
   if (kCharsetFromCache <= parentSource) {
     // Make sure that's OK
     if (!NodePrincipal()->Equals(parentPrincipal) ||
-        !EncodingUtils::IsAsciiCompatible(parentCharset)) {
+        !IsAsciiCompatible(parentCharset)) {
       return;
     }
 
-    aCharset.Assign(parentCharset);
+    aEncoding = WrapNotNull(parentCharset);
     aCharsetSource = kCharsetFromParentFrame;
   }
 }
 
 void
-nsHTMLDocument::TryTLD(int32_t& aCharsetSource, nsACString& aCharset)
+nsHTMLDocument::TryTLD(int32_t& aCharsetSource,
+                       NotNull<const Encoding*>& aEncoding)
 {
   if (aCharsetSource >= kCharsetFromTopLevelDomain) {
     return;
@@ -475,29 +478,32 @@ nsHTMLDocument::TryTLD(int32_t& aCharsetSource, nsACString& aCharset)
     return;
   }
   aCharsetSource = kCharsetFromTopLevelDomain;
-  FallbackEncoding::FromTopLevelDomain(tld, aCharset);
+  aEncoding = FallbackEncoding::FromTopLevelDomain(tld);
 }
 
 void
-nsHTMLDocument::TryFallback(int32_t& aCharsetSource, nsACString& aCharset)
+nsHTMLDocument::TryFallback(int32_t& aCharsetSource,
+                            NotNull<const Encoding*>& aEncoding)
 {
   if (kCharsetFromFallback <= aCharsetSource)
     return;
 
   aCharsetSource = kCharsetFromFallback;
-  FallbackEncoding::FromLocale(aCharset);
+  aEncoding = FallbackEncoding::FromLocale();
 }
 
 void
-nsHTMLDocument::SetDocumentCharacterSet(const nsACString& aCharSetID)
+nsHTMLDocument::SetDocumentCharacterSet(NotNull<const Encoding*> aEncoding)
 {
-  nsDocument::SetDocumentCharacterSet(aCharSetID);
+  nsDocument::SetDocumentCharacterSet(aEncoding);
   // Make sure to stash this charset on our channel as needed if it's a wyciwyg
   // channel.
   nsCOMPtr<nsIWyciwygChannel> wyciwygChannel = do_QueryInterface(mChannel);
   if (wyciwygChannel) {
+    nsAutoCString charset;
+    aEncoding->Name(charset);
     wyciwygChannel->SetCharsetAndSource(GetDocumentCharacterSetSource(),
-                                        aCharSetID);
+                                        charset);
   }
 }
 
@@ -531,8 +537,7 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
               !strcmp(aCommand, "external-resource");
   bool viewSource = !strcmp(aCommand, "view-source");
   bool asData = !strcmp(aCommand, kLoadAsData);
-  bool import = !strcmp(aCommand, "import");
-  if (!(view || viewSource || asData || import)) {
+  if (!(view || viewSource || asData)) {
     MOZ_ASSERT(false, "Bad parser command");
     return NS_ERROR_INVALID_ARG;
   }
@@ -647,12 +652,12 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
 
   // These are the charset source and charset for our document
   int32_t charsetSource;
-  nsAutoCString charset;
+  auto encoding = UTF_8_ENCODING;
 
   // These are the charset source and charset for the parser.  This can differ
   // from that for the document if the channel is a wyciwyg channel.
   int32_t parserCharsetSource;
-  nsAutoCString parserCharset;
+  auto parserCharset = UTF_8_ENCODING;
 
   nsCOMPtr<nsIWyciwygChannel> wyciwygChannel;
 
@@ -669,16 +674,13 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
 
   if (forceUtf8) {
     charsetSource = kCharsetFromUtf8OnlyMime;
-    charset.AssignLiteral("UTF-8");
     parserCharsetSource = charsetSource;
-    parserCharset = charset;
   } else if (!IsHTMLDocument() || !docShell) { // no docshell for text/html XHR
     charsetSource = IsHTMLDocument() ? kCharsetFromFallback
                                      : kCharsetFromDocTypeDefault;
-    charset.AssignLiteral("UTF-8");
-    TryChannelCharset(aChannel, charsetSource, charset, executor);
+    TryChannelCharset(aChannel, charsetSource, encoding, executor);
+    parserCharset = encoding;
     parserCharsetSource = charsetSource;
-    parserCharset = charset;
   } else {
     NS_ASSERTION(docShell, "Unexpected null value");
 
@@ -702,24 +704,24 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
       // content to a UTF-16 site such that the byte have a dangerous
       // interpretation as ASCII and the user can be lured to using the
       // charset menu.
-      TryChannelCharset(aChannel, charsetSource, charset, executor);
+      TryChannelCharset(aChannel, charsetSource, encoding, executor);
     }
 
-    TryUserForcedCharset(cv, docShell, charsetSource, charset);
+    TryUserForcedCharset(cv, docShell, charsetSource, encoding);
 
-    TryHintCharset(cv, charsetSource, charset); // XXX mailnews-only
-    TryParentCharset(docShell, charsetSource, charset);
+    TryHintCharset(cv, charsetSource, encoding); // XXX mailnews-only
+    TryParentCharset(docShell, charsetSource, encoding);
 
     if (cachingChan && !urlSpec.IsEmpty()) {
-      TryCacheCharset(cachingChan, charsetSource, charset);
+      TryCacheCharset(cachingChan, charsetSource, encoding);
     }
 
-    TryTLD(charsetSource, charset);
-    TryFallback(charsetSource, charset);
+    TryTLD(charsetSource, encoding);
+    TryFallback(charsetSource, encoding);
 
     if (wyciwygChannel) {
       // We know for sure that the parser needs to be using UTF16.
-      parserCharset = "UTF-16";
+      parserCharset = UTF_16LE_ENCODING;
       parserCharsetSource = charsetSource < kCharsetFromChannel ?
         kCharsetFromChannel : charsetSource;
 
@@ -728,27 +730,31 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
       rv = wyciwygChannel->GetCharsetAndSource(&cachedSource, cachedCharset);
       if (NS_SUCCEEDED(rv)) {
         if (cachedSource > charsetSource) {
-          charsetSource = cachedSource;
-          charset = cachedCharset;
+          auto cachedEncoding = Encoding::ForLabel(cachedCharset);
+          if (cachedEncoding) {
+            charsetSource = cachedSource;
+            encoding = WrapNotNull(cachedEncoding);
+          }
         }
       } else {
         // Don't propagate this error.
         rv = NS_OK;
       }
-
     } else {
-      parserCharset = charset;
+      parserCharset = encoding;
       parserCharsetSource = charsetSource;
     }
   }
 
   SetDocumentCharacterSetSource(charsetSource);
-  SetDocumentCharacterSet(charset);
+  SetDocumentCharacterSet(encoding);
 
   if (cachingChan) {
-    NS_ASSERTION(charset == parserCharset,
+    NS_ASSERTION(encoding == parserCharset,
                  "How did those end up different here?  wyciwyg channels are "
                  "not nsICachingChannel");
+    nsAutoCString charset;
+    encoding->Name(charset);
     rv = cachingChan->SetCacheTokenCachedCharset(charset);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "cannot SetMetaDataElement");
     rv = NS_OK; // don't propagate error
@@ -761,7 +767,7 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
 
 #ifdef DEBUG_charset
   printf(" charset = %s source %d\n",
-        charset.get(), charsetSource);
+         charset.get(), charsetSource);
 #endif
   mParser->SetDocumentCharset(parserCharset, parserCharsetSource);
   mParser->SetCommand(aCommand);
@@ -792,9 +798,9 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
     rv = bundleService->CreateBundle("chrome://global/locale/browser.properties",
                                      getter_AddRefs(bundle));
     NS_ASSERTION(NS_SUCCEEDED(rv) && bundle, "chrome://global/locale/browser.properties could not be loaded");
-    nsXPIDLString title;
+    nsAutoString title;
     if (bundle) {
-      bundle->GetStringFromName(u"plainText.wordWrap", getter_Copies(title));
+      bundle->GetStringFromName("plainText.wordWrap", title);
     }
     SetSelectedStyleSheetSet(title);
   }
@@ -818,7 +824,6 @@ nsHTMLDocument::StopDocumentLoad()
 
   nsDocument::StopDocumentLoad();
   UnblockOnload(false);
-  return;
 }
 
 void
@@ -863,6 +868,15 @@ nsHTMLDocument::SetCompatibilityMode(nsCompatibility aMode)
       pc->CompatibilityModeChanged();
     }
   }
+}
+
+nsIContent*
+nsHTMLDocument::GetUnfocusedKeyEventTarget()
+{
+  if (nsGenericHTMLElement* body = GetBody()) {
+    return body;
+  }
+  return nsDocument::GetUnfocusedKeyEventTarget();
 }
 
 //
@@ -1127,7 +1141,7 @@ nsHTMLDocument::SetBody(nsGenericHTMLElement* newBody, ErrorResult& rv)
 }
 
 NS_IMETHODIMP
-nsHTMLDocument::GetHead(nsIDOMHTMLHeadElement** aHead)
+nsHTMLDocument::GetHead(nsISupports** aHead)
 {
   *aHead = nullptr;
 
@@ -1163,7 +1177,7 @@ nsIHTMLCollection*
 nsHTMLDocument::Applets()
 {
   if (!mApplets) {
-    mApplets = new nsContentList(this, kNameSpaceID_XHTML, nsGkAtoms::applet, nsGkAtoms::applet);
+    mApplets = new nsEmptyContentList(this);
   }
   return mApplets;
 }
@@ -1325,6 +1339,11 @@ nsHTMLDocument::GetCookie(nsAString& aCookie, ErrorResult& rv)
     return;
   }
 
+  // If the document is a cookie-averse Document... return the empty string.
+  if (IsCookieAverse()) {
+    return;
+  }
+
   // not having a cookie service isn't an error
   nsCOMPtr<nsICookieService> service = do_GetService(NS_COOKIESERVICE_CONTRACTID);
   if (service) {
@@ -1348,12 +1367,11 @@ nsHTMLDocument::GetCookie(nsAString& aCookie, ErrorResult& rv)
       }
     }
 
-    nsXPIDLCString cookie;
+    nsCString cookie;
     service->GetCookieString(codebaseURI, channel, getter_Copies(cookie));
     // CopyUTF8toUTF16 doesn't handle error
     // because it assumes that the input is valid.
-    nsContentUtils::ConvertStringFromEncoding(NS_LITERAL_CSTRING("UTF-8"),
-                                              cookie, aCookie);
+    UTF_8_ENCODING->DecodeWithoutBOMHandling(cookie, aCookie);
   }
 }
 
@@ -1376,6 +1394,11 @@ nsHTMLDocument::SetCookie(const nsAString& aCookie, ErrorResult& rv)
   // is prohibited.
   if (mSandboxFlags & SANDBOXED_ORIGIN) {
     rv.Throw(NS_ERROR_DOM_SECURITY_ERR);
+    return;
+  }
+
+  // If the document is a cookie-averse Document... do nothing.
+  if (IsCookieAverse()) {
     return;
   }
 
@@ -1476,7 +1499,7 @@ nsHTMLDocument::Open(JSContext* cx,
 
   NS_ASSERTION(nsContentUtils::CanCallerAccess(static_cast<nsIDOMHTMLDocument*>(this)),
                "XOW should have caught this!");
-  if (!IsHTMLDocument() || mDisableDocWrite || !IsMasterDocument()) {
+  if (!IsHTMLDocument() || mDisableDocWrite) {
     // No calling document.open() on XHTML
     rv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
     return nullptr;
@@ -1675,6 +1698,11 @@ nsHTMLDocument::Open(JSContext* cx,
       templateContentsOwner->mWillReparent = true;
     }
 #endif
+
+    // Set our ready state to uninitialized before setting the new document so
+    // that window creation listeners don't use the document in its intermediate
+    // state prior to reset.
+    SetReadyStateInternal(READYSTATE_UNINITIALIZED);
 
     // Per spec, we pass false here so that a new Window is created.
     rv = window->SetNewDocument(this, nullptr,
@@ -1894,7 +1922,7 @@ nsHTMLDocument::WriteCommon(JSContext *cx,
     (mWriteLevel > NS_MAX_DOCUMENT_WRITE_DEPTH || mTooDeepWriteRecursion);
   NS_ENSURE_STATE(!mTooDeepWriteRecursion);
 
-  if (!IsHTMLDocument() || mDisableDocWrite || !IsMasterDocument()) {
+  if (!IsHTMLDocument() || mDisableDocWrite) {
     // No calling document.write*() on XHTML!
 
     return NS_ERROR_DOM_INVALID_STATE_ERR;
@@ -2015,6 +2043,11 @@ nsHTMLDocument::MatchNameAttribute(Element* aElement, int32_t aNamespaceID,
                                    nsIAtom* aAtom, void* aData)
 {
   NS_PRECONDITION(aElement, "Must have element to work with!");
+
+  if (!aElement->HasName()) {
+    return false;
+  }
+
   nsString* elementName = static_cast<nsString*>(aData);
   return
     aElement->GetNameSpaceID() == kNameSpaceID_XHTML &&
@@ -2196,24 +2229,8 @@ NS_IMETHODIMP
 nsHTMLDocument::GetSelection(nsISelection** aReturn)
 {
   ErrorResult rv;
-  NS_IF_ADDREF(*aReturn = GetSelection(rv));
+  NS_IF_ADDREF(*aReturn = nsDocument::GetSelection(rv));
   return rv.StealNSResult();
-}
-
-Selection*
-nsHTMLDocument::GetSelection(ErrorResult& aRv)
-{
-  nsCOMPtr<nsPIDOMWindowInner> window = do_QueryInterface(GetScopeObject());
-  if (!window) {
-    return nullptr;
-  }
-
-  NS_ASSERTION(window->IsInnerWindow(), "Should have inner window here!");
-  if (!window->IsCurrentInnerWindow()) {
-    return nullptr;
-  }
-
-  return nsGlobalWindow::Cast(window)->GetSelection(aRv);
 }
 
 NS_IMETHODIMP
@@ -2312,7 +2329,7 @@ nsHTMLDocument::GetSupportedNames(nsTArray<nsString>& aNames)
     nsIdentifierMapEntry* entry = iter.Get();
     if (entry->HasNameElement() ||
         entry->HasIdElementExposedAsHTMLDocumentProperty()) {
-      aNames.AppendElement(entry->GetKey());
+      aNames.AppendElement(entry->GetKeyAsString());
     }
   }
 }
@@ -2332,26 +2349,18 @@ nsContentList*
 nsHTMLDocument::GetForms()
 {
   if (!mForms) {
+    // Please keep this in sync with nsContentUtils::GenerateStateKey().
     mForms = new nsContentList(this, kNameSpaceID_XHTML, nsGkAtoms::form, nsGkAtoms::form);
   }
 
   return mForms;
 }
 
-static bool MatchFormControls(Element* aElement, int32_t aNamespaceID,
-                              nsIAtom* aAtom, void* aData)
+bool
+nsHTMLDocument::MatchFormControls(Element* aElement, int32_t aNamespaceID,
+                                  nsIAtom* aAtom, void* aData)
 {
   return aElement->IsNodeOfType(nsIContent::eHTML_FORM_CONTROL);
-}
-
-nsContentList*
-nsHTMLDocument::GetFormControls()
-{
-  if (!mFormControls) {
-    mFormControls = new nsContentList(this, MatchFormControls, nullptr, nullptr);
-  }
-
-  return mFormControls;
 }
 
 nsresult
@@ -2393,8 +2402,9 @@ nsHTMLDocument::CreateAndAddWyciwygChannel(void)
   // Note: we want to treat this like a "previous document" hint so that,
   // e.g. a <meta> tag in the document.write content can override it.
   SetDocumentCharacterSetSource(kCharsetFromHintPrevDoc);
-  mWyciwygChannel->SetCharsetAndSource(kCharsetFromHintPrevDoc,
-                                       GetDocumentCharacterSet());
+  nsAutoCString charset;
+  GetDocumentCharacterSet()->Name(charset);
+  mWyciwygChannel->SetCharsetAndSource(kCharsetFromHintPrevDoc, charset);
 
   // Inherit load flags from the original document's channel
   channel->SetLoadFlags(mLoadFlags);
@@ -2409,6 +2419,9 @@ nsHTMLDocument::CreateAndAddWyciwygChannel(void)
     nsLoadFlags loadFlags = 0;
     channel->GetLoadFlags(&loadFlags);
     loadFlags |= nsIChannel::LOAD_DOCUMENT_URI;
+    if (nsDocShell::SandboxFlagsImplyCookies(mSandboxFlags)) {
+      loadFlags |= nsIRequest::LOAD_DOCUMENT_NEEDS_COOKIE;
+    }
     channel->SetLoadFlags(loadFlags);
 
     channel->SetOriginalURI(wcwgURI);
@@ -2482,7 +2495,9 @@ nsHTMLDocument::MaybeEditingStateChanged()
       EditingStateChanged();
     } else if (!mInDestructor) {
       nsContentUtils::AddScriptRunner(
-        NewRunnableMethod(this, &nsHTMLDocument::MaybeEditingStateChanged));
+        NewRunnableMethod("nsHTMLDocument::MaybeEditingStateChanged",
+                          this,
+                          &nsHTMLDocument::MaybeEditingStateChanged));
     }
   }
 }
@@ -2513,9 +2528,10 @@ nsHTMLDocument::SetMayStartLayout(bool aMayStartLayout)
 class DeferredContentEditableCountChangeEvent : public Runnable
 {
 public:
-  DeferredContentEditableCountChangeEvent(nsHTMLDocument *aDoc,
-                                          nsIContent *aElement)
-    : mDoc(aDoc)
+  DeferredContentEditableCountChangeEvent(nsHTMLDocument* aDoc,
+                                          nsIContent* aElement)
+    : mozilla::Runnable("DeferredContentEditableCountChangeEvent")
+    , mDoc(aDoc)
     , mElement(aElement)
   {
   }
@@ -2573,9 +2589,8 @@ nsHTMLDocument::DeferredContentEditableCountChange(nsIContent *aElement)
       if (!docshell)
         return;
 
-      nsCOMPtr<nsIEditor> editor;
-      docshell->GetEditor(getter_AddRefs(editor));
-      if (editor) {
+      RefPtr<HTMLEditor> htmlEditor = docshell->GetHTMLEditor();
+      if (htmlEditor) {
         RefPtr<nsRange> range = new nsRange(aElement);
         rv = range->SelectNode(node);
         if (NS_FAILED(rv)) {
@@ -2586,8 +2601,8 @@ nsHTMLDocument::DeferredContentEditableCountChange(nsIContent *aElement)
         }
 
         nsCOMPtr<nsIInlineSpellChecker> spellChecker;
-        rv = editor->GetInlineSpellChecker(false,
-                                           getter_AddRefs(spellChecker));
+        rv = htmlEditor->GetInlineSpellChecker(false,
+                                               getter_AddRefs(spellChecker));
         NS_ENSURE_SUCCESS_VOID(rv);
 
         if (spellChecker) {
@@ -2621,7 +2636,7 @@ NotifyEditableStateChange(nsINode *aNode, nsIDocument *aDocument)
 }
 
 void
-nsHTMLDocument::TearingDownEditor(nsIEditor *aEditor)
+nsHTMLDocument::TearingDownEditor()
 {
   if (IsEditingOn()) {
     EditingState oldState = mEditingState;
@@ -2734,17 +2749,12 @@ nsHTMLDocument::EditingStateChanged()
   nsresult rv = docshell->GetEditingSession(getter_AddRefs(editSession));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIEditor> existingEditor;
-  editSession->GetEditorForWindow(window, getter_AddRefs(existingEditor));
-  if (existingEditor) {
+  RefPtr<HTMLEditor> htmlEditor = editSession->GetHTMLEditorForWindow(window);
+  if (htmlEditor) {
     // We might already have an editor if it was set up for mail, let's see
     // if this is actually the case.
-#ifdef DEBUG
-    nsCOMPtr<nsIHTMLEditor> htmlEditor = do_QueryInterface(existingEditor);
-    MOZ_ASSERT(htmlEditor, "If we have an editor, it must be an HTML editor");
-#endif
     uint32_t flags = 0;
-    existingEditor->GetFlags(&flags);
+    htmlEditor->GetFlags(&flags);
     if (flags & nsIPlaintextEditor::eEditorMailMask) {
       // We already have a mail editor, then we should not attempt to create
       // another one.
@@ -2762,7 +2772,7 @@ nsHTMLDocument::EditingStateChanged()
   bool updateState = false;
   bool spellRecheckAll = false;
   bool putOffToRemoveScriptBlockerUntilModifyingEditingState = false;
-  nsCOMPtr<nsIEditor> editor;
+  htmlEditor = nullptr;
 
   {
     EditingState oldState = mEditingState;
@@ -2846,14 +2856,15 @@ nsHTMLDocument::EditingStateChanged()
     }
 
     // XXX Need to call TearDownEditorOnWindow for all failures.
-    docshell->GetEditor(getter_AddRefs(editor));
-    if (!editor)
+    htmlEditor = docshell->GetHTMLEditor();
+    if (!htmlEditor) {
       return NS_ERROR_FAILURE;
+    }
 
     // If we're entering the design mode, put the selection at the beginning of
     // the document for compatibility reasons.
     if (designMode && oldState == eOff) {
-      editor->BeginningOfDocument();
+      htmlEditor->BeginningOfDocument();
     }
 
     if (putOffToRemoveScriptBlockerUntilModifyingEditingState) {
@@ -2905,18 +2916,21 @@ nsHTMLDocument::EditingStateChanged()
 
   // Resync the editor's spellcheck state.
   if (spellRecheckAll) {
-    nsCOMPtr<nsISelectionController> selcon;
-    nsresult rv = editor->GetSelectionController(getter_AddRefs(selcon));
-    NS_ENSURE_SUCCESS(rv, rv);
+    nsCOMPtr<nsISelectionController> selectionController =
+      htmlEditor->GetSelectionController();
+    if (NS_WARN_IF(!selectionController)) {
+      return NS_ERROR_FAILURE;
+    }
 
     nsCOMPtr<nsISelection> spellCheckSelection;
-    rv = selcon->GetSelection(nsISelectionController::SELECTION_SPELLCHECK,
-                              getter_AddRefs(spellCheckSelection));
+    rv = selectionController->GetSelection(
+                                nsISelectionController::SELECTION_SPELLCHECK,
+                                getter_AddRefs(spellCheckSelection));
     if (NS_SUCCEEDED(rv)) {
       spellCheckSelection->RemoveAllRanges();
     }
   }
-  editor->SyncRealTimeSpell();
+  htmlEditor->SyncRealTimeSpell();
 
   return NS_OK;
 }
@@ -3647,20 +3661,21 @@ nsHTMLDocument::QueryCommandValue(const nsAString& commandID,
   // aValue will wind up being the empty string.  This is fine -- we want to
   // return "" in that case anyway (bug 738385), so we just return NS_OK
   // regardless.
-  nsXPIDLCString cStringResult;
+  nsCString cStringResult;
   cmdParams->GetCStringValue("state_attribute",
                              getter_Copies(cStringResult));
   CopyUTF8toUTF16(cStringResult, aValue);
 }
 
 nsresult
-nsHTMLDocument::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const
+nsHTMLDocument::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
+                      bool aPreallocateChildren) const
 {
   NS_ASSERTION(aNodeInfo->NodeInfoManager() == mNodeInfoManager,
                "Can't import this document into another document!");
 
   RefPtr<nsHTMLDocument> clone = new nsHTMLDocument();
-  nsresult rv = CloneDocHelper(clone.get());
+  nsresult rv = CloneDocHelper(clone.get(), aPreallocateChildren);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // State from nsHTMLDocument
@@ -3690,7 +3705,7 @@ nsHTMLDocument::RemovedFromDocShell()
 }
 
 /* virtual */ void
-nsHTMLDocument::DocAddSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
+nsHTMLDocument::DocAddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const
 {
   nsDocument::DocAddSizeOfExcludingThis(aWindowSizes);
 
@@ -3703,7 +3718,6 @@ nsHTMLDocument::DocAddSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
   // - mAnchors
   // - mScripts
   // - mForms
-  // - mFormControls
   // - mWyciwygChannel
   // - mMidasCommandManager
 }
@@ -3718,7 +3732,8 @@ nsHTMLDocument::WillIgnoreCharsetOverride()
   if (mCharacterSetSource >= kCharsetFromByteOrderMark) {
     return true;
   }
-  if (!EncodingUtils::IsAsciiCompatible(mCharacterSet)) {
+  if (!mCharacterSet->IsAsciiCompatible() &&
+      mCharacterSet != ISO_2022_JP_ENCODING) {
     return true;
   }
   nsCOMPtr<nsIWyciwygChannel> wyciwyg = do_QueryInterface(mChannel);

@@ -11,7 +11,6 @@
 #include "MockMediaResource.h"
 
 using namespace mozilla;
-using namespace mozilla::mp3;
 using media::TimeUnit;
 
 
@@ -309,7 +308,7 @@ protected:
     }
 
     for (auto& target: mTargets) {
-      ASSERT_EQ(NS_OK, target.mResource->Open(nullptr));
+      ASSERT_EQ(NS_OK, target.mResource->Open());
       ASSERT_TRUE(target.mDemuxer->Init());
     }
   }
@@ -437,14 +436,15 @@ TEST_F(MP3DemuxerTest, Duration) {
     RefPtr<MediaRawData> frameData(target.mDemuxer->DemuxSample());
     ASSERT_TRUE(frameData);
 
-    const int64_t duration = target.mDemuxer->Duration().ToMicroseconds();
-    const int64_t pos = duration + 1e6;
+    const auto duration = target.mDemuxer->Duration();
+    const auto pos = duration + TimeUnit::FromMicroseconds(1e6);
 
     // Attempt to seek 1 second past the end of stream.
-    target.mDemuxer->Seek(TimeUnit::FromMicroseconds(pos));
+    target.mDemuxer->Seek(pos);
     // The seek should bring us to the end of the stream.
-    EXPECT_NEAR(duration, target.mDemuxer->SeekPosition().ToMicroseconds(),
-                target.mSeekError * duration);
+    EXPECT_NEAR(duration.ToMicroseconds(),
+                target.mDemuxer->SeekPosition().ToMicroseconds(),
+                target.mSeekError * duration.ToMicroseconds());
 
     // Since we're at the end of the stream, there should be no frames left.
     frameData = target.mDemuxer->DemuxSample();
@@ -457,15 +457,16 @@ TEST_F(MP3DemuxerTest, Seek) {
     RefPtr<MediaRawData> frameData(target.mDemuxer->DemuxSample());
     ASSERT_TRUE(frameData);
 
-    const int64_t seekTime = TimeUnit::FromSeconds(1).ToMicroseconds();
-    int64_t pos = target.mDemuxer->SeekPosition().ToMicroseconds();
+    const auto seekTime = TimeUnit::FromSeconds(1);
+    auto pos = target.mDemuxer->SeekPosition();
 
     while (frameData) {
-      EXPECT_NEAR(pos, target.mDemuxer->SeekPosition().ToMicroseconds(),
-                  target.mSeekError * pos);
+      EXPECT_NEAR(pos.ToMicroseconds(),
+                  target.mDemuxer->SeekPosition().ToMicroseconds(),
+                  target.mSeekError * pos.ToMicroseconds());
 
       pos += seekTime;
-      target.mDemuxer->Seek(TimeUnit::FromMicroseconds(pos));
+      target.mDemuxer->Seek(pos);
       frameData = target.mDemuxer->DemuxSample();
     }
   }
@@ -476,16 +477,17 @@ TEST_F(MP3DemuxerTest, Seek) {
     RefPtr<MediaRawData> frameData(target.mDemuxer->DemuxSample());
     ASSERT_TRUE(frameData);
 
-    const int64_t seekTime = TimeUnit::FromSeconds(1).ToMicroseconds();
-    int64_t pos = target.mDemuxer->SeekPosition().ToMicroseconds();
+    const auto seekTime = TimeUnit::FromSeconds(1);
+    auto pos = target.mDemuxer->SeekPosition();
 
     while (frameData) {
-      EXPECT_NEAR(pos, target.mDemuxer->SeekPosition().ToMicroseconds(),
-                  target.mSeekError * pos);
+      EXPECT_NEAR(pos.ToMicroseconds(),
+                  target.mDemuxer->SeekPosition().ToMicroseconds(),
+                  target.mSeekError * pos.ToMicroseconds());
 
       pos += seekTime;
       target.mDemuxer->Reset();
-      target.mDemuxer->Seek(TimeUnit::FromMicroseconds(pos));
+      target.mDemuxer->Seek(pos);
       frameData = target.mDemuxer->DemuxSample();
     }
   }

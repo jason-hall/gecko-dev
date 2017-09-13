@@ -48,12 +48,6 @@ NS_NewRubyBaseContainerFrame(nsIPresShell* aPresShell,
 // nsRubyBaseContainerFrame Method Implementations
 // ===============================================
 
-nsIAtom*
-nsRubyBaseContainerFrame::GetType() const
-{
-  return nsGkAtoms::rubyBaseContainerFrame;
-}
-
 #ifdef DEBUG_FRAME_DUMP
 nsresult
 nsRubyBaseContainerFrame::GetFrameName(nsAString& aResult) const
@@ -74,7 +68,7 @@ LineBreakBefore(nsIFrame* aFrame,
       // It is not an inline element. We can break before it.
       return gfxBreakPriority::eNormalBreak;
     }
-    if (child->GetType() != nsGkAtoms::textFrame) {
+    if (!child->IsTextFrame()) {
       continue;
     }
 
@@ -85,7 +79,8 @@ LineBreakBefore(nsIFrame* aFrame,
     iter.SetOriginalOffset(textFrame->GetContentOffset());
     uint32_t pos = iter.GetSkippedOffset();
     gfxTextRun* textRun = textFrame->GetTextRun(nsTextFrame::eInflated);
-    if (pos >= textRun->GetLength()) {
+    MOZ_ASSERT(textRun, "fail to build textrun?");
+    if (!textRun || pos >= textRun->GetLength()) {
       // The text frame contains no character at all.
       return gfxBreakPriority::eNoBreak;
     }
@@ -137,7 +132,7 @@ GetIsLineBreakAllowed(nsIFrame* aFrame, bool aIsLineBreakable,
  * happens across the boundary of those frames.
  */
 static nscoord
-CalculateColumnPrefISize(nsRenderingContext* aRenderingContext,
+CalculateColumnPrefISize(gfxContext* aRenderingContext,
                          const RubyColumnEnumerator& aEnumerator,
                          nsIFrame::InlineIntrinsicISizeData* aBaseISizeData)
 {
@@ -173,7 +168,7 @@ CalculateColumnPrefISize(nsRenderingContext* aRenderingContext,
 //       See bug 1134945.
 /* virtual */ void
 nsRubyBaseContainerFrame::AddInlineMinISize(
-  nsRenderingContext *aRenderingContext, nsIFrame::InlineMinISizeData *aData)
+  gfxContext *aRenderingContext, nsIFrame::InlineMinISizeData *aData)
 {
   AutoRubyTextContainerArray textContainers(this);
 
@@ -228,7 +223,7 @@ nsRubyBaseContainerFrame::AddInlineMinISize(
 
 /* virtual */ void
 nsRubyBaseContainerFrame::AddInlinePrefISize(
-  nsRenderingContext *aRenderingContext, nsIFrame::InlinePrefISizeData *aData)
+  gfxContext *aRenderingContext, nsIFrame::InlinePrefISizeData *aData)
 {
   AutoRubyTextContainerArray textContainers(this);
 
@@ -252,8 +247,8 @@ nsRubyBaseContainerFrame::AddInlinePrefISize(
   aData->mCurrentLine += sum;
 }
 
-/* virtual */ bool 
-nsRubyBaseContainerFrame::IsFrameOfType(uint32_t aFlags) const 
+/* virtual */ bool
+nsRubyBaseContainerFrame::IsFrameOfType(uint32_t aFlags) const
 {
   if (aFlags & eSupportsCSSTransforms) {
     return false;
@@ -269,7 +264,7 @@ nsRubyBaseContainerFrame::CanContinueTextRun() const
 }
 
 /* virtual */ LogicalSize
-nsRubyBaseContainerFrame::ComputeSize(nsRenderingContext *aRenderingContext,
+nsRubyBaseContainerFrame::ComputeSize(gfxContext *aRenderingContext,
                                       WritingMode aWM,
                                       const LogicalSize& aCBSize,
                                       nscoord aAvailableISize,
@@ -726,7 +721,7 @@ nsRubyBaseContainerFrame::PullOneColumn(nsLineLayout* aLineLayout,
   const uint32_t rtcCount = textContainers.Length();
 
   nsIFrame* nextBase = GetNextInFlowChild(aPullFrameState.mBase);
-  MOZ_ASSERT(!nextBase || nextBase->GetType() == nsGkAtoms::rubyBaseFrame);
+  MOZ_ASSERT(!nextBase || nextBase->IsRubyBaseFrame());
   aColumn.mBaseFrame = static_cast<nsRubyBaseFrame*>(nextBase);
   bool foundFrame = !!aColumn.mBaseFrame;
   bool pullingIntraLevelWhitespace =
@@ -736,7 +731,7 @@ nsRubyBaseContainerFrame::PullOneColumn(nsLineLayout* aLineLayout,
   for (uint32_t i = 0; i < rtcCount; i++) {
     nsIFrame* nextText =
       textContainers[i]->GetNextInFlowChild(aPullFrameState.mTexts[i]);
-    MOZ_ASSERT(!nextText || nextText->GetType() == nsGkAtoms::rubyTextFrame);
+    MOZ_ASSERT(!nextText || nextText->IsRubyTextFrame());
     nsRubyTextFrame* textFrame = static_cast<nsRubyTextFrame*>(nextText);
     aColumn.mTextFrames.AppendElement(textFrame);
     foundFrame = foundFrame || nextText;

@@ -100,6 +100,10 @@ public:
   typedef uint32_t                            index_type;
   typedef uint32_t                            size_type;
 
+  // These are only for internal use within the string classes:
+  typedef StringDataFlags                     DataFlags;
+  typedef StringClassFlags                    ClassFlags;
+
   /**
    * reading iterators
    */
@@ -162,9 +166,9 @@ public:
     return mLength;
   }
 
-  uint32_t Flags() const
+  DataFlags GetDataFlags() const
   {
-    return mFlags;
+    return mDataFlags;
   }
 
   bool IsEmpty() const
@@ -174,17 +178,17 @@ public:
 
   bool IsLiteral() const
   {
-    return (mFlags & F_LITERAL) != 0;
+    return !!(mDataFlags & DataFlags::LITERAL);
   }
 
   bool IsVoid() const
   {
-    return (mFlags & F_VOIDED) != 0;
+    return !!(mDataFlags & DataFlags::VOIDED);
   }
 
   bool IsTerminated() const
   {
-    return (mFlags & F_TERMINATED) != 0;
+    return !!(mDataFlags & DataFlags::TERMINATED);
   }
 
   char_type CharAt(index_type aIndex) const
@@ -302,73 +306,19 @@ protected:
   nsTStringRepr_CharT() = delete; // Never instantiate directly
 
   constexpr
-  nsTStringRepr_CharT(char_type* aData, size_type aLength, uint32_t aFlags)
+  nsTStringRepr_CharT(char_type* aData, size_type aLength,
+                      DataFlags aDataFlags, ClassFlags aClassFlags)
     : mData(aData)
     , mLength(aLength)
-    , mFlags(aFlags)
+    , mDataFlags(aDataFlags)
+    , mClassFlags(aClassFlags)
   {
   }
 
-  char_type*  mData;
-  size_type   mLength;
-  uint32_t    mFlags;
-
-public:
-  // mFlags is a bitwise combination of the following flags.  the meaning
-  // and interpretation of these flags is an implementation detail.
-  //
-  // NOTE: these flags are declared public _only_ for convenience inside
-  // the string implementation.
-
-  enum
-  {
-    F_NONE         = 0,       // no flags
-
-    // data flags are in the lower 16-bits
-    F_TERMINATED   = 1 << 0,  // IsTerminated returns true
-    F_VOIDED       = 1 << 1,  // IsVoid returns true
-    F_SHARED       = 1 << 2,  // mData points to a heap-allocated, shared buffer
-    F_OWNED        = 1 << 3,  // mData points to a heap-allocated, raw buffer
-    F_FIXED        = 1 << 4,  // mData points to a fixed-size writable, dependent buffer
-    F_LITERAL      = 1 << 5,  // mData points to a string literal; F_TERMINATED will also be set
-
-    // class flags are in the upper 16-bits
-    F_CLASS_FIXED  = 1 << 16   // indicates that |this| is of type nsTFixedString
-  };
-
-  //
-  // Some terminology:
-  //
-  //   "dependent buffer"    A dependent buffer is one that the string class
-  //                         does not own.  The string class relies on some
-  //                         external code to ensure the lifetime of the
-  //                         dependent buffer.
-  //
-  //   "shared buffer"       A shared buffer is one that the string class
-  //                         allocates.  When it allocates a shared string
-  //                         buffer, it allocates some additional space at
-  //                         the beginning of the buffer for additional
-  //                         fields, including a reference count and a
-  //                         buffer length.  See nsStringHeader.
-  //
-  //   "adopted buffer"      An adopted buffer is a raw string buffer
-  //                         allocated on the heap (using moz_xmalloc)
-  //                         of which the string class subsumes ownership.
-  //
-  // Some comments about the string flags:
-  //
-  //   F_SHARED, F_OWNED, and F_FIXED are all mutually exlusive.  They
-  //   indicate the allocation type of mData.  If none of these flags
-  //   are set, then the string buffer is dependent.
-  //
-  //   F_SHARED, F_OWNED, or F_FIXED imply F_TERMINATED.  This is because
-  //   the string classes always allocate null-terminated buffers, and
-  //   non-terminated substrings are always dependent.
-  //
-  //   F_VOIDED implies F_TERMINATED, and moreover it implies that mData
-  //   points to char_traits::sEmptyBuffer.  Therefore, F_VOIDED is
-  //   mutually exclusive with F_SHARED, F_OWNED, and F_FIXED.
-  //
+  char_type* mData;
+  size_type mLength;
+  DataFlags mDataFlags;
+  ClassFlags const mClassFlags;
 };
 
 } // namespace detail
@@ -576,6 +526,9 @@ public:
     return *this;
   }
 
+  // Adopt a heap-allocated char sequence for this string; is Voided if aData
+  // is null. Useful for e.g. converting an strdup'd C string into an
+  // nsCString. See also getter_Copies(), which is a useful wrapper.
   void NS_FASTCALL Adopt(char_type* aData, size_type aLength = size_type(-1));
 
 
@@ -692,7 +645,7 @@ public:
    * this with floating-point values as a result.
    */
   void AppendPrintf(const char* aFormat, ...) MOZ_FORMAT_PRINTF(2, 3);
-  void AppendPrintf(const char* aFormat, va_list aAp);
+  void AppendPrintf(const char* aFormat, va_list aAp) MOZ_FORMAT_PRINTF(2, 0);
   void AppendInt(int32_t aInteger)
   {
     AppendPrintf("%" PRId32, aInteger);
@@ -999,20 +952,42 @@ public:
    * string.
    *
    *  @param  aChar -- char to be stripped
-   *  @param  aOffset -- where in this string to start stripping chars
    */
 
-  void StripChar(char_type aChar, int32_t aOffset = 0);
+  void StripChar(char_type aChar);
 
   /**
    *  This method is used to remove all occurrences of aChars from this
    * string.
    *
    *  @param  aChars -- chars to be stripped
-   *  @param  aOffset -- where in this string to start stripping chars
    */
 
-  void StripChars(const char_type* aChars, uint32_t aOffset = 0);
+  void StripChars(const char_type* aChars);
+
+  /**
+   * This method is used to remove all occurrences of some characters this
+   * from this string.  The characters removed have the corresponding
+   * entries in the bool array set to true; we retain all characters
+   * with code beyond 127.
+   * THE CALLER IS RESPONSIBLE for making sure the complete boolean
+   * array, 128 entries, is properly initialized.
+   *
+   * See also: ASCIIMask class.
+   *
+   *  @param  aToStrip -- Array where each entry is true if the
+   *          corresponding ASCII character is to be stripped.  All
+   *          characters beyond code 127 are retained.  Note that this
+   *          parameter is of ASCIIMaskArray type, but we expand the typedef
+   *          to avoid having to include nsASCIIMask.h in this include file
+   *          as it brings other includes.
+   */
+  void StripTaggedASCII(const std::array<bool, 128>& aToStrip);
+
+  /**
+   * A shortcut to strip \r and \n.
+   */
+  void StripCRLF();
 
   /**
    * If the string uses a shared buffer, this method
@@ -1020,11 +995,18 @@ public:
    */
   void ForgetSharedBuffer()
   {
-    if (mFlags & nsSubstring::F_SHARED) {
-      mData = char_traits::sEmptyBuffer;
-      mLength = 0;
-      mFlags = F_TERMINATED;
+    if (mDataFlags & DataFlags::SHARED) {
+      SetToEmptyBuffer();
     }
+  }
+
+protected:
+  void AssertValid()
+  {
+    MOZ_ASSERT(!(mClassFlags & ClassFlags::NULL_TERMINATED) ||
+               (mDataFlags & DataFlags::TERMINATED),
+               "String classes whose static type guarantees a null-terminated "
+               "buffer must not be assigned a non-null-terminated buffer.");
   }
 
 public:
@@ -1034,8 +1016,9 @@ public:
    * base type, which helps avoid converting to nsTAString.
    */
   MOZ_IMPLICIT nsTSubstring_CharT(const substring_tuple_type& aTuple)
-    : nsTStringRepr_CharT(nullptr, 0, F_NONE)
+    : nsTStringRepr_CharT(nullptr, 0, DataFlags(0), ClassFlags(0))
   {
+    AssertValid();
     Assign(aTuple);
   }
 
@@ -1073,32 +1056,63 @@ protected:
 
   // default initialization
   nsTSubstring_CharT()
-    : nsTStringRepr_CharT(char_traits::sEmptyBuffer, 0, F_TERMINATED)
+    : nsTStringRepr_CharT(char_traits::sEmptyBuffer, 0, DataFlags::TERMINATED,
+                          ClassFlags(0))
   {
+    AssertValid();
   }
 
   // copy-constructor, constructs as dependent on given object
   // (NOTE: this is for internal use only)
   nsTSubstring_CharT(const self_type& aStr)
     : nsTStringRepr_CharT(aStr.mData, aStr.mLength,
-                          aStr.mFlags & (F_TERMINATED | F_VOIDED))
+                          aStr.mDataFlags & (DataFlags::TERMINATED | DataFlags::VOIDED),
+                          ClassFlags(0))
   {
+    AssertValid();
+  }
+
+  // initialization with ClassFlags
+  explicit nsTSubstring_CharT(ClassFlags aClassFlags)
+    : nsTStringRepr_CharT(char_traits::sEmptyBuffer, 0, DataFlags::TERMINATED,
+                          aClassFlags)
+  {
+    AssertValid();
   }
 
  /**
    * allows for direct initialization of a nsTSubstring object.
    */
-  // XXXbz or can I just include nscore.h and use NS_BUILD_REFCNT_LOGGING?
+  nsTSubstring_CharT(char_type* aData, size_type aLength,
+                     DataFlags aDataFlags, ClassFlags aClassFlags)
+// XXXbz or can I just include nscore.h and use NS_BUILD_REFCNT_LOGGING?
 #if defined(DEBUG) || defined(FORCE_BUILD_REFCNT_LOGGING)
 #define XPCOM_STRING_CONSTRUCTOR_OUT_OF_LINE
-  nsTSubstring_CharT(char_type* aData, size_type aLength, uint32_t aFlags);
+    ;
 #else
 #undef XPCOM_STRING_CONSTRUCTOR_OUT_OF_LINE
-  nsTSubstring_CharT(char_type* aData, size_type aLength, uint32_t aFlags)
-    : nsTStringRepr_CharT(aData, aLength, aFlags)
+    : nsTStringRepr_CharT(aData, aLength, aDataFlags, aClassFlags)
   {
+    AssertValid();
+    MOZ_RELEASE_ASSERT(CheckCapacity(aLength), "String is too large.");
   }
 #endif /* DEBUG || FORCE_BUILD_REFCNT_LOGGING */
+
+  void SetToEmptyBuffer()
+  {
+    mData = char_traits::sEmptyBuffer;
+    mLength = 0;
+    mDataFlags = DataFlags::TERMINATED;
+    AssertValid();
+  }
+
+  void SetData(char_type* aData, size_type aLength, DataFlags aDataFlags)
+  {
+    mData = aData;
+    mLength = aLength;
+    mDataFlags = aDataFlags;
+    AssertValid();
+  }
 
   /**
    * this function releases mData and does not change the value of
@@ -1112,7 +1126,7 @@ protected:
    *
    * @param aCapacity    specifies the required capacity of mData
    * @param aOldData     returns null or the old value of mData
-   * @param aOldFlags    returns 0 or the old value of mFlags
+   * @param aOldFlags    returns 0 or the old value of mDataFlags
    *
    * if mData is already mutable and of sufficient capacity, then this
    * function will return immediately.  otherwise, it will either resize
@@ -1126,7 +1140,7 @@ protected:
    * XXX we should expose a way for subclasses to free old_data.
    */
   bool NS_FASTCALL MutatePrep(size_type aCapacity,
-                              char_type** aOldData, uint32_t* aOldFlags);
+                              char_type** aOldData, DataFlags* aOldDataFlags);
 
   /**
    * this function prepares a section of mData to be modified.  if
@@ -1186,15 +1200,6 @@ protected:
     }
 
     return true;
-  }
-
-  /**
-   * this helper function stores the specified dataFlags in mFlags
-   */
-  void SetDataFlags(uint32_t aDataFlags)
-  {
-    NS_ASSERTION((aDataFlags & 0xFFFF0000) == 0, "bad flags");
-    mFlags = aDataFlags | (mFlags & 0xFFFF0000);
   }
 
   void NS_FASTCALL ReplaceLiteral(index_type aCutStart, size_type aCutLength,

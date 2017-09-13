@@ -1,9 +1,5 @@
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-  "resource://gre/modules/Promise.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Task",
-  "resource://gre/modules/Task.jsm");
 
 function is_hidden(element) {
   var style = element.ownerGlobal.getComputedStyle(element);
@@ -134,7 +130,7 @@ function isSecurityState(browser, expectedState) {
  * @return {Promise}
  * @resolves When the operation has finished and the identity panel has closed.
  */
-function assertMixedContentBlockingState(tabbrowser, states = {}) {
+async function assertMixedContentBlockingState(tabbrowser, states = {}) {
   if (!tabbrowser || !("activeLoaded" in states) ||
       !("activeBlocked" in states) || !("passiveLoaded" in states)) {
     throw new Error("assertMixedContentBlockingState requires a browser and a states object");
@@ -183,7 +179,7 @@ function assertMixedContentBlockingState(tabbrowser, states = {}) {
 
     ok(!is_hidden(connectionIcon), "connection icon should be visible");
     if (activeLoaded) {
-      is(connectionIconImage, "url(\"chrome://browser/skin/connection-mixed-active-loaded.svg#icon\")",
+      is(connectionIconImage, "url(\"chrome://browser/skin/connection-mixed-active-loaded.svg\")",
         "Using active loaded icon");
     }
     if (activeBlocked && !passiveLoaded) {
@@ -191,11 +187,11 @@ function assertMixedContentBlockingState(tabbrowser, states = {}) {
         "Using active blocked icon");
     }
     if (passiveLoaded && !(activeLoaded || activeBlocked)) {
-      is(connectionIconImage, "url(\"chrome://browser/skin/connection-mixed-passive-loaded.svg#icon\")",
+      is(connectionIconImage, "url(\"chrome://browser/skin/connection-mixed-passive-loaded.svg\")",
         "Using passive loaded icon");
     }
     if (passiveLoaded && activeBlocked) {
-      is(connectionIconImage, "url(\"chrome://browser/skin/connection-mixed-passive-loaded.svg#icon\")",
+      is(connectionIconImage, "url(\"chrome://browser/skin/connection-mixed-passive-loaded.svg\")",
         "Using active blocked and passive loaded icon");
     }
   }
@@ -263,22 +259,23 @@ function assertMixedContentBlockingState(tabbrowser, states = {}) {
   }
 
   if (activeLoaded || activeBlocked || passiveLoaded) {
+    let promiseViewShown = BrowserTestUtils.waitForEvent(gIdentityHandler._identityPopup, "ViewShown");
     doc.getElementById("identity-popup-security-expander").click();
+    await promiseViewShown;
     is(Array.filter(doc.querySelectorAll("[observes=identity-popup-mcb-learn-more]"),
                     element => !is_hidden(element)).length, 1,
        "The 'Learn more' link should be visible once.");
   }
 
-  gIdentityHandler._identityPopup.hidden = true;
-
-  // Wait for the panel to be closed before continuing. The promisePopupHidden
-  // function cannot be used because it's unreliable unless promisePopupShown is
-  // also called before closing the panel. This cannot be done until all callers
-  // are made asynchronous (bug 1221114).
-  return new Promise(resolve => executeSoon(resolve));
+  if (gIdentityHandler._identityPopup.state != "closed") {
+    let hideEvent = BrowserTestUtils.waitForEvent(gIdentityHandler._identityPopup, "popuphidden");
+    info("Hiding identity popup");
+    gIdentityHandler._identityPopup.hidePopup();
+    await hideEvent;
+  }
 }
 
-function* loadBadCertPage(url) {
+async function loadBadCertPage(url) {
   const EXCEPTION_DIALOG_URI = "chrome://pippki/content/exceptionDialog.xul";
   let exceptionDialogResolved = new Promise(function(resolve) {
     // When the certificate exception dialog has opened, click the button to add
@@ -298,18 +295,18 @@ function* loadBadCertPage(url) {
     };
 
     Services.obs.addObserver(certExceptionDialogObserver,
-                             "cert-exception-ui-ready", false);
+                             "cert-exception-ui-ready");
   });
 
   let loaded = BrowserTestUtils.waitForErrorPage(gBrowser.selectedBrowser);
-  yield BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
-  yield loaded;
+  await BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+  await loaded;
 
-  yield ContentTask.spawn(gBrowser.selectedBrowser, null, function*() {
+  await ContentTask.spawn(gBrowser.selectedBrowser, null, async function() {
     content.document.getElementById("exceptionDialogButton").click();
   });
-  yield exceptionDialogResolved;
-  yield BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
+  await exceptionDialogResolved;
+  await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 }
 
 // Utility function to get a handle on the certificate exception dialog.

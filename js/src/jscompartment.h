@@ -14,12 +14,15 @@
 #include "mozilla/Variant.h"
 #include "mozilla/XorShift128PlusRNG.h"
 
-#include "builtin/RegExp.h"
+#include <stddef.h>
+
+#include "frontend/LanguageExtensions.h"
 #include "gc/Barrier.h"
 #include "gc/NurseryAwareHashMap.h"
 #include "gc/Zone.h"
-#include "vm/GlobalObject.h"
 #include "vm/PIC.h"
+#include "vm/ReceiverGuard.h"
+#include "vm/RegExpShared.h"
 #include "vm/SavedStacks.h"
 #include "vm/TemplateRegistry.h"
 #include "vm/Time.h"
@@ -35,6 +38,7 @@ namespace gc {
 template <typename Node, typename Derived> class ComponentFinder;
 } // namespace gc
 
+class GlobalObject;
 class LexicalEnvironmentObject;
 class ScriptSourceObject;
 struct NativeIterator;
@@ -181,15 +185,11 @@ class CrossCompartmentKey
         return wrapped.match(matcher);
     }
 
-    // Valid for JSObject* and Debugger keys. Crashes immediately if used on a
-    // JSString* key.
     JSCompartment* compartment() {
         struct GetCompartmentFunctor {
             JSCompartment* operator()(JSObject** tp) const { return (*tp)->compartment(); }
             JSCompartment* operator()(JSScript** tp) const { return (*tp)->compartment(); }
-            JSCompartment* operator()(JSString** tp) const {
-                MOZ_CRASH("invalid ccw key"); return nullptr;
-            }
+            JSCompartment* operator()(JSString** tp) const { return nullptr; }
         };
         return applyToWrapped(GetCompartmentFunctor());
     }
@@ -236,9 +236,203 @@ class CrossCompartmentKey
     WrappedType wrapped;
 };
 
+// The data structure for storing CCWs, which has a map per target compartment
+// so we can access them easily. Note string CCWs are stored separately from the
+// others because they have target compartment nullptr.
+class WrapperMap
+{
+    static const size_t InitialInnerMapSize = 4;
 
-using WrapperMap = NurseryAwareHashMap<CrossCompartmentKey, JS::Value,
-                                       CrossCompartmentKey::Hasher, SystemAllocPolicy>;
+    using InnerMap = NurseryAwareHashMap<CrossCompartmentKey,
+                                         JS::Value,
+                                         CrossCompartmentKey::Hasher,
+                                         SystemAllocPolicy>;
+    using OuterMap = GCHashMap<JSCompartment*,
+                               InnerMap,
+                               DefaultHasher<JSCompartment*>,
+                               SystemAllocPolicy>;
+
+    OuterMap map;
+
+  public:
+    class Enum
+    {
+      public:
+        enum SkipStrings : bool {
+            WithStrings = false,
+            WithoutStrings = true
+        };
+
+      private:
+        Enum(const Enum&) = delete;
+        void operator=(const Enum&) = delete;
+
+        void goToNext() {
+            if (outer.isNothing())
+                return;
+            for (; !outer->empty(); outer->popFront()) {
+                JSCompartment* c = outer->front().key();
+                // Need to skip string at first, because the filter may not be
+                // happy with a nullptr.
+                if (!c && skipStrings)
+                    continue;
+                if (filter && !filter->match(c))
+                    continue;
+                InnerMap& m = outer->front().value();
+                if (!m.empty()) {
+                    if (inner.isSome())
+                        inner.reset();
+                    inner.emplace(m);
+                    outer->popFront();
+                    return;
+                }
+            }
+        }
+
+        mozilla::Maybe<OuterMap::Enum> outer;
+        mozilla::Maybe<InnerMap::Enum> inner;
+        const CompartmentFilter* filter;
+        SkipStrings skipStrings;
+
+      public:
+        explicit Enum(WrapperMap& m, SkipStrings s = WithStrings) :
+                filter(nullptr), skipStrings(s) {
+            outer.emplace(m.map);
+            goToNext();
+        }
+
+        Enum(WrapperMap& m, const CompartmentFilter& f, SkipStrings s = WithStrings) :
+                filter(&f), skipStrings(s) {
+            outer.emplace(m.map);
+            goToNext();
+        }
+
+        Enum(WrapperMap& m, JSCompartment* target) {
+            // Leave the outer map as nothing and only iterate the inner map we
+            // find here.
+            auto p = m.map.lookup(target);
+            if (p)
+                inner.emplace(p->value());
+        }
+
+        bool empty() const {
+            return (outer.isNothing() || outer->empty()) &&
+                   (inner.isNothing() || inner->empty());
+        }
+
+        InnerMap::Entry& front() const {
+            MOZ_ASSERT(inner.isSome() && !inner->empty());
+            return inner->front();
+        }
+
+        void popFront() {
+            MOZ_ASSERT(!empty());
+            if (!inner->empty()) {
+                inner->popFront();
+                if (!inner->empty())
+                    return;
+            }
+            goToNext();
+        }
+
+        void removeFront() {
+            MOZ_ASSERT(inner.isSome());
+            inner->removeFront();
+        }
+    };
+
+    class Ptr : public InnerMap::Ptr
+    {
+        friend class WrapperMap;
+
+        InnerMap* map;
+
+        Ptr() : InnerMap::Ptr(), map(nullptr) {}
+        Ptr(const InnerMap::Ptr& p, InnerMap& m) : InnerMap::Ptr(p), map(&m) {}
+    };
+
+    MOZ_MUST_USE bool init(uint32_t len) { return map.init(len); }
+
+    bool empty() {
+        if (map.empty())
+            return true;
+        for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
+            if (!e.front().value().empty())
+                return false;
+        }
+        return true;
+    }
+
+    Ptr lookup(const CrossCompartmentKey& k) const {
+        auto op = map.lookup(const_cast<CrossCompartmentKey&>(k).compartment());
+        if (op) {
+            auto ip = op->value().lookup(k);
+            if (ip)
+                return Ptr(ip, op->value());
+        }
+        return Ptr();
+    }
+
+    void remove(Ptr p) {
+        if (p)
+            p.map->remove(p);
+    }
+
+    MOZ_MUST_USE bool put(const CrossCompartmentKey& k, const JS::Value& v) {
+        JSCompartment* c = const_cast<CrossCompartmentKey&>(k).compartment();
+        MOZ_ASSERT(k.is<JSString*>() == !c);
+        auto p = map.lookupForAdd(c);
+        if (!p) {
+            InnerMap m;
+            if (!m.init(InitialInnerMapSize) || !map.add(p, c, mozilla::Move(m)))
+                return false;
+        }
+        return p->value().put(k, v);
+    }
+
+    size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
+        size_t size = map.sizeOfExcludingThis(mallocSizeOf);
+        for (OuterMap::Enum e(map); !e.empty(); e.popFront())
+            size += e.front().value().sizeOfExcludingThis(mallocSizeOf);
+        return size;
+    }
+    size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) {
+        size_t size = map.sizeOfIncludingThis(mallocSizeOf);
+        for (OuterMap::Enum e(map); !e.empty(); e.popFront())
+            size += e.front().value().sizeOfIncludingThis(mallocSizeOf);
+        return size;
+    }
+
+    bool hasNurseryAllocatedWrapperEntries(const CompartmentFilter& f) {
+        for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
+            JSCompartment* c = e.front().key();
+            if (c && !f.match(c))
+                continue;
+            InnerMap& m = e.front().value();
+            if (m.hasNurseryEntries())
+                return true;
+        }
+        return false;
+    }
+
+    void sweepAfterMinorGC(JSTracer* trc) {
+        for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
+            InnerMap& m = e.front().value();
+            m.sweepAfterMinorGC(trc);
+            if (m.empty())
+                e.removeFront();
+        }
+    }
+
+    void sweep() {
+        for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
+            InnerMap& m = e.front().value();
+            m.sweep();
+            if (m.empty())
+                e.removeFront();
+        }
+    }
+};
 
 // We must ensure that all newly allocated JSObjects get their metadata
 // set. However, metadata builders may require the new object be in a sane
@@ -324,6 +518,27 @@ class MOZ_RAII AutoSetNewObjectMetadata : private JS::CustomAutoRooter
     ~AutoSetNewObjectMetadata();
 };
 
+class PropertyIteratorObject;
+
+struct IteratorHashPolicy
+{
+    struct Lookup {
+        ReceiverGuard* guards;
+        size_t numGuards;
+        uint32_t key;
+
+        Lookup(ReceiverGuard* guards, size_t numGuards, uint32_t key)
+          : guards(guards), numGuards(numGuards), key(key)
+        {
+            MOZ_ASSERT(numGuards > 0);
+        }
+    };
+    static HashNumber hash(const Lookup& lookup) {
+        return lookup.key;
+    }
+    static bool match(PropertyIteratorObject* obj, const Lookup& lookup);
+};
+
 } /* namespace js */
 
 namespace js {
@@ -406,9 +621,11 @@ struct JSCompartment
   public:
     bool                         isSelfHosting;
     bool                         marked;
-    bool                         warnedAboutDateToLocaleFormat;
-    bool                         warnedAboutExprClosure;
-    bool                         warnedAboutForEach;
+    bool                         warnedAboutDateToLocaleFormat : 1;
+    bool                         warnedAboutExprClosure : 1;
+    bool                         warnedAboutForEach : 1;
+    bool                         warnedAboutLegacyGenerator : 1;
+    bool                         warnedAboutObjectWatch : 1;
     uint32_t                     warnedAboutStringGenericsMethods;
 
 #ifdef DEBUG
@@ -453,12 +670,12 @@ struct JSCompartment
         return runtime_;
     }
 
-    /*
-     * Nb: global_ might be nullptr, if (a) it's the atoms compartment, or
-     * (b) the compartment's global has been collected.  The latter can happen
-     * if e.g. a string in a compartment is rooted but no object is, and thus
-     * the global isn't rooted, and thus the global can be finalized while the
-     * compartment lives on.
+    /* The global object for this compartment.
+     *
+     * This returns nullptr if this is the atoms compartment.  (The global_
+     * field is also null briefly during GC, after the global object is
+     * collected; but when that happens the JSCompartment is destroyed during
+     * the same GC.)
      *
      * In contrast, JSObject::global() is infallible because marking a JSObject
      * always marks its global as well.
@@ -469,10 +686,14 @@ struct JSCompartment
     /* An unbarriered getter for use while tracing. */
     inline js::GlobalObject* unsafeUnbarrieredMaybeGlobal() const;
 
+    /* True if a global object exists, but it's being collected. */
+    inline bool globalIsAboutToBeFinalized();
+
     inline void initGlobal(js::GlobalObject& global);
 
   public:
     void*                        data;
+    void*                        realmData;
 
   private:
     const js::AllocationMetadataBuilder *allocationMetadataBuilder;
@@ -480,9 +701,6 @@ struct JSCompartment
     js::SavedStacks              savedStacks_;
 
     js::WrapperMap               crossCompartmentWrappers;
-
-    using CCKeyVector = mozilla::Vector<js::CrossCompartmentKey, 0, js::SystemAllocPolicy>;
-    CCKeyVector                  nurseryCCKeys;
 
     // The global environment record's [[VarNames]] list that contains all
     // names declared using FunctionDeclaration, GeneratorDeclaration, and
@@ -498,6 +716,11 @@ struct JSCompartment
     int64_t                      lastAnimationTime;
 
     js::RegExpCompartment        regExps;
+
+    using IteratorCache = js::HashSet<js::PropertyIteratorObject*,
+                                      js::IteratorHashPolicy,
+                                      js::SystemAllocPolicy>;
+    IteratorCache iteratorCache;
 
     /*
      * For generational GC, record whether a write barrier has added this
@@ -543,7 +766,6 @@ struct JSCompartment
                                 size_t* lazyArrayBuffers,
                                 size_t* objectMetadataTables,
                                 size_t* crossCompartmentWrappers,
-                                size_t* regexpCompartment,
                                 size_t* savedStacksSet,
                                 size_t* varNamesSet,
                                 size_t* nonSyntacticLexicalScopes,
@@ -614,7 +836,8 @@ struct JSCompartment
         DebuggerObservesAllExecution = 1 << 1,
         DebuggerObservesAsmJS = 1 << 2,
         DebuggerObservesCoverage = 1 << 3,
-        DebuggerNeedsDelazification = 1 << 4
+        DebuggerObservesBinarySource = 1 << 4,
+        DebuggerNeedsDelazification = 1 << 5
     };
 
     unsigned debugModeBits;
@@ -623,7 +846,8 @@ struct JSCompartment
     static const unsigned DebuggerObservesMask = IsDebuggee |
                                                  DebuggerObservesAllExecution |
                                                  DebuggerObservesCoverage |
-                                                 DebuggerObservesAsmJS;
+                                                 DebuggerObservesAsmJS |
+                                                 DebuggerObservesBinarySource;
 
     void updateDebuggerObservesFlag(unsigned flag);
 
@@ -645,6 +869,7 @@ struct JSCompartment
     ~JSCompartment();
 
     MOZ_MUST_USE bool init(JSContext* maybecx);
+    void destroy(js::FreeOp* fop);
 
     MOZ_MUST_USE inline bool wrap(JSContext* cx, JS::MutableHandleValue vp);
 
@@ -669,8 +894,22 @@ struct JSCompartment
         crossCompartmentWrappers.remove(p);
     }
 
+    bool hasNurseryAllocatedWrapperEntries(const js::CompartmentFilter& f) {
+        return crossCompartmentWrappers.hasNurseryAllocatedWrapperEntries(f);
+    }
+
     struct WrapperEnum : public js::WrapperMap::Enum {
         explicit WrapperEnum(JSCompartment* c) : js::WrapperMap::Enum(c->crossCompartmentWrappers) {}
+    };
+
+    struct NonStringWrapperEnum : public js::WrapperMap::Enum {
+        explicit NonStringWrapperEnum(JSCompartment* c) : js::WrapperMap::Enum(c->crossCompartmentWrappers, WithoutStrings) {}
+        explicit NonStringWrapperEnum(JSCompartment* c, const js::CompartmentFilter& f) : js::WrapperMap::Enum(c->crossCompartmentWrappers, f, WithoutStrings) {}
+        explicit NonStringWrapperEnum(JSCompartment* c, JSCompartment* target) : js::WrapperMap::Enum(c->crossCompartmentWrappers, target) { MOZ_ASSERT(target); }
+    };
+
+    struct StringWrapperEnum : public js::WrapperMap::Enum {
+        explicit StringWrapperEnum(JSCompartment* c) : js::WrapperMap::Enum(c->crossCompartmentWrappers, nullptr) {}
     };
 
     js::LexicalEnvironmentObject*
@@ -681,10 +920,10 @@ struct JSCompartment
      * This method traces data that is live iff we know that this compartment's
      * global is still live.
      */
-    void trace(JSTracer* trc);
+    void traceGlobal(JSTracer* trc);
     /*
      * This method traces JSCompartment-owned GC roots that are considered live
-     * regardless of whether the JSCompartment itself is still live.
+     * regardless of whether the compartment's global is still live.
      */
     void traceRoots(JSTracer* trc, js::gc::GCRuntime::TraceOrMarkRuntime traceOrMark);
     /*
@@ -707,7 +946,8 @@ struct JSCompartment
 
     void sweepCrossCompartmentWrappers();
     void sweepSavedStacks();
-    void sweepGlobalObject(js::FreeOp* fop);
+    void sweepTemplateLiteralMap();
+    void sweepGlobalObject();
     void sweepSelfHostingScriptSource();
     void sweepJitCompartment(js::FreeOp* fop);
     void sweepRegExps();
@@ -715,6 +955,7 @@ struct JSCompartment
     void sweepNativeIterators();
     void sweepTemplateObjects();
     void sweepVarNames();
+    void sweepWatchpoints();
 
     void purge();
     void clearTables();
@@ -763,8 +1004,6 @@ struct JSCompartment
     JSObject* getExistingTemplateLiteralObject(JSObject* rawStrings);
 
     void findOutgoingEdges(js::gc::ZoneComponentFinder& finder);
-
-    MOZ_MUST_USE bool findDeadProxyZoneEdges(bool* foundAny);
 
     js::DtoaCache dtoaCache;
     js::NewProxyCache newProxyCache;
@@ -858,6 +1097,15 @@ struct JSCompartment
         updateDebuggerObservesFlag(DebuggerObservesAsmJS);
     }
 
+    bool debuggerObservesBinarySource() const {
+        static const unsigned Mask = IsDebuggee | DebuggerObservesBinarySource;
+        return (debugModeBits & Mask) == Mask;
+    }
+
+    void updateDebuggerObservesBinarySource() {
+        updateDebuggerObservesFlag(DebuggerObservesBinarySource);
+    }
+
     // True if this compartment's global is a debuggee of some Debugger object
     // whose collectCoverageInfo flag is true.
     bool debuggerObservesCoverage() const {
@@ -872,6 +1120,7 @@ struct JSCompartment
     bool collectCoverageForDebug() const;
     bool collectCoverageForPGO() const;
     void clearScriptCounts();
+    void clearScriptNames();
 
     bool needsDelazificationForDebugger() const {
         return debugModeBits & DebuggerNeedsDelazification;
@@ -898,6 +1147,7 @@ struct JSCompartment
     js::WatchpointMap* watchpointMap;
 
     js::ScriptCountsMap* scriptCountsMap;
+    js::ScriptNameMap* scriptNameMap;
 
     js::DebugScriptMap* debugScriptMap;
 
@@ -909,9 +1159,6 @@ struct JSCompartment
      * suppression.
      */
     js::NativeIterator* enumerators;
-
-    /* Native iterator most recently started. */
-    js::PropertyIteratorObject* lastCachedNativeIterator;
 
   private:
     /* Used by memory reporters and invalid otherwise. */
@@ -955,33 +1202,18 @@ struct JSCompartment
         return jitCompartment_;
     }
 
-    enum DeprecatedLanguageExtension {
-        DeprecatedForEach = 0,              // JS 1.6+
-        // NO LONGER USING 1
-        DeprecatedLegacyGenerator = 2,      // JS 1.7+
-        DeprecatedExpressionClosure = 3,    // Added in JS 1.8
-        // NO LONGER USING 4
-        // NO LONGER USING 5
-        // NO LONGER USING 6
-        // NO LONGER USING 7
-        // NO LONGER USING 8
-        // NO LONGER USING 9
-        DeprecatedBlockScopeFunRedecl = 10,
-        DeprecatedLanguageExtensionCount
-    };
-
     js::ArgumentsObject* getOrCreateArgumentsTemplateObject(JSContext* cx, bool mapped);
 
     js::ArgumentsObject* maybeArgumentsTemplateObject(bool mapped) const;
 
   private:
     // Used for collecting telemetry on SpiderMonkey's deprecated language extensions.
-    bool sawDeprecatedLanguageExtension[DeprecatedLanguageExtensionCount];
+    bool sawDeprecatedLanguageExtension[size_t(js::DeprecatedLanguageExtension::Count)];
 
     void reportTelemetry();
 
   public:
-    void addTelemetry(const char* filename, DeprecatedLanguageExtension e);
+    void addTelemetry(const char* filename, js::DeprecatedLanguageExtension e);
 
   public:
     // Aggregated output used to collect JSScript hit counts when code coverage
@@ -1052,8 +1284,11 @@ class AutoCompartment
     JSCompartment* origin() const { return origin_; }
 
   protected:
+    inline AutoCompartment(JSContext* cx, JSCompartment* target);
+
+    // Used only for entering the atoms compartment.
     inline AutoCompartment(JSContext* cx, JSCompartment* target,
-                           AutoLockForExclusiveAccess* maybeLock = nullptr);
+                           AutoLockForExclusiveAccess& lock);
 
   private:
     AutoCompartment(const AutoCompartment&) = delete;
@@ -1174,17 +1409,18 @@ class MOZ_RAII AutoSuppressAllocationMetadataBuilder {
 
   public:
     explicit AutoSuppressAllocationMetadataBuilder(JSContext* cx)
+      : AutoSuppressAllocationMetadataBuilder(cx->compartment()->zone())
     { }
 
     explicit AutoSuppressAllocationMetadataBuilder(JS::Zone* zone)
-    //  : zone(zone),
-    //    saved(zone->suppressAllocationMetadataBuilder)
+      : zone(zone),
+        saved(zone->suppressAllocationMetadataBuilder)
     {
-        //zone->suppressAllocationMetadataBuilder = true;
+        zone->suppressAllocationMetadataBuilder = true;
     }
 
     ~AutoSuppressAllocationMetadataBuilder() {
-        //zone->suppressAllocationMetadataBuilder = saved;
+        zone->suppressAllocationMetadataBuilder = saved;
     }
 };
 

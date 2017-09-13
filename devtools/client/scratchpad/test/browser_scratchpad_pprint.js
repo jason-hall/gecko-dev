@@ -6,7 +6,7 @@ function test()
 {
   waitForExplicitFinish();
 
-  gBrowser.selectedTab = gBrowser.addTab();
+  gBrowser.selectedTab = BrowserTestUtils.addTab(gBrowser);
   gBrowser.selectedBrowser.addEventListener("load", function () {
     openScratchpad(runTests);
   }, {capture: true, once: true});
@@ -22,7 +22,7 @@ function runTests(sw)
     const prettyText = sp.getText();
     ok(prettyText.includes("\n"));
     finish();
-  }).then(null, error => {
+  }).catch(error => {
     ok(false, error);
   });
 }

@@ -8,7 +8,7 @@ const { Ci, Cc, Cr, CC } = require("chrome");
 const Services = require("Services");
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
 const { dumpv } = DevToolsUtils;
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/shared/old-event-emitter");
 const defer = require("devtools/shared/defer");
 
 DevToolsUtils.defineLazyGetter(this, "IOUtil", () => {
@@ -99,13 +99,13 @@ StreamCopier.prototype = {
   copy: function () {
     // Dispatch to the next tick so that it's possible to attach a progress
     // event listener, even for extremely fast copies (like when testing).
-    Services.tm.currentThread.dispatch(() => {
+    Services.tm.dispatchToMainThread(() => {
       try {
         this._copy();
       } catch (e) {
         this._deferred.reject(e);
       }
-    }, 0);
+    });
     return this;
   },
 

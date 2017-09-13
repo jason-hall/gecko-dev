@@ -31,8 +31,6 @@ public:
 
   mozilla::ipc::IPCResult RecvUpdateOverscrollOffset(const float& aX, const float& aY, const bool& aIsRootContent) override;
 
-  mozilla::ipc::IPCResult RecvSetScrollingRootContent(const bool& aIsRootContent) override;
-
   mozilla::ipc::IPCResult RecvNotifyMozMouseScrollEvent(const ViewID& aScrollId,
                                                         const nsString& aEvent) override;
 
@@ -43,6 +41,8 @@ public:
   mozilla::ipc::IPCResult RecvNotifyFlushComplete() override;
 
   mozilla::ipc::IPCResult RecvNotifyAsyncScrollbarDragRejected(const ViewID& aScrollId) override;
+
+  mozilla::ipc::IPCResult RecvNotifyAutoscrollHandledByAPZ(const ViewID& aScrollId) override;
 
   mozilla::ipc::IPCResult RecvDestroy() override;
 

@@ -9,6 +9,8 @@
 #include "mozilla/layers/Compositor.h"  // for Compositor
 #include "mozilla/layers/Effects.h"     // for TexturedEffect, Effect, etc
 #include "mozilla/layers/LayerManagerComposite.h"     // for TexturedEffect, Effect, etc
+#include "mozilla/layers/WebRenderBridgeParent.h"
+#include "mozilla/layers/AsyncImagePipelineManager.h"
 #include "nsAString.h"
 #include "nsDebug.h"                    // for NS_WARNING, NS_ASSERTION
 #include "nsPrintfCString.h"            // for nsPrintfCString
@@ -25,10 +27,13 @@ class ISurfaceAllocator;
 WebRenderImageHost::WebRenderImageHost(const TextureInfo& aTextureInfo)
   : CompositableHost(aTextureInfo)
   , ImageComposite()
+  , mWrBridge(nullptr)
+  , mWrBridgeBindings(0)
 {}
 
 WebRenderImageHost::~WebRenderImageHost()
 {
+  MOZ_ASSERT(!mWrBridge);
 }
 
 void
@@ -62,6 +67,27 @@ WebRenderImageHost::UseTextureHost(const nsTArray<TimedTexture>& aTextures)
 
   mImages.SwapElements(newImages);
   newImages.Clear();
+
+  if (mWrBridge && GetAsyncRef()) {
+    mWrBridge->ScheduleComposition();
+  }
+
+  // Video producers generally send replacement images with the same frameID but
+  // slightly different timestamps in order to sync with the audio clock. This
+  // means that any CompositeUntil() call we made in Composite() may no longer
+  // guarantee that we'll composite until the next frame is ready. Fix that here.
+  if (mWrBridge && mLastFrameID >= 0) {
+    MOZ_ASSERT(mWrBridge->AsyncImageManager());
+    for (size_t i = 0; i < mImages.Length(); ++i) {
+      bool frameComesAfter = mImages[i].mFrameID > mLastFrameID ||
+                             mImages[i].mProducerID != mLastProducerID;
+      if (frameComesAfter && !mImages[i].mTimeStamp.IsNull()) {
+        mWrBridge->AsyncImageManager()->CompositeUntil(mImages[i].mTimeStamp +
+                           TimeDuration::FromMilliseconds(BIAS_TIME_MS));
+        break;
+      }
+    }
+  }
 }
 
 void
@@ -77,6 +103,7 @@ WebRenderImageHost::CleanupResources()
   nsTArray<TimedImage> newImages;
   mImages.SwapElements(newImages);
   newImages.Clear();
+  SetCurrentTextureHost(nullptr);
 }
 
 void
@@ -95,8 +122,12 @@ WebRenderImageHost::RemoveTextureHost(TextureHost* aTexture)
 TimeStamp
 WebRenderImageHost::GetCompositionTime() const
 {
-  // XXX temporary workaround
-  return TimeStamp::Now();
+  TimeStamp time;
+  if (mWrBridge) {
+    MOZ_ASSERT(mWrBridge->AsyncImageManager());
+    time = mWrBridge->AsyncImageManager()->GetCompositionTime();
+  }
+  return time;
 }
 
 TextureHost*
@@ -109,11 +140,73 @@ WebRenderImageHost::GetAsTextureHost(IntRect* aPictureRect)
   return nullptr;
 }
 
+TextureHost*
+WebRenderImageHost::GetAsTextureHostForComposite()
+{
+  if (!mWrBridge) {
+    return nullptr;
+  }
+
+  int imageIndex = ChooseImageIndex();
+  if (imageIndex < 0) {
+    SetCurrentTextureHost(nullptr);
+    return nullptr;
+  }
+
+  if (uint32_t(imageIndex) + 1 < mImages.Length()) {
+    MOZ_ASSERT(mWrBridge->AsyncImageManager());
+    mWrBridge->AsyncImageManager()->CompositeUntil(mImages[imageIndex + 1].mTimeStamp + TimeDuration::FromMilliseconds(BIAS_TIME_MS));
+  }
+
+  TimedImage* img = &mImages[imageIndex];
+
+  if (mLastFrameID != img->mFrameID || mLastProducerID != img->mProducerID) {
+    if (mAsyncRef) {
+      ImageCompositeNotificationInfo info;
+      info.mImageBridgeProcessId = mAsyncRef.mProcessId;
+      info.mNotification = ImageCompositeNotification(
+        mAsyncRef.mHandle,
+        img->mTimeStamp, mWrBridge->AsyncImageManager()->GetCompositionTime(),
+        img->mFrameID, img->mProducerID);
+      mWrBridge->AsyncImageManager()->AppendImageCompositeNotification(info);
+    }
+    mLastFrameID = img->mFrameID;
+    mLastProducerID = img->mProducerID;
+  }
+  SetCurrentTextureHost(img->mTextureHost);
+
+  // XXX Add UpdateBias()
+
+  return mCurrentTextureHost;
+}
+
+void
+WebRenderImageHost::SetCurrentTextureHost(TextureHost* aTexture)
+{
+  if (aTexture == mCurrentTextureHost.get()) {
+    return;
+  }
+
+  if (mWrBridge &&
+      !!mCurrentTextureHost &&
+      mCurrentTextureHost != aTexture &&
+      mCurrentTextureHost->AsWebRenderTextureHost()) {
+    MOZ_ASSERT(mWrBridge->AsyncImageManager());
+    wr::PipelineId piplineId = mWrBridge->PipelineId();
+    wr::Epoch epoch = mWrBridge->WrEpoch();
+    mWrBridge->AsyncImageManager()->HoldExternalImage(
+      piplineId,
+      epoch,
+      mCurrentTextureHost->AsWebRenderTextureHost());
+  }
+
+  mCurrentTextureHost = aTexture;
+}
+
 void WebRenderImageHost::Attach(Layer* aLayer,
                        TextureSourceProvider* aProvider,
                        AttachFlags aFlags)
 {
-  MOZ_ASSERT_UNREACHABLE("unexpected to be called");
 }
 
 void
@@ -198,9 +291,33 @@ WebRenderImageHost::GetImageSize() const
 {
   const TimedImage* img = ChooseImage();
   if (img) {
-    return IntSize(img->mPictureRect.width, img->mPictureRect.height);
+    return IntSize(img->mPictureRect.Width(), img->mPictureRect.Height());
   }
   return IntSize();
+}
+
+void
+WebRenderImageHost::SetWrBridge(WebRenderBridgeParent* aWrBridge)
+{
+  // For image hosts created through ImageBridgeParent, there may be multiple
+  // references to it due to the order of creation and freeing of layers by
+  // the layer tree. However this should be limited to things such as video
+  // which will not be reused across different WebRenderBridgeParent objects.
+  MOZ_ASSERT(aWrBridge);
+  MOZ_ASSERT(!mWrBridge || mWrBridge == aWrBridge);
+  mWrBridge = aWrBridge;
+  ++mWrBridgeBindings;
+}
+
+void
+WebRenderImageHost::ClearWrBridge()
+{
+  MOZ_ASSERT(mWrBridgeBindings > 0);
+  --mWrBridgeBindings;
+  if (mWrBridgeBindings == 0) {
+    SetCurrentTextureHost(nullptr);
+    mWrBridge = nullptr;
+  }
 }
 
 } // namespace layers

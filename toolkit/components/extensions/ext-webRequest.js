@@ -1,19 +1,17 @@
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetter(this, "MatchPattern",
-                                  "resource://gre/modules/MatchPattern.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
-                                  "resource://gre/modules/NetUtil.jsm");
+// The ext-* files are imported into the same scopes.
+/* import-globals-from ext-toolkit.js */
+
+// This file expectes tabTracker to be defined in the global scope (e.g.
+// by ext-utils.js).
+/* global tabTracker */
+
 XPCOMUtils.defineLazyModuleGetter(this, "WebRequest",
                                   "resource://gre/modules/WebRequest.jsm");
 
-Cu.import("resource://gre/modules/ExtensionManagement.jsm");
-var {
-  SingletonEventManager,
-} = ExtensionUtils;
-
 // EventManager-like class specifically for WebRequest. Inherits from
-// SingletonEventManager. Takes care of converting |details| parameter
+// EventManager. Takes care of converting |details| parameter
 // when invoking listeners.
 function WebRequestEventManager(context, eventName) {
   let name = `webRequest.${eventName}`;
@@ -27,13 +25,13 @@ function WebRequestEventManager(context, eventName) {
 
       // Check hosts permissions for both the resource being requested,
       const hosts = context.extension.whiteListedHosts;
-      if (!hosts.matchesIgnoringPath(NetUtil.newURI(data.url))) {
+      if (!hosts.matches(Services.io.newURI(data.url))) {
         return;
       }
       // and the origin that is loading the resource.
       const origin = data.documentUrl;
       const own = origin && origin.startsWith(context.extension.getURL());
-      if (origin && !own && !hosts.matchesIgnoringPath(NetUtil.newURI(origin))) {
+      if (origin && !own && !hosts.matches(Services.io.newURI(origin))) {
         return;
       }
 
@@ -57,8 +55,8 @@ function WebRequestEventManager(context, eventName) {
         tabId: browserData.tabId,
         type: data.type,
         timeStamp: Date.now(),
-        frameId: data.type == "main_frame" ? 0 : ExtensionManagement.getFrameId(data.windowId),
-        parentFrameId: ExtensionManagement.getParentFrameId(data.parentWindowId, data.windowId),
+        frameId: data.windowId,
+        parentFrameId: data.parentWindowId,
       };
 
       const maybeCached = ["onResponseStarted", "onBeforeRedirect", "onCompleted", "onErrorOccurred"];
@@ -71,7 +69,7 @@ function WebRequestEventManager(context, eventName) {
       }
 
       let optional = ["requestHeaders", "responseHeaders", "statusCode", "statusLine", "error", "redirectUrl",
-                      "requestBody", "scheme", "realm", "isProxy", "challenger"];
+                      "requestBody", "scheme", "realm", "isProxy", "challenger", "proxyInfo"];
       for (let opt of optional) {
         if (opt in data) {
           data2[opt] = data[opt];
@@ -83,8 +81,12 @@ function WebRequestEventManager(context, eventName) {
 
     let filter2 = {};
     if (filter.urls) {
-      filter2.urls = new MatchPattern(filter.urls);
-      if (!filter2.urls.overlapsPermissions(context.extension.whiteListedHosts, context.extension.optionalOrigins)) {
+      let perms = new MatchPatternSet([...context.extension.whiteListedHosts.patterns,
+                                       ...context.extension.optionalOrigins.patterns]);
+
+      filter2.urls = new MatchPatternSet(filter.urls);
+
+      if (!perms.overlapsAll(filter2.urls)) {
         Cu.reportError("The webRequest.addListener filter doesn't overlap with host permissions.");
       }
     }
@@ -98,10 +100,12 @@ function WebRequestEventManager(context, eventName) {
       filter2.windowId = filter.windowId;
     }
 
+    let blockingAllowed = context.extension.hasPermission("webRequestBlocking");
+
     let info2 = [];
     if (info) {
       for (let desc of info) {
-        if (desc == "blocking" && !context.extension.hasPermission("webRequestBlocking")) {
+        if (desc == "blocking" && !blockingAllowed) {
           Cu.reportError("Using webRequest.addListener with the blocking option " +
                          "requires the 'webRequestBlocking' permission.");
         } else {
@@ -110,16 +114,24 @@ function WebRequestEventManager(context, eventName) {
       }
     }
 
-    WebRequest[eventName].addListener(listener, filter2, info2);
+    let listenerDetails = {
+      addonId: context.extension.id,
+      blockingAllowed,
+      tabParent: context.xulBrowser.frameLoader.tabParent,
+    };
+
+    WebRequest[eventName].addListener(
+      listener, filter2, info2,
+      listenerDetails);
     return () => {
       WebRequest[eventName].removeListener(listener);
     };
   };
 
-  return SingletonEventManager.call(this, context, name, register);
+  return EventManager.call(this, context, name, register);
 }
 
-WebRequestEventManager.prototype = Object.create(SingletonEventManager.prototype);
+WebRequestEventManager.prototype = Object.create(EventManager.prototype);
 
 this.webRequest = class extends ExtensionAPI {
   getAPI(context) {

@@ -26,9 +26,8 @@ use dom::nodelist::NodeList;
 use dom::validation::Validatable;
 use dom::virtualmethods::VirtualMethods;
 use dom_struct::dom_struct;
-use html5ever_atoms::LocalName;
-use ipc_channel::ipc::IpcSender;
-use script_traits::ScriptMsg as ConstellationMsg;
+use html5ever::{LocalName, Prefix};
+use script_traits::ScriptToConstellationChan;
 use std::cell::Cell;
 use std::default::Default;
 use std::ops::Range;
@@ -40,7 +39,7 @@ use textinput::{KeyReaction, Lines, SelectionDirection, TextInput};
 pub struct HTMLTextAreaElement {
     htmlelement: HTMLElement,
     #[ignore_heap_size_of = "#7193"]
-    textinput: DOMRefCell<TextInput<IpcSender<ConstellationMsg>>>,
+    textinput: DOMRefCell<TextInput<ScriptToConstellationChan>>,
     placeholder: DOMRefCell<DOMString>,
     // https://html.spec.whatwg.org/multipage/#concept-textarea-dirty
     value_changed: Cell<bool>,
@@ -107,9 +106,9 @@ static DEFAULT_ROWS: u32 = 2;
 
 impl HTMLTextAreaElement {
     fn new_inherited(local_name: LocalName,
-                     prefix: Option<DOMString>,
+                     prefix: Option<Prefix>,
                      document: &Document) -> HTMLTextAreaElement {
-        let chan = document.window().upcast::<GlobalScope>().constellation_chan().clone();
+        let chan = document.window().upcast::<GlobalScope>().script_to_constellation_chan().clone();
         HTMLTextAreaElement {
             htmlelement:
                 HTMLElement::new_inherited_with_state(IN_ENABLED_STATE | IN_READ_WRITE_STATE,
@@ -124,7 +123,7 @@ impl HTMLTextAreaElement {
 
     #[allow(unrooted_must_root)]
     pub fn new(local_name: LocalName,
-               prefix: Option<DOMString>,
+               prefix: Option<Prefix>,
                document: &Document) -> Root<HTMLTextAreaElement> {
         Node::reflect_node(box HTMLTextAreaElement::new_inherited(local_name, prefix, document),
                            document,

@@ -35,94 +35,98 @@ const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Services.jsm");
 
 Cu.import("resource://formautofill/FormAutofillUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "OS",
-                                  "resource://gre/modules/osfile.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ProfileStorage",
-                                  "resource://formautofill/ProfileStorage.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "FormAutofillPreferences",
                                   "resource://formautofill/FormAutofillPreferences.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "FormAutofillDoorhanger",
+                                  "resource://formautofill/FormAutofillDoorhanger.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "MasterPassword",
+                                  "resource://formautofill/MasterPassword.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "RecentWindow",
+                                  "resource:///modules/RecentWindow.jsm");
 
 this.log = null;
 FormAutofillUtils.defineLazyLogGetter(this, this.EXPORTED_SYMBOLS[0]);
 
-const PROFILE_JSON_FILE_NAME = "autofill-profiles.json";
-const ENABLED_PREF = "browser.formautofill.enabled";
+const {
+  ENABLED_AUTOFILL_ADDRESSES_PREF,
+  ENABLED_AUTOFILL_CREDITCARDS_PREF,
+  CREDITCARDS_COLLECTION_NAME,
+} = FormAutofillUtils;
 
 function FormAutofillParent() {
+  // Lazily load the storage JSM to avoid disk I/O until absolutely needed.
+  // Once storage is loaded we need to update saved field names and inform content processes.
+  XPCOMUtils.defineLazyGetter(this, "profileStorage", () => {
+    let {profileStorage} = Cu.import("resource://formautofill/ProfileStorage.jsm", {});
+    log.debug("Loading profileStorage");
+
+    profileStorage.initialize().then(() => {
+      // Update the saved field names to compute the status and update child processes.
+      this._updateSavedFieldNames();
+    });
+
+    return profileStorage;
+  });
 }
 
 FormAutofillParent.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsISupports, Ci.nsIObserver]),
 
-  _profileStore: null,
-
   /**
-   * Whether Form Autofill is enabled in preferences.
-   * Caches the latest value of this._getStatus().
+   * Cache of the Form Autofill status (considering preferences and storage).
    */
-  _enabled: false,
+  _active: null,
 
   /**
    * Initializes ProfileStorage and registers the message handler.
    */
-  init() {
-    log.debug("init");
-    let storePath = OS.Path.join(OS.Constants.Path.profileDir, PROFILE_JSON_FILE_NAME);
-    this._profileStore = new ProfileStorage(storePath);
-    this._profileStore.initialize();
-
-    Services.obs.addObserver(this, "advanced-pane-loaded", false);
-    Services.ppmm.addMessageListener("FormAutofill:GetProfiles", this);
-    Services.ppmm.addMessageListener("FormAutofill:SaveProfile", this);
-    Services.ppmm.addMessageListener("FormAutofill:RemoveProfiles", this);
+  async init() {
+    Services.obs.addObserver(this, "sync-pane-loaded");
+    Services.ppmm.addMessageListener("FormAutofill:InitStorage", this);
+    Services.ppmm.addMessageListener("FormAutofill:GetRecords", this);
+    Services.ppmm.addMessageListener("FormAutofill:SaveAddress", this);
+    Services.ppmm.addMessageListener("FormAutofill:SaveCreditCard", this);
+    Services.ppmm.addMessageListener("FormAutofill:RemoveAddresses", this);
+    Services.ppmm.addMessageListener("FormAutofill:RemoveCreditCards", this);
+    Services.ppmm.addMessageListener("FormAutofill:OpenPreferences", this);
+    Services.ppmm.addMessageListener("FormAutofill:GetDecryptedString", this);
+    Services.mm.addMessageListener("FormAutofill:OnFormSubmit", this);
 
     // Observing the pref and storage changes
-    Services.prefs.addObserver(ENABLED_PREF, this, false);
-    Services.obs.addObserver(this, "formautofill-storage-changed", false);
-
-    // Force to trigger the onStatusChanged function for setting listeners properly
-    // while initizlization
-    this._setStatus(this._getStatus());
-    this._updateSavedFieldNames();
+    Services.prefs.addObserver(ENABLED_AUTOFILL_ADDRESSES_PREF, this);
+    Services.prefs.addObserver(ENABLED_AUTOFILL_CREDITCARDS_PREF, this);
+    Services.obs.addObserver(this, "formautofill-storage-changed");
   },
 
   observe(subject, topic, data) {
     log.debug("observe:", topic, "with data:", data);
     switch (topic) {
-      case "advanced-pane-loaded": {
+      case "sync-pane-loaded": {
         let formAutofillPreferences = new FormAutofillPreferences();
         let document = subject.document;
         let prefGroup = formAutofillPreferences.init(document);
-        let parentNode = document.getElementById("mainPrefPane");
-        let insertBeforeNode = document.getElementById("locationBarGroup");
+        let parentNode = document.getElementById("passwordsGroup");
+        let insertBeforeNode = document.getElementById("masterPasswordRow");
         parentNode.insertBefore(prefGroup, insertBeforeNode);
         break;
       }
 
       case "nsPref:changed": {
-        // Observe pref changes and update _enabled cache if status is changed.
-        let currentStatus = this._getStatus();
-        if (currentStatus !== this._enabled) {
-          this._setStatus(currentStatus);
-        }
+        // Observe pref changes and update _active cache if status is changed.
+        this._updateStatus();
         break;
       }
 
       case "formautofill-storage-changed": {
-        // Early exit if the action is not "add" nor "remove"
-        if (data != "add" && data != "remove") {
+        // Early exit if only metadata is changed
+        if (data == "notifyUsed") {
           break;
         }
 
         this._updateSavedFieldNames();
-        let currentStatus = this._getStatus();
-        if (currentStatus !== this._enabled) {
-          this._setStatus(currentStatus);
-        }
         break;
       }
 
@@ -136,35 +140,37 @@ FormAutofillParent.prototype = {
    * Broadcast the status to frames when the form autofill status changes.
    */
   _onStatusChanged() {
-    log.debug("_onStatusChanged: Status changed to", this._enabled);
-    Services.ppmm.broadcastAsyncMessage("FormAutofill:enabledStatus", this._enabled);
+    log.debug("_onStatusChanged: Status changed to", this._active);
+    Services.ppmm.broadcastAsyncMessage("FormAutofill:enabledStatus", this._active);
     // Sync process data autofillEnabled to make sure the value up to date
     // no matter when the new content process is initialized.
-    Services.ppmm.initialProcessData.autofillEnabled = this._enabled;
+    Services.ppmm.initialProcessData.autofillEnabled = this._active;
   },
 
   /**
-   * Query pref and storage status to determine the overall status for
+   * Query preference and storage status to determine the overall status of the
    * form autofill feature.
    *
-   * @returns {boolean} status of form autofill feature
+   * @returns {boolean} whether form autofill is active (enabled and has data)
    */
-  _getStatus() {
-    if (!Services.prefs.getBoolPref(ENABLED_PREF)) {
-      return false;
-    }
+  _computeStatus() {
+    const savedFieldNames = Services.ppmm.initialProcessData.autofillSavedFieldNames;
 
-    return this._profileStore.getAll().length > 0;
+    return (Services.prefs.getBoolPref(ENABLED_AUTOFILL_ADDRESSES_PREF) ||
+           Services.prefs.getBoolPref(ENABLED_AUTOFILL_CREDITCARDS_PREF)) &&
+           savedFieldNames &&
+           savedFieldNames.size > 0;
   },
 
   /**
-   * Set status and trigger _onStatusChanged.
-   *
-   * @param {boolean} newStatus The latest status we want to set for _enabled
+   * Update the status and trigger _onStatusChanged, if necessary.
    */
-  _setStatus(newStatus) {
-    this._enabled = newStatus;
-    this._onStatusChanged();
+  _updateStatus() {
+    let wasActive = this._active;
+    this._active = this._computeStatus();
+    if (this._active !== wasActive) {
+      this._onStatusChanged();
+    }
   },
 
   /**
@@ -174,36 +180,61 @@ FormAutofillParent.prototype = {
    * @param   {object} message.data The data of the message.
    * @param   {nsIFrameMessageManager} message.target Caller's message manager.
    */
-  receiveMessage({name, data, target}) {
+  async receiveMessage({name, data, target}) {
     switch (name) {
-      case "FormAutofill:GetProfiles": {
-        this._getProfiles(data, target);
+      case "FormAutofill:InitStorage": {
+        this.profileStorage.initialize();
         break;
       }
-      case "FormAutofill:SaveProfile": {
+      case "FormAutofill:GetRecords": {
+        this._getRecords(data, target);
+        break;
+      }
+      case "FormAutofill:SaveAddress": {
         if (data.guid) {
-          this.getProfileStore().update(data.guid, data.profile);
+          this.profileStorage.addresses.update(data.guid, data.address);
         } else {
-          this.getProfileStore().add(data.profile);
+          this.profileStorage.addresses.add(data.address);
         }
         break;
       }
-      case "FormAutofill:RemoveProfiles": {
-        data.guids.forEach(guid => this.getProfileStore().remove(guid));
+      case "FormAutofill:SaveCreditCard": {
+        await this.profileStorage.creditCards.normalizeCCNumberFields(data.creditcard);
+        this.profileStorage.creditCards.add(data.creditcard);
+        break;
+      }
+      case "FormAutofill:RemoveAddresses": {
+        data.guids.forEach(guid => this.profileStorage.addresses.remove(guid));
+        break;
+      }
+      case "FormAutofill:RemoveCreditCards": {
+        data.guids.forEach(guid => this.profileStorage.creditCards.remove(guid));
+        break;
+      }
+      case "FormAutofill:OnFormSubmit": {
+        this._onFormSubmit(data, target);
+        break;
+      }
+      case "FormAutofill:OpenPreferences": {
+        const win = RecentWindow.getMostRecentBrowserWindow();
+        win.openPreferences("panePrivacy", {origin: "autofillFooter"});
+        break;
+      }
+      case "FormAutofill:GetDecryptedString": {
+        let {cipherText, reauth} = data;
+        let string;
+        try {
+          string = await MasterPassword.decrypt(cipherText, reauth);
+        } catch (e) {
+          if (e.result != Cr.NS_ERROR_ABORT) {
+            throw e;
+          }
+          log.warn("User canceled master password entry");
+        }
+        target.sendAsyncMessage("FormAutofill:DecryptedString", string);
         break;
       }
     }
-  },
-
-  /**
-   * Returns the instance of ProfileStorage. To avoid syncing issues, anyone
-   * who needs to access the profile should request the instance by this instead
-   * of creating a new one.
-   *
-   * @returns {ProfileStorage}
-   */
-  getProfileStore() {
-    return this._profileStore;
   },
 
   /**
@@ -212,63 +243,212 @@ FormAutofillParent.prototype = {
    * @private
    */
   _uninit() {
-    if (this._profileStore) {
-      this._profileStore._saveImmediately();
-      this._profileStore = null;
-    }
+    this.profileStorage._saveImmediately();
 
-    Services.ppmm.removeMessageListener("FormAutofill:GetProfiles", this);
-    Services.ppmm.removeMessageListener("FormAutofill:SaveProfile", this);
-    Services.ppmm.removeMessageListener("FormAutofill:RemoveProfiles", this);
-    Services.obs.removeObserver(this, "advanced-pane-loaded");
-    Services.prefs.removeObserver(ENABLED_PREF, this);
+    Services.ppmm.removeMessageListener("FormAutofill:InitStorage", this);
+    Services.ppmm.removeMessageListener("FormAutofill:GetRecords", this);
+    Services.ppmm.removeMessageListener("FormAutofill:SaveAddress", this);
+    Services.ppmm.removeMessageListener("FormAutofill:SaveCreditCard", this);
+    Services.ppmm.removeMessageListener("FormAutofill:RemoveAddresses", this);
+    Services.ppmm.removeMessageListener("FormAutofill:RemoveCreditCards", this);
+    Services.obs.removeObserver(this, "sync-pane-loaded");
+    Services.prefs.removeObserver(ENABLED_AUTOFILL_ADDRESSES_PREF, this);
+    Services.prefs.removeObserver(ENABLED_AUTOFILL_CREDITCARDS_PREF, this);
   },
 
   /**
-   * Get the profile data from profile store and return profiles back to content process.
+   * Get the records from profile store and return results back to content
+   * process. It will decrypt the credit card number and append
+   * "cc-number-decrypted" to each record if MasterPassword isn't set.
    *
    * @private
+   * @param  {string} data.collectionName
+   *         The name used to specify which collection to retrieve records.
    * @param  {string} data.searchString
-   *         The typed string for filtering out the matched profile.
+   *         The typed string for filtering out the matched records.
    * @param  {string} data.info
    *         The input autocomplete property's information.
    * @param  {nsIFrameMessageManager} target
    *         Content's message manager.
    */
-  _getProfiles({searchString, info}, target) {
-    let profiles = [];
-
-    if (info && info.fieldName) {
-      profiles = this._profileStore.getByFilter({searchString, info});
-    } else {
-      profiles = this._profileStore.getAll();
+  async _getRecords({collectionName, searchString, info}, target) {
+    let collection = this.profileStorage[collectionName];
+    if (!collection) {
+      target.sendAsyncMessage("FormAutofill:Records", []);
+      return;
     }
 
-    target.sendAsyncMessage("FormAutofill:Profiles", profiles);
+    let recordsInCollection = collection.getAll();
+    if (!info || !info.fieldName || !recordsInCollection.length) {
+      target.sendAsyncMessage("FormAutofill:Records", recordsInCollection);
+      return;
+    }
+
+    let isCCAndMPEnabled = collectionName == CREDITCARDS_COLLECTION_NAME && MasterPassword.isEnabled;
+    // We don't filter "cc-number" when MasterPassword is set.
+    if (isCCAndMPEnabled && info.fieldName == "cc-number") {
+      recordsInCollection = recordsInCollection.filter(record => !!record["cc-number"]);
+      target.sendAsyncMessage("FormAutofill:Records", recordsInCollection);
+      return;
+    }
+
+    let records = [];
+    let lcSearchString = searchString.toLowerCase();
+
+    for (let record of recordsInCollection) {
+      let fieldValue = record[info.fieldName];
+      if (!fieldValue) {
+        continue;
+      }
+
+      // Cache the decrypted "cc-number" in each record for content to preview
+      // when MasterPassword isn't set.
+      if (!isCCAndMPEnabled && record["cc-number-encrypted"]) {
+        record["cc-number-decrypted"] = await MasterPassword.decrypt(record["cc-number-encrypted"]);
+      }
+
+      // Filter "cc-number" based on the decrypted one.
+      if (info.fieldName == "cc-number") {
+        fieldValue = record["cc-number-decrypted"];
+      }
+
+      if (!lcSearchString || String(fieldValue).toLowerCase().startsWith(lcSearchString)) {
+        records.push(record);
+      }
+    }
+
+    target.sendAsyncMessage("FormAutofill:Records", records);
   },
 
   _updateSavedFieldNames() {
+    log.debug("_updateSavedFieldNames");
     if (!Services.ppmm.initialProcessData.autofillSavedFieldNames) {
       Services.ppmm.initialProcessData.autofillSavedFieldNames = new Set();
     } else {
       Services.ppmm.initialProcessData.autofillSavedFieldNames.clear();
     }
 
-    this._profileStore.getAll().forEach((profile) => {
-      Object.keys(profile).forEach((fieldName) => {
-        if (!profile[fieldName]) {
-          return;
-        }
-        Services.ppmm.initialProcessData.autofillSavedFieldNames.add(fieldName);
+    ["addresses", "creditCards"].forEach(c => {
+      this.profileStorage[c].getAll().forEach((record) => {
+        Object.keys(record).forEach((fieldName) => {
+          if (!record[fieldName]) {
+            return;
+          }
+          Services.ppmm.initialProcessData.autofillSavedFieldNames.add(fieldName);
+        });
       });
     });
 
     // Remove the internal guid and metadata fields.
-    this._profileStore.INTERNAL_FIELDS.forEach((fieldName) => {
+    this.profileStorage.INTERNAL_FIELDS.forEach((fieldName) => {
       Services.ppmm.initialProcessData.autofillSavedFieldNames.delete(fieldName);
     });
 
     Services.ppmm.broadcastAsyncMessage("FormAutofill:savedFieldNames",
                                         Services.ppmm.initialProcessData.autofillSavedFieldNames);
+    this._updateStatus();
+  },
+
+  _onAddressSubmit(address, target) {
+    if (address.guid) {
+      // Avoid updating the fields that users don't modify.
+      let originalAddress = this.profileStorage.addresses.get(address.guid);
+      for (let field in address.record) {
+        if (address.untouchedFields.includes(field) && originalAddress[field]) {
+          address.record[field] = originalAddress[field];
+        }
+      }
+
+      if (!this.profileStorage.addresses.mergeIfPossible(address.guid, address.record)) {
+        FormAutofillDoorhanger.show(target, "update").then((state) => {
+          let changedGUIDs = this.profileStorage.addresses.mergeToStorage(address.record);
+          switch (state) {
+            case "create":
+              if (!changedGUIDs.length) {
+                changedGUIDs.push(this.profileStorage.addresses.add(address.record));
+              }
+              break;
+            case "update":
+              if (!changedGUIDs.length) {
+                this.profileStorage.addresses.update(address.guid, address.record);
+                changedGUIDs.push(address.guid);
+              } else {
+                this.profileStorage.addresses.remove(address.guid);
+              }
+              break;
+          }
+          changedGUIDs.forEach(guid => this.profileStorage.addresses.notifyUsed(guid));
+        });
+        // Address should be updated
+        Services.telemetry.scalarAdd("formautofill.addresses.fill_type_autofill_update", 1);
+        return;
+      }
+      this.profileStorage.addresses.notifyUsed(address.guid);
+      // Address is merged successfully
+      Services.telemetry.scalarAdd("formautofill.addresses.fill_type_autofill", 1);
+    } else {
+      let changedGUIDs = this.profileStorage.addresses.mergeToStorage(address.record);
+      if (!changedGUIDs.length) {
+        changedGUIDs.push(this.profileStorage.addresses.add(address.record));
+      }
+      changedGUIDs.forEach(guid => this.profileStorage.addresses.notifyUsed(guid));
+
+      // Show first time use doorhanger
+      if (Services.prefs.getBoolPref("extensions.formautofill.firstTimeUse")) {
+        Services.prefs.setBoolPref("extensions.formautofill.firstTimeUse", false);
+        FormAutofillDoorhanger.show(target, "firstTimeUse").then((state) => {
+          if (state !== "open-pref") {
+            return;
+          }
+
+          target.ownerGlobal.openPreferences("panePrivacy",
+                                             {origin: "autofillDoorhanger"});
+        });
+      } else {
+        // We want to exclude the first time form filling.
+        Services.telemetry.scalarAdd("formautofill.addresses.fill_type_manual", 1);
+      }
+    }
+  },
+
+  async _onCreditCardSubmit(creditCard, target) {
+    // We'll show the credit card doorhanger if:
+    //   - User applys autofill and changed
+    //   - User fills form manually
+    if (creditCard.guid &&
+        Object.keys(creditCard.record).every(key => creditCard.untouchedFields.includes(key))) {
+      // Add probe to record credit card autofill(without modification).
+      Services.telemetry.scalarAdd("formautofill.creditCards.fill_type_autofill", 1);
+      return;
+    }
+
+    // Add the probe to record credit card manual filling or autofill but modified case.
+    let ccScalar = creditCard.guid ? "formautofill.creditCards.fill_type_autofill_modified" :
+                                     "formautofill.creditCards.fill_type_manual";
+    Services.telemetry.scalarAdd(ccScalar, 1);
+
+    let state = await FormAutofillDoorhanger.show(target, "creditCard");
+    if (state == "cancel") {
+      return;
+    }
+
+    if (state == "disable") {
+      Services.prefs.setBoolPref("extensions.formautofill.creditCards.enabled", false);
+      return;
+    }
+
+    await this.profileStorage.creditCards.normalizeCCNumberFields(creditCard.record);
+    this.profileStorage.creditCards.add(creditCard.record);
+  },
+
+  _onFormSubmit(data, target) {
+    let {address, creditCard} = data;
+
+    if (address) {
+      this._onAddressSubmit(address, target);
+    }
+    if (creditCard) {
+      this._onCreditCardSubmit(creditCard, target);
+    }
   },
 };

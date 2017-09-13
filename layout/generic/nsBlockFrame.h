@@ -44,6 +44,8 @@ class nsBlockInFlowLineIterator;
 class nsBulletFrame;
 namespace mozilla {
 class BlockReflowInput;
+class ServoRestyleState;
+class StyleSetHandle;
 } // namespace mozilla
 
 /**
@@ -80,8 +82,7 @@ class nsBlockFrame : public nsContainerFrame
   using BlockReflowInput = mozilla::BlockReflowInput;
 
 public:
-  NS_DECL_QUERYFRAME_TARGET(nsBlockFrame)
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsBlockFrame)
 
   typedef nsLineList::iterator LineIterator;
   typedef nsLineList::const_iterator ConstLineIterator;
@@ -139,9 +140,7 @@ public:
   nsSplittableType GetSplittableType() const override;
   bool IsFloatContainingBlock() const override;
   void BuildDisplayList(nsDisplayListBuilder* aBuilder,
-                        const nsRect& aDirtyRect,
                         const nsDisplayListSet& aLists) override;
-  nsIAtom* GetType() const override;
   bool IsFrameOfType(uint32_t aFlags) const override
   {
     return nsContainerFrame::IsFrameOfType(aFlags &
@@ -215,7 +214,7 @@ public:
     ~AutoLineCursorSetup()
     {
       if (mOrigCursor) {
-        mFrame->Properties().Set(LineCursorProperty(), mOrigCursor);
+        mFrame->SetProperty(LineCursorProperty(), mOrigCursor);
       } else {
         mFrame->ClearLineCursor();
       }
@@ -272,16 +271,26 @@ public:
     return outside ? outside : GetInsideBullet();
   }
 
+  /**
+   * @return the first-letter frame or nullptr if we don't have one.
+   */
+  nsIFrame* GetFirstLetter() const;
+
+  /**
+   * @return the ::first-line frame or nullptr if we don't have one.
+   */
+  nsIFrame* GetFirstLineFrame() const;
+
   void MarkIntrinsicISizesDirty() override;
 private:
   void CheckIntrinsicCacheAgainstShrinkWrapState();
 public:
-  nscoord GetMinISize(nsRenderingContext *aRenderingContext) override;
-  nscoord GetPrefISize(nsRenderingContext *aRenderingContext) override;
+  nscoord GetMinISize(gfxContext *aRenderingContext) override;
+  nscoord GetPrefISize(gfxContext *aRenderingContext) override;
 
   nsRect ComputeTightBounds(DrawTarget* aDrawTarget) const override;
 
-  nsresult GetPrefWidthTightBounds(nsRenderingContext* aContext,
+  nsresult GetPrefWidthTightBounds(gfxContext* aContext,
                                    nscoord* aX,
                                    nscoord* aXMost) override;
 
@@ -397,9 +406,19 @@ public:
     nsFrameList mFrames;
   };
 
+  /**
+   * Update the styles of our various pseudo-elements (bullets, first-line,
+   * etc, but _not_ first-letter).
+   */
+  void UpdatePseudoElementStyles(mozilla::ServoRestyleState& aRestyleState);
+
+  // Update our first-letter styles during stylo post-traversal.  This needs to
+  // be done at a slightly different time than our other pseudo-elements.
+  void UpdateFirstLetterStyle(mozilla::ServoRestyleState& aRestyleState);
+
 protected:
-  explicit nsBlockFrame(nsStyleContext* aContext)
-    : nsContainerFrame(aContext)
+  explicit nsBlockFrame(nsStyleContext* aContext, ClassID aID = kClassID)
+    : nsContainerFrame(aContext, aID)
     , mMinWidth(NS_INTRINSIC_WIDTH_UNKNOWN)
     , mPrefWidth(NS_INTRINSIC_WIDTH_UNKNOWN)
   {
@@ -407,6 +426,7 @@ protected:
   InitDebugFlags();
 #endif
   }
+
   virtual ~nsBlockFrame();
 
 #ifdef DEBUG
@@ -416,7 +436,7 @@ protected:
   NS_DECLARE_FRAME_PROPERTY_WITHOUT_DTOR(LineCursorProperty, nsLineBox)
   bool HasLineCursor() { return GetStateBits() & NS_BLOCK_HAS_LINE_CURSOR; }
   nsLineBox* GetLineCursor() {
-    return HasLineCursor() ? Properties().Get(LineCursorProperty()) : nullptr;
+    return HasLineCursor() ? GetProperty(LineCursorProperty()) : nullptr;
   }
 
   nsLineBox* NewLineBox(nsIFrame* aFrame, bool aIsBlock) {
@@ -903,6 +923,13 @@ protected:
   nsFrameList* EnsurePushedFloats();
   // Remove and return the pushed floats list.
   nsFrameList* RemovePushedFloats();
+
+  // Resolve a style context for our bullet frame.  aType should be
+  // mozListBullet or mozListNumber.  Passing in the style set is an
+  // optimization, because all callsites have it.
+  already_AddRefed<nsStyleContext> ResolveBulletStyle(
+    mozilla::CSSPseudoElementType aType,
+    mozilla::StyleSetHandle aStyleSet);
 
 #ifdef DEBUG
   void VerifyLines(bool aFinalCheckOK);

@@ -11,7 +11,6 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/dom/TimeRanges.h"
 #include "mozilla/TimeStamp.h"
 
 namespace mozilla {
@@ -19,7 +18,7 @@ namespace media {
 class TimeIntervals;
 } // namespace media
 } // namespace mozilla
-// CopyChooser specalization for nsTArray
+// CopyChooser specialization for nsTArray
 template<>
 struct nsTArray_CopyChooser<mozilla::media::TimeIntervals>
 {
@@ -38,51 +37,6 @@ namespace media {
 
 // Number of nanoseconds per second. 1e9.
 static const int64_t NSECS_PER_S = 1000000000;
-
-struct Microseconds {
-  Microseconds()
-    : mValue(0)
-  {}
-
-  explicit Microseconds(int64_t aValue)
-    : mValue(aValue)
-  {}
-
-  double ToSeconds() {
-    return double(mValue) / USECS_PER_S;
-  }
-
-  static Microseconds FromSeconds(double aValue) {
-    MOZ_ASSERT(!IsNaN(aValue));
-
-    double val = aValue * USECS_PER_S;
-    if (val >= double(INT64_MAX)) {
-      return Microseconds(INT64_MAX);
-    } else if (val <= double(INT64_MIN)) {
-      return Microseconds(INT64_MIN);
-    } else {
-      return Microseconds(int64_t(val));
-    }
-  }
-
-  bool operator == (const Microseconds& aOther) const {
-    return mValue == aOther.mValue;
-  }
-  bool operator > (const Microseconds& aOther) const {
-    return mValue > aOther.mValue;
-  }
-  bool operator >= (const Microseconds& aOther) const {
-    return mValue >= aOther.mValue;
-  }
-  bool operator < (const Microseconds& aOther) const {
-    return mValue < aOther.mValue;
-  }
-  bool operator <= (const Microseconds& aOther) const {
-    return mValue <= aOther.mValue;
-  }
-
-  int64_t mValue;
-};
 
 // TimeUnit at present uses a CheckedInt64 as storage.
 // INT64_MAX has the special meaning of being +oo.
@@ -108,10 +62,6 @@ public:
 
   static constexpr TimeUnit FromMicroseconds(int64_t aValue) {
     return TimeUnit(aValue);
-  }
-
-  static TimeUnit FromMicroseconds(Microseconds aValue) {
-    return TimeUnit(aValue.mValue);
   }
 
   static constexpr TimeUnit FromNanoseconds(int64_t aValue) {
@@ -159,6 +109,14 @@ public:
 
   bool IsInfinite() const {
     return mValue.value() == INT64_MAX;
+  }
+
+  bool IsPositive() const {
+    return mValue.value() > 0;
+  }
+
+  bool IsNegative() const {
+    return mValue.value() < 0;
   }
 
   bool operator == (const TimeUnit& aOther) const {
@@ -228,15 +186,6 @@ public:
     : mValue(CheckedInt64(0))
   {}
 
-  explicit TimeUnit(const Microseconds& aMicroseconds)
-    : mValue(aMicroseconds.mValue)
-  {}
-  TimeUnit& operator = (const Microseconds& aMicroseconds)
-  {
-    mValue = aMicroseconds.mValue;
-    return *this;
-  }
-
   TimeUnit(const TimeUnit&) = default;
 
   TimeUnit& operator = (const TimeUnit&) = default;
@@ -291,34 +240,6 @@ public:
   }
 
   TimeIntervals() = default;
-
-  // Make TimeIntervals interchangeable with dom::TimeRanges.
-  explicit TimeIntervals(dom::TimeRanges* aRanges)
-  {
-    for (uint32_t i = 0; i < aRanges->Length(); i++) {
-      ErrorResult rv;
-      *this +=
-        TimeInterval(TimeUnit::FromSeconds(aRanges->Start(i, rv)),
-                     TimeUnit::FromSeconds(aRanges->End(i, rv)));
-    }
-  }
-  TimeIntervals& operator = (dom::TimeRanges* aRanges)
-  {
-    *this = TimeIntervals(aRanges);
-    return *this;
-  }
-
-  static TimeIntervals FromTimeRanges(dom::TimeRanges* aRanges)
-  {
-    return TimeIntervals(aRanges);
-  }
-
-  void ToTimeRanges(dom::TimeRanges* aRanges) const
-  {
-    for (IndexType i = 0; i < Length(); i++) {
-      aRanges->Add(Start(i).ToSeconds(), End(i).ToSeconds());
-    }
-  }
 };
 
 } // namespace media

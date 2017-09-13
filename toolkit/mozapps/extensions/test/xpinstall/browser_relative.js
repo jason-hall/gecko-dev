@@ -17,7 +17,7 @@ function test() {
       toString() { return this.URL; }
     }
   }));
-  gBrowser.selectedTab = gBrowser.addTab();
+  gBrowser.selectedTab = BrowserTestUtils.addTab(gBrowser);
   gBrowser.loadURI(TESTROOT + "installtrigger.html?" + triggers);
 }
 
@@ -27,7 +27,6 @@ function confirm_install(window) {
   is(items[0].name, "XPI Test", "Should have seen the name");
   is(items[0].url, TESTROOT + "amosigned.xpi", "Should have listed the correct url for the item");
   is(items[0].icon, TESTROOT + "icon.png", "Should have listed the correct icon for the item");
-  is(items[0].signed, "false", "Should have listed the item as unsigned");
   return true;
 }
 
@@ -35,12 +34,12 @@ function install_ended(install, addon) {
   install.cancel();
 }
 
-const finish_test = Task.async(function*(count) {
+const finish_test = async function(count) {
   is(count, 1, "1 Add-on should have been successfully installed");
 
   Services.perms.remove(makeURI("http://example.com"), "install");
 
-  const results = yield ContentTask.spawn(gBrowser.selectedBrowser, null, () => {
+  const results = await ContentTask.spawn(gBrowser.selectedBrowser, null, () => {
     return {
       return: content.document.getElementById("return").textContent,
       status: content.document.getElementById("status").textContent,
@@ -52,4 +51,4 @@ const finish_test = Task.async(function*(count) {
 
   gBrowser.removeCurrentTab();
   Harness.finish();
-});
+};

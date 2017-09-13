@@ -17,11 +17,13 @@
 #include "mozilla/CORSMode.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventListenerManager.h"
+#include "mozilla/HTMLEditor.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/TextEditor.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/css/StyleRule.h"
 #include "mozilla/dom/Element.h"
@@ -60,7 +62,6 @@
 #include "nsIDOMEventListener.h"
 #include "nsIDOMMutationEvent.h"
 #include "nsIDOMNodeList.h"
-#include "nsIEditor.h"
 #include "nsILinkHandler.h"
 #include "mozilla/dom/NodeInfo.h"
 #include "mozilla/dom/NodeInfoInlines.h"
@@ -106,6 +107,8 @@
 #include "nsChildContentList.h"
 #include "mozilla/dom/NodeBinding.h"
 #include "mozilla/dom/BindingDeclarations.h"
+
+#include "XPathGenerator.h"
 
 #ifdef ACCESSIBILITY
 #include "mozilla/dom/AccessibleNode.h"
@@ -158,6 +161,12 @@ void*
 nsINode::GetProperty(uint16_t aCategory, nsIAtom *aPropertyName,
                      nsresult *aStatus) const
 {
+  if (!HasProperties()) { // a fast HasFlag() test
+    if (aStatus) {
+      *aStatus = NS_PROPTABLE_PROP_NOT_THERE;
+    }
+    return nullptr;
+  }
   return OwnerDoc()->PropertyTable(aCategory)->GetProperty(this, aPropertyName,
                                                            aStatus);
 }
@@ -215,33 +224,30 @@ nsINode::IsEditableInternal() const
   return doc && doc->HasFlag(NODE_IS_EDITABLE);
 }
 
-static nsIContent* GetEditorRootContent(nsIEditor* aEditor)
-{
-  nsCOMPtr<nsIDOMElement> rootElement;
-  aEditor->GetRootElement(getter_AddRefs(rootElement));
-  nsCOMPtr<nsIContent> rootContent(do_QueryInterface(rootElement));
-  return rootContent;
-}
-
 nsIContent*
-nsINode::GetTextEditorRootContent(nsIEditor** aEditor)
+nsINode::GetTextEditorRootContent(TextEditor** aTextEditor)
 {
-  if (aEditor)
-    *aEditor = nullptr;
+  if (aTextEditor) {
+    *aTextEditor = nullptr;
+  }
   for (nsINode* node = this; node; node = node->GetParentNode()) {
     if (!node->IsElement() ||
         !node->IsHTMLElement())
       continue;
 
-    nsCOMPtr<nsIEditor> editor =
-      static_cast<nsGenericHTMLElement*>(node)->GetEditorInternal();
-    if (!editor)
+    RefPtr<TextEditor> textEditor =
+      static_cast<nsGenericHTMLElement*>(node)->GetTextEditorInternal();
+    if (!textEditor) {
       continue;
+    }
 
-    nsIContent* rootContent = GetEditorRootContent(editor);
-    if (aEditor)
-      editor.swap(*aEditor);
-    return rootContent;
+    MOZ_ASSERT(!textEditor->AsHTMLEditor(),
+               "If it were an HTML editor, needs to use GetRootElement()");
+    Element* rootElement = textEditor->GetRoot();
+    if (aTextEditor) {
+      textEditor.forget(aTextEditor);
+    }
+    return rootElement;
   }
   return nullptr;
 }
@@ -351,13 +357,13 @@ nsINode::GetSelectionRootContent(nsIPresShell* aPresShell)
 
   nsPresContext* presContext = aPresShell->GetPresContext();
   if (presContext) {
-    nsIEditor* editor = nsContentUtils::GetHTMLEditor(presContext);
-    if (editor) {
+    HTMLEditor* htmlEditor = nsContentUtils::GetHTMLEditor(presContext);
+    if (htmlEditor) {
       // This node is in HTML editor.
       nsIDocument* doc = GetComposedDoc();
       if (!doc || doc->HasFlag(NODE_IS_EDITABLE) ||
           !HasFlag(NODE_IS_EDITABLE)) {
-        nsIContent* editorRoot = GetEditorRootContent(editor);
+        nsIContent* editorRoot = htmlEditor->GetRoot();
         NS_ENSURE_TRUE(editorRoot, nullptr);
         return nsContentUtils::IsInSameAnonymousTree(this, editorRoot) ?
                  editorRoot :
@@ -403,7 +409,11 @@ nsINode::ChildNodes()
 {
   nsSlots* slots = Slots();
   if (!slots->mChildNodes) {
-    slots->mChildNodes = new nsChildContentList(this);
+    // Check |!IsElement()| first to catch the common case
+    // without virtual call |IsNodeOfType|
+    slots->mChildNodes = !IsElement() && IsNodeOfType(nsINode::eATTRIBUTE) ?
+                           new nsAttrChildContentList(this) :
+                           new nsParentNodeChildContentList(this);
   }
 
   return slots->mChildNodes;
@@ -1339,16 +1349,6 @@ nsINode::PostHandleEvent(EventChainPostVisitor& /*aVisitor*/)
   return NS_OK;
 }
 
-nsresult
-nsINode::DispatchDOMEvent(WidgetEvent* aEvent,
-                          nsIDOMEvent* aDOMEvent,
-                          nsPresContext* aPresContext,
-                          nsEventStatus* aEventStatus)
-{
-  return EventDispatcher::DispatchDOMEvent(this, aEvent, aDOMEvent,
-                                           aPresContext, aEventStatus);
-}
-
 EventListenerManager*
 nsINode::GetOrCreateListenerManager()
 {
@@ -1566,8 +1566,9 @@ nsresult
 nsINode::doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
                          bool aNotify, nsAttrAndChildArray& aChildArray)
 {
-  NS_PRECONDITION(!aKid->GetParentNode(),
-                  "Inserting node that already has parent");
+  MOZ_ASSERT(!aKid->GetParentNode(), "Inserting node that already has parent");
+  MOZ_ASSERT(!IsNodeOfType(nsINode::eATTRIBUTE));
+
   nsresult rv;
 
   // The id-handling code, and in the future possibly other code, need to
@@ -1594,6 +1595,14 @@ nsINode::doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
   NS_ENSURE_SUCCESS(rv, rv);
   if (aIndex == 0) {
     mFirstChild = aKid;
+  }
+
+  // Invalidate cached array of child nodes
+  nsSlots* slots = GetExistingSlots();
+  if (slots && slots->mChildNodes) {
+    auto childNodes =
+      static_cast<nsParentNodeChildContentList*>(slots->mChildNodes.get());
+    childNodes->InvalidateCache();
   }
 
   nsIContent* parent =
@@ -1897,9 +1906,14 @@ void
 nsINode::doRemoveChildAt(uint32_t aIndex, bool aNotify,
                          nsIContent* aKid, nsAttrAndChildArray& aChildArray)
 {
-  NS_PRECONDITION(aKid && aKid->GetParentNode() == this &&
-                  aKid == GetChildAt(aIndex) &&
-                  IndexOf(aKid) == (int32_t)aIndex, "Bogus aKid");
+  // NOTE: This function must not trigger any calls to
+  // nsIDocument::GetRootElement() calls until *after* it has removed aKid from
+  // aChildArray. Any calls before then could potentially restore a stale
+  // value for our cached root element, per note in nsDocument::RemoveChildAt().
+  MOZ_ASSERT(aKid && aKid->GetParentNode() == this &&
+             aKid == GetChildAt(aIndex) &&
+             IndexOf(aKid) == (int32_t)aIndex, "Bogus aKid");
+  MOZ_ASSERT(!IsNodeOfType(nsINode::eATTRIBUTE));
 
   nsMutationGuard::DidMutate();
   mozAutoDocUpdate updateBatch(GetComposedDoc(), UPDATE_CONTENT_MODEL, aNotify);
@@ -1911,6 +1925,14 @@ nsINode::doRemoveChildAt(uint32_t aIndex, bool aNotify,
   }
 
   aChildArray.RemoveChildAt(aIndex);
+
+  // Invalidate cached array of child nodes
+  nsSlots* slots = GetExistingSlots();
+  if (slots && slots->mChildNodes) {
+    auto childNodes =
+      static_cast<nsParentNodeChildContentList*>(slots->mChildNodes.get());
+    childNodes->InvalidateCache();
+  }
 
   if (aNotify) {
     nsNodeUtils::ContentRemoved(this, aKid, aIndex, previousSibling);
@@ -2560,13 +2582,12 @@ nsINode::GetAccessibleNode()
   return nullptr;
 }
 
-size_t
-nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
+void
+nsINode::AddSizeOfExcludingThis(nsWindowSizes& aSizes, size_t* aNodeSize) const
 {
-  size_t n = 0;
   EventListenerManager* elm = GetExistingListenerManager();
   if (elm) {
-    n += elm->SizeOfIncludingThis(aMallocSizeOf);
+    *aNodeSize += elm->SizeOfIncludingThis(aSizes.mState.mMallocSizeOf);
   }
 
   // Measurement of the following members may be added later if DMD finds it is
@@ -2577,7 +2598,6 @@ nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
   // The following members are not measured:
   // - mParent, mNextSibling, mPreviousSibling, mFirstChild: because they're
   //   non-owning
-  return n;
 }
 
 #define EVENT(name_, id_, type_, struct_)                                    \
@@ -2796,7 +2816,6 @@ FindMatchingElements(nsINode* aRoot, nsCSSSelectorList* aSelectorList, T &aList,
 
   TreeMatchContext matchingContext(false, nsRuleWalker::eRelevantLinkUnvisited,
                                    doc, TreeMatchContext::eNeverMatchVisited);
-  doc->FlushPendingLinkUpdates();
   AddScopeElements(matchingContext, aRoot);
 
   // Fast-path selectors involving IDs.  We can only do this if aRoot
@@ -3006,6 +3025,12 @@ nsINode::AddAnimationObserverUnlessExists(
 {
   AddMutationObserverUnlessExists(aAnimationObserver);
   OwnerDoc()->SetMayHaveAnimationObservers();
+}
+
+void
+nsINode::GenerateXPath(nsAString& aResult)
+{
+  XPathGenerator::Generate(this, aResult);
 }
 
 bool

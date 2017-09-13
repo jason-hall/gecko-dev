@@ -8,7 +8,7 @@ var Cc = Components.classes, Ci = Components.interfaces, Cu = Components.utils;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
-Cu.import("resource://gre/modules/Promise.jsm");
+Cu.import("resource://gre/modules/PromiseUtils.jsm");
 
 const NOTIFICATION_EVENT_DISMISSED = "dismissed";
 const NOTIFICATION_EVENT_REMOVED = "removed";
@@ -259,6 +259,12 @@ this.PopupNotifications = function PopupNotifications(tabbrowser, panel,
     }
   };
 
+  let documentElement = this.window.document.documentElement;
+  let locationBarHidden = documentElement.getAttribute("chromehidden").includes("location");
+  let isFullscreen = !!this.window.document.fullscreenElement;
+
+  this.panel.setAttribute("followanchor", !locationBarHidden && !isFullscreen);
+
   // There are no anchor icons in DOM fullscreen mode, but we would
   // still like to show the popup notification. To avoid an infinite
   // loop of showing and hiding, we have to disable followanchor
@@ -267,7 +273,7 @@ this.PopupNotifications = function PopupNotifications(tabbrowser, panel,
     this.panel.setAttribute("followanchor", "false");
   }, true);
   this.window.addEventListener("MozDOMFullscreen:Exited", () => {
-    this.panel.setAttribute("followanchor", "true");
+    this.panel.setAttribute("followanchor", !locationBarHidden);
   }, true);
 
   this.window.addEventListener("activate", this, true);
@@ -700,7 +706,7 @@ PopupNotifications.prototype = {
     if (this._ignoreDismissal) {
       return this._ignoreDismissal.promise;
     }
-    let deferred = Promise.defer();
+    let deferred = PromiseUtils.defer();
     this._ignoreDismissal = deferred;
     this.panel.hidePopup();
     return deferred.promise;
@@ -801,7 +807,7 @@ PopupNotifications.prototype = {
         let uri;
         try {
            if (n.options.displayURI instanceof Ci.nsIFileURL) {
-            uri = n.options.displayURI.path;
+            uri = n.options.displayURI.pathQueryRef;
           } else {
             uri = n.options.displayURI.hostPort;
           }
@@ -869,6 +875,7 @@ PopupNotifications.prototype = {
         }
       } else {
         popupnotification.setAttribute("checkboxhidden", "true");
+        popupnotification.setAttribute("warninghidden", "true");
       }
 
       this.panel.appendChild(popupnotification);
@@ -939,6 +946,13 @@ PopupNotifications.prototype = {
       if (!anchorElement || (anchorElement.boxObject.height == 0 &&
                              anchorElement.boxObject.width == 0)) {
         anchorElement = this.tabbrowser.selectedTab;
+
+        // If we're in an entirely chromeless environment, set the anchorElement
+        // to null and let openPopup show the notification at (0,0) later.
+        if (!anchorElement || (anchorElement.boxObject.height == 0 &&
+                               anchorElement.boxObject.width == 0)) {
+          anchorElement = null;
+        }
       }
     }
 
@@ -1022,7 +1036,7 @@ PopupNotifications.prototype = {
       this._popupshownListener = this._popupshownListener.bind(this);
       target.addEventListener("popupshown", this._popupshownListener, true);
 
-      this.panel.openPopup(anchorElement, "bottomcenter topleft");
+      this.panel.openPopup(anchorElement, "bottomcenter topleft", 0, 0);
     });
   },
 
@@ -1160,6 +1174,11 @@ PopupNotifications.prototype = {
       let anchorElm = notification.anchorElement;
       if (anchorElm) {
         anchorElm.setAttribute(ICON_ATTRIBUTE_SHOWING, "true");
+
+        if (notification.options.extraAttr) {
+          anchorElm.setAttribute("extraAttr", notification.options.extraAttr);
+        }
+
       }
     }
   },
@@ -1502,6 +1521,6 @@ PopupNotifications.prototype = {
   },
 
   _notify: function PopupNotifications_notify(topic) {
-    Services.obs.notifyObservers(null, "PopupNotifications-" + topic, "");
+    Services.obs.notifyObservers(null, "PopupNotifications-" + topic);
   },
 };

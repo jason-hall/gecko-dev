@@ -7,6 +7,7 @@ from argparse import ArgumentParser, SUPPRESS
 from distutils.util import strtobool
 from itertools import chain
 from urlparse import urlparse
+import logging
 import json
 import os
 import tempfile
@@ -228,11 +229,12 @@ class MochitestArguments(ArgumentContainer):
                   "chunkByDir directories.",
           "default": 0,
           }],
-        [["--run-by-dir"],
+        [["--run-by-manifest"],
          {"action": "store_true",
-          "dest": "runByDir",
-          "help": "Run each directory in a single browser instance with a fresh profile.",
+          "dest": "runByManifest",
+          "help": "Run each manifest in a single browser instance with a fresh profile.",
           "default": False,
+          "suppress": True,
           }],
         [["--shuffle"],
          {"action": "store_true",
@@ -438,13 +440,6 @@ class MochitestArguments(ArgumentContainer):
           "default": None,
           "suppress": True,
           }],
-        [["--strict-content-sandbox"],
-         {"action": "store_true",
-          "default": False,
-          "dest": "strictContentSandbox",
-          "help": "Run tests with a more strict content sandbox (Windows only).",
-          "suppress": not mozinfo.isWin,
-          }],
         [["--nested_oop"],
          {"action": "store_true",
           "default": False,
@@ -583,6 +578,11 @@ class MochitestArguments(ArgumentContainer):
           "help": "Timeout while waiting to receive a message from the marionette server.",
           "suppress": True,
           }],
+        [["--marionette-startup-timeout"],
+         {"default": None,
+          "help": "Timeout while waiting for marionette server startup.",
+          "suppress": True,
+          }],
         [["--cleanup-crashes"],
          {"action": "store_true",
           "dest": "cleanupCrashes",
@@ -599,6 +599,30 @@ class MochitestArguments(ArgumentContainer):
          {"default": None,
           "dest": "failure_pattern_file",
           "help": "File describes all failure patterns of the tests.",
+          "suppress": True,
+          }],
+        [["--work-path"],
+         {"default": None,
+          "dest": "workPath",
+          "help": "Path to the base dir of all source files.",
+          "suppress": True,
+          }],
+        [["--obj-path"],
+         {"default": None,
+          "dest": "objPath",
+          "help": "Path to the base dir of all object files.",
+          "suppress": True,
+          }],
+        [["--verify"],
+         {"action": "store_true",
+          "default": False,
+          "help": "Test verification mode.",
+          "suppress": True,
+          }],
+        [["--verify-max-time"],
+         {"type": int,
+          "default": 3600,
+          "help": "Maximum time, in seconds, to run in --verify mode.",
           "suppress": True,
           }],
     ]
@@ -622,8 +646,6 @@ class MochitestArguments(ArgumentContainer):
     def validate(self, parser, options, context):
         """Validate generic options."""
 
-        # for test manifest parsing.
-        mozinfo.update({"strictContentSandbox": options.strictContentSandbox})
         # for test manifest parsing.
         mozinfo.update({"nested_oop": options.nested_oop})
 
@@ -759,24 +781,19 @@ class MochitestArguments(ArgumentContainer):
                     "data." % options.jscov_dir_prefix)
 
         if options.testingModulesDir is None:
+            # Try to guess the testing modules directory.
+            possible = [os.path.join(here, os.path.pardir, 'modules')]
             if build_obj:
-                options.testingModulesDir = os.path.join(
-                    build_obj.topobjdir, '_tests', 'modules')
-            else:
-                # Try to guess the testing modules directory.
-                # This somewhat grotesque hack allows the buildbot machines to find the
-                # modules directory without having to configure the buildbot hosts. This
-                # code should never be executed in local runs because the build system
-                # should always set the flag that populates this variable. If buildbot ever
-                # passes this argument, this code can be deleted.
-                possible = os.path.join(here, os.path.pardir, 'modules')
+                possible.insert(0, os.path.join(build_obj.topobjdir, '_tests', 'modules'))
 
-                if os.path.isdir(possible):
-                    options.testingModulesDir = possible
+            for p in possible:
+                if os.path.isdir(p):
+                    options.testingModulesDir = p
+                    break
 
         if build_obj:
             plugins_dir = os.path.join(build_obj.distdir, 'plugins')
-            if plugins_dir not in options.extraProfileFiles:
+            if os.path.isdir(plugins_dir) and plugins_dir not in options.extraProfileFiles:
                 options.extraProfileFiles.append(plugins_dir)
 
         # Even if buildbot is updated, we still want this, as the path we pass in
@@ -957,6 +974,9 @@ class AndroidArguments(ArgumentContainer):
             device_args['port'] = options.devicePort
         elif options.deviceSerial:
             device_args['deviceSerial'] = options.deviceSerial
+
+        if options.log_tbpl_level == 'debug' or options.log_mach_level == 'debug':
+            device_args['logLevel'] = logging.DEBUG
         options.dm = DroidADB(**device_args)
 
         if not options.remoteTestRoot:
@@ -998,6 +1018,9 @@ class AndroidArguments(ArgumentContainer):
         if options.xrePath is None:
             options.xrePath = options.utilityPath
 
+        if build_obj:
+            options.topsrcdir = build_obj.topsrcdir
+
         if options.pidFile != "":
             f = open(options.pidFile, 'w')
             f.write("%s" % os.getpid())
@@ -1015,7 +1038,7 @@ class AndroidArguments(ArgumentContainer):
                 if build_obj.substs.get('MOZ_BUILD_MOBILE_ANDROID_WITH_GRADLE'):
                     options.robocopApk = os.path.join(build_obj.topobjdir, 'gradle', 'build',
                                                       'mobile', 'android', 'app', 'outputs', 'apk',
-                                                      'app-automation-debug-androidTest-'
+                                                      'app-official-photon-debug-androidTest-'
                                                       'unaligned.apk')
                 else:
                     options.robocopApk = os.path.join(build_obj.topobjdir, 'mobile', 'android',

@@ -7,13 +7,20 @@ extern crate cssparser;
 extern crate env_logger;
 extern crate geckoservo;
 #[macro_use] extern crate log;
-extern crate parking_lot;
 extern crate selectors;
+#[macro_use] extern crate size_of_test;
 #[macro_use] extern crate style;
 extern crate style_traits;
 
-mod sanity_checks;
+#[cfg(target_pointer_width = "64")]
 mod size_of;
+mod specified_values;
 
 mod servo_function_signatures;
 
+use style::*;
+
+#[allow(dead_code, improper_ctypes)]
+mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}

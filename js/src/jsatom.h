@@ -8,6 +8,7 @@
 #define jsatom_h
 
 #include "mozilla/HashFunctions.h"
+#include "mozilla/Maybe.h"
 
 #include "jsalloc.h"
 
@@ -141,7 +142,7 @@ AtomIsPinnedInRuntime(JSRuntime* rt, JSAtom* atom);
 #endif // DEBUG
 
 /* Well-known predefined C strings. */
-#define DECLARE_PROTO_STR(name,code,init,clasp) extern const char js_##name##_str[];
+#define DECLARE_PROTO_STR(name,init,clasp) extern const char js_##name##_str[];
 JS_FOR_EACH_PROTOTYPE(DECLARE_PROTO_STR)
 #undef DECLARE_PROTO_STR
 
@@ -179,7 +180,8 @@ enum PinningBehavior
 
 extern JSAtom*
 Atomize(JSContext* cx, const char* bytes, size_t length,
-        js::PinningBehavior pin = js::DoNotPinAtom);
+        js::PinningBehavior pin = js::DoNotPinAtom,
+        const mozilla::Maybe<uint32_t>& indexValue = mozilla::Nothing());
 
 template <typename CharT>
 extern JSAtom*

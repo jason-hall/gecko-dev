@@ -6,9 +6,17 @@
 
 #include "ContentPrefs.h"
 
-/************************************************************
- *    DO NOT ADD PREFS TO THIS LIST WITHOUT DOM PEER REVIEW *
- ************************************************************/
+/******************************************************************************
+ *
+ *           DO NOT ADD PREFS TO THIS LIST WITHOUT DOM PEER REVIEW
+ *
+ * This is the list of preferences that are sent to the content process on
+ * startup. Only prefs that are required immediately upon startup should be
+ * listed here. The first IPC message received in the content process will
+ * contain all the other prefs. Prefs should only be listed here if they must be
+ * read before the first IPC message is received.
+ *
+ ******************************************************************************/
 
 const char* mozilla::dom::ContentPrefs::gInitPrefs[] = {
   "accessibility.monoaudio.enable",
@@ -41,10 +49,12 @@ const char* mozilla::dom::ContentPrefs::gInitPrefs[] = {
   "dom.enable_resource_timing",
   "dom.event.handling-user-input-time-limit",
   "dom.event.touch.coalescing.enabled",
-  "dom.forms.autocomplete.experimental",
+  "dom.forms.autocomplete.formautofill",
   "dom.ipc.processPriorityManager.backgroundGracePeriodMS",
   "dom.ipc.processPriorityManager.backgroundPerceivableGracePeriodMS",
+  "dom.ipc.useNativeEventProcessing.content",
   "dom.max_chrome_script_run_time",
+  "dom.max_ext_content_script_run_time",
   "dom.max_script_run_time",
   "dom.mozBrowserFramesEnabled",
   "dom.performance.enable_notify_performance_timing",
@@ -56,6 +66,7 @@ const char* mozilla::dom::ContentPrefs::gInitPrefs[] = {
   "dom.vibrator.enabled",
   "dom.vibrator.max_vibrate_list_len",
   "dom.vibrator.max_vibrate_ms",
+  "dom.webcomponents.customelements.enabled",
   "dom.webcomponents.enabled",
   "focusmanager.testmode",
   "font.size.inflation.disabledInMasterProcess",
@@ -96,15 +107,16 @@ const char* mozilla::dom::ContentPrefs::gInitPrefs[] = {
   "javascript.options.native_regexp",
   "javascript.options.parallel_parsing",
   "javascript.options.shared_memory",
+  "javascript.options.streams",
   "javascript.options.strict",
   "javascript.options.strict.debug",
   "javascript.options.throw_on_asmjs_validation_failure",
   "javascript.options.throw_on_debuggee_would_run",
   "javascript.options.wasm",
   "javascript.options.wasm_baselinejit",
+  "javascript.options.wasm_ionjit",
   "javascript.options.werror",
   "javascript.use_us_english_locale",
-  "jsloader.reuseGlobal",
   "layout.idle_period.required_quiescent_frames",
   "layout.idle_period.time_limit",
   "layout.interruptible-reflow.enabled",
@@ -112,6 +124,7 @@ const char* mozilla::dom::ContentPrefs::gInitPrefs[] = {
   "media.apple.forcevda",
   "media.clearkey.persistent-license.enabled",
   "media.cubeb.backend",
+  "media.cubeb.sandbox",
   "media.cubeb_latency_msg_frames",
   "media.cubeb_latency_playback_ms",
   "media.decoder-doctor.wmf-disabled-is-failure",
@@ -122,7 +135,6 @@ const char* mozilla::dom::ContentPrefs::gInitPrefs[] = {
   "media.decoder.recycle.enabled",
   "media.dormant-on-pause-timeout-ms",
   "media.eme.audio.blank",
-  "media.eme.chromium-api.enabled",
   "media.eme.enabled",
   "media.eme.video.blank",
   "media.ffmpeg.enabled",
@@ -198,14 +210,13 @@ const char* mozilla::dom::ContentPrefs::gInitPrefs[] = {
   "privacy.firstparty.isolate",
   "privacy.firstparty.isolate.restrict_opener_access",
   "privacy.resistFingerprinting",
-  "security.data_uri.inherit_security_context",
+  "security.data_uri.unique_opaque_origin",
   "security.fileuri.strict_origin_policy",
   "security.sandbox.content.level",
   "security.sandbox.content.tempDirSuffix",
   "security.sandbox.logging.enabled",
   "security.sandbox.mac.track.violations",
   "security.sandbox.windows.log.stackTraceDepth",
-  "shutdown.watchdog.timeoutSecs",
   "signed.applets.codebase_principal_support",
   "svg.disabled",
   "svg.display-lists.hit-testing.enabled",

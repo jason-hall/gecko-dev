@@ -21,14 +21,13 @@ use layout_debug;
 use model::{IntrinsicISizes, IntrinsicISizesContribution, MaybeAuto};
 use std::cmp;
 use std::fmt;
-use std::sync::Arc;
 use style::computed_values::{border_collapse, border_spacing, table_layout};
 use style::context::SharedStyleContext;
 use style::logical_geometry::LogicalSize;
-use style::properties::ServoComputedValues;
+use style::properties::ComputedValues;
 use style::servo::restyle_damage::{REFLOW, REFLOW_OUT_OF_FLOW};
 use style::values::CSSFloat;
-use style::values::computed::LengthOrPercentageOrAuto;
+use style::values::computed::{LengthOrPercentageOrAuto, NonNegativeAu};
 use table_row::{self, CellIntrinsicInlineSize, CollapsedBorder, CollapsedBorderProvenance};
 use table_row::TableRowFlow;
 use table_wrapper::TableLayout;
@@ -191,8 +190,8 @@ impl TableFlow {
             border_collapse::T::separate => style.get_inheritedtable().border_spacing,
             border_collapse::T::collapse => {
                 border_spacing::T {
-                    horizontal: Au(0),
-                    vertical: Au(0),
+                    horizontal: NonNegativeAu::zero(),
+                    vertical: NonNegativeAu::zero(),
                 }
             }
         }
@@ -203,7 +202,7 @@ impl TableFlow {
         if num_columns == 0 {
             return Au(0);
         }
-        self.spacing().horizontal * (num_columns as i32 + 1)
+        self.spacing().horizontal.0 * (num_columns as i32 + 1)
     }
 }
 
@@ -254,7 +253,7 @@ impl Flow for TableFlow {
                         LengthOrPercentageOrAuto::Auto |
                         LengthOrPercentageOrAuto::Calc(_) |
                         LengthOrPercentageOrAuto::Length(_) => 0.0,
-                        LengthOrPercentageOrAuto::Percentage(percentage) => percentage,
+                        LengthOrPercentageOrAuto::Percentage(percentage) => percentage.0,
                     },
                     preferred: Au(0),
                     constrained: false,
@@ -352,20 +351,16 @@ impl Flow for TableFlow {
 
         let shared_context = layout_context.shared_context();
         // The position was set to the containing block by the flow's parent.
+        // FIXME: The code for distributing column widths should really be placed under table_wrapper.rs.
         let containing_block_inline_size = self.block_flow.base.block_container_inline_size;
 
-        let mut num_unspecified_inline_sizes = 0;
-        let mut num_percentage_inline_sizes = 0;
-        let mut total_column_inline_size = Au(0);
-        let mut total_column_percentage_size = 0.0;
-        for column_inline_size in &self.column_intrinsic_inline_sizes {
-            if column_inline_size.percentage != 0.0 {
-                total_column_percentage_size += column_inline_size.percentage;
-                num_percentage_inline_sizes += 1;
-            } else if column_inline_size.constrained {
-                total_column_inline_size += column_inline_size.minimum_length;
-            } else {
-                num_unspecified_inline_sizes += 1;
+        let mut constrained_column_inline_sizes_indices = vec![];
+        let mut unspecified_inline_sizes_indices = vec![];
+        for (idx, column_inline_size) in self.column_intrinsic_inline_sizes.iter().enumerate() {
+            if column_inline_size.constrained {
+                constrained_column_inline_sizes_indices.push(idx);
+            } else if column_inline_size.percentage == 0.0 {
+                unspecified_inline_sizes_indices.push(idx);
             }
         }
 
@@ -383,43 +378,50 @@ impl Flow for TableFlow {
         let total_horizontal_spacing = self.total_horizontal_spacing();
         let content_inline_size = self.block_flow.fragment.border_box.size.inline -
             padding_and_borders - total_horizontal_spacing;
+        let mut remaining_inline_size = content_inline_size;
 
         match self.table_layout {
             TableLayout::Fixed => {
-                // In fixed table layout, we distribute extra space among the unspecified columns
-                // if there are any, or among all the columns if all are specified.
-                // See: https://drafts.csswg.org/css-tables-3/#distributing-width-to-columns
-                // (infobox)
                 self.column_computed_inline_sizes.clear();
-                if num_unspecified_inline_sizes != 0 {
-                    let extra_column_inline_size = content_inline_size - total_column_inline_size;
-                    for column_inline_size in &self.column_intrinsic_inline_sizes {
-                        if !column_inline_size.constrained {
-                            self.column_computed_inline_sizes.push(ColumnComputedInlineSize {
-                                size: extra_column_inline_size / num_unspecified_inline_sizes,
-                            });
-                        } else {
-                            self.column_computed_inline_sizes.push(ColumnComputedInlineSize {
-                                size: column_inline_size.minimum_length,
-                            });
-                        }
-                    }
-                } else if num_percentage_inline_sizes != 0 {
-                    let extra_column_inline_size = content_inline_size - total_column_inline_size;
-                    let ratio = content_inline_size.to_f32_px() /
-                        total_column_percentage_size;
-                    for column_inline_size in &self.column_intrinsic_inline_sizes {
+
+                // https://drafts.csswg.org/css2/tables.html#fixed-table-layout
+                for column_inline_size in &self.column_intrinsic_inline_sizes {
+                    if column_inline_size.constrained {
                         self.column_computed_inline_sizes.push(ColumnComputedInlineSize {
-                            size: extra_column_inline_size.scale_by(ratio * column_inline_size.percentage),
+                            size: column_inline_size.minimum_length,
                         });
+                        remaining_inline_size -= column_inline_size.minimum_length;
+                    } else if column_inline_size.percentage != 0.0 {
+                        let size = remaining_inline_size.scale_by(column_inline_size.percentage);
+                        self.column_computed_inline_sizes.push(ColumnComputedInlineSize {
+                            size: size,
+                        });
+                        remaining_inline_size -= size;
+                    } else {
+                        // Set the size to 0 now, distribute the remaining widths later
+                        self.column_computed_inline_sizes.push(ColumnComputedInlineSize {
+                            size: Au(0),
+                        });
+                    }
+                }
+
+                // Distribute remaining content inline size
+                if unspecified_inline_sizes_indices.len() > 0 {
+                    for &index in &unspecified_inline_sizes_indices {
+                        self.column_computed_inline_sizes[index].size =
+                            remaining_inline_size.scale_by(1.0 / unspecified_inline_sizes_indices.len() as f32);
                     }
                 } else {
-                    let ratio = content_inline_size.to_f32_px() /
-                        total_column_inline_size.to_f32_px();
-                    for column_inline_size in &self.column_intrinsic_inline_sizes {
-                        self.column_computed_inline_sizes.push(ColumnComputedInlineSize {
-                            size: column_inline_size.minimum_length.scale_by(ratio),
-                        });
+                    let total_minimum_size = self.column_intrinsic_inline_sizes
+                        .iter()
+                        .filter(|size| size.constrained)
+                        .map(|size| size.minimum_length.0 as f32)
+                        .sum::<f32>();
+
+                    for &index in &constrained_column_inline_sizes_indices {
+                        self.column_computed_inline_sizes[index].size +=
+                            remaining_inline_size.scale_by(
+                                self.column_computed_inline_sizes[index].size.0 as f32 / total_minimum_size);
                     }
                 }
             }
@@ -467,12 +469,12 @@ impl Flow for TableFlow {
 
     fn assign_block_size(&mut self, _: &LayoutContext) {
         debug!("assign_block_size: assigning block_size for table");
-        let vertical_spacing = self.spacing().vertical;
+        let vertical_spacing = self.spacing().vertical.0;
         self.block_flow.assign_block_size_for_table_like_flow(vertical_spacing)
     }
 
-    fn compute_absolute_position(&mut self, layout_context: &LayoutContext) {
-        self.block_flow.compute_absolute_position(layout_context)
+    fn compute_stacking_relative_position(&mut self, layout_context: &LayoutContext) {
+        self.block_flow.compute_stacking_relative_position(layout_context)
     }
 
     fn generated_containing_block_size(&self, flow: OpaqueFlow) -> LogicalSize<Au> {
@@ -504,7 +506,7 @@ impl Flow for TableFlow {
         self.block_flow.collect_stacking_contexts(state);
     }
 
-    fn repair_style(&mut self, new_style: &Arc<ServoComputedValues>) {
+    fn repair_style(&mut self, new_style: &::ServoArc<ComputedValues>) {
         self.block_flow.repair_style(new_style)
     }
 
@@ -543,8 +545,7 @@ pub struct InternalTable {
 
 impl ISizeAndMarginsComputer for InternalTable {
     fn compute_border_and_padding(&self, block: &mut BlockFlow, containing_block_inline_size: Au) {
-        block.fragment.compute_border_and_padding(containing_block_inline_size,
-                                                  self.border_collapse)
+        block.fragment.compute_border_and_padding(containing_block_inline_size)
     }
 
     /// Compute the used value of inline-size, taking care of min-inline-size and max-inline-size.
@@ -586,7 +587,7 @@ impl ISizeAndMarginsComputer for InternalTable {
 /// maximum of 100 pixels and 20% of the table), the preceding constraint means that we must
 /// potentially store both a specified width *and* a specified percentage, so that the inline-size
 /// assignment phase of layout will know which one to pick.
-#[derive(Clone, Serialize, Debug, Copy)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct ColumnIntrinsicInlineSize {
     /// The preferred intrinsic inline size.
     pub preferred: Au,
@@ -623,7 +624,7 @@ impl ColumnIntrinsicInlineSize {
 ///
 /// TODO(pcwalton): There will probably be some `border-collapse`-related info in here too
 /// eventually.
-#[derive(Serialize, Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct ColumnComputedInlineSize {
     /// The computed size of this inline column.
     pub size: Au,

@@ -45,7 +45,7 @@ use dom_struct::dom_struct;
 use encoding::EncodingRef;
 use encoding::all::UTF_8;
 use encoding::label::encoding_from_whatwg_label;
-use html5ever_atoms::LocalName;
+use html5ever::{LocalName, Prefix};
 use hyper::header::{Charset, ContentDisposition, ContentType, DispositionParam, DispositionType};
 use hyper::method::Method;
 use msg::constellation_msg::PipelineId;
@@ -59,7 +59,7 @@ use style::attr::AttrValue;
 use style::str::split_html_space_chars;
 use task_source::TaskSource;
 
-#[derive(JSTraceable, PartialEq, Clone, Copy, HeapSizeOf)]
+#[derive(Clone, Copy, HeapSizeOf, JSTraceable, PartialEq)]
 pub struct GenerationId(u32);
 
 #[dom_struct]
@@ -73,7 +73,7 @@ pub struct HTMLFormElement {
 
 impl HTMLFormElement {
     fn new_inherited(local_name: LocalName,
-                     prefix: Option<DOMString>,
+                     prefix: Option<Prefix>,
                      document: &Document) -> HTMLFormElement {
         HTMLFormElement {
             htmlelement: HTMLElement::new_inherited(local_name, prefix, document),
@@ -86,7 +86,7 @@ impl HTMLFormElement {
 
     #[allow(unrooted_must_root)]
     pub fn new(local_name: LocalName,
-               prefix: Option<DOMString>,
+               prefix: Option<Prefix>,
                document: &Document) -> Root<HTMLFormElement> {
         Node::reflect_node(box HTMLFormElement::new_inherited(local_name, prefix, document),
                            document,
@@ -172,7 +172,7 @@ impl HTMLFormElementMethods for HTMLFormElement {
             return elements;
         }
 
-        #[derive(JSTraceable, HeapSizeOf)]
+        #[derive(HeapSizeOf, JSTraceable)]
         struct ElementsFilter {
             form: Root<HTMLFormElement>
         }
@@ -241,13 +241,13 @@ impl HTMLFormElementMethods for HTMLFormElement {
     }
 }
 
-#[derive(Copy, Clone, HeapSizeOf, PartialEq)]
+#[derive(Clone, Copy, HeapSizeOf, PartialEq)]
 pub enum SubmittedFrom {
     FromForm,
     NotFromForm
 }
 
-#[derive(Copy, Clone, HeapSizeOf)]
+#[derive(Clone, Copy, HeapSizeOf)]
 pub enum ResetFrom {
     FromForm,
     NotFromForm
@@ -345,7 +345,7 @@ impl HTMLFormElement {
         let _target = submitter.target();
         // TODO: Handle browsing contexts, partially loaded documents (step 16-17)
 
-        let mut load_data = LoadData::new(action_components, doc.get_referrer_policy(), Some(doc.url()));
+        let mut load_data = LoadData::new(action_components, None, doc.get_referrer_policy(), Some(doc.url()));
 
         // Step 18
         match (&*scheme, method) {
@@ -674,14 +674,14 @@ impl HTMLFormElement {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf, Clone)]
+#[derive(Clone, HeapSizeOf, JSTraceable)]
 pub enum FormDatumValue {
     #[allow(dead_code)]
     File(Root<File>),
     String(DOMString)
 }
 
-#[derive(HeapSizeOf, JSTraceable, Clone)]
+#[derive(Clone, HeapSizeOf, JSTraceable)]
 pub struct FormDatum {
     pub ty: DOMString,
     pub name: DOMString,
@@ -701,14 +701,14 @@ impl FormDatum {
     }
 }
 
-#[derive(Copy, Clone, HeapSizeOf)]
+#[derive(Clone, Copy, HeapSizeOf)]
 pub enum FormEncType {
     TextPlainEncoded,
     UrlEncoded,
     FormDataEncoded
 }
 
-#[derive(Copy, Clone, HeapSizeOf)]
+#[derive(Clone, Copy, HeapSizeOf)]
 pub enum FormMethod {
     FormGet,
     FormPost,
@@ -759,7 +759,7 @@ impl FormSubmittableElement {
     }
 }
 
-#[derive(Copy, Clone, HeapSizeOf)]
+#[derive(Clone, Copy, HeapSizeOf)]
 pub enum FormSubmitter<'a> {
     FormElement(&'a HTMLFormElement),
     InputElement(&'a HTMLInputElement),
@@ -1116,8 +1116,6 @@ struct PlannedNavigation {
 }
 
 impl Runnable for PlannedNavigation {
-    fn name(&self) -> &'static str { "PlannedNavigation" }
-
     fn handler(self: Box<PlannedNavigation>) {
         if self.generation_id == self.form.root().generation_id.get() {
             let script_chan = self.script_chan.clone();

@@ -228,7 +228,7 @@ MacroAssemblerX86::handleFailureWithHandlerTail(void* handler)
     // No exception handler. Load the error value, load the new stack pointer
     // and return from the entry frame.
     bind(&entryFrame);
-    moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
+    asMasm().moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
     loadPtr(Address(esp, offsetof(ResumeFromException, stackPointer)), esp);
     ret();
 
@@ -364,6 +364,7 @@ MacroAssembler::subFromStackPtr(Imm32 imm32)
 void
 MacroAssembler::setupUnalignedABICall(Register scratch)
 {
+    MOZ_ASSERT(!IsCompilingWasm(), "wasm should only use aligned ABI calls");
     setupABICall();
     dynamicAlignment_ = true;
 
@@ -407,20 +408,26 @@ MacroAssembler::callWithABIPre(uint32_t* stackAdjust, bool callFromWasm)
 }
 
 void
-MacroAssembler::callWithABIPost(uint32_t stackAdjust, MoveOp::Type result)
+MacroAssembler::callWithABIPost(uint32_t stackAdjust, MoveOp::Type result, bool callFromWasm)
 {
     freeStack(stackAdjust);
-    if (result == MoveOp::DOUBLE) {
-        reserveStack(sizeof(double));
-        fstp(Operand(esp, 0));
-        loadDouble(Operand(esp, 0), ReturnDoubleReg);
-        freeStack(sizeof(double));
-    } else if (result == MoveOp::FLOAT32) {
-        reserveStack(sizeof(float));
-        fstp32(Operand(esp, 0));
-        loadFloat32(Operand(esp, 0), ReturnFloat32Reg);
-        freeStack(sizeof(float));
+
+    // Calls to native functions in wasm pass through a thunk which already
+    // fixes up the return value for us.
+    if (!callFromWasm) {
+        if (result == MoveOp::DOUBLE) {
+            reserveStack(sizeof(double));
+            fstp(Operand(esp, 0));
+            loadDouble(Operand(esp, 0), ReturnDoubleReg);
+            freeStack(sizeof(double));
+        } else if (result == MoveOp::FLOAT32) {
+            reserveStack(sizeof(float));
+            fstp32(Operand(esp, 0));
+            loadFloat32(Operand(esp, 0), ReturnFloat32Reg);
+            freeStack(sizeof(float));
+        }
     }
+
     if (dynamicAlignment_)
         pop(esp);
 
@@ -446,6 +453,73 @@ MacroAssembler::callWithABINoProfiler(const Address& fun, MoveOp::Type result)
     callWithABIPre(&stackAdjust);
     call(fun);
     callWithABIPost(stackAdjust, result);
+}
+
+// ===============================================================
+// Move instructions
+
+void
+MacroAssembler::moveValue(const TypedOrValueRegister& src, const ValueOperand& dest)
+{
+    if (src.hasValue()) {
+        moveValue(src.valueReg(), dest);
+        return;
+    }
+
+    MIRType type = src.type();
+    AnyRegister reg = src.typedReg();
+
+    if (!IsFloatingPointType(type)) {
+        mov(ImmWord(MIRTypeToTag(type)), dest.typeReg());
+        if (reg.gpr() != dest.payloadReg())
+            movl(reg.gpr(), dest.payloadReg());
+        return;
+    }
+
+    ScratchDoubleScope scratch(*this);
+    FloatRegister freg = reg.fpu();
+    if (type == MIRType::Float32) {
+        convertFloat32ToDouble(freg, scratch);
+        freg = scratch;
+    }
+    boxDouble(freg, dest, scratch);
+}
+
+void
+MacroAssembler::moveValue(const ValueOperand& src, const ValueOperand& dest)
+{
+    Register s0 = src.typeReg();
+    Register s1 = src.payloadReg();
+    Register d0 = dest.typeReg();
+    Register d1 = dest.payloadReg();
+
+    // Either one or both of the source registers could be the same as a
+    // destination register.
+    if (s1 == d0) {
+        if (s0 == d1) {
+            // If both are, this is just a swap of two registers.
+            xchgl(d0, d1);
+            return;
+        }
+        // If only one is, copy that source first.
+        mozilla::Swap(s0, s1);
+        mozilla::Swap(d0, d1);
+    }
+
+    if (s0 != d0)
+        movl(s0, d0);
+    if (s1 != d1)
+        movl(s1, d1);
+}
+
+void
+MacroAssembler::moveValue(const Value& src, const ValueOperand& dest)
+{
+    movl(Imm32(src.toNunboxTag()), dest.typeReg());
+    if (src.isGCThing())
+        movl(ImmGCPtr(src.toGCThing()), dest.payloadReg());
+    else
+        movl(Imm32(src.toNunboxPayload()), dest.payloadReg());
 }
 
 // ===============================================================

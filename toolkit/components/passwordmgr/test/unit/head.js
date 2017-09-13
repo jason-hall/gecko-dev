@@ -20,8 +20,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
                                   "resource://gre/modules/FileUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "OS",
                                   "resource://gre/modules/osfile.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-                                  "resource://gre/modules/Promise.jsm");
 
 const LoginInfo =
       Components.Constructor("@mozilla.org/login-manager/loginInfo;1",
@@ -96,16 +94,16 @@ const RecipeHelpers = {
 
 // Initialization functions common to all tests
 
-add_task(function* test_common_initialize()
+add_task(async function test_common_initialize()
 {
   // Before initializing the service for the first time, we should copy the key
   // file required to decrypt the logins contained in the SQLite databases used
   // by migration tests.  This file is not required for the other tests.
-  yield OS.File.copy(do_get_file("data/key3.db").path,
+  await OS.File.copy(do_get_file("data/key3.db").path,
                      OS.Path.join(OS.Constants.Path.profileDir, "key3.db"));
 
   // Ensure that the service and the storage module are initialized.
-  yield Services.logins.initializationPromise;
+  await Services.logins.initializationPromise;
 
   // Ensure that every test file starts with an empty database.
   LoginTestUtils.clearData();

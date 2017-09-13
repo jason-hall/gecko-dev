@@ -42,12 +42,6 @@ NS_NewRubyFrame(nsIPresShell* aPresShell,
 // nsRubyFrame Method Implementations
 // ==================================
 
-nsIAtom*
-nsRubyFrame::GetType() const
-{
-  return nsGkAtoms::rubyFrame;
-}
-
 /* virtual */ bool
 nsRubyFrame::IsFrameOfType(uint32_t aFlags) const
 {
@@ -66,7 +60,7 @@ nsRubyFrame::GetFrameName(nsAString& aResult) const
 #endif
 
 /* virtual */ void
-nsRubyFrame::AddInlineMinISize(nsRenderingContext *aRenderingContext,
+nsRubyFrame::AddInlineMinISize(gfxContext *aRenderingContext,
                                nsIFrame::InlineMinISizeData *aData)
 {
   for (nsIFrame* frame = this; frame; frame = frame->GetNextInFlow()) {
@@ -78,7 +72,7 @@ nsRubyFrame::AddInlineMinISize(nsRenderingContext *aRenderingContext,
 }
 
 /* virtual */ void
-nsRubyFrame::AddInlinePrefISize(nsRenderingContext *aRenderingContext,
+nsRubyFrame::AddInlinePrefISize(gfxContext *aRenderingContext,
                                 nsIFrame::InlinePrefISizeData *aData)
 {
   for (nsIFrame* frame = this; frame; frame = frame->GetNextInFlow()) {
@@ -96,7 +90,7 @@ FindRubyBaseContainerAncestor(nsIFrame* aFrame)
   for (nsIFrame* ancestor = aFrame->GetParent();
        ancestor && ancestor->IsFrameOfType(nsIFrame::eLineParticipant);
        ancestor = ancestor->GetParent()) {
-    if (ancestor->GetType() == nsGkAtoms::rubyBaseContainerFrame) {
+    if (ancestor->IsRubyBaseContainerFrame()) {
       return static_cast<nsRubyBaseContainerFrame*>(ancestor);
     }
   }
@@ -112,7 +106,7 @@ nsRubyFrame::Reflow(nsPresContext* aPresContext,
   MarkInReflow();
   DO_GLOBAL_REFLOW_COUNT("nsRubyFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowInput, aDesiredSize, aStatus);
-  
+
   if (!aReflowInput.mLineLayout) {
     NS_ASSERTION(aReflowInput.mLineLayout,
                  "No line layout provided to RubyFrame reflow method.");
@@ -125,6 +119,29 @@ nsRubyFrame::Reflow(nsPresContext* aPresContext,
 
   // Clear leadings
   mLeadings.Reset();
+
+  // Since the ruby base container is going to reflow not only the ruby
+  // base frames, but also the ruby text frames, and then *afterwards*
+  // we're going to reflow the ruby text containers (which do not reflow
+  // their children), we need to transfer NS_FRAME_IS_DIRTY status from
+  // the ruby text containers to their child ruby texts now, both so
+  // that the ruby texts are marked dirty if needed, and so that the
+  // ruby text container doesn't mark the ruby text frames dirty *after*
+  // they're reflowed and leave dirty bits in a clean tree (suppressing
+  // future reflows, due to lack of a queued reflow to clean them).
+  for (nsIFrame* child : PrincipalChildList()) {
+    if (child->HasAnyStateBits(NS_FRAME_IS_DIRTY) &&
+        child->IsRubyTextContainerFrame()) {
+      for (nsIFrame* grandchild : child->PrincipalChildList()) {
+        grandchild->AddStateBits(NS_FRAME_IS_DIRTY);
+      }
+      // Replace NS_FRAME_IS_DIRTY with NS_FRAME_HAS_DIRTY_CHILDREN so
+      // we still have a dirty marking, but one that we won't transfer
+      // to children again.
+      child->RemoveStateBits(NS_FRAME_IS_DIRTY);
+      child->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
+    }
+  }
 
   // Begin the span for the ruby frame
   WritingMode frameWM = aReflowInput.GetWritingMode();
@@ -381,7 +398,7 @@ nsRubyFrame::PullOneSegment(const nsLineLayout* aLineLayout,
   if (!baseFrame) {
     return nullptr;
   }
-  MOZ_ASSERT(baseFrame->GetType() == nsGkAtoms::rubyBaseContainerFrame);
+  MOZ_ASSERT(baseFrame->IsRubyBaseContainerFrame());
 
   // Get the float containing block of the base frame before we pull it.
   nsBlockFrame* oldFloatCB =
@@ -391,7 +408,7 @@ nsRubyFrame::PullOneSegment(const nsLineLayout* aLineLayout,
   // Pull all ruby text containers following the base container
   nsIFrame* nextFrame;
   while ((nextFrame = GetNextInFlowChild(aState)) != nullptr &&
-         nextFrame->GetType() == nsGkAtoms::rubyTextContainerFrame) {
+         nextFrame->IsRubyTextContainerFrame()) {
     PullNextInFlowChild(aState);
   }
 

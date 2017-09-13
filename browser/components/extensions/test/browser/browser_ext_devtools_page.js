@@ -2,10 +2,8 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetter(this, "gDevTools",
-                                  "resource://devtools/client/framework/gDevTools.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "devtools",
-                                  "resource://devtools/shared/Loader.jsm");
+const {DevToolsShim} = Cu.import("chrome://devtools-shim/content/DevToolsShim.jsm", {});
+const {gDevTools} = DevToolsShim;
 
 /**
  * This test file ensures that:
@@ -14,8 +12,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "devtools",
  * - the devtools_page can exchange messages with the background page
  */
 
-add_task(function* test_devtools_page_runtime_api_messaging() {
-  let tab = yield BrowserTestUtils.openNewForegroundTab(gBrowser, "http://mochi.test:8888/");
+add_task(async function test_devtools_page_runtime_api_messaging() {
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser, "http://mochi.test:8888/");
 
   function background() {
     browser.runtime.onConnect.addListener((port) => {
@@ -65,20 +63,20 @@ add_task(function* test_devtools_page_runtime_api_messaging() {
     },
   });
 
-  yield extension.startup();
+  await extension.startup();
 
-  let target = devtools.TargetFactory.forTab(tab);
+  let target = gDevTools.getTargetForTab(tab);
 
-  yield gDevTools.showToolbox(target, "webconsole");
+  await gDevTools.showToolbox(target, "webconsole");
   info("developer toolbox opened");
 
-  yield extension.awaitFinish("devtools_page_connect.done");
+  await extension.awaitFinish("devtools_page_connect.done");
 
-  yield gDevTools.closeToolbox(target);
+  await gDevTools.closeToolbox(target);
 
-  yield target.destroy();
+  await target.destroy();
 
-  yield extension.unload();
+  await extension.unload();
 
-  yield BrowserTestUtils.removeTab(tab);
+  await BrowserTestUtils.removeTab(tab);
 });

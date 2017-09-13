@@ -50,7 +50,7 @@ bool
 Decoder::fail(size_t errorOffset, const char* msg)
 {
     MOZ_ASSERT(error_);
-    UniqueChars strWithOffset(JS_smprintf("at offset %" PRIuSIZE ": %s", errorOffset, msg));
+    UniqueChars strWithOffset(JS_smprintf("at offset %zu: %s", errorOffset, msg));
     if (!strWithOffset)
         return false;
 
@@ -74,12 +74,12 @@ Decoder::startSection(SectionId id, ModuleEnvironment* env, uint32_t* sectionSta
 
     // Only start a section with 'id', skipping any custom sections before it.
 
-    uint32_t idValue;
-    if (!readVarU32(&idValue))
+    uint8_t idValue;
+    if (!readFixedU8(&idValue))
         goto rewind;
 
-    while (idValue != uint32_t(id)) {
-        if (idValue != uint32_t(SectionId::Custom))
+    while (idValue != uint8_t(id)) {
+        if (idValue != uint8_t(SectionId::Custom))
             goto rewind;
 
         // Rewind to the beginning of the current section since this is what
@@ -91,7 +91,7 @@ Decoder::startSection(SectionId id, ModuleEnvironment* env, uint32_t* sectionSta
         // Having successfully skipped a custom section, consider the next
         // section.
         currentSectionStart = cur_;
-        if (!readVarU32(&idValue))
+        if (!readFixedU8(&idValue))
             goto rewind;
     }
 
@@ -200,6 +200,36 @@ Decoder::skipCustomSection(ModuleEnvironment* env)
 
     finishCustomSection(sectionStart, sectionSize);
     return true;
+}
+
+bool
+Decoder::startNameSubsection(NameType nameType, uint32_t* endOffset)
+{
+    const uint8_t* initialPosition = cur_;
+
+    uint8_t nameTypeValue;
+    if (!readFixedU8(&nameTypeValue))
+        return false;
+
+    if (nameTypeValue != uint8_t(nameType)) {
+        cur_ = initialPosition;
+        *endOffset = NotStarted;
+        return true;
+    }
+
+    uint32_t payloadLength;
+    if (!readVarU32(&payloadLength) || payloadLength > bytesRemain())
+        return false;
+
+    *endOffset = (cur_ - beg_) + payloadLength;
+    return true;
+}
+
+bool
+Decoder::finishNameSubsection(uint32_t endOffset)
+{
+    MOZ_ASSERT(endOffset != NotStarted);
+    return endOffset == uint32_t(cur_ - beg_);
 }
 
 // Misc helpers.
@@ -320,13 +350,13 @@ DecodeFunctionBodyExprs(const ModuleEnvironment& env, const Sig& sig, const ValT
 #define CHECK(c) if (!(c)) return false; break
 
     while (true) {
-        uint16_t op;
+        OpBytes op;
         if (!iter.readOp(&op))
             return false;
 
         Nothing nothing;
 
-        switch (op) {
+        switch (op.b0) {
           case uint16_t(Op::End): {
             LabelKind unusedKind;
             ExprType unusedType;
@@ -549,6 +579,15 @@ DecodeFunctionBodyExprs(const ModuleEnvironment& env, const Sig& sig, const ValT
             CHECK(iter.readConversion(ValType::I64, ValType::F64, &nothing));
           case uint16_t(Op::F64PromoteF32):
             CHECK(iter.readConversion(ValType::F32, ValType::F64, &nothing));
+#ifdef ENABLE_WASM_THREAD_OPS
+          case uint16_t(Op::I32Extend8S):
+          case uint16_t(Op::I32Extend16S):
+            CHECK(iter.readConversion(ValType::I32, ValType::I32, &nothing));
+          case uint16_t(Op::I64Extend8S):
+          case uint16_t(Op::I64Extend16S):
+          case uint16_t(Op::I64Extend32S):
+            CHECK(iter.readConversion(ValType::I64, ValType::I64, &nothing));
+#endif
           case uint16_t(Op::I32Load8S):
           case uint16_t(Op::I32Load8U): {
             LinearMemoryAddress<Nothing> addr;
@@ -651,7 +690,7 @@ DecodeFunctionBodyExprs(const ModuleEnvironment& env, const Sig& sig, const ValT
           case uint16_t(Op::Unreachable):
             CHECK(iter.readUnreachable());
           default:
-            return iter.unrecognizedOpcode(op);
+            return iter.unrecognizedOpcode(&op);
         }
     }
 
@@ -721,8 +760,8 @@ DecodeTypeSection(Decoder& d, ModuleEnvironment* env)
         return false;
 
     for (uint32_t sigIndex = 0; sigIndex < numSigs; sigIndex++) {
-        uint32_t form;
-        if (!d.readVarU32(&form) || form != uint32_t(TypeCode::Func))
+        uint8_t form;
+        if (!d.readFixedU8(&form) || form != uint8_t(TypeCode::Func))
             return d.fail("expected function form");
 
         uint32_t numArgs;
@@ -781,6 +820,9 @@ DecodeName(Decoder& d)
     if (!d.readBytes(numBytes, &bytes))
         return nullptr;
 
+    if (!JS::StringIsUTF8(bytes, numBytes))
+        return nullptr;
+
     UniqueChars name(js_pod_malloc<char>(numBytes + 1));
     if (!name)
         return nullptr;
@@ -806,12 +848,12 @@ DecodeSignatureIndex(Decoder& d, const SigWithIdVector& sigs, uint32_t* sigIndex
 static bool
 DecodeLimits(Decoder& d, Limits* limits)
 {
-    uint32_t flags;
-    if (!d.readVarU32(&flags))
+    uint8_t flags;
+    if (!d.readFixedU8(&flags))
         return d.fail("expected flags");
 
-    if (flags & ~uint32_t(0x1))
-        return d.failf("unexpected bits set in flags: %" PRIu32, (flags & ~uint32_t(0x1)));
+    if (flags & ~uint8_t(0x1))
+        return d.failf("unexpected bits set in flags: %" PRIu32, (flags & ~uint8_t(0x1)));
 
     if (!d.readVarU32(&limits->initial))
         return d.fail("expected initial length");
@@ -836,11 +878,11 @@ DecodeLimits(Decoder& d, Limits* limits)
 static bool
 DecodeTableLimits(Decoder& d, TableDescVector* tables)
 {
-    uint32_t elementType;
-    if (!d.readVarU32(&elementType))
+    uint8_t elementType;
+    if (!d.readFixedU8(&elementType))
         return d.fail("expected table element type");
 
-    if (elementType != uint32_t(TypeCode::AnyFunc))
+    if (elementType != uint8_t(TypeCode::AnyFunc))
         return d.fail("expected 'anyfunc' element type");
 
     Limits limits;
@@ -884,14 +926,14 @@ DecodeGlobalType(Decoder& d, ValType* type, bool* isMutable)
     if (!DecodeValType(d, ModuleKind::Wasm, type))
         return false;
 
-    uint32_t flags;
-    if (!d.readVarU32(&flags))
+    uint8_t flags;
+    if (!d.readFixedU8(&flags))
         return d.fail("expected global flags");
 
-    if (flags & ~uint32_t(GlobalTypeImmediate::AllowedMask))
+    if (flags & ~uint8_t(GlobalTypeImmediate::AllowedMask))
         return d.fail("unexpected bits set in global flags");
 
-    *isMutable = flags & uint32_t(GlobalTypeImmediate::IsMutable);
+    *isMutable = flags & uint8_t(GlobalTypeImmediate::IsMutable);
     return true;
 }
 
@@ -942,8 +984,8 @@ DecodeImport(Decoder& d, ModuleEnvironment* env)
     if (!funcName)
         return d.fail("expected valid import func name");
 
-    uint32_t rawImportKind;
-    if (!d.readVarU32(&rawImportKind))
+    uint8_t rawImportKind;
+    if (!d.readFixedU8(&rawImportKind))
         return d.fail("failed to read import kind");
 
     DefinitionKind importKind = DefinitionKind(rawImportKind);
@@ -1113,11 +1155,11 @@ static bool
 DecodeInitializerExpression(Decoder& d, const GlobalDescVector& globals, ValType expected,
                             InitExpr* init)
 {
-    uint16_t op;
+    OpBytes op;
     if (!d.readOp(&op))
         return d.fail("failed to read initializer type");
 
-    switch (op) {
+    switch (op.b0) {
       case uint16_t(Op::I32Const): {
         int32_t i32;
         if (!d.readVarS32(&i32))
@@ -1165,8 +1207,8 @@ DecodeInitializerExpression(Decoder& d, const GlobalDescVector& globals, ValType
     if (expected != init->type())
         return d.fail("type mismatch: initializer type and expected type don't match");
 
-    uint16_t end;
-    if (!d.readOp(&end) || end != uint16_t(Op::End))
+    OpBytes end;
+    if (!d.readOp(&end) || end.b0 != uint16_t(Op::End))
         return d.fail("failed to read end of initializer expression");
 
     return true;
@@ -1242,8 +1284,8 @@ DecodeExport(Decoder& d, ModuleEnvironment* env, CStringSet* dupSet)
     if (!fieldName)
         return false;
 
-    uint32_t exportKind;
-    if (!d.readVarU32(&exportKind))
+    uint8_t exportKind;
+    if (!d.readFixedU8(&exportKind))
         return d.fail("failed to read export kind");
 
     switch (DefinitionKind(exportKind)) {
@@ -1560,60 +1602,81 @@ DecodeDataSection(Decoder& d, ModuleEnvironment* env)
     return true;
 }
 
-static void
-MaybeDecodeNameSectionBody(Decoder& d, ModuleEnvironment* env)
+static bool
+DecodeModuleNameSubsection(Decoder& d, ModuleEnvironment* env)
 {
-    // For simplicity, ignore all failures, even OOM. Failure will simply result
-    // in the names section not being included for this module.
+    uint32_t endOffset;
+    if (!d.startNameSubsection(NameType::Module, &endOffset))
+        return false;
+    if (endOffset == Decoder::NotStarted)
+        return true;
 
-    uint32_t numFuncNames;
-    if (!d.readVarU32(&numFuncNames))
-        return;
+    // Don't use NameInBytecode for module name; instead store a copy of the
+    // string. This way supplying a module name doesn't need to save the whole
+    // bytecode. While function names are likely to be stripped in practice,
+    // module names aren't necessarily.
 
-    if (numFuncNames > MaxFuncs)
-        return;
+    uint32_t nameLength;
+    if (!d.readVarU32(&nameLength))
+        return false;
 
-    // Use a local vector (and not env->funcNames) since it could result in a
-    // partially initialized result in case of failure in the middle.
+    const uint8_t* bytes;
+    if (!d.readBytes(nameLength, &bytes))
+        return false;
+
+    // Do nothing with module name for now; a future patch will incorporate the
+    // module name into the callstack format.
+
+    return d.finishNameSubsection(endOffset);
+}
+
+static bool
+DecodeFunctionNameSubsection(Decoder& d, ModuleEnvironment* env)
+{
+    uint32_t endOffset;
+    if (!d.startNameSubsection(NameType::Function, &endOffset))
+        return false;
+    if (endOffset == Decoder::NotStarted)
+        return true;
+
+    uint32_t nameCount = 0;
+    if (!d.readVarU32(&nameCount) || nameCount > MaxFuncs)
+        return false;
+
     NameInBytecodeVector funcNames;
-    if (!funcNames.resize(numFuncNames))
-        return;
 
-    for (uint32_t i = 0; i < numFuncNames; i++) {
-        uint32_t numBytes;
-        if (!d.readVarU32(&numBytes))
-            return;
-        if (numBytes > MaxStringLength)
-            return;
+    for (uint32_t i = 0; i < nameCount; ++i) {
+        uint32_t funcIndex = 0;
+        if (!d.readVarU32(&funcIndex))
+            return false;
 
-        NameInBytecode name;
-        name.offset = d.currentOffset();
-        name.length = numBytes;
-        funcNames[i] = name;
+        // Names must refer to real functions and be given in ascending order.
+        if (funcIndex >= env->numFuncs() || funcIndex < funcNames.length())
+            return false;
 
-        if (!d.readBytes(numBytes))
-            return;
+        uint32_t nameLength = 0;
+        if (!d.readVarU32(&nameLength) || nameLength > MaxStringLength)
+            return false;
 
-        // Skip local names for a function.
-        uint32_t numLocals;
-        if (!d.readVarU32(&numLocals))
-            return;
-        if (numLocals > MaxLocals)
-            return;
+        if (!nameLength)
+            continue;
 
-        for (uint32_t j = 0; j < numLocals; j++) {
-            uint32_t numBytes;
-            if (!d.readVarU32(&numBytes))
-                return;
-            if (numBytes > MaxStringLength)
-                return;
+        if (!funcNames.resize(funcIndex + 1))
+            return false;
 
-            if (!d.readBytes(numBytes))
-                return;
-        }
+        funcNames[funcIndex] = NameInBytecode(d.currentOffset(), nameLength);
+
+        if (!d.readBytes(nameLength))
+            return false;
     }
 
+    if (!d.finishNameSubsection(endOffset))
+        return false;
+
+    // To encourage fully valid function names subsections; only save names if
+    // the entire subsection decoded correctly.
     env->funcNames = Move(funcNames);
+    return true;
 }
 
 static bool
@@ -1627,8 +1690,17 @@ DecodeNameSection(Decoder& d, ModuleEnvironment* env)
 
     // Once started, custom sections do not report validation errors.
 
-    MaybeDecodeNameSectionBody(d, env);
+    if (!DecodeModuleNameSubsection(d, env))
+        goto finish;
 
+    if (!DecodeFunctionNameSubsection(d, env))
+        goto finish;
+
+    // The names we care about have already been extracted into 'env' so don't
+    // bother decoding the rest of the name section. finishCustomSection() will
+    // skip to the end of the name section (as it would for any other error).
+
+  finish:
     d.finishCustomSection(sectionStart, sectionSize);
     return true;
 }

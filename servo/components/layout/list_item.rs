@@ -18,10 +18,9 @@ use fragment::{CoordinateSystem, Fragment, FragmentBorderBoxIterator, GeneratedC
 use fragment::Overflow;
 use generated_content;
 use inline::InlineFlow;
-use std::sync::Arc;
 use style::computed_values::{list_style_type, position};
 use style::logical_geometry::LogicalSize;
-use style::properties::ServoComputedValues;
+use style::properties::ComputedValues;
 use style::servo::restyle_damage::RESOLVE_GENERATED_CONTENT;
 
 /// A block with the CSS `display` property equal to `list-item`.
@@ -120,12 +119,16 @@ impl Flow for ListItemFlow {
         }
     }
 
-    fn compute_absolute_position(&mut self, layout_context: &LayoutContext) {
-        self.block_flow.compute_absolute_position(layout_context)
+    fn compute_stacking_relative_position(&mut self, layout_context: &LayoutContext) {
+        self.block_flow.compute_stacking_relative_position(layout_context)
     }
 
     fn place_float_if_applicable<'a>(&mut self) {
         self.block_flow.place_float_if_applicable()
+    }
+
+    fn contains_roots_of_absolute_flow_tree(&self) -> bool {
+        self.block_flow.contains_roots_of_absolute_flow_tree()
     }
 
     fn is_absolute_containing_block(&self) -> bool {
@@ -148,7 +151,7 @@ impl Flow for ListItemFlow {
         self.block_flow.collect_stacking_contexts(state);
     }
 
-    fn repair_style(&mut self, new_style: &Arc<ServoComputedValues>) {
+    fn repair_style(&mut self, new_style: &::ServoArc<ComputedValues>) {
         self.block_flow.repair_style(new_style)
     }
 
@@ -198,7 +201,7 @@ impl Flow for ListItemFlow {
                                                              .early_absolute_position_info
                                                              .relative_containing_block_mode,
                                                          CoordinateSystem::Own)
-                           .translate(stacking_context_position));
+                           .translate(&stacking_context_position.to_vector()));
             }
         }
     }

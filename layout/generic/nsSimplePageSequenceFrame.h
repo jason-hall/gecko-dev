@@ -19,7 +19,7 @@ class HTMLCanvasElement;
 } // namespace mozilla
 
 //-----------------------------------------------
-// This class maintains all the data that 
+// This class maintains all the data that
 // is used by all the page frame
 // It lives while the nsSimplePageSequenceFrame lives
 class nsSharedPageData {
@@ -37,7 +37,7 @@ public:
 
   nsSize      mReflowSize;
   nsMargin    mReflowMargin;
-  // Margin for headers and footers; it defaults to 4/100 of an inch on UNIX 
+  // Margin for headers and footers; it defaults to 4/100 of an inch on UNIX
   // and 0 elsewhere; I think it has to do with some inconsistency in page size
   // computations
   nsMargin    mEdgePaperMargin;
@@ -51,30 +51,31 @@ public:
 };
 
 // Simple page sequence frame class. Used when we're in paginated mode
-class nsSimplePageSequenceFrame : public nsContainerFrame,
-                                  public nsIPageSequenceFrame {
+class nsSimplePageSequenceFrame final
+  : public nsContainerFrame
+  , public nsIPageSequenceFrame
+{
 public:
   friend nsSimplePageSequenceFrame* NS_NewSimplePageSequenceFrame(nsIPresShell* aPresShell,
                                                                   nsStyleContext* aContext);
 
   NS_DECL_QUERYFRAME
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsSimplePageSequenceFrame)
 
   // nsIFrame
   void Reflow(nsPresContext* aPresContext,
               ReflowOutput& aDesiredSize,
-              const ReflowInput& aMaxSize,
+              const ReflowInput& aReflowInput,
               nsReflowStatus& aStatus) override;
 
   void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                        const nsRect&           aDirtyRect,
                         const nsDisplayListSet& aLists) override;
 
   // nsIPageSequenceFrame
   NS_IMETHOD SetPageNo(int32_t aPageNo) { return NS_OK;}
   NS_IMETHOD SetSelectionHeight(nscoord aYOffset, nscoord aHeight) override { mYSelOffset = aYOffset; mSelectionHeight = aHeight; return NS_OK; }
   NS_IMETHOD SetTotalNumPages(int32_t aTotal) override { mTotalPages = aTotal; return NS_OK; }
-  
+
   // For Shrink To Fit
   NS_IMETHOD GetSTFPercent(float& aSTFPercent) override;
 
@@ -99,11 +100,9 @@ public:
   bool HasTransformGetter() const override { return true; }
 
   /**
-   * Get the "type" of the frame
-   *
-   * @see nsGkAtoms::sequenceFrame
+   * Return our first page frame.
    */
-  nsIAtom* GetType() const override;
+  void AppendDirectlyOwnedAnonBoxes(nsTArray<OwnedAnonBox>& aResult) override;
 
 #ifdef DEBUG_FRAME_DUMP
   nsresult GetFrameName(nsAString& aResult) const override;

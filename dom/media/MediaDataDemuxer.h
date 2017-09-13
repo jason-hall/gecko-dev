@@ -32,7 +32,8 @@ class MediaDataDemuxer
 public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaDataDemuxer)
 
-  typedef MozPromise<nsresult, MediaResult, /* IsExclusive = */ true> InitPromise;
+  typedef
+    MozPromise<MediaResult, MediaResult, /* IsExclusive = */ true> InitPromise;
 
   // Initializes the demuxer. Other methods cannot be called unless
   // initialization has completed and succeeded.
@@ -82,7 +83,7 @@ public:
   // since the demuxer was initialized.
   // The demuxer can use this mechanism to inform all track demuxers to update
   // its buffered range.
-  // This will be called should the demuxer be used with MediaSourceResource.
+  // This will be called should the demuxer be used with MediaSource.
   virtual void NotifyDataRemoved() { }
 
   // Indicate to MediaFormatReader if it should compute the start time

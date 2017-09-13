@@ -63,13 +63,13 @@ Categorical histograms are similar to enumerated histograms. However, instead of
 
 ``enumerated``
 --------------
-This histogram type is intended for storing "enum" values, when you can't specify labels and thus cannot use ``categorical`` histograms. An enumerated histogram consists of a fixed number of *buckets*, each of which is associated with a consecutive integer value (the bucket's *label*). Each bucket corresponds to an enum value and counts the number of times its particular enum value was recorded.
+This histogram type is intended for storing "enum" values, when you can't specify labels and thus cannot use ``categorical`` histograms. An enumerated histogram consists of a fixed number of *buckets* (specified by ``n_values``), each of which is associated with a consecutive integer value (the bucket's *label*), `0` to `n_values`. Each bucket corresponds to an enum value and counts the number of times its particular enum value was recorded; except for the `n_values` bucket, which counts all values greater than or equal to n_values.
 
 You might use this type of histogram if, for example, you wanted to track the relative popularity of SSL handshake types. Whenever the browser started an SSL handshake, it would record one of a limited number of enum values which uniquely identifies the handshake type.
 
 .. note::
 
-    Set ``n_buckets`` to a slightly larger value than needed to allow for new enum values in the future. See `Changing a histogram`_ if you need to add more enums later.
+    Set ``n_values`` to a slightly larger value than needed to allow for new enum values in the future. See `Changing a histogram`_ if you need to add more enums later.
 
 ``flag``
 --------
@@ -84,6 +84,8 @@ Flag histograms will ignore any changes after the flag is set, so once the flag 
 *Deprecated* (please use uint :doc:`scalars`).
 
 This histogram type is used when you want to record a count of something. It only stores a single value and defaults to `0`.
+
+.. _histogram-type-keyed:
 
 Keyed Histograms
 ----------------
@@ -106,6 +108,7 @@ The following is a sample histogram declaration from ``Histograms.json`` for a h
 .. code-block:: json
 
     "MEMORY_RESIDENT": {
+      "record_in_processes": ["main", "content"],
       "alert_emails": ["team@mozilla.xyz"],
       "expires_in_version": "never",
       "kind": "exponential",
@@ -119,6 +122,16 @@ The following is a sample histogram declaration from ``Histograms.json`` for a h
 Histograms which track timings in milliseconds or microseconds should suffix their names with ``"_MS"`` and ``"_US"`` respectively. Flag-type histograms should have the suffix ``"_FLAG"`` in their name.
 
 The possible fields in a histogram declaration are listed below.
+
+``record_in_processes``
+-----------------------
+Required. This field is a list of processes this histogram can be recorded in. Currently-supported values are:
+
+- ``main``
+- ``content``
+- ``gpu``
+- ``all_child`` (record in all child processes)
+- ``all`` (record in all processes)
 
 ``alert_emails``
 ----------------
@@ -135,6 +148,10 @@ Required. One of the histogram types described in the previous section. Differen
 ``keyed``
 ---------
 Optional, boolean, defaults to ``false``. Determines whether this is a *keyed histogram*.
+
+``keys``
+---------
+Optional, list of strings. Only valid for *keyed histograms*. Defines a case sensitive list of allowed keys that can be used for this histogram. The list is limited to 30 keys with a maximum length of 20 characters. When using a key that is not in the list, the accumulation is discarded and a warning is printed to the browser console.
 
 ``low``
 -------

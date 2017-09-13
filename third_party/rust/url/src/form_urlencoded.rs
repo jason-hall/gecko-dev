@@ -40,12 +40,14 @@ pub fn parse(input: &[u8]) -> Parse {
 ///
 /// Use `parse(input.as_bytes())` to parse a `&str` string.
 ///
-/// This function is only available if the `query_encoding` Cargo feature is enabled.
+/// This function is only available if the `query_encoding`
+/// [feature](http://doc.crates.io/manifest.html#the-features-section]) is enabled.
 ///
 /// Arguments:
 ///
 /// * `encoding_override`: The character encoding each name and values is decoded as
 ///    after percent-decoding. Defaults to UTF-8.
+///    `EncodingRef` is defined in [rust-encoding](https://github.com/lifthrasiir/rust-encoding).
 /// * `use_charset`: The *use _charset_ flag*. If in doubt, set to `false`.
 #[cfg(feature = "query_encoding")]
 pub fn parse_with_encoding<'a>(input: &'a [u8],
@@ -79,7 +81,7 @@ pub fn parse_with_encoding<'a>(input: &'a [u8],
 }
 
 /// The return type of `parse()`.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Parse<'a> {
     input: &'a [u8],
     encoding: EncodingOverride,
@@ -119,7 +121,7 @@ fn decode(input: &[u8], encoding: EncodingOverride) -> Cow<str> {
 }
 
 /// Replace b'+' with b' '
-fn replace_plus<'a>(input: &'a [u8]) -> Cow<'a, [u8]> {
+fn replace_plus(input: &[u8]) -> Cow<[u8]> {
     match input.iter().position(|&b| b == b'+') {
         None => Cow::Borrowed(input),
         Some(first_position) => {
@@ -143,6 +145,7 @@ impl<'a> Parse<'a> {
 }
 
 /// Like `Parse`, but yields pairs of `String` instead of pairs of `Cow<str>`.
+#[derive(Debug)]
 pub struct ParseIntoOwned<'a> {
     inner: Parse<'a>
 }
@@ -166,6 +169,7 @@ pub fn byte_serialize(input: &[u8]) -> ByteSerialize {
 }
 
 /// Return value of `byte_serialize()`.
+#[derive(Debug)]
 pub struct ByteSerialize<'a> {
     bytes: &'a [u8],
 }
@@ -207,6 +211,7 @@ impl<'a> Iterator for ByteSerialize<'a> {
 
 /// The [`application/x-www-form-urlencoded` serializer](
 /// https://url.spec.whatwg.org/#concept-urlencoded-serializer).
+#[derive(Debug)]
 pub struct Serializer<T: Target> {
     target: Option<T>,
     start_position: usize,

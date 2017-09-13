@@ -41,12 +41,6 @@ nsSVGGFrame::Init(nsIContent*       aContent,
 }
 #endif /* DEBUG */
 
-nsIAtom *
-nsSVGGFrame::GetType() const
-{
-  return nsGkAtoms::svgGFrame;
-}
-
 //----------------------------------------------------------------------
 // nsSVGDisplayableFrame methods
 
@@ -71,7 +65,7 @@ nsSVGGFrame::GetCanvasTM()
     NS_ASSERTION(GetParent(), "null parent");
 
     nsSVGContainerFrame *parent = static_cast<nsSVGContainerFrame*>(GetParent());
-    SVGGraphicsElement *content = static_cast<SVGGraphicsElement*>(mContent);
+    SVGGraphicsElement *content = static_cast<SVGGraphicsElement*>(GetContent());
 
     gfxMatrix tm = content->PrependLocalTransformsTo(parent->GetCanvasTM());
 

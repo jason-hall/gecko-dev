@@ -317,11 +317,9 @@ AllChildrenIterator::Get() const
 {
   switch (mPhase) {
     case eAtBeforeKid: {
-      nsIFrame* frame = mOriginalContent->GetPrimaryFrame();
-      MOZ_ASSERT(frame, "No frame at eAtBeforeKid phase");
-      nsIFrame* beforeFrame = nsLayoutUtils::GetBeforeFrame(frame);
-      MOZ_ASSERT(beforeFrame, "No content before frame at eAtBeforeKid phase");
-      return beforeFrame->GetContent();
+      Element* before = nsLayoutUtils::GetBeforePseudo(mOriginalContent);
+      MOZ_ASSERT(before, "No content before frame at eAtBeforeKid phase");
+      return before;
     }
 
     case eAtExplicitKids:
@@ -331,11 +329,9 @@ AllChildrenIterator::Get() const
       return mAnonKids[mAnonKidsIdx];
 
     case eAtAfterKid: {
-      nsIFrame* frame = mOriginalContent->GetPrimaryFrame();
-      MOZ_ASSERT(frame, "No frame at eAtAfterKid phase");
-      nsIFrame* afterFrame = nsLayoutUtils::GetAfterFrame(frame);
-      MOZ_ASSERT(afterFrame, "No content before frame at eAtBeforeKid phase");
-      return afterFrame->GetContent();
+      Element* after = nsLayoutUtils::GetAfterPseudo(mOriginalContent);
+      MOZ_ASSERT(after, "No content after frame at eAtAfterKid phase");
+      return after;
     }
 
     default:
@@ -349,15 +345,10 @@ AllChildrenIterator::Seek(nsIContent* aChildToFind)
 {
   if (mPhase == eAtBegin || mPhase == eAtBeforeKid) {
     mPhase = eAtExplicitKids;
-    nsIFrame* frame = mOriginalContent->GetPrimaryFrame();
-    if (frame) {
-      nsIFrame* beforeFrame = nsLayoutUtils::GetBeforeFrame(frame);
-      if (beforeFrame) {
-        if (beforeFrame->GetContent() == aChildToFind) {
-          mPhase = eAtBeforeKid;
-          return true;
-        }
-      }
+    Element* beforePseudo = nsLayoutUtils::GetBeforePseudo(mOriginalContent);
+    if (beforePseudo && beforePseudo == aChildToFind) {
+      mPhase = eAtBeforeKid;
+      return true;
     }
   }
 
@@ -379,24 +370,8 @@ AllChildrenIterator::Seek(nsIContent* aChildToFind)
 void
 AllChildrenIterator::AppendNativeAnonymousChildren()
 {
-  AppendNativeAnonymousChildrenFromFrame(mOriginalContent->GetPrimaryFrame());
-
-  // The root scroll frame is not the primary frame of the root element.
-  // Detect and handle this case.
-  if (!(mFlags & nsIContent::eSkipDocumentLevelNativeAnonymousContent) &&
-      mOriginalContent == mOriginalContent->OwnerDoc()->GetRootElement()) {
-    nsContentUtils::AppendDocumentLevelNativeAnonymousContentTo(
-        mOriginalContent->OwnerDoc(), mAnonKids);
-  }
-}
-
-void
-AllChildrenIterator::AppendNativeAnonymousChildrenFromFrame(nsIFrame* aFrame)
-{
-  nsIAnonymousContentCreator* ac = do_QueryFrame(aFrame);
-  if (ac) {
-    ac->AppendAnonymousContentTo(mAnonKids, mFlags);
-  }
+  nsContentUtils::AppendNativeAnonymousChildren(
+      mOriginalContent, mAnonKids, mFlags);
 }
 
 nsIContent*
@@ -404,13 +379,10 @@ AllChildrenIterator::GetNextChild()
 {
   if (mPhase == eAtBegin) {
     mPhase = eAtExplicitKids;
-    nsIFrame* frame = mOriginalContent->GetPrimaryFrame();
-    if (frame) {
-      nsIFrame* beforeFrame = nsLayoutUtils::GetBeforeFrame(frame);
-      if (beforeFrame) {
-        mPhase = eAtBeforeKid;
-        return beforeFrame->GetContent();
-      }
+    Element* beforeContent = nsLayoutUtils::GetBeforePseudo(mOriginalContent);
+    if (beforeContent) {
+      mPhase = eAtBeforeKid;
+      return beforeContent;
     }
   }
 
@@ -446,13 +418,10 @@ AllChildrenIterator::GetNextChild()
       return mAnonKids[mAnonKidsIdx];
     }
 
-    nsIFrame* frame = mOriginalContent->GetPrimaryFrame();
-    if (frame) {
-      nsIFrame* afterFrame = nsLayoutUtils::GetAfterFrame(frame);
-      if (afterFrame) {
-        mPhase = eAtAfterKid;
-        return afterFrame->GetContent();
-      }
+    Element* afterContent = nsLayoutUtils::GetAfterPseudo(mOriginalContent);
+    if (afterContent) {
+      mPhase = eAtAfterKid;
+      return afterContent;
     }
   }
 
@@ -466,13 +435,10 @@ AllChildrenIterator::GetPreviousChild()
   if (mPhase == eAtEnd) {
     MOZ_ASSERT(mAnonKidsIdx == mAnonKids.Length());
     mPhase = eAtAnonKids;
-    nsIFrame* frame = mOriginalContent->GetPrimaryFrame();
-    if (frame) {
-      nsIFrame* afterFrame = nsLayoutUtils::GetAfterFrame(frame);
-      if (afterFrame) {
-        mPhase = eAtAfterKid;
-        return afterFrame->GetContent();
-      }
+    Element* afterContent = nsLayoutUtils::GetAfterPseudo(mOriginalContent);
+    if (afterContent) {
+      mPhase = eAtAfterKid;
+      return afterContent;
     }
   }
 
@@ -501,13 +467,10 @@ AllChildrenIterator::GetPreviousChild()
       return kid;
     }
 
-    nsIFrame* frame = mOriginalContent->GetPrimaryFrame();
-    if (frame) {
-      nsIFrame* beforeFrame = nsLayoutUtils::GetBeforeFrame(frame);
-      if (beforeFrame) {
-        mPhase = eAtBeforeKid;
-        return beforeFrame->GetContent();
-      }
+    Element* beforeContent = nsLayoutUtils::GetBeforePseudo(mOriginalContent);
+    if (beforeContent) {
+      mPhase = eAtBeforeKid;
+      return beforeContent;
     }
   }
 
@@ -515,95 +478,10 @@ AllChildrenIterator::GetPreviousChild()
   return nullptr;
 }
 
-static bool
-IsNativeAnonymousImplementationOfPseudoElement(nsIContent* aContent)
-{
-  // First, we need a frame. This leads to the tricky issue of what we can
-  // infer if the frame is null.
-  //
-  // Unlike regular nodes, native anonymous content (NAC) gets created during
-  // frame construction, which happens after the main style traversal. This
-  // means that we have to manually resolve style for those nodes shortly after
-  // they're created, either by (a) invoking ResolvePseudoElementStyle (for PE
-  // NAC), or (b) handing the subtree off to Servo for a mini-traversal (for
-  // non-PE NAC). We have assertions in nsCSSFrameConstructor that we don't do
-  // both.
-  //
-  // Once that happens, the NAC has a frame. So if we have no frame here,
-  // we're either not NAC, or in the process of doing (b). Either way, this
-  // isn't a PE.
-  nsIFrame* f = aContent->GetPrimaryFrame();
-  if (!f) {
-    return false;
-  }
-
-  // Get the pseudo type.
-  CSSPseudoElementType pseudoType = f->StyleContext()->GetPseudoType();
-
-  // In general nodes never get anonymous box style. However, there are a few
-  // special cases:
-  //
-  // * We somewhat-confusingly give text nodes a style context tagged with
-  //   ":-moz-text", so we need to check for the anonymous box case here.
-  // * The primary frame for table elements is an anonymous box that inherits
-  //   from the table's style.
-  if (pseudoType == CSSPseudoElementType::InheritingAnonBox) {
-    MOZ_ASSERT(f->StyleContext()->GetPseudo() == nsCSSAnonBoxes::mozText ||
-               f->StyleContext()->GetPseudo() == nsCSSAnonBoxes::tableWrapper);
-    return false;
-  }
-
-  MOZ_ASSERT(pseudoType != CSSPseudoElementType::NonInheritingAnonBox);
-
-  // Finally check the actual pseudo type.
-  bool isImpl = pseudoType != CSSPseudoElementType::NotPseudo;
-  MOZ_ASSERT_IF(isImpl, aContent->IsRootOfNativeAnonymousSubtree());
-  return isImpl;
-}
-
-/* static */ bool
-StyleChildrenIterator::IsNeeded(const Element* aElement)
-{
-  // If the node is in an anonymous subtree, we conservatively return true to
-  // handle insertion points.
-  if (aElement->IsInAnonymousSubtree()) {
-    return true;
-  }
-
-  // If the node has an XBL binding with anonymous content return true.
-  if (aElement->HasFlag(NODE_MAY_BE_IN_BINDING_MNGR)) {
-    nsBindingManager* manager = aElement->OwnerDoc()->BindingManager();
-    nsXBLBinding* binding = manager->GetBindingWithContent(aElement);
-    if (binding && binding->GetAnonymousContent()) {
-      return true;
-    }
-  }
-
-  // If the node has native anonymous content, return true.
-  nsIAnonymousContentCreator* ac = do_QueryFrame(aElement->GetPrimaryFrame());
-  if (ac) {
-    return true;
-  }
-
-  return false;
-}
-
-
 nsIContent*
 StyleChildrenIterator::GetNextChild()
 {
-  while (nsIContent* child = AllChildrenIterator::GetNextChild()) {
-    if (IsNativeAnonymousImplementationOfPseudoElement(child)) {
-      // Skip any native-anonymous children that are used to implement pseudo-
-      // elements. These match pseudo-element selectors instead of being
-      // considered a child of their host, and thus the style system needs to
-      // handle them separately.
-    } else {
-      return child;
-    }
-  }
-
-  return nullptr;
+  return AllChildrenIterator::GetNextChild();
 }
 
 } // namespace dom

@@ -10,7 +10,7 @@
 #include "nsMixedContentBlocker.h"
 #include "nsCDefaultURIFixup.h"
 #include "nsIURIFixup.h"
-#include "nsINestedURI.h"
+#include "nsIImageLoadingContent.h"
 
 #include "mozilla/dom/Element.h"
 
@@ -396,8 +396,7 @@ DoContentSecurityChecks(nsIChannel* aChannel, nsILoadInfo* aLoadInfo)
                                  mimeTypeGuess,
                                  nullptr,        //extra,
                                  &shouldLoad,
-                                 nsContentUtils::GetContentPolicy(),
-                                 nsContentUtils::GetSecurityManager());
+                                 nsContentUtils::GetContentPolicy());
 
   if (NS_FAILED(rv) || NS_CP_REJECTED(shouldLoad)) {
     if ((NS_SUCCEEDED(rv) && shouldLoad == nsIContentPolicy::REJECT_TYPE) &&
@@ -509,21 +508,14 @@ nsContentSecurityManager::AsyncOnChannelRedirect(nsIChannel* aOldChannel,
     GetChannelResultPrincipal(aOldChannel, getter_AddRefs(oldPrincipal));
 
   nsCOMPtr<nsIURI> newURI;
-  aNewChannel->GetURI(getter_AddRefs(newURI));
-  nsCOMPtr<nsIURI> newOriginalURI;
-  aNewChannel->GetOriginalURI(getter_AddRefs(newOriginalURI));
-
-  NS_ENSURE_STATE(oldPrincipal && newURI && newOriginalURI);
+  Unused << NS_GetFinalChannelURI(aNewChannel, getter_AddRefs(newURI));
+  NS_ENSURE_STATE(oldPrincipal && newURI);
 
   const uint32_t flags =
       nsIScriptSecurityManager::LOAD_IS_AUTOMATIC_DOCUMENT_REPLACEMENT |
       nsIScriptSecurityManager::DISALLOW_SCRIPT;
   nsresult rv = nsContentUtils::GetSecurityManager()->
     CheckLoadURIWithPrincipal(oldPrincipal, newURI, flags);
-  if (NS_SUCCEEDED(rv) && newOriginalURI != newURI) {
-      rv = nsContentUtils::GetSecurityManager()->
-        CheckLoadURIWithPrincipal(oldPrincipal, newOriginalURI, flags);
-  }
   NS_ENSURE_SUCCESS(rv, rv);
 
   aCb->OnRedirectVerifyCallback(NS_OK);
@@ -558,12 +550,6 @@ nsContentSecurityManager::CheckChannel(nsIChannel* aChannel)
 
   if (contentPolicyType == nsIContentPolicy::TYPE_DOCUMENT ||
       contentPolicyType == nsIContentPolicy::TYPE_SUBDOCUMENT) {
-    // query the nested URI for security checks like in the case of view-source
-    nsCOMPtr<nsINestedURI> nestedURI = do_QueryInterface(uri);
-    if (nestedURI) {
-      nestedURI->GetInnerURI(getter_AddRefs(uri));
-    }
-
     // TYPE_DOCUMENT and TYPE_SUBDOCUMENT loads might potentially
     // be wyciwyg:// channels. Let's fix up the URI so we can
     // perform proper security checks.
@@ -633,6 +619,8 @@ nsContentSecurityManager::CheckChannel(nsIChannel* aChannel)
     // within nsCorsListenerProxy
     rv = DoCheckLoadURIChecks(uri, loadInfo);
     NS_ENSURE_SUCCESS(rv, rv);
+    // TODO: Bug 1371237
+    // consider calling SetBlockedRequest in nsContentSecurityManager::CheckChannel
   }
 
   return NS_OK;
@@ -726,11 +714,13 @@ nsContentSecurityManager::IsOriginPotentiallyTrustworthy(nsIPrincipal* aPrincipa
   // whitelist for network resources, i.e., those with scheme "http" or "ws".
   // The pref should contain a comma-separated list of hostnames.
   if (scheme.EqualsLiteral("http") || scheme.EqualsLiteral("ws")) {
-    nsAdoptingCString whitelist = Preferences::GetCString("dom.securecontext.whitelist");
-    if (whitelist) {
+    nsAutoCString whitelist;
+    nsresult rv =
+      Preferences::GetCString("dom.securecontext.whitelist", whitelist);
+    if (NS_SUCCEEDED(rv)) {
       nsCCharSeparatedTokenizer tokenizer(whitelist, ',');
       while (tokenizer.hasMoreTokens()) {
-        const nsCSubstring& allowedHost = tokenizer.nextToken();
+        const nsACString& allowedHost = tokenizer.nextToken();
         if (host.Equals(allowedHost)) {
           *aIsTrustWorthy = true;
           return NS_OK;

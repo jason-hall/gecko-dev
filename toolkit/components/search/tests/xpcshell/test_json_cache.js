@@ -62,7 +62,7 @@ function run_test() {
   let list = sis.read(sis.available());
   let searchSettings = JSON.parse(list);
 
-  cacheTemplate.visibleDefaultEngines = searchSettings["default"]["visibleDefaultEngines"];
+  cacheTemplate.visibleDefaultEngines = searchSettings.default.visibleDefaultEngines;
 
   run_next_test();
 }
@@ -135,7 +135,7 @@ add_test(function test_cache_write() {
         });
       }
     };
-    Services.obs.addObserver(cacheWriteObserver, "browser-search-service", false);
+    Services.obs.addObserver(cacheWriteObserver, "browser-search-service");
 
     Services.search.QueryInterface(Ci.nsIObserver).observe(null, "browser-search-engine-modified", "engine-removed");
   });

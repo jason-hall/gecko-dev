@@ -76,10 +76,6 @@ class JitContext
     CompileRuntime* runtime;
     CompileCompartment* compartment;
 
-    bool hasProfilingScripts() const {
-        return runtime && !!runtime->profilingScripts();
-    }
-
     int getNextAssemblerId() {
         return assemblerCount_++;
     }
@@ -147,8 +143,6 @@ void Invalidate(JSContext* cx, const RecompileInfoVector& invalid, bool resetUse
 void Invalidate(JSContext* cx, JSScript* script, bool resetUses = true,
                 bool cancelOffThread = true);
 
-void ToggleBarriers(JS::Zone* zone, bool needs);
-
 class IonBuilder;
 class MIRGenerator;
 class LIRGraph;
@@ -159,9 +153,10 @@ LIRGraph* GenerateLIR(MIRGenerator* mir);
 CodeGenerator* GenerateCode(MIRGenerator* mir, LIRGraph* lir);
 CodeGenerator* CompileBackEnd(MIRGenerator* mir);
 
-void AttachFinishedCompilations(JSContext* cx);
+void AttachFinishedCompilations(ZoneGroup* group, JSContext* maybecx);
 void FinishOffThreadBuilder(JSRuntime* runtime, IonBuilder* builder,
                             const AutoLockHelperThreadState& lock);
+void FreeIonBuilder(IonBuilder* builder);
 
 void LinkIonScript(JSContext* cx, HandleScript calleescript);
 uint8_t* LazyLinkTopActivation();
@@ -214,7 +209,6 @@ bool OffThreadCompilationAvailable(JSContext* cx);
 
 void ForbidCompilation(JSContext* cx, JSScript* script);
 
-void PurgeCaches(JSScript* script);
 size_t SizeOfIonData(JSScript* script, mozilla::MallocSizeOf mallocSizeOf);
 void DestroyJitScripts(FreeOp* fop, JSScript* script);
 void TraceJitScripts(JSTracer* trc, JSScript* script);

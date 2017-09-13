@@ -9,8 +9,11 @@
 
 from __future__ import print_function, unicode_literals
 from os import path, getcwd, listdir
+from time import time
 
 import sys
+import urllib2
+import json
 
 from mach.decorators import (
     CommandArgument,
@@ -19,10 +22,43 @@ from mach.decorators import (
 )
 
 from servo.command_base import CommandBase, cd, call
+from servo.build_commands import notify_build_done
 
 
 @CommandProvider
 class MachCommands(CommandBase):
+    def run_cargo(self, params, geckolib=False, check=False):
+        if geckolib:
+            self.set_use_stable_rust()
+            crate_dir = path.join('ports', 'geckolib')
+        else:
+            crate_dir = path.join('components', 'servo')
+
+        self.ensure_bootstrapped()
+        self.ensure_clobbered()
+        env = self.build_env(geckolib=geckolib)
+
+        if not params:
+            params = []
+
+        if check:
+            params = ['check'] + params
+
+        build_start = time()
+        if self.context.topdir == getcwd():
+            with cd(crate_dir):
+                status = call(['cargo'] + params, env=env)
+        else:
+            status = call(['cargo'] + params, env=env)
+        elapsed = time() - build_start
+
+        notify_build_done(self.config, elapsed, status == 0)
+
+        if check and status == 0:
+            print('Finished checking, binary NOT updated. Consider ./mach build before ./mach run')
+
+        return status
+
     @Command('cargo',
              description='Run Cargo',
              category='devenv')
@@ -30,15 +66,7 @@ class MachCommands(CommandBase):
         'params', default=None, nargs='...',
         help="Command-line arguments to be passed through to Cargo")
     def cargo(self, params):
-        if not params:
-            params = []
-
-        self.ensure_bootstrapped()
-
-        if self.context.topdir == getcwd():
-            with cd(path.join('components', 'servo')):
-                return call(["cargo"] + params, env=self.build_env())
-        return call(['cargo'] + params, env=self.build_env())
+        return self.run_cargo(params)
 
     @Command('cargo-geckolib',
              description='Run Cargo with the same compiler version and root crate as build-geckolib',
@@ -47,17 +75,25 @@ class MachCommands(CommandBase):
         'params', default=None, nargs='...',
         help="Command-line arguments to be passed through to Cargo")
     def cargo_geckolib(self, params):
-        if not params:
-            params = []
+        return self.run_cargo(params, geckolib=True)
 
-        self.set_use_stable_rust()
-        self.ensure_bootstrapped()
-        env = self.build_env(geckolib=True)
+    @Command('check',
+             description='Run "cargo check"',
+             category='devenv')
+    @CommandArgument(
+        'params', default=None, nargs='...',
+        help="Command-line arguments to be passed through to cargo check")
+    def check(self, params):
+        return self.run_cargo(params, check=True)
 
-        if self.context.topdir == getcwd():
-            with cd(path.join('ports', 'geckolib')):
-                return call(["cargo"] + params, env=env)
-        return call(['cargo'] + params, env=env)
+    @Command('check-geckolib',
+             description='Run "cargo check" with the same compiler version and root crate as build-geckolib',
+             category='devenv')
+    @CommandArgument(
+        'params', default=None, nargs='...',
+        help="Command-line arguments to be passed through to cargo check")
+    def check_geckolib(self, params):
+        return self.run_cargo(params, check=True, geckolib=True)
 
     @Command('cargo-update',
              description='Same as update-cargo',
@@ -71,8 +107,11 @@ class MachCommands(CommandBase):
     @CommandArgument(
         '--all-packages', '-a', action='store_true',
         help='Updates all packages')
-    def cargo_update(self, params=None, package=None, all_packages=None):
-        self.update_cargo(params, package, all_packages)
+    @CommandArgument(
+        '--dry-run', '-d', action='store_true',
+        help='Show outdated packages.')
+    def cargo_update(self, params=None, package=None, all_packages=None, dry_run=None):
+        self.update_cargo(params, package, all_packages, dry_run)
 
     @Command('update-cargo',
              description='Update Cargo dependencies',
@@ -88,11 +127,61 @@ class MachCommands(CommandBase):
         help='Updates all packages. NOTE! This is very likely to break your ' +
              'working copy, making it impossible to build servo. Only do ' +
              'this if you really know what you are doing.')
-    def update_cargo(self, params=None, package=None, all_packages=None):
+    @CommandArgument(
+        '--dry-run', '-d', action='store_true',
+        help='Show outdated packages.')
+    def update_cargo(self, params=None, package=None, all_packages=None, dry_run=None):
         if not params:
             params = []
 
-        if package:
+        if dry_run:
+            import toml
+            import httplib
+            import colorama
+
+            cargo_file = open(path.join(self.context.topdir, "Cargo.lock"))
+            content = toml.load(cargo_file)
+
+            packages = {}
+            outdated_packages = 0
+            conn = httplib.HTTPSConnection("crates.io")
+            for package in content.get("package", []):
+                if "replace" in package:
+                    continue
+                source = package.get("source", "")
+                if source == r"registry+https://github.com/rust-lang/crates.io-index":
+                    version = package["version"]
+                    name = package["name"]
+                    if not packages.get(name, "") or packages[name] > version:
+                        packages[name] = package["version"]
+                        conn.request('GET', '/api/v1/crates/{}/versions'.format(package["name"]))
+                        r = conn.getresponse()
+                        json_content = json.load(r)
+                        for v in json_content.get("versions"):
+                            if not v.get("yanked"):
+                                max_version = v.get("num")
+                                break
+
+                        if version != max_version:
+                            outdated_packages += 1
+                            version_major, version_minor = (version.split("."))[:2]
+                            max_major, max_minor = (max_version.split("."))[:2]
+
+                            if version_major == max_major and version_minor == max_minor and "alpha" not in version:
+                                msg = "minor update"
+                                msg_color = "\033[93m"
+                            else:
+                                msg = "update, which may contain breaking changes"
+                                msg_color = "\033[91m"
+
+                            colorama.init()
+                            print("{}Outdated package `{}`, available {}\033[0m".format(msg_color, name, msg),
+                                  "\n\tCurrent version: {}".format(version),
+                                  "\n\t Latest version: {}".format(max_version))
+            conn.close()
+
+            print("\nFound {} outdated packages from crates.io".format(outdated_packages))
+        elif package:
             params += ["-p", package]
         elif all_packages:
             params = []
@@ -101,11 +190,12 @@ class MachCommands(CommandBase):
             print("flag or update all packages with --all-packages (-a) flag")
             sys.exit(1)
 
-        self.ensure_bootstrapped()
+        if params or all_packages:
+            self.ensure_bootstrapped()
 
-        with cd(self.context.topdir):
-            call(["cargo", "update"] + params,
-                 env=self.build_env())
+            with cd(self.context.topdir):
+                call(["cargo", "update"] + params,
+                     env=self.build_env())
 
     @Command('rustc',
              description='Run the Rust compiler',
@@ -167,6 +257,23 @@ class MachCommands(CommandBase):
         return call(
             ["git"] + ["grep"] + params + ['--'] + grep_paths + [':(exclude)*.min.js', ':(exclude)*.min.css'],
             env=self.build_env())
+
+    @Command('rustup',
+             description='Update the Rust version to latest Nightly',
+             category='devenv')
+    def rustup(self):
+        url = "https://static.rust-lang.org/dist/channel-rust-nightly-date.txt"
+        nightly_date = urllib2.urlopen(url).read()
+        filename = path.join(self.context.topdir, "rust-toolchain")
+        with open(filename, "w") as f:
+            f.write("nightly-%s\n" % nightly_date)
+
+        # Reset self.config["tools"]["rust-root"] and self.config["tools"]["cargo-root"]
+        self._rust_nightly_date = None
+        self.set_use_stable_rust(False)
+        self.set_cargo_root()
+
+        self.fetch()
 
     @Command('fetch',
              description='Fetch Rust, Cargo and Cargo dependencies',

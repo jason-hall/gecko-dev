@@ -30,6 +30,7 @@ namespace gfx {
 class GradientStops;
 } // namespace gfx
 namespace layers {
+class StackingContextHelper;
 class WebRenderDisplayItemLayer;
 } // namespace layers
 } // namespace mozilla
@@ -107,8 +108,7 @@ public:
 
   bool CanCreateWebRenderCommands();
   void CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
-                               mozilla::layers::WebRenderDisplayItemLayer* aLayer,
-                               Rect aClipRect = Rect(0, 0, 0, 0));
+                               const mozilla::layers::StackingContextHelper& aSc);
 
   // utility function used for background painting as well as borders
   static void ComputeInnerRadii(const RectCornerRadii& aRadii,
@@ -146,14 +146,18 @@ private:
   Float mBorderWidths[4];
   RectCornerRadii mBorderRadii;
 
-  // colors
+  // the colors for 'border-top-color' et. al.
   nscolor mBorderColors[4];
+
+  // the lists of colors for '-moz-border-top-colors' et. al.
   nsBorderColors* mCompositeColors[4];
 
   // the background color
   nscolor mBackgroundColor;
 
   // calculated values
+  bool mAllBordersSameStyle;
+  bool mAllBordersSameWidth;
   bool mOneUnitBorder;
   bool mNoBorderRadius;
   bool mAvoidStroke;
@@ -295,7 +299,7 @@ public:
 
   mozilla::image::DrawResult
   DrawBorderImage(nsPresContext* aPresContext,
-                  nsRenderingContext& aRenderingContext,
+                  gfxContext& aRenderingContext,
                   nsIFrame* aForFrame,
                   const nsRect& aDirtyRect);
 
@@ -354,7 +358,7 @@ static inline void PrintAsStringNewline(const char *s = nullptr) {
   fflush (stderr);
 }
 
-static inline void PrintAsFormatString(const char *fmt, ...) {
+static inline MOZ_FORMAT_PRINTF(1, 2) void PrintAsFormatString(const char *fmt, ...) {
   va_list vl;
   va_start(vl, fmt);
   vfprintf (stderr, fmt, vl);
@@ -368,7 +372,7 @@ static inline void PrintAsString(const mozilla::gfx::Rect& r) {}
 static inline void PrintAsString(const mozilla::gfx::Float f) {}
 static inline void PrintAsString(const char *s) {}
 static inline void PrintAsStringNewline(const char *s = nullptr) {}
-static inline void PrintAsFormatString(const char *fmt, ...) {}
+static inline MOZ_FORMAT_PRINTF(1, 2) void PrintAsFormatString(const char *fmt, ...) {}
 #endif
 
 } // namespace mozilla

@@ -12,14 +12,13 @@ import org.mozilla.gecko.widget.RecyclerViewClickSupport;
 
 import android.content.Context;
 import android.content.res.TypedArray;
+import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.Button;
 
 import java.util.ArrayList;
-
-import static org.mozilla.gecko.Tab.TabType;
 
 public abstract class TabsLayout extends RecyclerView
         implements TabsPanel.TabsLayout,
@@ -31,16 +30,15 @@ public abstract class TabsLayout extends RecyclerView
     private static final String LOGTAG = "Gecko" + TabsLayout.class.getSimpleName();
 
     private final boolean isPrivate;
-    private final TabType type;
     private TabsPanel tabsPanel;
     private final TabsLayoutAdapter tabsAdapter;
+    private View emptyView;
 
     public TabsLayout(Context context, AttributeSet attrs, int itemViewLayoutResId) {
         super(context, attrs);
 
         TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.TabsLayout);
         isPrivate = (a.getInt(R.styleable.TabsLayout_tabs, 0x0) == 1);
-        type = TabType.BROWSING;
         a.recycle();
 
         tabsAdapter = new TabsLayoutAdapter(context, itemViewLayoutResId, isPrivate,
@@ -75,7 +73,13 @@ public abstract class TabsLayout extends RecyclerView
 
     @Override
     public void show() {
-        setVisibility(View.VISIBLE);
+        final boolean hasTabs = (tabsAdapter.getItemCount() > 0);
+        setVisibility(hasTabs ? VISIBLE : GONE);
+
+        if (emptyView != null) {
+            emptyView.setVisibility(hasTabs ? GONE : VISIBLE);
+        }
+
         Tabs.getInstance().refreshThumbnails();
         Tabs.registerOnTabsChangedListener(this);
         refreshTabsData();
@@ -86,6 +90,10 @@ public abstract class TabsLayout extends RecyclerView
         setVisibility(View.GONE);
         Tabs.unregisterOnTabsChangedListener(this);
         tabsAdapter.clear();
+
+        if (emptyView != null) {
+            emptyView.setVisibility(VISIBLE);
+        }
     }
 
     @Override
@@ -99,10 +107,6 @@ public abstract class TabsLayout extends RecyclerView
 
     @Override
     public void onTabChanged(Tab tab, Tabs.TabEvents msg, String data) {
-        if (msg != Tabs.TabEvents.RESTORED && tab.getType() != type) {
-            return;
-        }
-
         switch (msg) {
             case ADDED:
                 int tabIndex = Integer.parseInt(data);
@@ -110,7 +114,7 @@ public abstract class TabsLayout extends RecyclerView
                 tabsAdapter.notifyTabInserted(tab, tabIndex);
                 if (addAtIndexRequiresScroll(tabIndex)) {
                     // (The SELECTED tab is updated *after* this call to ADDED, so don't just call
-                    // updateSelectedPosition().)
+                    // scrollSelectedTabToTopOfTray().)
                     scrollToPosition(tabIndex);
                 }
                 break;
@@ -168,11 +172,16 @@ public abstract class TabsLayout extends RecyclerView
         return tabsAdapter.moveTab(fromPosition, toPosition);
     }
 
-    /** Updates the selected position in the list so that it will be scrolled to the right place. */
-    protected void updateSelectedPosition() {
+    /**
+     * Scroll the selected tab to the top of the tray.
+     * One of the motivations for scrolling to the top is so that, as often as possible, if we open
+     * a background tab from the selected tab, when we return to the tabs tray the new tab will be
+     * visible for selecting without requiring additional scrolling.
+     */
+    protected void scrollSelectedTabToTopOfTray() {
         final int selected = getSelectedAdapterPosition();
         if (selected != NO_POSITION) {
-            scrollToPosition(selected);
+            ((LinearLayoutManager)getLayoutManager()).scrollToPositionWithOffset(selected, 0);
         }
     }
 
@@ -183,13 +192,21 @@ public abstract class TabsLayout extends RecyclerView
         final Iterable<Tab> allTabs = Tabs.getInstance().getTabsInOrder();
 
         for (final Tab tab : allTabs) {
-            if (tab.isPrivate() == isPrivate && tab.getType() == type) {
+            if (tab.isPrivate() == isPrivate) {
                 tabData.add(tab);
             }
         }
 
         tabsAdapter.setTabs(tabData);
-        updateSelectedPosition();
+        scrollSelectedTabToTopOfTray();
+
+        // Show empty view if we're in private panel and there's no private tabs.
+        boolean hasTabs = !tabData.isEmpty();
+        setVisibility(hasTabs ? VISIBLE : GONE);
+
+        if (emptyView != null) {
+            emptyView.setVisibility(hasTabs ? GONE : VISIBLE);
+        }
     }
 
     private void closeTab(View view) {
@@ -237,7 +254,7 @@ public abstract class TabsLayout extends RecyclerView
 
     @Override
     public void setEmptyView(View emptyView) {
-        // We never display an empty view.
+        this.emptyView = emptyView;
     }
 
     @Override

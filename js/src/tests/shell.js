@@ -134,7 +134,7 @@
     assertEq = function assertEq(actual, expected, message) {
       if (!SameValue(actual, expected)) {
         throw new TypeError('Assertion failed: got "' + actual + '", ' +
-                            'expected "' + expected +
+                            'expected "' + expected + '"' +
                             (message ? ": " + message : ""));
       }
     };
@@ -737,6 +737,7 @@
       throw error;
     return result;
   }
+  global.getPromiseResult = getPromiseResult;
 
   function assertEventuallyEq(promise, expected) {
     assertEq(getPromiseResult(promise), expected);

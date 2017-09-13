@@ -37,7 +37,7 @@ NS_IMPL_CYCLE_COLLECTION_INHERITED(Animation, DOMEventTargetHelper,
 NS_IMPL_ADDREF_INHERITED(Animation, DOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(Animation, DOMEventTargetHelper)
 
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(Animation)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(Animation)
 NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)
 
 JSObject*
@@ -744,7 +744,7 @@ Animation::ElapsedTimeToTimeStamp(
   const StickyTimeDuration& aElapsedTime) const
 {
   TimeDuration delay = mEffect
-                       ? mEffect->SpecifiedTiming().mDelay
+                       ? mEffect->SpecifiedTiming().Delay()
                        : TimeDuration();
   return AnimationTimeToTimeStamp(aElapsedTime + delay);
 }
@@ -1366,6 +1366,7 @@ Animation::ResetPendingTasks()
   CancelPendingTasks();
   if (mReady) {
     mReady->MaybeReject(NS_ERROR_DOM_ABORT_ERR);
+    mReady = nullptr;
   }
 }
 
@@ -1452,7 +1453,9 @@ Animation::DoFinishNotification(SyncNotifyFlag aSyncNotifyFlag)
     DoFinishNotificationImmediately();
   } else if (!mFinishNotificationTask.IsPending()) {
     RefPtr<nsRunnableMethod<Animation>> runnable =
-      NewRunnableMethod(this, &Animation::DoFinishNotificationImmediately);
+      NewRunnableMethod("dom::Animation::DoFinishNotificationImmediately",
+                        this,
+                        &Animation::DoFinishNotificationImmediately);
     context->DispatchToMicroTask(do_AddRef(runnable));
     mFinishNotificationTask = runnable.forget();
   }
@@ -1525,8 +1528,8 @@ Animation::ComposeStyle<RefPtr<AnimValuesStyleRule>&>(
 
 template
 void
-Animation::ComposeStyle<const RawServoAnimationValueMap&>(
-  const RawServoAnimationValueMap& aAnimationValues,
+Animation::ComposeStyle<RawServoAnimationValueMap&>(
+  RawServoAnimationValueMap& aAnimationValues,
   const nsCSSPropertyIDSet& aPropertiesToSkip);
 
 } // namespace dom

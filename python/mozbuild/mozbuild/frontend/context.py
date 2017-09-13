@@ -926,13 +926,6 @@ VARIABLES = {
         APK file.
         """),
 
-    'ANDROID_ECLIPSE_PROJECT_TARGETS': (dict, dict,
-        """Defines Android Eclipse project targets.
-
-        This variable should not be populated directly. Instead, it should
-        populated by calling add_android_eclipse{_library}_project().
-        """),
-
     'SOURCES': (ContextDerivedTypedListWithItems(Path, StrictOrderingOnAppendListWithFlagsFactory({'no_pgo': bool, 'flags': List})), list,
         """Source code files.
 
@@ -1174,12 +1167,6 @@ VARIABLES = {
 
         This variable contains a list of source code files to compile.
         with the host compiler.
-        """),
-
-    'IS_COMPONENT': (bool, bool,
-        """Whether the library contains a binary XPCOM component manifest.
-
-        Implies FORCE_SHARED_LIB.
         """),
 
     'HOST_LIBRARY_NAME': (unicode, unicode,
@@ -1597,6 +1584,10 @@ VARIABLES = {
         """List of manifest files defining python unit tests.
         """),
 
+    'CRAMTEST_MANIFESTS': (ManifestparserManifestList, list,
+        """List of manifest files defining cram unit tests.
+        """),
+
 
     # The following variables are used to control the target of installed files.
     'XPI_NAME': (unicode, unicode,
@@ -1843,7 +1834,6 @@ TEMPLATE_VARIABLES = {
     'HOST_PROGRAM',
     'HOST_LIBRARY_NAME',
     'HOST_SIMPLE_PROGRAMS',
-    'IS_COMPONENT',
     'IS_FRAMEWORK',
     'LIBRARY_NAME',
     'PROGRAM',
@@ -1908,35 +1898,6 @@ FUNCTIONS = {
 
         This returns a rich Java JAR type, described at
         :py:class:`mozbuild.frontend.data.JavaJarData`.
-        """),
-
-    'add_android_eclipse_project': (
-        lambda self: self._add_android_eclipse_project, (str, str),
-        """Declare an Android Eclipse project.
-
-        This is one of the supported ways to populate the
-        ANDROID_ECLIPSE_PROJECT_TARGETS variable.
-
-        The parameters are:
-        * name - project name.
-        * manifest - path to AndroidManifest.xml.
-
-        This returns a rich Android Eclipse project type, described at
-        :py:class:`mozbuild.frontend.data.AndroidEclipseProjectData`.
-        """),
-
-    'add_android_eclipse_library_project': (
-        lambda self: self._add_android_eclipse_library_project, (str,),
-        """Declare an Android Eclipse library project.
-
-        This is one of the supported ways to populate the
-        ANDROID_ECLIPSE_PROJECT_TARGETS variable.
-
-        The parameters are:
-        * name - project name.
-
-        This returns a rich Android Eclipse project type, described at
-        :py:class:`mozbuild.frontend.data.AndroidEclipseProjectData`.
         """),
 
     'export': (lambda self: self._export, (str,),
@@ -2129,6 +2090,14 @@ SPECIAL_VARIABLES = {
            RESOURCE_FILES.fonts += ['bar.res']
         """),
 
+    'CONTENT_ACCESSIBLE_FILES': (lambda context: context['FINAL_TARGET_FILES'].contentaccessible, list,
+        """List of files which can be accessed by web content through resource:// URIs.
+
+        ``CONTENT_ACCESSIBLE_FILES`` is used to list the files to be exported
+        to ``dist/bin/contentaccessible``. Files can also be appended to a
+        field to indicate which subdirectory they should be exported to.
+        """),
+
     'EXTRA_JS_MODULES': (lambda context: context['FINAL_TARGET_FILES'].modules, list,
         """Additional JavaScript files to distribute.
 
@@ -2247,17 +2216,6 @@ DEPRECATION_HINTS = {
 
             Library('foo') [ or LIBRARY_NAME = 'foo' ]
             FORCE_SHARED_LIB = True
-        ''',
-
-    'IS_COMPONENT': '''
-        Please use
-
-            XPCOMBinaryComponent('foo')
-
-        instead of
-
-            Library('foo') [ or LIBRARY_NAME = 'foo' ]
-            IS_COMPONENT = True
         ''',
 
     'IS_FRAMEWORK': '''

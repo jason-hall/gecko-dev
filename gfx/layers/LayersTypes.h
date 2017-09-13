@@ -9,7 +9,9 @@
 #include <stdint.h>                     // for uint32_t
 
 #include "Units.h"
+#include "mozilla/DefineEnum.h"         // for MOZ_DEFINE_ENUM
 #include "mozilla/gfx/Point.h"          // for IntPoint
+#include "mozilla/Maybe.h"
 #include "mozilla/TypedEnumBits.h"
 #include "nsRegion.h"
 
@@ -26,6 +28,8 @@
 
 #define INVALID_OVERLAY -1
 
+//#define ENABLE_FRAME_LATENCY_LOG
+
 namespace IPC {
 template <typename T> struct ParamTraits;
 } // namespace IPC
@@ -33,6 +37,8 @@ template <typename T> struct ParamTraits;
 namespace android {
 class MOZ_EXPORT GraphicBuffer;
 } // namespace android
+
+struct nsStyleFilter;
 
 namespace mozilla {
 namespace layers {
@@ -69,12 +75,12 @@ enum class SurfaceMode : int8_t {
   SURFACE_COMPONENT_ALPHA
 };
 
-enum class ScaleMode : int8_t {
-  SCALE_NONE,
-  STRETCH,
-  SENTINEL
+MOZ_DEFINE_ENUM_CLASS_WITH_BASE(
+  ScaleMode, int8_t, (
+    SCALE_NONE,
+    STRETCH
 // Unimplemented - PRESERVE_ASPECT_RATIO_CONTAIN
-};
+));
 
 struct EventRegions {
   // The hit region for a layer contains all areas on the layer that are
@@ -103,6 +109,16 @@ struct EventRegions {
     : mHitRegion(aHitRegion)
   {
   }
+
+  // This constructor takes the maybe-hit region and uses it to update the
+  // hit region and dispatch-to-content region. It is useful from converting
+  // from the display item representation to the layer representation.
+  EventRegions(const nsIntRegion& aHitRegion,
+               const nsIntRegion& aMaybeHitRegion,
+               const nsIntRegion& aDispatchToContentRegion,
+               const nsIntRegion& aNoActionRegion,
+               const nsIntRegion& aHorizontalPanRegion,
+               const nsIntRegion& aVerticalPanRegion);
 
   bool operator==(const EventRegions& aRegions) const
   {
@@ -141,6 +157,26 @@ struct EventRegions {
     mVerticalPanRegion.Transform(aTransform);
   }
 
+  void OrWith(const EventRegions& aOther)
+  {
+    mHitRegion.OrWith(aOther.mHitRegion);
+    mDispatchToContentHitRegion.OrWith(aOther.mDispatchToContentHitRegion);
+    // See the comment in nsDisplayList::AddFrame, where the touch action regions
+    // are handled. The same thing applies here.
+    bool alreadyHadRegions = !mNoActionRegion.IsEmpty() ||
+        !mHorizontalPanRegion.IsEmpty() ||
+        !mVerticalPanRegion.IsEmpty();
+    mNoActionRegion.OrWith(aOther.mNoActionRegion);
+    mHorizontalPanRegion.OrWith(aOther.mHorizontalPanRegion);
+    mVerticalPanRegion.OrWith(aOther.mVerticalPanRegion);
+    if (alreadyHadRegions) {
+      nsIntRegion combinedActionRegions;
+      combinedActionRegions.Or(mHorizontalPanRegion, mVerticalPanRegion);
+      combinedActionRegions.OrWith(mNoActionRegion);
+      mDispatchToContentHitRegion.OrWith(combinedActionRegions);
+    }
+  }
+
   bool IsEmpty() const
   {
     return mHitRegion.IsEmpty()
@@ -148,6 +184,15 @@ struct EventRegions {
         && mNoActionRegion.IsEmpty()
         && mHorizontalPanRegion.IsEmpty()
         && mVerticalPanRegion.IsEmpty();
+  }
+
+  void SetEmpty()
+  {
+    mHitRegion.SetEmpty();
+    mDispatchToContentHitRegion.SetEmpty();
+    mNoActionRegion.SetEmpty();
+    mHorizontalPanRegion.SetEmpty();
+    mVerticalPanRegion.SetEmpty();
   }
 
   nsCString ToString() const
@@ -213,6 +258,8 @@ typedef Array<gfx::Color, 4> BorderColors;
 typedef Array<LayerSize, 4> BorderCorners;
 typedef Array<LayerCoord, 4> BorderWidths;
 typedef Array<uint8_t, 4> BorderStyles;
+
+typedef Maybe<LayerRect> MaybeLayerRect;
 
 // This is used to communicate Layers across IPC channels. The Handle is valid
 // for layers in the same PLayerTransaction. Handles are created by ClientLayerManager,
@@ -299,11 +346,30 @@ private:
   uint64_t mHandle;
 };
 
-enum class ScrollDirection : uint32_t {
+MOZ_DEFINE_ENUM_CLASS_WITH_BASE(ScrollDirection, uint32_t, (
   NONE,
   VERTICAL,
   HORIZONTAL
+));
+
+enum class CSSFilterType : int8_t {
+  BLUR,
+  BRIGHTNESS,
+  CONTRAST,
+  GRAYSCALE,
+  HUE_ROTATE,
+  INVERT,
+  OPACITY,
+  SATURATE,
+  SEPIA,
 };
+
+struct CSSFilter {
+  CSSFilterType type;
+  float argument;
+};
+
+CSSFilter ToCSSFilter(const nsStyleFilter& filter);
 
 } // namespace layers
 } // namespace mozilla

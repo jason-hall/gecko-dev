@@ -17,11 +17,6 @@
 #include "js/Class.h"
 #include "js/GCAPI.h"
 #include "js/GCHashTable.h"
-
-#if ENABLE_INTL_API
-#include "unicode/utypes.h"
-#endif
-
 #include "vm/NativeObject.h"
 
 class JSLinearString;
@@ -180,7 +175,7 @@ class SharedIntlData
      * by ICU when compared to IANA.
      */
     bool tryCanonicalizeTimeZoneConsistentWithIANA(JSContext* cx, JS::HandleString timeZone,
-                                                   JS::MutableHandleString result);
+                                                   MutableHandleAtom result);
 
   private:
     /**
@@ -436,6 +431,16 @@ extern MOZ_MUST_USE bool
 intl_availableCalendars(JSContext* cx, unsigned argc, Value* vp);
 
 /**
+ * Returns the calendar type identifier per Unicode Technical Standard 35,
+ * Unicode Locale Data Markup Language, for the default calendar for the given
+ * locale.
+ *
+ * Usage: calendar = intl_defaultCalendar(locale)
+ */
+extern MOZ_MUST_USE bool
+intl_defaultCalendar(JSContext* cx, unsigned argc, Value* vp);
+
+/**
  * 6.4.1 IsValidTimeZoneName ( timeZone )
  *
  * Verifies that the given string is a valid time zone name. If it is a valid
@@ -688,35 +693,6 @@ intl_toLocaleLowerCase(JSContext* cx, unsigned argc, Value* vp);
 extern MOZ_MUST_USE bool
 intl_toLocaleUpperCase(JSContext* cx, unsigned argc, Value* vp);
 
-#if ENABLE_INTL_API
-/**
- * Cast char16_t* strings to UChar* strings used by ICU.
- */
-inline const UChar*
-Char16ToUChar(const char16_t* chars)
-{
-  return reinterpret_cast<const UChar*>(chars);
-}
-
-inline UChar*
-Char16ToUChar(char16_t* chars)
-{
-  return reinterpret_cast<UChar*>(chars);
-}
-
-inline char16_t*
-UCharToChar16(UChar* chars)
-{
-  return reinterpret_cast<char16_t*>(chars);
-}
-
-inline const char16_t*
-UCharToChar16(const UChar* chars)
-{
-  return reinterpret_cast<const char16_t*>(chars);
-}
-
-#endif // ENABLE_INTL_API
 
 } // namespace js
 

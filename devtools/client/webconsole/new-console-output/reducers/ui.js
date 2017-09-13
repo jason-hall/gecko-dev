@@ -7,32 +7,33 @@
 
 const {
   FILTER_BAR_TOGGLE,
-  MESSAGE_ADD,
-  TIMESTAMPS_TOGGLE
+  PERSIST_TOGGLE,
+  TIMESTAMPS_TOGGLE,
+  SELECT_NETWORK_MESSAGE_TAB,
 } = require("devtools/client/webconsole/new-console-output/constants");
 const Immutable = require("devtools/client/shared/vendor/immutable");
 
+const {
+  PANELS,
+} = require("devtools/client/netmonitor/src/constants");
+
 const UiState = Immutable.Record({
   filterBarVisible: false,
-  filteredMessageVisible: false,
-  autoscroll: true,
+  persistLogs: false,
   timestampsVisible: true,
+  networkMessageActiveTabId: PANELS.HEADERS,
 });
 
 function ui(state = new UiState(), action) {
-  // Autoscroll should be set for all action types. If the last action was not message
-  // add, then turn it off. This prevents us from scrolling after someone toggles a
-  // filter, or to the bottom of the attachement when an expandable message at the bottom
-  // of the list is expanded. It does depend on the MESSAGE_ADD action being the last in
-  // its batch, though.
-  state = state.set("autoscroll", action.type == MESSAGE_ADD);
-
   switch (action.type) {
     case FILTER_BAR_TOGGLE:
       return state.set("filterBarVisible", !state.filterBarVisible);
+    case PERSIST_TOGGLE:
+      return state.set("persistLogs", !state.persistLogs);
     case TIMESTAMPS_TOGGLE:
       return state.set("timestampsVisible", action.visible);
-
+    case SELECT_NETWORK_MESSAGE_TAB:
+      return state.set("networkMessageActiveTabId", action.id);
   }
 
   return state;

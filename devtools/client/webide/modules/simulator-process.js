@@ -7,19 +7,19 @@
 
 const { Cc, Ci, Cu } = require("chrome");
 
-const Environment = require("sdk/system/environment").env;
-const EventEmitter = require("devtools/shared/event-emitter");
-const promise = require("promise");
-const Subprocess = require("sdk/system/child_process/subprocess");
+const Environment = Cc["@mozilla.org/process/environment;1"]
+                      .getService(Ci.nsIEnvironment);
+const EventEmitter = require("devtools/shared/old-event-emitter");
 const Services = require("Services");
 
+const {Subprocess} = Cu.import("resource://gre/modules/Subprocess.jsm", {});
+
 loader.lazyGetter(this, "OS", () => {
-  const Runtime = require("sdk/system/runtime");
-  switch (Runtime.OS) {
+  switch (Services.appinfo.OS) {
     case "Darwin":
       return "mac64";
     case "Linux":
-      if (Runtime.XPCOMABI.indexOf("x86_64") === 0) {
+      if (Services.appinfo.XPCOMABI.indexOf("x86_64") === 0) {
         return "linux64";
       } else {
         return "linux32";
@@ -78,47 +78,58 @@ SimulatorProcess.prototype = {
     let environment;
     if (OS.indexOf("linux") > -1) {
       environment = ["TMPDIR=" + Services.dirsvc.get("TmpD", Ci.nsIFile).path];
-      ["DISPLAY", "XAUTHORITY"].forEach(key => {
-        if (key in Environment) {
-          environment.push(key + "=" + Environment[key]);
-        }
-      });
+      ["DISPLAY", "XAUTHORITY"]
+        .filter(key => Environment.exists(key))
+        .forEach(key => {
+          environment.push(key + "=" + Environment.get(key));
+        });
     }
 
     // Spawn a B2G instance.
-    this.process = Subprocess.call({
-      command: b2g,
+    Subprocess.call({
+      command: b2g.path,
       arguments: this.args,
+      environmentAppend: true,
       environment: environment,
-      stdout: data => this.emit("stdout", data),
-      stderr: data => this.emit("stderr", data),
+      stderr: "pipe",
+    }).then(process => {
+      this.process = process;
+      let dumpPipe = async (pipe, type) => {
+        let data = await pipe.readString();
+        while (data) {
+          this.emit(type, data);
+          data = await pipe.readString();
+        }
+      };
+      dumpPipe(process.stdout, "stdout");
+      dumpPipe(process.stderr, "stderr");
+
       // On B2G instance exit, reset tracked process, remote debugger port and
       // shuttingDown flag, then finally emit an exit event.
-      done: result => {
-        console.log("B2G terminated with " + result.exitCode);
+      process.wait().then(result => {
         this.process = null;
         this.emit("exit", result.exitCode);
-      }
+      });
     });
   },
 
   // Request a B2G instance kill.
   kill() {
-    let deferred = promise.defer();
-    if (this.process) {
-      this.once("exit", (e, exitCode) => {
-        this.shuttingDown = false;
-        deferred.resolve(exitCode);
-      });
-      if (!this.shuttingDown) {
-        this.shuttingDown = true;
-        this.emit("kill", null);
-        this.process.kill();
+    return new Promise(resolve => {
+      if (this.process) {
+        this.once("exit", (e, exitCode) => {
+          this.shuttingDown = false;
+          resolve(exitCode);
+        });
+        if (!this.shuttingDown) {
+          this.shuttingDown = true;
+          this.emit("kill", null);
+          this.process.kill();
+        }
+      } else {
+        return resolve(undefined);
       }
-      return deferred.promise;
-    } else {
-      return promise.resolve(undefined);
-    }
+    });
   },
 
   // Maybe log output messages.
@@ -177,7 +188,7 @@ var CSPp = CustomSimulatorProcess.prototype = Object.create(SimulatorProcess.pro
 // Compute B2G binary file handle.
 Object.defineProperty(CSPp, "b2gBinary", {
   get: function () {
-    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
+    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
     file.initWithPath(this.options.b2gBinary);
     return file;
   }
@@ -186,7 +197,7 @@ Object.defineProperty(CSPp, "b2gBinary", {
 // Compute Gaia profile file handle.
 Object.defineProperty(CSPp, "gaiaProfile", {
   get: function () {
-    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
+    let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
     file.initWithPath(this.options.gaiaProfile);
     return file;
   }
@@ -246,7 +257,7 @@ Object.defineProperty(ASPp, "gaiaProfile", {
 
     // Custom profile from simulator configuration.
     if (this.options.gaiaProfile) {
-      file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
+      file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
       file.initWithPath(this.options.gaiaProfile);
       return file;
     }

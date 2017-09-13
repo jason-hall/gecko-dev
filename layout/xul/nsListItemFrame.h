@@ -9,10 +9,10 @@
 nsIFrame* NS_NewListItemFrame(nsIPresShell* aPresShell,
                               nsStyleContext *aContext);
 
-class nsListItemFrame : public nsGridRowLeafFrame
+class nsListItemFrame final : public nsGridRowLeafFrame
 {
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsListItemFrame)
 
   friend nsIFrame* NS_NewListItemFrame(nsIPresShell* aPresShell,
                                        nsStyleContext *aContext);
@@ -20,7 +20,6 @@ public:
   // overridden so that children of listitems don't handle mouse events,
   // unless allowevents="true" is specified on the listitem
   virtual void BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
-                                           const nsRect&           aDirtyRect,
                                            const nsDisplayListSet& aLists) override;
 
   virtual nsSize GetXULPrefSize(nsBoxLayoutState& aState) override;

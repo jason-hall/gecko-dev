@@ -67,9 +67,6 @@ public:
 protected:
     bool mIsLocked;
     bool mIsProducerAcquired;
-#ifdef DEBUG
-    nsIThread* const mOwningThread;
-#endif
 
     SharedSurface(SharedSurfaceType type,
                   AttachmentType attachType,
@@ -95,6 +92,10 @@ public:
 
     // Unlocking is harmless if we're already unlocked.
     void UnlockProd();
+
+    // This surface has been moved to the front buffer and will not be locked again
+    // until it is recycled. Do any finalization steps here.
+    virtual void Commit(){}
 
 protected:
     virtual void LockProdImpl() = 0;
@@ -302,7 +303,8 @@ protected:
 public:
     UniquePtr<SharedSurface> NewSharedSurface(const gfx::IntSize& size);
     //already_AddRefed<ShSurfHandle> NewShSurfHandle(const gfx::IntSize& size);
-    already_AddRefed<layers::SharedSurfaceTextureClient> NewTexClient(const gfx::IntSize& size);
+    already_AddRefed<layers::SharedSurfaceTextureClient> NewTexClient(const gfx::IntSize& size,
+                                                                      const layers::LayersIPCChannel* aLayersChannel = nullptr);
 
     static void RecycleCallback(layers::TextureClient* tc, void* /*closure*/);
 

@@ -43,21 +43,19 @@ class nsNumberControlFrame final : public nsContainerFrame
   explicit nsNumberControlFrame(nsStyleContext* aContext);
 
 public:
-  NS_DECL_QUERYFRAME_TARGET(nsNumberControlFrame)
   NS_DECL_QUERYFRAME
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsNumberControlFrame)
 
   virtual void DestroyFrom(nsIFrame* aDestructRoot) override;
   virtual void ContentStatesChanged(mozilla::EventStates aStates) override;
-  virtual bool IsLeaf() const override { return true; }
 
 #ifdef ACCESSIBILITY
   virtual mozilla::a11y::AccType AccessibleType() override;
 #endif
 
-  virtual nscoord GetMinISize(nsRenderingContext* aRenderingContext) override;
+  virtual nscoord GetMinISize(gfxContext* aRenderingContext) override;
 
-  virtual nscoord GetPrefISize(nsRenderingContext* aRenderingContext) override;
+  virtual nscoord GetPrefISize(gfxContext* aRenderingContext) override;
 
   virtual void Reflow(nsPresContext*           aPresContext,
                       ReflowOutput&     aDesiredSize,
@@ -78,8 +76,6 @@ public:
     return MakeFrameName(NS_LITERAL_STRING("NumberControl"), aResult);
   }
 #endif
-
-  virtual nsIAtom* GetType() const override;
 
   virtual bool IsFrameOfType(uint32_t aFlags) const override
   {
@@ -158,7 +154,7 @@ public:
   /**
    * Our element had HTMLInputElement::Select() called on it.
    */
-  nsresult HandleSelectCall();
+  void HandleSelectCall();
 
   virtual Element* GetPseudoElement(CSSPseudoElementType aType) override;
 
@@ -178,7 +174,8 @@ private:
   {
   public:
     explicit SyncDisabledStateEvent(nsNumberControlFrame* aFrame)
-    : mFrame(aFrame)
+      : mozilla::Runnable("nsNumberControlFrame::SyncDisabledStateEvent")
+      , mFrame(aFrame)
     {}
 
     NS_IMETHOD Run() override

@@ -8,6 +8,7 @@
 #define gc_StoreBuffer_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/HashFunctions.h"
 #include "mozilla/ReentrancyGuard.h"
 
 #include <algorithm>
@@ -39,8 +40,6 @@ class BufferableRef
     virtual void trace(JSTracer* trc) = 0;
     bool maybeInRememberedSet(const Nursery&) const { return true; }
 };
-
-
 
 } /* namespace gc */
 } /* namespace js */

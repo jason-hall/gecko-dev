@@ -3,10 +3,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "DrawTargetD2D1.h"
 #include "ScaledFontDWrite.h"
+#include "UnscaledFontDWrite.h"
 #include "PathD2D.h"
 #include "gfxFont.h"
+#include "Logging.h"
 
 using namespace std;
 
@@ -107,16 +108,24 @@ ScaledFontDWrite::ScaledFontDWrite(IDWriteFontFace *aFontFace,
                                    Float aSize,
                                    bool aUseEmbeddedBitmap,
                                    bool aForceGDIMode,
+                                   IDWriteRenderingParams* aParams,
+                                   Float aGamma,
+                                   Float aContrast,
                                    const gfxFontStyle* aStyle)
     : ScaledFontBase(aUnscaledFont, aSize)
     , mFontFace(aFontFace)
     , mUseEmbeddedBitmap(aUseEmbeddedBitmap)
     , mForceGDIMode(aForceGDIMode)
+    , mParams(aParams)
+    , mGamma(aGamma)
+    , mContrast(aContrast)
 {
-  mStyle = SkFontStyle(aStyle->weight,
-                       DWriteFontStretchFromStretch(aStyle->stretch),
-                       aStyle->style == NS_FONT_STYLE_NORMAL ?
-                       SkFontStyle::kUpright_Slant : SkFontStyle::kItalic_Slant);
+  if (aStyle) {
+    mStyle = SkFontStyle(aStyle->weight,
+                         DWriteFontStretchFromStretch(aStyle->stretch),
+                         aStyle->style == NS_FONT_STYLE_NORMAL ?
+                         SkFontStyle::kUpright_Slant : SkFontStyle::kItalic_Slant);
+  }
 }
 
 already_AddRefed<Path>
@@ -142,12 +151,24 @@ SkTypeface*
 ScaledFontDWrite::GetSkTypeface()
 {
   if (!mTypeface) {
-    IDWriteFactory *factory = DrawTargetD2D1::GetDWriteFactory();
+    RefPtr<IDWriteFactory> factory = Factory::GetDWriteFactory();
     if (!factory) {
       return nullptr;
     }
 
-    mTypeface = SkCreateTypefaceFromDWriteFont(factory, mFontFace, mStyle, mForceGDIMode);
+    Float gamma = mGamma;
+    // Skia doesn't support a gamma value outside of 0-4, so default to 2.2
+    if (gamma < 0.0f || gamma > 4.0f) {
+      gamma = 2.2f;
+    }
+
+    Float contrast = mContrast;
+    // Skia doesn't support a contrast value outside of 0-1, so default to 1.0
+    if (contrast < 0.0f || contrast > 1.0f) {
+      contrast = 1.0f;
+    }
+
+    mTypeface = SkCreateTypefaceFromDWriteFont(factory, mFontFace, mStyle, mForceGDIMode, gamma, contrast);
   }
   return mTypeface;
 }
@@ -221,7 +242,7 @@ ScaledFontDWrite::CopyGlyphsToSink(const GlyphBuffer &aBuffer, ID2D1GeometrySink
 }
 
 bool
-ScaledFontDWrite::GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton)
+UnscaledFontDWrite::GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton)
 {
   UINT32 fileCount = 0;
   mFontFace->GetFiles(&fileCount, nullptr);
@@ -242,13 +263,13 @@ ScaledFontDWrite::GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton
   UINT32 refKeySize;
   // XXX - This can currently crash for webfonts, as when we get the reference
   // key out of the file, that can be an invalid reference key for the loader
-  // we use it with. The fix to this is not obvious but it will probably 
+  // we use it with. The fix to this is not obvious but it will probably
   // have to happen inside thebes.
   file->GetReferenceKey(&referenceKey, &refKeySize);
 
   RefPtr<IDWriteFontFileLoader> loader;
   file->GetLoader(getter_AddRefs(loader));
-  
+
   RefPtr<IDWriteFontFileStream> stream;
   loader->CreateStreamFromKey(referenceKey, refKeySize, getter_AddRefs(stream));
 
@@ -258,18 +279,53 @@ ScaledFontDWrite::GetFontFileData(FontFileDataOutput aDataCallback, void *aBaton
     MOZ_ASSERT(false);
     return false;
   }
-  
+
   uint32_t fileSize = static_cast<uint32_t>(fileSize64);
   const void *fragmentStart;
   void *context;
   stream->ReadFileFragment(&fragmentStart, 0, fileSize, &context);
 
-  aDataCallback((uint8_t*)fragmentStart, fileSize, mFontFace->GetIndex(), mSize,
-                0, nullptr, aBaton);
+  aDataCallback((uint8_t*)fragmentStart, fileSize, mFontFace->GetIndex(), aBaton);
 
   stream->ReleaseFileFragment(context);
 
   return true;
+}
+
+bool
+ScaledFontDWrite::GetFontInstanceData(FontInstanceDataOutput aCb, void* aBaton)
+{
+  InstanceData instance(this);
+  aCb(reinterpret_cast<uint8_t*>(&instance), sizeof(instance), aBaton);
+  return true;
+}
+
+already_AddRefed<ScaledFont>
+UnscaledFontDWrite::CreateScaledFont(Float aGlyphSize,
+                                     const uint8_t* aInstanceData,
+                                     uint32_t aInstanceDataLength)
+{
+  if (aInstanceDataLength < sizeof(ScaledFontDWrite::InstanceData)) {
+    gfxWarning() << "DWrite scaled font instance data is truncated.";
+    return nullptr;
+  }
+
+  const ScaledFontDWrite::InstanceData *instanceData =
+    reinterpret_cast<const ScaledFontDWrite::InstanceData*>(aInstanceData);
+  RefPtr<ScaledFontBase> scaledFont =
+    new ScaledFontDWrite(mFontFace, this, aGlyphSize,
+                         instanceData->mUseEmbeddedBitmap,
+                         instanceData->mForceGDIMode,
+                         nullptr,
+                         instanceData->mGamma,
+                         instanceData->mContrast);
+
+  if (mNeedsCairo && !scaledFont->PopulateCairoScaledFont()) {
+    gfxWarning() << "Unable to create cairo scaled font DWrite font.";
+    return nullptr;
+  }
+
+  return scaledFont.forget();
 }
 
 AntialiasMode

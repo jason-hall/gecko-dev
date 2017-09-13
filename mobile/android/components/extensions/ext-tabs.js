@@ -15,60 +15,11 @@ XPCOMUtils.defineLazyModuleGetter(this, "PromiseUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
                                   "resource://gre/modules/Services.jsm");
 
-var {
-  SingletonEventManager,
-} = ExtensionUtils;
-
-// This function is pretty tightly tied to Extension.jsm.
-// Its job is to fill in the |tab| property of the sender.
-function getSender(extension, target, sender) {
-  let tabId;
-  if ("tabId" in sender) {
-    // The message came from a privileged extension page running in a tab. In
-    // that case, it should include a tabId property (which is filled in by the
-    // page-open listener below).
-    tabId = sender.tabId;
-    delete sender.tabId;
-  } else if (target instanceof Ci.nsIDOMXULElement) {
-    tabId = tabTracker.getBrowserData(target).tabId;
-  }
-
-  if (tabId) {
-    let tab = extension.tabManager.get(tabId, null);
-    if (tab) {
-      sender.tab = tab.convert();
-    }
-  }
-}
-
-// Used by Extension.jsm
-global.tabGetSender = getSender;
-
-/* eslint-disable mozilla/balanced-listeners */
-extensions.on("page-shutdown", (type, context) => {
-  if (context.viewType == "tab") {
-    if (context.extension.id !== context.xulBrowser.contentPrincipal.addonId) {
-      // Only close extension tabs.
-      // This check prevents about:addons from closing when it contains a
-      // WebExtension as an embedded inline options page.
-      return;
-    }
-    let {BrowserApp} = context.xulBrowser.ownerGlobal;
-    if (BrowserApp) {
-      let nativeTab = BrowserApp.getTabForBrowser(context.xulBrowser);
-      if (nativeTab) {
-        BrowserApp.closeTab(nativeTab);
-      }
-    }
-  }
-});
-/* eslint-enable mozilla/balanced-listeners */
-
-function getBrowserWindow(window) {
+const getBrowserWindow = window => {
   return window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDocShell)
                .QueryInterface(Ci.nsIDocShellTreeItem).rootTreeItem
                .QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindow);
-}
+};
 
 let tabListener = {
   tabReadyInitialized: false,
@@ -160,7 +111,7 @@ this.tabs = class extends ExtensionAPI {
           fire.async({tabId: tab.id, windowId: tab.windowId});
         }).api(),
 
-        onCreated: new SingletonEventManager(context, "tabs.onCreated", fire => {
+        onCreated: new EventManager(context, "tabs.onCreated", fire => {
           let listener = (eventName, event) => {
             fire.async(tabManager.convert(event.nativeTab));
           };
@@ -183,15 +134,15 @@ this.tabs = class extends ExtensionAPI {
           fire.async({tabIds: [tab.id], windowId: tab.windowId});
         }).api(),
 
-        onAttached: new SingletonEventManager(context, "tabs.onAttached", fire => {
+        onAttached: new EventManager(context, "tabs.onAttached", fire => {
           return () => {};
         }).api(),
 
-        onDetached: new SingletonEventManager(context, "tabs.onDetached", fire => {
+        onDetached: new EventManager(context, "tabs.onDetached", fire => {
           return () => {};
         }).api(),
 
-        onRemoved: new SingletonEventManager(context, "tabs.onRemoved", fire => {
+        onRemoved: new EventManager(context, "tabs.onRemoved", fire => {
           let listener = (eventName, event) => {
             fire.async(event.tabId, {windowId: event.windowId, isWindowClosing: event.isWindowClosing});
           };
@@ -202,15 +153,15 @@ this.tabs = class extends ExtensionAPI {
           };
         }).api(),
 
-        onReplaced: new SingletonEventManager(context, "tabs.onReplaced", fire => {
+        onReplaced: new EventManager(context, "tabs.onReplaced", fire => {
           return () => {};
         }).api(),
 
-        onMoved: new SingletonEventManager(context, "tabs.onMoved", fire => {
+        onMoved: new EventManager(context, "tabs.onMoved", fire => {
           return () => {};
         }).api(),
 
-        onUpdated: new SingletonEventManager(context, "tabs.onUpdated", fire => {
+        onUpdated: new EventManager(context, "tabs.onUpdated", fire => {
           const restricted = ["url", "favIconUrl", "title"];
 
           function sanitize(extension, changeInfo) {
@@ -318,6 +269,8 @@ this.tabs = class extends ExtensionAPI {
           // Make sure things like about:blank and data: URIs never inherit,
           // and instead always get a NullPrincipal.
           options.disallowInheritPrincipal = true;
+
+          options.parentId = BrowserApp.selectedTab.id;
 
           tabListener.initTabReady();
           let nativeTab = BrowserApp.addTab(url, options);

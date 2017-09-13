@@ -12,7 +12,7 @@ use dom::bindings::str::DOMString;
 use dom::element::Element;
 use dom::node::window_from_node;
 use dom_struct::dom_struct;
-use html5ever_atoms::LocalName;
+use html5ever::LocalName;
 use servo_atoms::Atom;
 use style::str::HTML_SPACE_CHARACTERS;
 
@@ -84,7 +84,7 @@ impl DOMTokenListMethods for DOMTokenList {
     fn Add(&self, tokens: Vec<DOMString>) -> ErrorResult {
         let mut atoms = self.element.get_tokenlist_attribute(&self.local_name);
         for token in &tokens {
-            let token = try!(self.check_token_exceptions(&token));
+            let token = self.check_token_exceptions(&token)?;
             if !atoms.iter().any(|atom| *atom == token) {
                 atoms.push(token);
             }
@@ -97,7 +97,7 @@ impl DOMTokenListMethods for DOMTokenList {
     fn Remove(&self, tokens: Vec<DOMString>) -> ErrorResult {
         let mut atoms = self.element.get_tokenlist_attribute(&self.local_name);
         for token in &tokens {
-            let token = try!(self.check_token_exceptions(&token));
+            let token = self.check_token_exceptions(&token)?;
             atoms.iter().position(|atom| *atom == token).map(|index| atoms.remove(index));
         }
         self.element.set_atomic_tokenlist_attribute(&self.local_name, atoms);
@@ -107,7 +107,7 @@ impl DOMTokenListMethods for DOMTokenList {
     // https://dom.spec.whatwg.org/#dom-domtokenlist-toggle
     fn Toggle(&self, token: DOMString, force: Option<bool>) -> Fallible<bool> {
         let mut atoms = self.element.get_tokenlist_attribute(&self.local_name);
-        let token = try!(self.check_token_exceptions(&token));
+        let token = self.check_token_exceptions(&token)?;
         match atoms.iter().position(|atom| *atom == token) {
             Some(index) => match force {
                 Some(true) => Ok(true),
@@ -158,9 +158,9 @@ impl DOMTokenListMethods for DOMTokenList {
             } else {
                 atoms.remove(pos);
             }
+            // Step 5.
+            self.element.set_atomic_tokenlist_attribute(&self.local_name, atoms);
         }
-        // Step 5.
-        self.element.set_atomic_tokenlist_attribute(&self.local_name, atoms);
         Ok(())
     }
 

@@ -12,7 +12,7 @@
 #include "nsIStreamListener.h"
 #include "nsIThreadRetargetableStreamListener.h"
 #include "mozilla/ConsoleReportCollector.h"
-#include "mozilla/dom/FetchSignal.h"
+#include "mozilla/dom/AbortSignal.h"
 #include "mozilla/dom/SRIMetadata.h"
 #include "mozilla/RefPtr.h"
 
@@ -21,6 +21,7 @@
 
 class nsIConsoleReportCollector;
 class nsIDocument;
+class nsIEventTarget;
 class nsIOutputStream;
 class nsILoadGroup;
 class nsIPrincipal;
@@ -84,7 +85,7 @@ class FetchDriver final : public nsIStreamListener,
                           public nsIChannelEventSink,
                           public nsIInterfaceRequestor,
                           public nsIThreadRetargetableStreamListener,
-                          public FetchSignal::Follower
+                          public AbortFollower
 {
 public:
   NS_DECL_ISUPPORTS
@@ -96,9 +97,11 @@ public:
 
   FetchDriver(InternalRequest* aRequest,
               nsIPrincipal* aPrincipal,
-              nsILoadGroup* aLoadGroup);
+              nsILoadGroup* aLoadGroup,
+              nsIEventTarget* aMainThreadEventTarget,
+              bool aIsTrackingFetch);
 
-  nsresult Fetch(FetchSignal* aSignal,
+  nsresult Fetch(AbortSignal* aSignal,
                  FetchDriverObserver* aObserver);
 
   void
@@ -111,10 +114,9 @@ public:
     mWorkerScript = aWorkerScirpt;
   }
 
-  // FetchSignal::Follower
-
+  // AbortFollower
   void
-  Aborted() override;
+  Abort() override;
 
 private:
   nsCOMPtr<nsIPrincipal> mPrincipal;
@@ -126,8 +128,10 @@ private:
   nsCOMPtr<nsIDocument> mDocument;
   nsCOMPtr<nsIChannel> mChannel;
   nsAutoPtr<SRICheckDataVerifier> mSRIDataVerifier;
+  nsCOMPtr<nsIEventTarget> mMainThreadEventTarget;
   SRIMetadata mSRIMetadata;
   nsCString mWorkerScript;
+  bool mIsTrackingFetch;
 
 #ifdef DEBUG
   bool mResponseAvailableCalled;

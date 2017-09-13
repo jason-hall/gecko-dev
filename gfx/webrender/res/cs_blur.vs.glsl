@@ -1,4 +1,3 @@
-#line 1
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -54,7 +53,8 @@ void main(void) {
             break;
     }
 
-    vUvRect = vec4(src_task.data0.xy, src_task.data0.xy + src_task.data0.zw);
+    vUvRect = vec4(src_task.data0.xy + vec2(0.5),
+                   src_task.data0.xy + src_task.data0.zw - vec2(0.5));
     vUvRect /= texture_size.xyxy;
 
     vec2 uv0 = src_task.data0.xy / texture_size;

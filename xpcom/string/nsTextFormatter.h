@@ -53,11 +53,9 @@ public:
                            const char16_t* aFmt, ...);
 
   /*
-   * sprintf into a moz_xmalloc'd buffer. Return a pointer to
-   * buffer on success, nullptr on failure.
+   * sprintf into an existing nsAString, overwriting any contents it already
+   * has. Infallible.
    */
-  static char16_t* smprintf(const char16_t* aFmt, ...);
-
   static uint32_t ssprintf(nsAString& aOut, const char16_t* aFmt, ...);
 
   /*
@@ -65,16 +63,7 @@ public:
    */
   static uint32_t vsnprintf(char16_t* aOut, uint32_t aOutLen, const char16_t* aFmt,
                             va_list aAp);
-  static char16_t* vsmprintf(const char16_t* aFmt, va_list aAp);
   static uint32_t vssprintf(nsAString& aOut, const char16_t* aFmt, va_list aAp);
-
-  /*
-   * Free the memory allocated, for the caller, by smprintf.
-   * -- Deprecated --
-   * Callers can substitute calling smprintf_free with free
-   */
-  static void smprintf_free(char16_t* aMem);
-
 };
 
 #endif /* nsTextFormatter_h___ */

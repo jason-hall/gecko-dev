@@ -31,20 +31,16 @@ public class IconGenerator implements IconLoader {
     // Mozilla's Visual Design Colour Palette
     // http://firefoxux.github.io/StyleGuide/#/visualDesign/colours
     private static final int[] COLORS = {
-            0xFFc33c32,
-            0xFFf25820,
-            0xFFff9216,
-            0xFFffcb00,
-            0xFF57bd35,
-            0xFF01bdad,
-            0xFF0996f8,
-            0xFF02538b,
-            0xFF1f386e,
-            0xFF7a2f7a,
-            0xFFea385e,
+            0xFF9A4C00,
+            0xFFAB008D,
+            0xFF4C009C,
+            0xFF002E9C,
+            0xFF009EC2,
+            0xFF009D02,
+            0xFF51AB00,
+            0xFF36385A,
     };
 
-    private static final int TEXT_SIZE_DP = 12;
     @Override
     public IconResponse load(IconRequest request) {
         if (request.getIconCount() > 1) {
@@ -78,7 +74,9 @@ public class IconGenerator implements IconLoader {
 
         final String character = getRepresentativeCharacter(pageURL);
 
-        final float textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, TEXT_SIZE_DP, context.getResources().getDisplayMetrics());
+        // The text size is calculated dynamically based on the target icon size (1/8th). For an icon
+        // size of 112dp we'd use a text size of 14dp (112 / 8).
+        final float textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, widthAndHeight / 8, context.getResources().getDisplayMetrics());
 
         paint.setTextAlign(Paint.Align.CENTER);
         paint.setTextSize(textSize);
@@ -89,7 +87,7 @@ public class IconGenerator implements IconLoader {
                 (int) ((canvas.getHeight() / 2) - ((paint.descent() + paint.ascent()) / 2)),
                 paint);
 
-        return IconResponse.createGenerated(favicon, color & 0x7FFFFFFF);
+        return IconResponse.createGenerated(favicon, color);
     }
 
     /**

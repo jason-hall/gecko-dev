@@ -66,13 +66,11 @@ public:
 
   void BuildDisplayList(nsDisplayListBuilder* aBuilder,
                         nsSubDocumentFrame* aFrame,
-                        const nsRect& aDirtyRect,
                         const nsDisplayListSet& aLists);
 
   already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                      nsIFrame* aFrame,
                                      LayerManager* aManager,
-                                     const nsIntRect& aVisibleRect,
                                      nsDisplayItem* aItem,
                                      const ContainerLayerParameters& aContainerParameters);
 
@@ -89,6 +87,8 @@ public:
   void TakeFocusForClickFromTap();
 
   void EnsureLayersConnected(CompositorOptions* aCompositorOptions);
+
+  LayerManager* AttachLayerManager();
 
 protected:
   void ActorDestroy(ActorDestroyReason why) override;
@@ -114,6 +114,7 @@ private:
 
   RefPtr<nsFrameLoader> mFrameLoader;
   RefPtr<ContainerLayer> mContainer;
+  RefPtr<LayerManager> mLayerManager;
 
   // True after Destroy() has been called, which is triggered
   // originally by nsFrameLoader::Destroy().  After this point, we can
@@ -126,7 +127,7 @@ private:
   // Prefer the extra bit of state to null'ing out mFrameLoader in
   // Destroy() so that less code needs to be special-cased for after
   // Destroy().
-  // 
+  //
   // It's possible for mFrameLoader==null and
   // mFrameLoaderDestroyed==false.
   bool mFrameLoaderDestroyed;
@@ -160,10 +161,21 @@ public:
   BuildLayer(nsDisplayListBuilder* aBuilder, LayerManager* aManager,
              const ContainerLayerParameters& aContainerParameters) override;
 
+  virtual bool CreateWebRenderCommands(mozilla::wr::DisplayListBuilder& aBuilder,
+                                       const StackingContextHelper& aSc,
+                                       nsTArray<WebRenderParentCommand>& aParentCommands,
+                                       mozilla::layers::WebRenderLayerManager* aManager,
+                                       nsDisplayListBuilder* aDisplayListBuilder) override;
+  virtual bool UpdateScrollData(mozilla::layers::WebRenderScrollData* aData,
+                                mozilla::layers::WebRenderLayerScrollData* aLayerData) override;
+
+  uint64_t GetRemoteLayersId() const;
+
   NS_DISPLAY_DECL_NAME("Remote", TYPE_REMOTE)
 
 private:
   RenderFrameParent* mRemoteFrame;
+  mozilla::LayoutDeviceIntPoint mOffset;
   mozilla::layers::EventRegionsOverride mEventRegionsOverride;
 };
 

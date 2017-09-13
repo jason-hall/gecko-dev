@@ -12,6 +12,7 @@
 
 #include "AccessibleHandler.h"
 #include "AccessibleHandlerControl.h"
+#include "AccessibleTextTearoff.h"
 
 #include "Factory.h"
 #include "HandlerData.h"
@@ -183,6 +184,12 @@ AccessibleHandler::QueryHandlerInterface(IUnknown* aProxyUnknown, REFIID aIid,
     return S_OK;
   }
 
+  if (aIid == IID_IAccessibleText || aIid == IID_IAccessibleHypertext) {
+    RefPtr<IAccessibleHypertext> textTearoff(new AccessibleTextTearoff(this));
+    textTearoff.forget(aOutInterface);
+    return S_OK;
+  }
+
   if (aIid == IID_IProvideClassInfo) {
     RefPtr<IProvideClassInfo> clsInfo(this);
     clsInfo.forget(aOutInterface);
@@ -215,17 +222,12 @@ AccessibleHandler::ReadHandlerPayload(IStream* aStream, REFIID aIid)
     return S_OK;
   }
 
-  long pid = static_cast<long>(::GetCurrentProcessId());
-
-  RefPtr<IHandlerControl> ctl;
-  HRESULT hr = gControlFactory.CreateInstance(nullptr, IID_IHandlerControl,
-                                              getter_AddRefs(ctl));
-  if (SUCCEEDED(hr)) {
-    hr = mCachedData.mGeckoBackChannel->put_HandlerControl(pid, ctl);
-    MOZ_ASSERT(SUCCEEDED(hr));
+  RefPtr<AccessibleHandlerControl> ctl(gControlFactory.GetOrCreateSingleton());
+  if (!ctl) {
+    return E_OUTOFMEMORY;
   }
 
-  return hr;
+  return ctl->Register(WrapNotNull(mCachedData.mGeckoBackChannel));
 }
 
 REFIID

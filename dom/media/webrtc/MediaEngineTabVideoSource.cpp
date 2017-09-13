@@ -6,6 +6,7 @@
 #include "MediaEngineTabVideoSource.h"
 
 #include "mozilla/gfx/2D.h"
+#include "mozilla/gfx/DataSurfaceHelpers.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/dom/BindingDeclarations.h"
@@ -303,8 +304,8 @@ MediaEngineTabVideoSource::Draw() {
     }
   }
 
-  gfxImageFormat format = SurfaceFormat::X8R8G8B8_UINT32;
-  uint32_t stride = gfxASurface::FormatStrideForWidth(format, size.width);
+  uint32_t stride = StrideForFormatAndWidth(SurfaceFormat::X8R8G8B8_UINT32,
+                                            size.width);
 
   if (mDataSize < static_cast<size_t>(stride * size.height)) {
     mDataSize = stride * size.height;
@@ -343,8 +344,8 @@ MediaEngineTabVideoSource::Draw() {
   if (mWindow) {
     RefPtr<gfxContext> context = gfxContext::CreateOrNull(dt);
     MOZ_ASSERT(context); // already checked the draw target above
-    context->SetMatrix(context->CurrentMatrix().Scale((((float) size.width)/mViewportWidth),
-                                                      (((float) size.height)/mViewportHeight)));
+    context->SetMatrix(context->CurrentMatrix().PreScale((((float) size.width)/mViewportWidth),
+                                                         (((float) size.height)/mViewportHeight)));
 
     nscolor bgColor = NS_RGB(255, 255, 255);
     uint32_t renderDocFlags = mScrollWithPage? 0 :

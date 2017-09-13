@@ -20,10 +20,10 @@ const TOPIC_SHUTDOWN = "places-shutdown";
  */
 function TaggingService() {
   // Observe bookmarks changes.
-  PlacesUtils.bookmarks.addObserver(this, false);
+  PlacesUtils.bookmarks.addObserver(this);
 
   // Cleanup on shutdown.
-  Services.obs.addObserver(this, TOPIC_SHUTDOWN, false);
+  Services.obs.addObserver(this, TOPIC_SHUTDOWN);
 }
 
 TaggingService.prototype = {
@@ -128,7 +128,7 @@ TaggingService.prototype = {
         // have created it.
         tag.__defineGetter__("id", () => this._getItemIdForTag(tag.name));
       } else {
-        throw Cr.NS_ERROR_INVALID_ARG;
+        throw Components.Exception("Invalid tag value", Cr.NS_ERROR_INVALID_ARG);
       }
       return tag;
     });
@@ -136,8 +136,8 @@ TaggingService.prototype = {
 
   // nsITaggingService
   tagURI: function TS_tagURI(aURI, aTags, aSource) {
-    if (!aURI || !aTags || !Array.isArray(aTags)) {
-      throw Cr.NS_ERROR_INVALID_ARG;
+    if (!aURI || !aTags || !Array.isArray(aTags) || aTags.length == 0) {
+      throw Components.Exception("Invalid value for tags", Cr.NS_ERROR_INVALID_ARG);
     }
 
     // This also does some input validation.
@@ -215,8 +215,8 @@ TaggingService.prototype = {
 
   // nsITaggingService
   untagURI: function TS_untagURI(aURI, aTags, aSource) {
-    if (!aURI || (aTags && !Array.isArray(aTags))) {
-      throw Cr.NS_ERROR_INVALID_ARG;
+    if (!aURI || (aTags && (!Array.isArray(aTags) || aTags.length == 0))) {
+      throw Components.Exception("Invalid value for tags", Cr.NS_ERROR_INVALID_ARG);
     }
 
     if (!aTags) {
@@ -257,8 +257,9 @@ TaggingService.prototype = {
 
   // nsITaggingService
   getURIsForTag: function TS_getURIsForTag(aTagName) {
-    if (!aTagName || aTagName.length == 0)
-      throw Cr.NS_ERROR_INVALID_ARG;
+    if (!aTagName || aTagName.length == 0) {
+      throw Components.Exception("Invalid tag name", Cr.NS_ERROR_INVALID_ARG);
+    }
 
     if (/^\s|\s$/.test(aTagName)) {
       Deprecated.warning("Tag passed to getURIsForTag was not trimmed",
@@ -293,23 +294,39 @@ TaggingService.prototype = {
 
   // nsITaggingService
   getTagsForURI: function TS_getTagsForURI(aURI, aCount) {
-    if (!aURI)
-      throw Cr.NS_ERROR_INVALID_ARG;
+    if (!aURI) {
+      throw Components.Exception("Invalid uri", Cr.NS_ERROR_INVALID_ARG);
+    }
 
-    var tags = [];
-    var bookmarkIds = PlacesUtils.bookmarks.getBookmarkIdsForURI(aURI);
-    for (var i = 0; i < bookmarkIds.length; i++) {
-      var folderId = PlacesUtils.bookmarks.getFolderIdForItem(bookmarkIds[i]);
-      if (this._tagFolders[folderId])
-        tags.push(this._tagFolders[folderId]);
+    let tags = [];
+    let db = PlacesUtils.history.DBConnection;
+    let stmt = db.createStatement(
+      `SELECT t.id AS folderId
+       FROM moz_bookmarks b
+       JOIN moz_bookmarks t on t.id = b.parent
+       WHERE b.fk = (SELECT id FROM moz_places WHERE url_hash = hash(:url) AND url = :url) AND
+       t.parent = :tags_root
+       ORDER BY b.lastModified DESC, b.id DESC`
+    );
+    stmt.params.url = aURI.spec;
+    stmt.params.tags_root = PlacesUtils.tagsFolderId;
+    try {
+      while (stmt.executeStep()) {
+        try {
+          tags.push(this._tagFolders[stmt.row.folderId]);
+        } catch (ex) {}
+      }
+    } finally {
+      stmt.finalize();
     }
 
     // sort the tag list
     tags.sort(function(a, b) {
         return a.toLowerCase().localeCompare(b.toLowerCase());
       });
-    if (aCount)
+    if (aCount) {
       aCount.value = tags.length;
+    }
     return tags;
   },
 
@@ -463,9 +480,9 @@ TaggingService.prototype = {
   _xpcom_factory: XPCOMUtils.generateSingletonFactory(TaggingService),
 
   QueryInterface: XPCOMUtils.generateQI([
-    Ci.nsITaggingService
-  , Ci.nsINavBookmarkObserver
-  , Ci.nsIObserver
+    Ci.nsITaggingService,
+    Ci.nsINavBookmarkObserver,
+    Ci.nsIObserver
   ])
 };
 

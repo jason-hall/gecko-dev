@@ -17,19 +17,14 @@ using namespace mozilla;
 
 //#define FCF_NOISY
 
-nsFormControlFrame::nsFormControlFrame(nsStyleContext* aContext)
-  : nsAtomicContainerFrame(aContext)
+nsFormControlFrame::nsFormControlFrame(nsStyleContext* aContext,
+                                       nsIFrame::ClassID aID)
+  : nsAtomicContainerFrame(aContext, aID)
 {
 }
 
 nsFormControlFrame::~nsFormControlFrame()
 {
-}
-
-nsIAtom*
-nsFormControlFrame::GetType() const
-{
-  return nsGkAtoms::formControlFrame;
 }
 
 void
@@ -45,12 +40,12 @@ NS_QUERYFRAME_HEAD(nsFormControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsAtomicContainerFrame)
 
 /* virtual */ nscoord
-nsFormControlFrame::GetMinISize(nsRenderingContext *aRenderingContext)
+nsFormControlFrame::GetMinISize(gfxContext *aRenderingContext)
 {
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
-#if !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK)
-  result = StyleDisplay()->UsedAppearance() == NS_THEME_NONE ? 0 : DefaultSize();
+#if !defined(MOZ_WIDGET_ANDROID)
+  result = StyleDisplay()->mAppearance == NS_THEME_NONE ? 0 : DefaultSize();
 #else
   result = DefaultSize();
 #endif
@@ -58,12 +53,12 @@ nsFormControlFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 }
 
 /* virtual */ nscoord
-nsFormControlFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
+nsFormControlFrame::GetPrefISize(gfxContext *aRenderingContext)
 {
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
-#if !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK)
-  result = StyleDisplay()->UsedAppearance() == NS_THEME_NONE ? 0 : DefaultSize();
+#if !defined(MOZ_WIDGET_ANDROID)
+  result = StyleDisplay()->mAppearance == NS_THEME_NONE ? 0 : DefaultSize();
 #else
   result = DefaultSize();
 #endif
@@ -72,7 +67,7 @@ nsFormControlFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
 
 /* virtual */
 LogicalSize
-nsFormControlFrame::ComputeAutoSize(nsRenderingContext* aRC,
+nsFormControlFrame::ComputeAutoSize(gfxContext*         aRC,
                                     WritingMode         aWM,
                                     const LogicalSize&  aCBSize,
                                     nscoord             aAvailableISize,
@@ -82,8 +77,8 @@ nsFormControlFrame::ComputeAutoSize(nsRenderingContext* aRC,
                                     ComputeSizeFlags    aFlags)
 {
   LogicalSize size(aWM, 0, 0);
-#if !defined(MOZ_WIDGET_ANDROID) && !defined(MOZ_WIDGET_GONK)
-  if (StyleDisplay()->UsedAppearance() == NS_THEME_NONE) {
+#if !defined(MOZ_WIDGET_ANDROID)
+  if (StyleDisplay()->mAppearance == NS_THEME_NONE) {
     return size;
   }
 #endif
@@ -107,7 +102,7 @@ nsFormControlFrame::GetLogicalBaseline(WritingMode aWritingMode) const
 #if !defined(MOZ_WIDGET_ANDROID)
   // For appearance:none we use a standard CSS baseline, i.e. synthesized from
   // our margin-box.
-  if (StyleDisplay()->UsedAppearance() == NS_THEME_NONE) {
+  if (StyleDisplay()->mAppearance == NS_THEME_NONE) {
     return nsAtomicContainerFrame::GetLogicalBaseline(aWritingMode);
   }
 #endif
@@ -164,9 +159,9 @@ nsresult
 nsFormControlFrame::RegUnRegAccessKey(nsIFrame * aFrame, bool aDoReg)
 {
   NS_ENSURE_ARG_POINTER(aFrame);
-  
+
   nsPresContext* presContext = aFrame->PresContext();
-  
+
   NS_ASSERTION(presContext, "aPresContext is NULL in RegUnRegAccessKey!");
 
   nsAutoString accessKey;
@@ -185,13 +180,13 @@ nsFormControlFrame::RegUnRegAccessKey(nsIFrame * aFrame, bool aDoReg)
   return NS_ERROR_FAILURE;
 }
 
-void 
+void
 nsFormControlFrame::SetFocus(bool aOn, bool aRepaint)
 {
 }
 
 nsresult
-nsFormControlFrame::HandleEvent(nsPresContext* aPresContext, 
+nsFormControlFrame::HandleEvent(nsPresContext* aPresContext,
                                 WidgetGUIEvent* aEvent,
                                 nsEventStatus* aEventStatus)
 {

@@ -70,6 +70,10 @@ END_TEST(testWeakMap_basicOperations)
 
 BEGIN_TEST(testWeakMap_keyDelegates)
 {
+#ifdef JS_GC_ZEAL
+    AutoLeaveZeal nozeal(cx);
+#endif /* JS_GC_ZEAL */
+
     JS_SetGCParameter(cx, JSGC_MODE, JSGC_MODE_INCREMENTAL);
     JS_GC(cx);
     JS::RootedObject map(cx, JS::NewWeakMapObject(cx));
@@ -101,6 +105,9 @@ BEGIN_TEST(testWeakMap_keyDelegates)
     cx->runtime()->gc.startDebugGC(GC_NORMAL, budget);
     while (JS::IsIncrementalGCInProgress(cx))
         cx->runtime()->gc.debugGCSlice(budget);
+#ifdef DEBUG
+    CHECK(map->zone()->lastSweepGroupIndex() < delegateRoot->zone()->lastSweepGroupIndex());
+#endif
 
     /* Add our entry to the weakmap. */
     JS::RootedValue val(cx, JS::Int32Value(1));
@@ -115,6 +122,14 @@ BEGIN_TEST(testWeakMap_keyDelegates)
     while (JS::IsIncrementalGCInProgress(cx))
         cx->runtime()->gc.debugGCSlice(budget);
     CHECK(checkSize(map, 1));
+
+    /*
+     * Check that the zones finished marking at the same time, which is
+     * necessary because of the presence of the delegate and the CCW.
+     */
+#ifdef DEBUG
+    CHECK(map->zone()->lastSweepGroupIndex() == delegateRoot->zone()->lastSweepGroupIndex());
+#endif
 
     /* Check that when the delegate becomes unreachable the entry is removed. */
     delegateRoot = nullptr;
@@ -193,9 +208,8 @@ JSObject* newDelegate()
     static const js::ClassOps delegateClassOps = {
         nullptr, /* addProperty */
         nullptr, /* delProperty */
-        nullptr, /* getProperty */
-        nullptr, /* setProperty */
         nullptr, /* enumerate */
+        nullptr, /* newEnumerate */
         nullptr, /* resolve */
         nullptr, /* mayResolve */
         nullptr, /* finalize */
@@ -221,7 +235,7 @@ JSObject* newDelegate()
 
     /* Create the global object. */
     JS::CompartmentOptions options;
-    options.behaviors().setVersion(JSVERSION_LATEST);
+    options.behaviors().setVersion(JSVERSION_DEFAULT);
 
     JS::RootedObject global(cx, JS_NewGlobalObject(cx, Jsvalify(&delegateClass), nullptr,
                                                    JS::FireOnNewGlobalHook, options));

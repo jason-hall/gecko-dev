@@ -2,6 +2,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+"use strict";
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
@@ -78,6 +79,13 @@ function FeedWriter() {
   this._selectedAppMenuItem = null;
   this._subscribeCallback = null;
   this._defaultHandlerMenuItem = null;
+
+
+  XPCOMUtils.defineLazyGetter(this, "_mm", () =>
+    this._window.QueryInterface(Ci.nsIInterfaceRequestor).
+                 getInterface(Ci.nsIDocShell).
+                 QueryInterface(Ci.nsIInterfaceRequestor).
+                 getInterface(Ci.nsIContentFrameMessageManager));
 }
 
 FeedWriter.prototype = {
@@ -189,9 +197,11 @@ FeedWriter.prototype = {
   __dateFormatter: null,
   get _dateFormatter() {
     if (!this.__dateFormatter) {
-      const dtOptions = { year: "numeric", month: "long", day: "numeric",
-                          hour: "numeric", minute: "numeric" };
-      this.__dateFormatter = new Intl.DateTimeFormat(undefined, dtOptions);
+      const dtOptions = {
+        timeStyle: "short",
+        dateStyle: "long"
+      };
+      this.__dateFormatter = Services.intl.createDateTimeFormat(undefined, dtOptions);
     }
     return this.__dateFormatter;
   },
@@ -819,7 +829,7 @@ FeedWriter.prototype = {
       case "FeedWriter:PreferenceUpdated":
         // This is called when browser-feeds.js spots a pref change
         // This will happen when
-        // - about:preferences#applications changes
+        // - about:preferences#general changes
         // - another feed reader page changes the preference
         // - when this page itself changes the select and there isn't a redirect
         //   bookmarks and launching an external app means the page stays open after subscribe
@@ -963,30 +973,20 @@ FeedWriter.prototype = {
     // Show the file picker before subscribing if the
     // choose application menuitem was chosen using the keyboard
     if (selectedItem.id == "chooseApplicationMenuItem") {
-      this._chooseClientApp(function(aResult) {
+      this._chooseClientApp(aResult => {
         if (aResult) {
           selectedItem =
             this._handlersList.selectedOptions[0];
           subscribeCallback();
         }
-      }.bind(this));
+      });
     } else {
       subscribeCallback();
     }
   },
 
-  get _mm() {
-    let mm = this._window.QueryInterface(Ci.nsIInterfaceRequestor).
-                          getInterface(Ci.nsIDocShell).
-                          QueryInterface(Ci.nsIInterfaceRequestor).
-                          getInterface(Ci.nsIContentFrameMessageManager);
-    delete this._mm;
-    return this._mm = mm;
-  },
-
   classID: FEEDWRITER_CID,
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMEventListener, Ci.nsIObserver,
-                                         Ci.nsINavHistoryObserver,
                                          Ci.nsIDOMGlobalPropertyInitializer])
 };
 

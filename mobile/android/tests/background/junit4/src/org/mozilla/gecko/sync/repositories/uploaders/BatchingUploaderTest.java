@@ -144,13 +144,17 @@ public class BatchingUploaderTest {
         }
 
         @Override
-        public void onStoreCompleted(long storeEnd) {
+        public void onStoreCompleted() {
             ++storeCompleted;
         }
 
         @Override
         public void onStoreFailed(Exception e) {
             lastStoreFailedException = e;
+        }
+
+        @Override
+        public void onRecordStoreReconciled(String guid, String oldGuid, Integer newVersion) {
         }
 
         @Override

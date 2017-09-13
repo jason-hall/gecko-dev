@@ -1,5 +1,3 @@
-#line 1
-
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -171,6 +169,10 @@ void main(void) {
     vec4 Cb = texture(sCacheRGBA8, vUv0);
     vec4 Cs = texture(sCacheRGBA8, vUv1);
 
+    // The mix-blend-mode functions assume no premultiplied alpha
+    Cb.rgb /= Cb.a;
+    Cs.rgb /= Cs.a;
+
     if (Cb.a == 0.0) {
         oFragColor = Cs;
         return;
@@ -179,10 +181,6 @@ void main(void) {
         oFragColor = vec4(0.0, 0.0, 0.0, 0.0);
         return;
     }
-
-    // The mix-blend-mode functions assume no premultiplied alpha
-    Cb.rgb /= Cb.a;
-    Cs.rgb /= Cs.a;
 
     // Return yellow if none of the branches match (shouldn't happen).
     vec4 result = vec4(1.0, 1.0, 0.0, 1.0);

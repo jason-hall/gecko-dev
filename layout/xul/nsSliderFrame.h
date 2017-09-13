@@ -37,11 +37,10 @@ protected:
   virtual ~nsSliderMediator() {}
 };
 
-class nsSliderFrame : public nsBoxFrame
+class nsSliderFrame final : public nsBoxFrame
 {
 public:
-  NS_DECL_FRAMEARENA_HELPERS
-  NS_DECL_QUERYFRAME_TARGET(nsSliderFrame)
+  NS_DECL_FRAMEARENA_HELPERS(nsSliderFrame)
   NS_DECL_QUERYFRAME
 
   friend class nsSliderMediator;
@@ -64,13 +63,11 @@ public:
   virtual void DestroyFrom(nsIFrame* aDestructRoot) override;
 
   virtual void BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
-                                           const nsRect&           aDirtyRect,
                                            const nsDisplayListSet& aLists) override;
 
   virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists) override;
- 
+
   virtual nsresult AttributeChanged(int32_t aNameSpaceID,
                                     nsIAtom* aAttribute,
                                     int32_t aModType) override;
@@ -83,8 +80,6 @@ public:
   virtual nsresult HandleEvent(nsPresContext* aPresContext,
                                mozilla::WidgetGUIEvent* aEvent,
                                nsEventStatus* aEventStatus) override;
-
-  virtual nsIAtom* GetType() const override;
 
   // nsContainerFrame overrides
   virtual void SetInitialChildList(ChildListID     aListID,
@@ -142,6 +137,8 @@ public:
   // fall back to main-thread dragging.
   void AsyncScrollbarDragRejected();
 
+  bool OnlySystemGroupDispatch(mozilla::EventMessage aMessage) const override;
+
 private:
 
   bool GetScrollToClick();
@@ -179,7 +176,7 @@ private:
     (static_cast<nsSliderFrame*>(aData))->Notify();
   }
   void PageScroll(nscoord aChange);
- 
+
   nsPoint mDestinationPoint;
   RefPtr<nsSliderMediator> mMediator;
 

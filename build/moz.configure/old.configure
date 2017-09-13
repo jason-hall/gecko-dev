@@ -104,6 +104,8 @@ def prepare_configure(old_configure, mozconfig, autoconf, build_env, shell,
             shell, autoconf,
             '--localdir=%s' % os.path.dirname(old_configure),
             old_configure + '.in'])
+        if not script:
+            die('Generated old-configure is empty! Check that your autoconf 2.13 program works!')
 
         # Make old-configure append to config.log, where we put our own log.
         # This could be done with a m4 macro, but it's way easier this way
@@ -157,10 +159,6 @@ def old_configure_options(*options):
     '--enable-accessibility',
     '--enable-address-sanitizer',
     '--enable-alsa',
-    '--enable-android-omx',
-    '--enable-b2g-bt',
-    '--enable-b2g-camera',
-    '--enable-b2g-ril',
     '--enable-bundled-fonts',
     '--enable-clang-plugin',
     '--enable-content-sandbox',
@@ -179,7 +177,6 @@ def old_configure_options(*options):
     '--enable-gamepad',
     '--enable-gconf',
     '--enable-gczeal',
-    '--enable-gold',
     '--enable-hardware-aec-ns',
     '--enable-icf',
     '--enable-install-strip',
@@ -193,26 +190,21 @@ def old_configure_options(*options):
     '--enable-maintenance-service',
     '--enable-memory-sanitizer',
     '--enable-mobile-optimize',
-    '--enable-mozril-geoloc',
     '--enable-necko-wifi',
     '--enable-negotiateauth',
     '--enable-nfc',
     '--enable-nspr-build',
     '--enable-official-branding',
-    '--enable-omx-plugin',
     '--enable-oom-breakpoint',
     '--enable-optimize',
     '--enable-parental-controls',
     '--enable-pie',
-    '--enable-png-arm-neon-support',
     '--enable-posix-nspr-emulation',
     '--enable-pref-extensions',
     '--enable-pulseaudio',
     '--enable-raw',
     '--enable-readline',
     '--enable-reflow-perf',
-    '--enable-release',
-    '--enable-safe-browsing',
     '--enable-sandbox',
     '--enable-signmar',
     '--enable-simulator',
@@ -229,10 +221,10 @@ def old_configure_options(*options):
     '--enable-tasktracer',
     '--enable-thread-sanitizer',
     '--enable-trace-logging',
+    '--enable-ubsan-int-overflow',
     '--enable-ui-locale',
     '--enable-universalchardet',
     '--enable-updater',
-    '--enable-url-classifier',
     '--enable-valgrind',
     '--enable-verify-mar',
     '--enable-webrtc',
@@ -251,7 +243,6 @@ def old_configure_options(*options):
     '--with-app-name',
     '--with-arch',
     '--with-branding',
-    '--with-crashreporter-enable-percent',
     '--with-cross-lib',
     '--with-debug-label',
     '--with-default-mozilla-five-home',
@@ -319,15 +310,30 @@ def old_configure(prepare_configure, extra_old_configure_args, all_options,
         if value.origin != 'default'
     ]
 
+    env = os.environ
+    extra_env = {}
+
     # We also pass it the options from js/moz.configure so that it can pass
     # them down to js/src/configure. Note this list is empty when running
     # js/src/configure, in which case we don't need to pass those options
     # to old-configure since old-configure doesn't handle them anyways.
     if extra_old_configure_args:
-        cmd += extra_old_configure_args
+        for arg in extra_old_configure_args:
+            if arg.startswith('-'):
+                cmd.append(arg)
+            else:
+                k, v = arg.split('=', 1)
+                extra_env[k] = v
+
+    if extra_env:
+        env = dict(env)
+        env.update(extra_env)
 
     # For debugging purpose, in case it's not what we'd expect.
     log.debug('Running %s', quote(*cmd))
+    if extra_env:
+        log.debug('with extra environment: %s',
+                  ' '.join('%s=%s' % pair for pair in extra_env.iteritems()))
 
     # Our logging goes to config.log, the same file old.configure uses.
     # We can't share the handle on the file, so close it. We assume nothing

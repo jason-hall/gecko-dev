@@ -15,12 +15,12 @@
 /******************************************************************************
  * nsSubDocumentFrame
  *****************************************************************************/
-class nsSubDocumentFrame : public nsAtomicContainerFrame,
-                           public nsIReflowCallback
+class nsSubDocumentFrame final
+  : public nsAtomicContainerFrame
+  , public nsIReflowCallback
 {
 public:
-  NS_DECL_QUERYFRAME_TARGET(nsSubDocumentFrame)
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsSubDocumentFrame)
 
   explicit nsSubDocumentFrame(nsStyleContext* aContext);
 
@@ -30,8 +30,6 @@ public:
 #endif
 
   NS_DECL_QUERYFRAME
-
-  nsIAtom* GetType() const override;
 
   bool IsFrameOfType(uint32_t aFlags) const override
   {
@@ -47,14 +45,14 @@ public:
 
   void DestroyFrom(nsIFrame* aDestructRoot) override;
 
-  nscoord GetMinISize(nsRenderingContext *aRenderingContext) override;
-  nscoord GetPrefISize(nsRenderingContext *aRenderingContext) override;
+  nscoord GetMinISize(gfxContext *aRenderingContext) override;
+  nscoord GetPrefISize(gfxContext *aRenderingContext) override;
 
   mozilla::IntrinsicSize GetIntrinsicSize() override;
   nsSize  GetIntrinsicRatio() override;
 
   mozilla::LogicalSize
-  ComputeAutoSize(nsRenderingContext*         aRenderingContext,
+  ComputeAutoSize(gfxContext*                 aRenderingContext,
                   mozilla::WritingMode        aWritingMode,
                   const mozilla::LogicalSize& aCBSize,
                   nscoord                     aAvailableISize,
@@ -64,7 +62,7 @@ public:
                   ComputeSizeFlags            aFlags) override;
 
   mozilla::LogicalSize
-  ComputeSize(nsRenderingContext*         aRenderingContext,
+  ComputeSize(gfxContext*                 aRenderingContext,
               mozilla::WritingMode        aWritingMode,
               const mozilla::LogicalSize& aCBSize,
               nscoord                     aAvailableISize,
@@ -79,7 +77,6 @@ public:
               nsReflowStatus&    aStatus) override;
 
   void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                        const nsRect&           aDirtyRect,
                         const nsDisplayListSet& aLists) override;
 
   nsresult AttributeChanged(int32_t aNameSpaceID,
@@ -129,6 +126,13 @@ public:
    */
   bool PassPointerEventsToChildren();
 
+  void MaybeShowViewer()
+  {
+    if (!mDidCreateDoc && !mCallingShow) {
+      ShowViewer();
+    }
+  }
+
 protected:
   friend class AsyncFrameInit;
 
@@ -148,7 +152,7 @@ protected:
   void ShowViewer();
 
   /* Obtains the frame we should use for intrinsic size information if we are
-   * an HTML <object>, <embed> or <applet> (a replaced element - not <iframe>)
+   * an HTML <object> or <embed>  (a replaced element - not <iframe>)
    * and our sub-document has an intrinsic size. The frame returned is the
    * frame for the document element of the document we're embedding.
    *

@@ -143,10 +143,12 @@ AudioTrackEncoder::InterleaveTrackData(AudioChunk& aChunk,
                                        uint32_t aOutputChannels,
                                        AudioDataValue* aOutput)
 {
+  uint32_t numChannelsToCopy = std::min(aOutputChannels,
+                                        static_cast<uint32_t>(aChunk.mChannelData.Length()));
   switch(aChunk.mBufferFormat) {
     case AUDIO_FORMAT_S16: {
       AutoTArray<const int16_t*, 2> array;
-      array.SetLength(aOutputChannels);
+      array.SetLength(numChannelsToCopy);
       for (uint32_t i = 0; i < array.Length(); i++) {
         array[i] = static_cast<const int16_t*>(aChunk.mChannelData[i]);
       }
@@ -155,7 +157,7 @@ AudioTrackEncoder::InterleaveTrackData(AudioChunk& aChunk,
     }
     case AUDIO_FORMAT_FLOAT32: {
       AutoTArray<const float*, 2> array;
-      array.SetLength(aOutputChannels);
+      array.SetLength(numChannelsToCopy);
       for (uint32_t i = 0; i < array.Length(); i++) {
         array[i] = static_cast<const float*>(aChunk.mChannelData[i]);
       }
@@ -309,13 +311,13 @@ VideoTrackEncoder::AppendVideoSegment(const VideoSegment& aSegment)
                  nullDuration));
       // Adapt to the time before the first frame. This extends the first frame
       // from [start, end] to [0, end], but it'll do for now.
-      CheckedInt64 diff = FramesToUsecs(nullDuration, mTrackRate);
-      if (!diff.isValid()) {
+      auto diff = FramesToTimeUnit(nullDuration, mTrackRate);
+      if (!diff.IsValid()) {
         NS_ERROR("null duration overflow");
         return NS_ERROR_DOM_MEDIA_OVERFLOW_ERR;
       }
 
-      mLastChunk.mTimeStamp -= TimeDuration::FromMicroseconds(diff.value());
+      mLastChunk.mTimeStamp -= diff.ToTimeDuration();
       mLastChunk.mDuration += nullDuration;
     }
 

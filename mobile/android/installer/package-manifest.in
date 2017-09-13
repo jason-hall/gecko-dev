@@ -126,6 +126,7 @@
 @BINPATH@/components/dom_html.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_json.xpt
+@BINPATH@/components/dom_payments.xpt
 @BINPATH@/components/dom_power.xpt
 #ifdef MOZ_ANDROID_GCM
 @BINPATH@/components/dom_push.xpt
@@ -152,7 +153,6 @@
 @BINPATH@/components/editor.xpt
 @BINPATH@/components/extensions.xpt
 @BINPATH@/components/exthandler.xpt
-@BINPATH@/components/exthelper.xpt
 @BINPATH@/components/fastfind.xpt
 @BINPATH@/components/feeds.xpt
 @BINPATH@/components/gfx.xpt
@@ -172,10 +172,6 @@
 @BINPATH@/components/layout_xul_tree.xpt
 @BINPATH@/components/layout_xul.xpt
 @BINPATH@/components/locale.xpt
-@BINPATH@/components/lwbrk.xpt
-#ifdef MOZ_GECKO_PROFILER
-@BINPATH@/components/memory_profiler.xpt
-#endif
 @BINPATH@/components/mimetype.xpt
 @BINPATH@/components/mozfind.xpt
 #ifdef ENABLE_INTL_API
@@ -223,7 +219,6 @@
 @BINPATH@/components/toolkit_asyncshutdown.xpt
 @BINPATH@/components/toolkit_filewatcher.xpt
 @BINPATH@/components/toolkit_finalizationwitness.xpt
-@BINPATH@/components/toolkit_formautofill.xpt
 @BINPATH@/components/toolkit_osfile.xpt
 @BINPATH@/components/toolkit_securityreporter.xpt
 @BINPATH@/components/toolkit_perfmonitoring.xpt
@@ -241,6 +236,7 @@
 @BINPATH@/components/urlformatter.xpt
 @BINPATH@/components/webBrowser_core.xpt
 @BINPATH@/components/webbrowserpersist.xpt
+@BINPATH@/components/webextensions.xpt
 @BINPATH@/components/widget.xpt
 @BINPATH@/components/widget_android.xpt
 @BINPATH@/components/windowcreator.xpt
@@ -277,6 +273,8 @@
 @BINPATH@/components/BrowserElementParent.js
 @BINPATH@/components/FeedProcessor.manifest
 @BINPATH@/components/FeedProcessor.js
+@BINPATH@/components/UAOverridesBootstrapper.js
+@BINPATH@/components/UAOverridesBootstrapper.manifest
 @BINPATH@/components/WellKnownOpportunisticUtils.js
 @BINPATH@/components/WellKnownOpportunisticUtils.manifest
 @BINPATH@/components/mozProtocolHandler.js
@@ -335,8 +333,8 @@
 @BINPATH@/components/nsURLFormatter.js
 @BINPATH@/components/txEXSLTRegExFunctions.manifest
 @BINPATH@/components/txEXSLTRegExFunctions.js
-@BINPATH@/components/nsContentPrefService.manifest
-@BINPATH@/components/nsContentPrefService.js
+@BINPATH@/components/ContentPrefService2.manifest
+@BINPATH@/components/ContentPrefService2.js
 @BINPATH@/components/nsHandlerService-json.manifest
 @BINPATH@/components/nsHandlerService-json.js
 @BINPATH@/components/nsHandlerService.manifest
@@ -347,13 +345,8 @@
 @BINPATH@/components/nsFormAutoComplete.js
 @BINPATH@/components/FormHistoryStartup.js
 @BINPATH@/components/nsInputListAutoComplete.js
-@BINPATH@/components/formautofill.manifest
-@BINPATH@/components/FormAutofillContentService.js
-@BINPATH@/components/FormAutofillStartup.js
 @BINPATH@/components/contentAreaDropListener.manifest
 @BINPATH@/components/contentAreaDropListener.js
-@BINPATH@/components/messageWakeupService.js
-@BINPATH@/components/messageWakeupService.manifest
 @BINPATH@/components/nsINIProcessor.manifest
 @BINPATH@/components/nsINIProcessor.js
 @BINPATH@/components/servicesComponents.manifest
@@ -398,8 +391,6 @@
 @BINPATH@/components/DownloadLegacy.js
 
 #ifndef MOZ_GECKOVIEW_JAR
-@BINPATH@/components/PresentationDeviceInfoManager.manifest
-@BINPATH@/components/PresentationDeviceInfoManager.js
 @BINPATH@/components/BuiltinProviders.manifest
 @BINPATH@/components/PresentationControlService.js
 @BINPATH@/components/PresentationNetworkHelper.js
@@ -444,6 +435,7 @@
 ; [Extensions]
 @BINPATH@/components/extensions-toolkit.manifest
 @BINPATH@/components/extensions-mobile.manifest
+@BINPATH@/components/extension-process-script.js
 
 ; Features
 @BINPATH@/features/*
@@ -467,8 +459,6 @@
 @BINPATH@/res/EditorOverride.css
 @BINPATH@/res/contenteditable.css
 @BINPATH@/res/designmode.css
-@BINPATH@/res/TopLevelImageDocument.css
-@BINPATH@/res/TopLevelVideoDocument.css
 @BINPATH@/res/table-add-column-after-active.gif
 @BINPATH@/res/table-add-column-after-hover.gif
 @BINPATH@/res/table-add-column-after.gif
@@ -491,13 +481,15 @@
 @BINPATH@/res/dtd/*
 @BINPATH@/res/html/*
 @BINPATH@/res/language.properties
-@BINPATH@/res/entityTables/*
 
 #ifndef MOZ_ANDROID_EXCLUDE_FONTS
 @BINPATH@/res/fonts/*
 #else
 @BINPATH@/res/fonts/*.properties
 #endif
+
+; Content-accessible resources.
+@BINPATH@/contentaccessible/*
 
 ; svg
 @BINPATH@/res/svg.css
@@ -530,7 +522,11 @@
 @BINPATH@/chrome/geckoview@JAREXT@
 @BINPATH@/chrome/geckoview.manifest
 
-#ifndef MOZ_GECKOVIEW_JAR
+#ifdef MOZ_GECKOVIEW_JAR
+@BINPATH@/components/GeckoView.manifest
+@BINPATH@/components/GeckoViewPrompt.js
+@BINPATH@/components/GeckoViewPermission.js
+#else
 @BINPATH@/chrome/chrome@JAREXT@
 @BINPATH@/chrome/chrome.manifest
 @BINPATH@/components/AboutRedirector.js
@@ -567,4 +563,14 @@
 
 #ifdef PKG_LOCALE_MANIFEST
 #include @PKG_LOCALE_MANIFEST@
+#endif
+
+; Background Hang Monitor
+@BINPATH@/components/backgroundhangmonitor.xpt
+
+; NOTE: This must match the config checks in
+; /toolkit/components/backgroundhangmonitor/moz.build.
+#if defined(NIGHTLY_BUILD) && !defined(MOZ_DEBUG) && !defined(MOZ_TSAN)
+@BINPATH@/components/BHRTelemetryService.js
+@BINPATH@/components/BHRTelemetryService.manifest
 #endif

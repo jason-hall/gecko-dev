@@ -12,7 +12,19 @@ var metadataElements = {
     crossOrigin: {type: "enum", keywords: ["anonymous", "use-credentials"], nonCanon:{"": "anonymous"}, isNullable: true, defaultVal: null, invalidVal: "anonymous"},
     rel: "string",
     relList: {type: "tokenlist", domAttrName: "rel"},
-    // as: {}, XXX TODO: reflecting IDL attribute is an IDL enumeration
+    as: {
+      type: "enum",
+      keywords: ["fetch", "audio", "document", "embed", "font", "image", "manifest", "object", "report", "script", "serviceworker", "sharedworker", "style", "track", "video", "worker", "xslt"],
+      defaultVal: "",
+      invalidVal: ""
+    },
+    scope: "string",
+    updateViaCache: {
+      type: "enum",
+      keywords: ["imports", "all", "none"],
+      defaultVal: "imports",
+      invalidVal: "imports"
+    },
     media: "string",
     nonce: "string",
     integrity: "string",
@@ -20,6 +32,12 @@ var metadataElements = {
     type: "string",
     sizes: "settable tokenlist",
     referrerPolicy: {type: "enum", keywords: ["", "no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url"]},
+    workerType: {
+      type: "enum",
+      keywords: ["classic", "module"],
+      defaultVal: "classic",
+      invalidVal: "",
+    },
 
     // Obsolete
     charset: "string",

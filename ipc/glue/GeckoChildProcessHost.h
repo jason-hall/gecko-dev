@@ -157,8 +157,6 @@ protected:
 #ifdef MOZ_SANDBOX
   SandboxBroker mSandboxBroker;
   std::vector<std::wstring> mAllowedFilesRead;
-  std::vector<std::wstring> mAllowedFilesReadWrite;
-  std::vector<std::wstring> mAllowedDirectories;
   bool mEnableSandboxLogging;
   int32_t mSandboxLevel;
 #endif
@@ -211,6 +209,7 @@ private:
   // the current environment).
   nsCString mRestoreOrigNSPRLogName;
   nsCString mRestoreOrigMozLogName;
+  nsCString mRestoreOrigRustLog;
 
   static uint32_t sNextUniqueID;
 

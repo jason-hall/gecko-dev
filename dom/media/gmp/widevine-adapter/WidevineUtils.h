@@ -39,21 +39,6 @@ LogModule* GetCDMLog();
 GMPErr
 ToGMPErr(cdm::Status aStatus);
 
-class WidevineDecryptor;
-
-class CDMWrapper {
-public:
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(CDMWrapper)
-
-  explicit CDMWrapper(cdm::ContentDecryptionModule_8* aCDM,
-                      WidevineDecryptor* aDecryptor);
-  cdm::ContentDecryptionModule_8* GetCDM() const { return mCDM; }
-private:
-  ~CDMWrapper();
-  cdm::ContentDecryptionModule_8* mCDM;
-  RefPtr<WidevineDecryptor> mDecryptor;
-};
-
 void InitInputBuffer(const GMPEncryptedBufferMetadata* aCrypto,
                      int64_t aTimestamp,
                      const uint8_t* aData,
@@ -61,7 +46,21 @@ void InitInputBuffer(const GMPEncryptedBufferMetadata* aCrypto,
                      cdm::InputBuffer &aInputBuffer,
                      nsTArray<cdm::SubsampleEntry> &aSubsamples);
 
-class WidevineBuffer : public cdm::Buffer
+namespace gmp {
+class CDMShmemBuffer;
+}
+class WidevineBuffer;
+
+// Base class for our cdm::Buffer implementations, so we can tell at runtime
+// whether the buffer is a Shmem or non-Shmem buffer.
+class CDMBuffer : public cdm::Buffer
+{
+public:
+  virtual WidevineBuffer* AsArrayBuffer() { return nullptr; }
+  virtual gmp::CDMShmemBuffer* AsShmemBuffer() { return nullptr; }
+};
+
+class WidevineBuffer : public CDMBuffer
 {
 public:
   explicit WidevineBuffer(size_t aSize);
@@ -75,6 +74,8 @@ public:
   // Moves contents of buffer out into temporary.
   // Note: This empties the buffer.
   nsTArray<uint8_t> ExtractBuffer();
+
+  WidevineBuffer* AsArrayBuffer() override { return this; }
 
 private:
   nsTArray<uint8_t> mBuffer;

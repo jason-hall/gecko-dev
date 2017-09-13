@@ -55,7 +55,11 @@ public:
   void WaitForRemotePrint();
   void RemotePrintFinished();
 
-  void Disconnect() { mPrintEngine = nullptr; }
+  void Disconnect()
+  {
+    mPrintEngine = nullptr;
+    mPrintObj = nullptr;
+  }
 
 private:
   ~nsPagePrintTimer();
@@ -87,9 +91,5 @@ private:
 #endif
   ;
 };
-
-
-nsresult
-NS_NewPagePrintTimer(nsPagePrintTimer **aResult);
 
 #endif /* nsPagePrintTimer_h___ */

@@ -17,18 +17,19 @@ class JavaCallbacksSupport
 public:
   typedef java::CodecProxy::NativeCallbacks::Natives<JavaCallbacksSupport> Base;
   using Base::AttachNative;
+  using Base::GetNative;
   using Base::DisposeNative;
 
   JavaCallbacksSupport() : mCanceled(false) { }
 
   virtual ~JavaCallbacksSupport() { }
 
-  virtual void HandleInputExhausted() = 0;
+  virtual void HandleInput(int64_t aTimestamp, bool aProcessed) = 0;
 
-  void OnInputExhausted()
+  void OnInputStatus(jlong aTimestamp, bool aProcessed)
   {
     if (!mCanceled) {
-      HandleInputExhausted();
+      HandleInput(aTimestamp, aProcessed);
     }
   }
 

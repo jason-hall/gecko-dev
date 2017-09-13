@@ -19,11 +19,10 @@
 #include "nsIHTMLContentSink.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIInterfaceRequestorUtils.h"
-#include "nsScriptLoader.h"
 #include "nsIURI.h"
 #include "nsIContentViewer.h"
 #include "mozilla/dom/NodeInfo.h"
-#include "nsToken.h"
+#include "mozilla/dom/ScriptLoader.h"
 #include "nsIAppShell.h"
 #include "nsCRT.h"
 #include "prtime.h"
@@ -50,7 +49,6 @@
 #include "nsIDocument.h"
 #include "nsStubDocumentObserver.h"
 #include "nsIHTMLDocument.h"
-#include "nsIDOMHTMLMapElement.h"
 #include "nsICookieService.h"
 #include "nsTArray.h"
 #include "nsIScriptSecurityManager.h"
@@ -84,10 +82,6 @@ using namespace mozilla::dom;
 
 //----------------------------------------------------------------------
 
-typedef nsGenericHTMLElement*
-  (*contentCreatorCallback)(already_AddRefed<mozilla::dom::NodeInfo>&&,
-                            FromParser aFromParser);
-
 nsGenericHTMLElement*
 NS_NewHTMLNOTUSEDElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
                          FromParser aFromParser)
@@ -98,7 +92,7 @@ NS_NewHTMLNOTUSEDElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
 
 #define HTML_TAG(_tag, _classname, _interfacename) NS_NewHTML##_classname##Element,
 #define HTML_OTHER(_tag) NS_NewHTMLNOTUSEDElement,
-static const contentCreatorCallback sContentCreatorCallbacks[] = {
+static const HTMLContentCreatorFunction sHTMLContentCreatorFunctions[] = {
   NS_NewHTMLUnknownElement,
 #include "nsHTMLTagList.h"
 #undef HTML_TAG
@@ -136,7 +130,7 @@ public:
   NS_IMETHOD WillResume(void) override;
   NS_IMETHOD SetParser(nsParserBase* aParser) override;
   virtual void FlushPendingNotifications(FlushType aType) override;
-  NS_IMETHOD SetDocumentCharset(nsACString& aCharset) override;
+  virtual void SetDocumentCharset(NotNull<const Encoding*> aEncoding) override;
   virtual nsISupports *GetTarget() override;
   virtual bool IsScriptExecuting() override;
 
@@ -263,7 +257,8 @@ NS_NewHTMLElement(Element** aResult, already_AddRefed<mozilla::dom::NodeInfo>&& 
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  if (isCustomElementName || aIs) {
+  if (CustomElementRegistry::IsCustomElementEnabled() &&
+      (isCustomElementName || aIs)) {
     nsContentUtils::SetupCustomElement(*aResult, aIs);
   }
 
@@ -279,7 +274,7 @@ CreateHTMLElement(uint32_t aNodeType,
                aNodeType == eHTMLTag_userdefined,
                "aNodeType is out of bounds");
 
-  contentCreatorCallback cb = sContentCreatorCallbacks[aNodeType];
+  HTMLContentCreatorFunction cb = sHTMLContentCreatorFunctions[aNodeType];
 
   NS_ASSERTION(cb != NS_NewHTMLNOTUSEDElement,
                "Don't know how to construct tag element!");
@@ -1067,7 +1062,7 @@ HTMLContentSink::FlushPendingNotifications(FlushType aType)
         FlushTags();
       }
     }
-    if (aType >= FlushType::InterruptibleLayout) {
+    if (aType >= FlushType::EnsurePresShellInitAndFrames) {
       // Make sure that layout has started so that the reflow flush
       // will actually happen.
       StartLayout(true);
@@ -1086,11 +1081,10 @@ HTMLContentSink::FlushTags()
   return mCurrentContext ? mCurrentContext->FlushTags() : NS_OK;
 }
 
-NS_IMETHODIMP
-HTMLContentSink::SetDocumentCharset(nsACString& aCharset)
+void
+HTMLContentSink::SetDocumentCharset(NotNull<const Encoding*> aEncoding)
 {
   MOZ_ASSERT_UNREACHABLE("<meta charset> case doesn't occur with about:blank");
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 nsISupports *

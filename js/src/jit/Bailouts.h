@@ -9,8 +9,8 @@
 
 #include "jstypes.h"
 
-#include "jit/JitFrameIterator.h"
 #include "jit/JitFrames.h"
+#include "jit/JSJitFrameIter.h"
 #include "vm/Stack.h"
 
 namespace js {
@@ -102,7 +102,7 @@ static const uint32_t BAILOUT_RETURN_OVERRECURSED = 2;
 
 // This address is a magic number made to cause crashes while indicating that we
 // are making an attempt to mark the stack during a bailout.
-static uint8_t * const FAKE_JIT_TOP_FOR_BAILOUT = reinterpret_cast<uint8_t*>(0xba1);
+static uint8_t* const FAKE_EXITFP_FOR_BAILOUT = reinterpret_cast<uint8_t*>(0xba1);
 
 // BailoutStack is an architecture specific pointer to the stack, given by the
 // bailout handler.
@@ -113,7 +113,7 @@ class InvalidationBailoutStack;
 
 // This structure is constructed before recovering the baseline frames for a
 // bailout. It records all information extracted from the stack, and which are
-// needed for the JitFrameIterator.
+// needed for the JSJitFrameIter.
 class BailoutFrameInfo
 {
     MachineState machine_;
@@ -128,7 +128,7 @@ class BailoutFrameInfo
   public:
     BailoutFrameInfo(const JitActivationIterator& activations, BailoutStack* sp);
     BailoutFrameInfo(const JitActivationIterator& activations, InvalidationBailoutStack* sp);
-    BailoutFrameInfo(const JitActivationIterator& activations, const JitFrameIterator& frame);
+    BailoutFrameInfo(const JitActivationIterator& activations, const JSJitFrameIter& frame);
     ~BailoutFrameInfo();
 
     uint8_t* fp() const {

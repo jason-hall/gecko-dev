@@ -925,6 +925,18 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "-moz-context-properties": {
+    "isInherited": true,
+    "subproperties": [
+      "-moz-context-properties"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "unset"
+    ]
+  },
   "-moz-control-character-visibility": {
     "isInherited": true,
     "subproperties": [
@@ -1222,6 +1234,8 @@ exports.CSS_PROPERTIES = {
     "supports": [],
     "values": [
       "ignore",
+      "ignore-horizontal",
+      "ignore-vertical",
       "inherit",
       "initial",
       "stretch-to-fit",
@@ -1487,6 +1501,52 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "-moz-window-opacity": {
+    "isInherited": false,
+    "subproperties": [
+      "-moz-window-opacity"
+    ],
+    "supports": [
+      7
+    ],
+    "values": [
+      "inherit",
+      "initial",
+      "unset"
+    ]
+  },
+  "-moz-window-transform": {
+    "isInherited": false,
+    "subproperties": [
+      "-moz-window-transform"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "unset"
+    ]
+  },
+  "-moz-window-transform-origin": {
+    "isInherited": false,
+    "subproperties": [
+      "-moz-window-transform-origin"
+    ],
+    "supports": [
+      6,
+      8
+    ],
+    "values": [
+      "bottom",
+      "center",
+      "inherit",
+      "initial",
+      "left",
+      "right",
+      "top",
+      "unset"
+    ]
+  },
   "-webkit-align-content": {
     "isInherited": false,
     "subproperties": [
@@ -1729,20 +1789,6 @@ exports.CSS_PROPERTIES = {
       "step-end",
       "step-start",
       "steps",
-      "unset"
-    ]
-  },
-  "-webkit-appearance": {
-    "isInherited": false,
-    "subproperties": [
-      "appearance"
-    ],
-    "supports": [],
-    "values": [
-      "auto",
-      "inherit",
-      "initial",
-      "none",
       "unset"
     ]
   },
@@ -2858,7 +2904,6 @@ exports.CSS_PROPERTIES = {
       "animation-play-state",
       "animation-timing-function",
       "-moz-appearance",
-      "appearance",
       "backface-visibility",
       "background-attachment",
       "background-blend-mode",
@@ -2941,6 +2986,7 @@ exports.CSS_PROPERTIES = {
       "column-width",
       "contain",
       "content",
+      "-moz-context-properties",
       "-moz-control-character-visibility",
       "counter-increment",
       "counter-reset",
@@ -3150,6 +3196,9 @@ exports.CSS_PROPERTIES = {
       "will-change",
       "-moz-window-dragging",
       "-moz-window-shadow",
+      "-moz-window-opacity",
+      "-moz-window-transform",
+      "-moz-window-transform-origin",
       "word-break",
       "word-spacing",
       "overflow-wrap",
@@ -3172,7 +3221,6 @@ exports.CSS_PROPERTIES = {
       "COLOR",
       "-moz-all",
       "-moz-alt-content",
-      "-moz-anchor-decoration",
       "-moz-available",
       "-moz-block-height",
       "-moz-box",
@@ -3371,6 +3419,7 @@ exports.CSS_PROPERTIES = {
       "geometricprecision",
       "grab",
       "grabbing",
+      "grayscale",
       "grid",
       "groove",
       "groupbox",
@@ -3389,6 +3438,8 @@ exports.CSS_PROPERTIES = {
       "icon",
       "ideographic",
       "ignore",
+      "ignore-horizontal",
+      "ignore-vertical",
       "inactive",
       "infinite",
       "inherit",
@@ -3884,20 +3935,6 @@ exports.CSS_PROPERTIES = {
       "step-end",
       "step-start",
       "steps",
-      "unset"
-    ]
-  },
-  "appearance": {
-    "isInherited": false,
-    "subproperties": [
-      "appearance"
-    ],
-    "supports": [],
-    "values": [
-      "auto",
-      "inherit",
-      "initial",
-      "none",
       "unset"
     ]
   },
@@ -9111,7 +9148,6 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
-      "-moz-anchor-decoration",
       "-moz-none",
       "blink",
       "currentColor",
@@ -9162,7 +9198,6 @@ exports.CSS_PROPERTIES = {
     ],
     "supports": [],
     "values": [
-      "-moz-anchor-decoration",
       "blink",
       "inherit",
       "initial",
@@ -9807,14 +9842,6 @@ exports.PREFERENCES = [
     "layout.css.all-shorthand.enabled"
   ],
   [
-    "-moz-appearance",
-    "layout.css.moz-appearance.enabled"
-  ],
-  [
-    "appearance",
-    "layout.css.appearance.enabled"
-  ],
-  [
     "background-blend-mode",
     "layout.css.background-blend-mode.enabled"
   ],
@@ -10137,10 +10164,6 @@ exports.PREFERENCES = [
   [
     "-webkit-animation-timing-function",
     "layout.css.prefixes.webkit"
-  ],
-  [
-    "-webkit-appearance",
-    "layout.css.appearance.enabled"
   ],
   [
     "-webkit-filter",

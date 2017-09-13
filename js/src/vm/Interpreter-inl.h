@@ -258,6 +258,39 @@ GetEnvironmentName(JSContext* cx, HandleObject envChain, HandlePropertyName name
 }
 
 inline bool
+HasOwnProperty(JSContext* cx, HandleValue val, HandleValue idValue, bool* result)
+{
+
+    // As an optimization, provide a fast path when rooting is not necessary and
+    // we can safely retrieve the object's shape.
+    jsid id;
+    if (val.isObject() && ValueToId<NoGC>(cx, idValue, &id)) {
+        JSObject* obj = &val.toObject();
+        PropertyResult prop;
+        if (obj->isNative() &&
+            NativeLookupOwnProperty<NoGC>(cx, &obj->as<NativeObject>(), id, &prop))
+        {
+            *result = prop.isFound();
+            return true;
+        }
+    }
+
+    // Step 1.
+    RootedId key(cx);
+    if (!ToPropertyKey(cx, idValue, &key))
+        return false;
+
+    // Step 2.
+    RootedObject obj(cx, ToObject(cx, val));
+    if (!obj)
+        return false;
+
+    // Step 3.
+    return HasOwnProperty(cx, obj, key, result);
+}
+
+
+inline bool
 GetIntrinsicOperation(JSContext* cx, jsbytecode* pc, MutableHandleValue vp)
 {
     RootedPropertyName name(cx, cx->currentScript()->getName(pc));
@@ -318,7 +351,7 @@ SetNameOperation(JSContext* cx, JSScript* script, jsbytecode* pc, HandleObject e
         else
             varobj = &env->as<NativeObject>();
         MOZ_ASSERT(!varobj->getOpsSetProperty());
-        ok = NativeSetProperty(cx, varobj, id, val, receiver, Unqualified, result);
+        ok = NativeSetProperty<Unqualified>(cx, varobj, id, val, receiver, result);
     } else {
         ok = SetProperty(cx, env, id, val, receiver, result);
     }
@@ -365,7 +398,7 @@ InitGlobalLexicalOperation(JSContext* cx, LexicalEnvironmentObject* lexicalEnvAr
     Rooted<LexicalEnvironmentObject*> lexicalEnv(cx, lexicalEnvArg);
     RootedShape shape(cx, lexicalEnv->lookup(cx, script->getName(pc)));
     MOZ_ASSERT(shape);
-    lexicalEnv->setSlot(shape->slot(), value);
+    lexicalEnv->setSlotWithType(cx, shape, value);
 }
 
 inline bool
@@ -455,11 +488,11 @@ ToIdOperation(JSContext* cx, HandleScript script, jsbytecode* pc, HandleValue id
 }
 
 static MOZ_ALWAYS_INLINE bool
-GetObjectElementOperation(JSContext* cx, JSOp op, JS::HandleObject obj, JS::HandleObject receiver,
+GetObjectElementOperation(JSContext* cx, JSOp op, JS::HandleObject obj, JS::HandleValue receiver,
                           HandleValue key, MutableHandleValue res)
 {
     MOZ_ASSERT(op == JSOP_GETELEM || op == JSOP_CALLELEM || op == JSOP_GETELEM_SUPER);
-    MOZ_ASSERT_IF(op == JSOP_GETELEM || op == JSOP_CALLELEM, obj == receiver);
+    MOZ_ASSERT_IF(op == JSOP_GETELEM || op == JSOP_CALLELEM, obj == &receiver.toObject());
 
     do {
         uint32_t index;
@@ -593,8 +626,9 @@ GetElementOperation(JSContext* cx, JSOp op, HandleValue lref, HandleValue rref,
         return GetPrimitiveElementOperation(cx, op, thisv, rref, res);
     }
 
-    RootedObject thisv(cx, &lref.toObject());
-    return GetObjectElementOperation(cx, op, thisv, thisv, rref, res);
+    RootedObject obj(cx, &lref.toObject());
+    RootedValue thisv(cx, lref);
+    return GetObjectElementOperation(cx, op, obj, thisv, rref, res);
 }
 
 static MOZ_ALWAYS_INLINE JSString*
@@ -604,25 +638,16 @@ TypeOfOperation(const Value& v, JSRuntime* rt)
     return TypeName(type, *rt->commonNames);
 }
 
-static inline JSString*
-TypeOfObjectOperation(JSObject* obj, JSRuntime* rt)
-{
-    JSType type = js::TypeOfObject(obj);
-    return TypeName(type, *rt->commonNames);
-}
-
 static MOZ_ALWAYS_INLINE bool
 InitElemOperation(JSContext* cx, jsbytecode* pc, HandleObject obj, HandleValue idval, HandleValue val)
 {
     MOZ_ASSERT(!val.isMagic(JS_ELEMENTS_HOLE));
-    MOZ_ASSERT(!obj->getClass()->getGetProperty());
-    MOZ_ASSERT(!obj->getClass()->getSetProperty());
 
     RootedId id(cx);
     if (!ToPropertyKey(cx, idval, &id))
         return false;
 
-    unsigned flags = JSOp(*pc) == JSOP_INITHIDDENELEM ? 0 : JSPROP_ENUMERATE;
+    unsigned flags = GetInitDataPropAttrs(JSOp(*pc));
     return DefineProperty(cx, obj, id, val, nullptr, nullptr, flags);
 }
 

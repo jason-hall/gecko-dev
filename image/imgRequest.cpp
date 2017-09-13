@@ -69,7 +69,9 @@ imgRequest::imgRequest(imgLoader* aLoader, const ImageCacheKey& aCacheKey)
  , mDecodeRequested(false)
  , mNewPartPending(false)
  , mHadInsecureRedirect(false)
-{ }
+{
+  LOG_FUNC(gImgLog, "imgRequest::imgRequest()");
+}
 
 imgRequest::~imgRequest()
 {
@@ -317,7 +319,8 @@ class imgRequestMainThreadCancel : public Runnable
 {
 public:
   imgRequestMainThreadCancel(imgRequest* aImgRequest, nsresult aStatus)
-    : mImgRequest(aImgRequest)
+    : Runnable("imgRequestMainThreadCancel")
+    , mImgRequest(aImgRequest)
     , mStatus(aStatus)
   {
     MOZ_ASSERT(!NS_IsMainThread(), "Create me off main thread only!");
@@ -344,7 +347,10 @@ imgRequest::Cancel(nsresult aStatus)
   if (NS_IsMainThread()) {
     ContinueCancel(aStatus);
   } else {
-    NS_DispatchToMainThread(new imgRequestMainThreadCancel(this, aStatus));
+    RefPtr<ProgressTracker> progressTracker = GetProgressTracker();
+    nsCOMPtr<nsIEventTarget> eventTarget = progressTracker->GetEventTarget();
+    nsCOMPtr<nsIRunnable> ev = new imgRequestMainThreadCancel(this, aStatus);
+    eventTarget->Dispatch(ev.forget(), NS_DISPATCH_NORMAL);
   }
 }
 
@@ -367,7 +373,8 @@ class imgRequestMainThreadEvict : public Runnable
 {
 public:
   explicit imgRequestMainThreadEvict(imgRequest* aImgRequest)
-    : mImgRequest(aImgRequest)
+    : Runnable("imgRequestMainThreadEvict")
+    , mImgRequest(aImgRequest)
   {
     MOZ_ASSERT(!NS_IsMainThread(), "Create me off main thread only!");
     MOZ_ASSERT(aImgRequest);
@@ -541,10 +548,52 @@ imgRequest::AdjustPriority(imgRequestProxy* proxy, int32_t delta)
     return;
   }
 
+  AdjustPriorityInternal(delta);
+}
+
+void
+imgRequest::AdjustPriorityInternal(int32_t aDelta)
+{
   nsCOMPtr<nsISupportsPriority> p = do_QueryInterface(mChannel);
   if (p) {
-    p->AdjustPriority(delta);
+    p->AdjustPriority(aDelta);
   }
+}
+
+void
+imgRequest::BoostPriority(uint32_t aCategory)
+{
+  if (!gfxPrefs::ImageLayoutNetworkPriority()) {
+    return;
+  }
+
+  uint32_t newRequestedCategory =
+    (mBoostCategoriesRequested & aCategory) ^ aCategory;
+  if (!newRequestedCategory) {
+    // priority boost for each category can only apply once.
+    return;
+  }
+
+  MOZ_LOG(gImgLog, LogLevel::Debug,
+         ("[this=%p] imgRequest::BoostPriority for category %x",
+          this, newRequestedCategory));
+
+  int32_t delta = 0;
+
+  if (newRequestedCategory & imgIRequest::CATEGORY_FRAME_INIT) {
+    --delta;
+  }
+
+  if (newRequestedCategory & imgIRequest::CATEGORY_SIZE_QUERY) {
+    --delta;
+  }
+
+  if (newRequestedCategory & imgIRequest::CATEGORY_DISPLAY) {
+    delta += nsISupportsPriority::PRIORITY_HIGH;
+  }
+
+  AdjustPriorityInternal(delta);
+  mBoostCategoriesRequested |= newRequestedCategory;
 }
 
 bool
@@ -571,7 +620,8 @@ imgRequest::UpdateCacheEntrySize()
   }
 
   RefPtr<Image> image = GetImage();
-  size_t size = image->SizeOfSourceWithComputedFallback(moz_malloc_size_of);
+  SizeOfState state(moz_malloc_size_of);
+  size_t size = image->SizeOfSourceWithComputedFallback(state);
   mCacheEntry->SetDataSize(size);
 }
 
@@ -1015,7 +1065,8 @@ class FinishPreparingForNewPartRunnable final : public Runnable
 public:
   FinishPreparingForNewPartRunnable(imgRequest* aImgRequest,
                                     NewPartResult&& aResult)
-    : mImgRequest(aImgRequest)
+    : Runnable("FinishPreparingForNewPartRunnable")
+    , mImgRequest(aImgRequest)
     , mResult(aResult)
   {
     MOZ_ASSERT(aImgRequest);
@@ -1093,22 +1144,35 @@ imgRequest::OnDataAvailable(nsIRequest* aRequest, nsISupports* aContext,
 
     if (result.mImage) {
       image = result.mImage;
+      nsCOMPtr<nsIEventTarget> eventTarget;
 
       // Update our state to reflect this new part.
       {
         MutexAutoLock lock(mMutex);
         mImage = image;
+
+        // We only get an event target if we are not on the main thread, because
+        // we have to dispatch in that case. If we are on the main thread, but
+        // on a different scheduler group than ProgressTracker would give us,
+        // that is okay because nothing in imagelib requires that, just our
+        // listeners (which have their own checks).
+        if (!NS_IsMainThread()) {
+          eventTarget = mProgressTracker->GetEventTarget();
+          MOZ_ASSERT(eventTarget);
+        }
+
         mProgressTracker = nullptr;
       }
 
       // Some property objects are not threadsafe, and we need to send
       // OnImageAvailable on the main thread, so finish on the main thread.
-      if (NS_IsMainThread()) {
+      if (!eventTarget) {
+        MOZ_ASSERT(NS_IsMainThread());
         FinishPreparingForNewPart(result);
       } else {
         nsCOMPtr<nsIRunnable> runnable =
           new FinishPreparingForNewPartRunnable(this, Move(result));
-        NS_DispatchToMainThread(runnable);
+        eventTarget->Dispatch(runnable.forget(), NS_DISPATCH_NORMAL);
       }
     }
 

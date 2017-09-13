@@ -31,17 +31,17 @@ using namespace js::gc;
 using namespace js::gcstats;
 
 using mozilla::DebugOnly;
+using mozilla::EnumeratedArray;
+using mozilla::IntegerRange;
 using mozilla::PodArrayZero;
 using mozilla::PodZero;
+using mozilla::TimeStamp;
+using mozilla::TimeDuration;
 
-/*
- * If this fails, then you can either delete this assertion and allow all
- * larger-numbered reasons to pile up in the last telemetry bucket, or switch
- * to GC_REASON_3 and bump the max value.
- */
 
 JS_PUBLIC_API(const char*)
 JS::gcreason::ExplainReason(JS::gcreason::Reason reason)
 {
 	return " ";
 }
+

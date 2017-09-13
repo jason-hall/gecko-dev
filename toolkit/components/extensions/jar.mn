@@ -4,14 +4,15 @@
 
 toolkit.jar:
 % content extensions %content/extensions/
+    content/extensions/dummy.xul
     content/extensions/ext-alarms.js
     content/extensions/ext-backgroundPage.js
     content/extensions/ext-browser-content.js
+    content/extensions/ext-browserSettings.js
     content/extensions/ext-contextualIdentities.js
     content/extensions/ext-cookies.js
     content/extensions/ext-downloads.js
     content/extensions/ext-extension.js
-    content/extensions/ext-geolocation.js
     content/extensions/ext-i18n.js
     content/extensions/ext-idle.js
     content/extensions/ext-management.js
@@ -22,8 +23,10 @@ toolkit.jar:
     content/extensions/ext-proxy.js
     content/extensions/ext-runtime.js
     content/extensions/ext-storage.js
+    content/extensions/ext-tabs-base.js
     content/extensions/ext-theme.js
     content/extensions/ext-toolkit.js
+    content/extensions/ext-toolkit.json
     content/extensions/ext-topSites.js
     content/extensions/ext-webRequest.js
     content/extensions/ext-webNavigation.js
@@ -34,8 +37,8 @@ toolkit.jar:
 #ifndef ANDROID
     content/extensions/ext-c-identity.js
 #endif
-    content/extensions/ext-c-permissions.js
     content/extensions/ext-c-runtime.js
     content/extensions/ext-c-storage.js
     content/extensions/ext-c-test.js
     content/extensions/ext-c-toolkit.js
+    content/extensions/ext-c-webRequest.js

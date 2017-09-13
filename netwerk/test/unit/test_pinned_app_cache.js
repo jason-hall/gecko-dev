@@ -102,7 +102,7 @@ function init_profile() {
   dump(ps.getBoolPref("browser.cache.offline.enable"));
   ps.setBoolPref("browser.cache.offline.enable", true);
   ps.setComplexValue("browser.cache.offline.parent_directory",
-		     Ci.nsILocalFile, do_get_profile());
+		     Ci.nsIFile, do_get_profile());
 }
 
 function init_http_server() {
@@ -155,7 +155,7 @@ function watch_update(update, stateChangeHandler, cacheAvailHandler) {
     updateStateChanged: stateChangeHandler,
     applicationCacheAvailable: cacheAvailHandler
   };
-  update.addObserver(observer, false);
+  update.addObserver(observer);
 
   return update;
 }

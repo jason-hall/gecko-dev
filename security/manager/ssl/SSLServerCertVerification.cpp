@@ -110,7 +110,6 @@
 #include "cert.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
-#include "mozilla/Mutex.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/UniquePtr.h"
@@ -129,6 +128,7 @@
 #include "nsNSSShutDown.h"
 #include "nsSSLStatus.h"
 #include "nsServiceManagerUtils.h"
+#include "nsString.h"
 #include "nsURLHelper.h"
 #include "nsXPCOMCIDInternal.h"
 #include "pkix/pkix.h"
@@ -150,14 +150,6 @@ namespace {
 // do not use a nsCOMPtr to avoid static initializer/destructor
 nsIThreadPool* gCertVerificationThreadPool = nullptr;
 
-// We avoid using a mutex for the success case to avoid lock-related
-// performance issues. However, we do use a lock in the error case to simplify
-// the code, since performance in the error case is not important.
-Mutex* gSSLVerificationTelemetryMutex = nullptr;
-
-// We add a mutex to serialize PKCS11 database operations
-Mutex* gSSLVerificationPK11Mutex = nullptr;
-
 } // unnamed namespace
 
 // Called when the socket transport thread starts, to initialize the SSL cert
@@ -173,8 +165,6 @@ Mutex* gSSLVerificationPK11Mutex = nullptr;
 void
 InitializeSSLServerCertVerificationThreads()
 {
-  gSSLVerificationTelemetryMutex = new Mutex("SSLVerificationTelemetryMutex");
-  gSSLVerificationPK11Mutex = new Mutex("SSLVerificationPK11Mutex");
   // TODO: tuning, make parameters preferences
   // XXX: instantiate nsThreadPool directly, to make this more bulletproof.
   // Currently, the nsThreadPool.h header isn't exported for us to do so.
@@ -206,14 +196,6 @@ void StopSSLServerCertVerificationThreads()
   if (gCertVerificationThreadPool) {
     gCertVerificationThreadPool->Shutdown();
     NS_RELEASE(gCertVerificationThreadPool);
-  }
-  if (gSSLVerificationTelemetryMutex) {
-    delete gSSLVerificationTelemetryMutex;
-    gSSLVerificationTelemetryMutex = nullptr;
-  }
-  if (gSSLVerificationPK11Mutex) {
-    delete gSSLVerificationPK11Mutex;
-    gSSLVerificationPK11Mutex = nullptr;
   }
 }
 
@@ -247,7 +229,7 @@ public:
                                   Telemetry::HistogramID telemetryID = Telemetry::HistogramCount,
                                   uint32_t telemetryValue = -1,
                                   SSLErrorMessageType errorMessageType =
-                                      PlainErrorMessage);
+                                    SSLErrorMessageType::Plain);
 
   void Dispatch();
 private:
@@ -357,7 +339,7 @@ MapCertErrorToProbeValue(PRErrorCode errorCode)
 
 SECStatus
 DetermineCertOverrideErrors(const UniqueCERTCertificate& cert,
-                            const char* hostName,
+                            const nsACString& hostName,
                             PRTime now, PRErrorCode defaultErrorCodeToReport,
                             /*out*/ uint32_t& collectedErrors,
                             /*out*/ PRErrorCode& errorCodeTrust,
@@ -365,7 +347,6 @@ DetermineCertOverrideErrors(const UniqueCERTCertificate& cert,
                             /*out*/ PRErrorCode& errorCodeTime)
 {
   MOZ_ASSERT(cert);
-  MOZ_ASSERT(hostName);
   MOZ_ASSERT(collectedErrors == 0);
   MOZ_ASSERT(errorCodeTrust == 0);
   MOZ_ASSERT(errorCodeMismatch == 0);
@@ -438,8 +419,8 @@ DetermineCertOverrideErrors(const UniqueCERTCertificate& cert,
     }
     Input hostnameInput;
     Result result = hostnameInput.Init(
-      BitwiseCast<const uint8_t*, const char*>(hostName),
-      strlen(hostName));
+      BitwiseCast<const uint8_t*, const char*>(hostName.BeginReading()),
+      hostName.Length());
     if (result != Success) {
       PR_SetError(SEC_ERROR_INVALID_ARGS, 0);
       return SECFailure;
@@ -519,6 +500,7 @@ CertErrorRunnable::OverrideAllowedForHost(/*out*/ bool& overrideAllowed)
                         mProviderFlags,
                         mInfoObject->GetOriginAttributes(),
                         nullptr,
+                        nullptr,
                         &strictTransportSecurityEnabled);
   if (NS_FAILED(rv)) {
     MOZ_LOG(gPIPNSSLog, LogLevel::Debug,
@@ -529,6 +511,7 @@ CertErrorRunnable::OverrideAllowedForHost(/*out*/ bool& overrideAllowed)
                         uri,
                         mProviderFlags,
                         mInfoObject->GetOriginAttributes(),
+                        nullptr,
                         nullptr,
                         &hasPinningInformation);
   if (NS_FAILED(rv)) {
@@ -556,8 +539,7 @@ CertErrorRunnable::CheckCertOverrides()
                                                mDefaultErrorCodeToReport);
   }
 
-  int32_t port;
-  mInfoObject->GetPort(&port);
+  int32_t port = mInfoObject->GetPort();
 
   nsAutoCString hostWithPortString(mInfoObject->GetHostName());
   hostWithPortString.Append(':');
@@ -661,7 +643,7 @@ CertErrorRunnable::CheckCertOverrides()
                                         errorCodeToReport,
                                         Telemetry::HistogramCount,
                                         -1,
-                                        OverridableCertErrorMessage);
+                                        SSLErrorMessageType::OverridableCert);
 
   LogInvalidCertError(mInfoObject,
                       result->mErrorCode,
@@ -701,7 +683,7 @@ CreateCertErrorRunnable(CertVerifier& certVerifier,
   PRErrorCode errorCodeTrust = 0;
   PRErrorCode errorCodeMismatch = 0;
   PRErrorCode errorCodeTime = 0;
-  if (DetermineCertOverrideErrors(cert, infoObject->GetHostNameRaw(), now,
+  if (DetermineCertOverrideErrors(cert, infoObject->GetHostName(), now,
                                   defaultErrorCodeToReport, collected_errors,
                                   errorCodeTrust, errorCodeMismatch,
                                   errorCodeTime) != SECSuccess) {
@@ -754,7 +736,8 @@ class CertErrorRunnableRunnable : public Runnable
 {
 public:
   explicit CertErrorRunnableRunnable(CertErrorRunnable* certErrorRunnable)
-    : mCertErrorRunnable(certErrorRunnable)
+    : Runnable("psm::CertErrorRunnableRunnable")
+    , mCertErrorRunnable(certErrorRunnable)
   {
   }
 private:
@@ -814,12 +797,18 @@ private:
 };
 
 SSLServerCertVerificationJob::SSLServerCertVerificationJob(
-    const RefPtr<SharedCertVerifier>& certVerifier, const void* fdForLogging,
-    nsNSSSocketInfo* infoObject, const UniqueCERTCertificate& cert,
-    UniqueCERTCertList peerCertChain, const SECItem* stapledOCSPResponse,
-    const SECItem* sctsFromTLSExtension,
-    uint32_t providerFlags, Time time, PRTime prtime)
-  : mCertVerifier(certVerifier)
+  const RefPtr<SharedCertVerifier>& certVerifier,
+  const void* fdForLogging,
+  nsNSSSocketInfo* infoObject,
+  const UniqueCERTCertificate& cert,
+  UniqueCERTCertList peerCertChain,
+  const SECItem* stapledOCSPResponse,
+  const SECItem* sctsFromTLSExtension,
+  uint32_t providerFlags,
+  Time time,
+  PRTime prtime)
+  : Runnable("psm::SSLServerCertVerificationJob")
+  , mCertVerifier(certVerifier)
   , mFdForLogging(fdForLogging)
   , mInfoObject(infoObject)
   , mCert(CERT_DupCertificate(cert.get()))
@@ -1422,9 +1411,10 @@ AuthCertificate(CertVerifier& certVerifier,
   Result rv = certVerifier.VerifySSLServerCert(cert, stapledOCSPResponse,
                                                sctsFromTLSExtension, time,
                                                infoObject,
-                                               infoObject->GetHostNameRaw(),
-                                               certList, saveIntermediates,
-                                               flags, infoObject->
+                                               infoObject->GetHostName(),
+                                               certList, &peerCertChain,
+                                               saveIntermediates, flags,
+                                               infoObject->
                                                       GetOriginAttributes(),
                                                &evOidPolicy,
                                                &ocspStaplingStatus,
@@ -1609,11 +1599,10 @@ SSLServerCertVerificationJob::Run()
     // Note: the interval is not calculated once as PR_GetError MUST be called
     // before any other  function call
     error = PR_GetError();
-    {
-      TimeStamp now = TimeStamp::Now();
-      MutexAutoLock telemetryMutex(*gSSLVerificationTelemetryMutex);
-      Telemetry::AccumulateTimeDelta(failureTelemetry, mJobStartTime, now);
-    }
+
+    TimeStamp now = TimeStamp::Now();
+    Telemetry::AccumulateTimeDelta(failureTelemetry, mJobStartTime, now);
+
     if (error != 0) {
       RefPtr<CertErrorRunnable> runnable(
           CreateCertErrorRunnable(*mCertVerifier, error, mInfoObject, mCert,
@@ -1815,7 +1804,7 @@ AuthCertificateHook(void* arg, PRFileDesc* fd, PRBool checkSig, PRBool isServer)
       }
 
       // We must call SetCanceled here to set the error message type
-      // in case it isn't PlainErrorMessage, which is what we would
+      // in case it isn't SSLErrorMessageType::Plain, which is what we would
       // default to if we just called
       // PR_SetError(runnable->mResult->mErrorCode, 0) and returned
       // SECFailure without doing this.
@@ -1835,10 +1824,13 @@ AuthCertificateHook(void* arg, PRFileDesc* fd, PRBool checkSig, PRBool isServer)
 }
 
 SSLServerCertVerificationResult::SSLServerCertVerificationResult(
-        nsNSSSocketInfo* infoObject, PRErrorCode errorCode,
-        Telemetry::HistogramID telemetryID, uint32_t telemetryValue,
-        SSLErrorMessageType errorMessageType)
-  : mInfoObject(infoObject)
+  nsNSSSocketInfo* infoObject,
+  PRErrorCode errorCode,
+  Telemetry::HistogramID telemetryID,
+  uint32_t telemetryValue,
+  SSLErrorMessageType errorMessageType)
+  : Runnable("psm::SSLServerCertVerificationResult")
+  , mInfoObject(infoObject)
   , mErrorCode(errorCode)
   , mErrorMessageType(errorMessageType)
   , mTelemetryID(telemetryID)
@@ -1871,9 +1863,7 @@ SSLServerCertVerificationResult::Run()
   if (mTelemetryID != Telemetry::HistogramCount) {
      Telemetry::Accumulate(mTelemetryID, mTelemetryValue);
   }
-  // XXX: This cast will be removed by the next patch
-  ((nsNSSSocketInfo*) mInfoObject.get())
-    ->SetCertVerificationResult(mErrorCode, mErrorMessageType);
+  mInfoObject->SetCertVerificationResult(mErrorCode, mErrorMessageType);
   return NS_OK;
 }
 

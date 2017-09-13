@@ -21,7 +21,6 @@ DIRS += [
     'netmonitor',
     'performance',
     'preferences',
-    'projecteditor',
     'responsive.html',
     'responsivedesign',
     'scratchpad',
@@ -40,11 +39,6 @@ DIRS += [
 # Shim old theme paths used by DevTools add-ons
 if CONFIG['MOZ_BUILD_APP'] == 'browser':
     DIRS += ['themes/shims']
-
-EXTRA_COMPONENTS += [
-    'devtools-startup.js',
-    'devtools-startup.manifest',
-]
 
 JAR_MANIFESTS += ['jar.mn']
 

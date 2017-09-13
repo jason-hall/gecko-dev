@@ -18,10 +18,10 @@ class nsSplitterFrameInner;
 
 nsIFrame* NS_NewSplitterFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
-class nsSplitterFrame : public nsBoxFrame
+class nsSplitterFrame final : public nsBoxFrame
 {
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsSplitterFrame)
 
   explicit nsSplitterFrame(nsStyleContext* aContext);
   virtual void DestroyFrom(nsIFrame* aDestructRoot) override;
@@ -68,10 +68,9 @@ public:
                                nsEventStatus* aEventStatus) override;
 
   virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists) override;
 
-  virtual void GetInitialOrientation(bool& aIsHorizontal) override; 
+  virtual void GetInitialOrientation(bool& aIsHorizontal) override;
 
 private:
 

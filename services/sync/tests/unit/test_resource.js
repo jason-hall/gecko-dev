@@ -3,6 +3,7 @@
 
 Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://services-common/observers.js");
+Cu.import("resource://services-common/utils.js");
 Cu.import("resource://services-sync/resource.js");
 Cu.import("resource://services-sync/status.js");
 Cu.import("resource://services-sync/util.js");
@@ -148,10 +149,8 @@ function server_headers(metadata, response) {
   response.bodyOutputStream.write(body, body.length);
 }
 
-function run_test() {
+add_task(async function test() {
   initTestLogging("Trace");
-
-  do_test_pending();
 
   let logger = Log.repository.getLogger("Test");
   Log.repository.rootLogger.addAppender(new Log.DumpAppender());
@@ -179,7 +178,7 @@ function run_test() {
   PACSystemSettings.PACURI = server.baseURI + "/pac1";
   installFakePAC();
   let proxiedRes = new Resource(server.baseURI + "/open");
-  let content = proxiedRes.get();
+  let content = await proxiedRes.get();
   do_check_true(pacFetched);
   do_check_true(fetched);
   do_check_eq(content, "This path exists");
@@ -198,7 +197,7 @@ function run_test() {
   do_check_eq(res.data, null);
 
   _("GET a non-password-protected resource");
-  content = res.get();
+  content = await res.get();
   do_check_eq(content, "This path exists");
   do_check_eq(content.status, 200);
   do_check_true(content.success);
@@ -231,7 +230,7 @@ function run_test() {
 
   _("GET a password protected resource (test that it'll fail w/o pass, no throw)");
   let res2 = new Resource(server.baseURI + "/protected");
-  content = res2.get();
+  content = await res2.get();
   do_check_eq(content, "This path exists and is protected - failed");
   do_check_eq(content.status, 401);
   do_check_false(content.success);
@@ -244,14 +243,14 @@ function run_test() {
   let auth = browseridManager.getResourceAuthenticator();
   res3.authenticator = auth;
   do_check_eq(res3.authenticator, auth);
-  content = res3.get();
+  content = await res3.get();
   do_check_eq(content, "This path exists and is protected");
   do_check_eq(content.status, 200);
   do_check_true(content.success);
 
   _("GET a non-existent resource (test that it'll fail, but not throw)");
   let res4 = new Resource(server.baseURI + "/404");
-  content = res4.get();
+  content = await res4.get();
   do_check_eq(content, "File not found");
   do_check_eq(content.status, 404);
   do_check_false(content.success);
@@ -263,66 +262,66 @@ function run_test() {
 
   _("PUT to a resource (string)");
   let res5 = new Resource(server.baseURI + "/upload");
-  content = res5.put(JSON.stringify(sample_data));
+  content = await res5.put(JSON.stringify(sample_data));
   do_check_eq(content, "Valid data upload via PUT");
   do_check_eq(content.status, 200);
   do_check_eq(res5.data, content);
 
   _("PUT to a resource (object)");
-  content = res5.put(sample_data);
+  content = await res5.put(sample_data);
   do_check_eq(content, "Valid data upload via PUT");
   do_check_eq(content.status, 200);
   do_check_eq(res5.data, content);
 
   _("PUT without data arg (uses resource.data) (string)");
   res5.data = JSON.stringify(sample_data);
-  content = res5.put();
+  content = await res5.put();
   do_check_eq(content, "Valid data upload via PUT");
   do_check_eq(content.status, 200);
   do_check_eq(res5.data, content);
 
   _("PUT without data arg (uses resource.data) (object)");
   res5.data = sample_data;
-  content = res5.put();
+  content = await res5.put();
   do_check_eq(content, "Valid data upload via PUT");
   do_check_eq(content.status, 200);
   do_check_eq(res5.data, content);
 
   _("POST to a resource (string)");
-  content = res5.post(JSON.stringify(sample_data));
+  content = await res5.post(JSON.stringify(sample_data));
   do_check_eq(content, "Valid data upload via POST");
   do_check_eq(content.status, 200);
   do_check_eq(res5.data, content);
 
   _("POST to a resource (object)");
-  content = res5.post(sample_data);
+  content = await res5.post(sample_data);
   do_check_eq(content, "Valid data upload via POST");
   do_check_eq(content.status, 200);
   do_check_eq(res5.data, content);
 
   _("POST without data arg (uses resource.data) (string)");
   res5.data = JSON.stringify(sample_data);
-  content = res5.post();
+  content = await res5.post();
   do_check_eq(content, "Valid data upload via POST");
   do_check_eq(content.status, 200);
   do_check_eq(res5.data, content);
 
   _("POST without data arg (uses resource.data) (object)");
   res5.data = sample_data;
-  content = res5.post();
+  content = await res5.post();
   do_check_eq(content, "Valid data upload via POST");
   do_check_eq(content.status, 200);
   do_check_eq(res5.data, content);
 
   _("DELETE a resource");
   let res6 = new Resource(server.baseURI + "/delete");
-  content = res6.delete();
+  content = await res6.delete();
   do_check_eq(content, "This resource has been deleted")
   do_check_eq(content.status, 200);
 
   _("JSON conversion of response body");
   let res7 = new Resource(server.baseURI + "/json");
-  content = res7.get();
+  content = await res7.get();
   do_check_eq(content, JSON.stringify(sample_data));
   do_check_eq(content.status, 200);
   do_check_eq(JSON.stringify(content.obj), JSON.stringify(sample_data));
@@ -332,26 +331,26 @@ function run_test() {
   // X-Weave-Timestamp header, AsyncResource.serverTime is null.
   do_check_eq(AsyncResource.serverTime, null);
   let res8 = new Resource(server.baseURI + "/timestamp");
-  content = res8.get();
+  content = await res8.get();
   do_check_eq(AsyncResource.serverTime, TIMESTAMP);
 
   _("GET: no special request headers");
   let res9 = new Resource(server.baseURI + "/headers");
-  content = res9.get();
+  content = await res9.get();
   do_check_eq(content, "{}");
 
   _("PUT: Content-Type defaults to text/plain");
-  content = res9.put("data");
+  content = await res9.put("data");
   do_check_eq(content, JSON.stringify({"content-type": "text/plain"}));
 
   _("POST: Content-Type defaults to text/plain");
-  content = res9.post("data");
+  content = await res9.post("data");
   do_check_eq(content, JSON.stringify({"content-type": "text/plain"}));
 
   _("setHeader(): setting simple header");
   res9.setHeader("X-What-Is-Weave", "awesome");
   do_check_eq(res9.headers["x-what-is-weave"], "awesome");
-  content = res9.get();
+  content = await res9.get();
   do_check_eq(content, JSON.stringify({"x-what-is-weave": "awesome"}));
 
   _("setHeader(): setting multiple headers, overwriting existing header");
@@ -359,21 +358,21 @@ function run_test() {
   res9.setHeader("X-Another-Header", "hello world");
   do_check_eq(res9.headers["x-what-is-weave"], "more awesomer");
   do_check_eq(res9.headers["x-another-header"], "hello world");
-  content = res9.get();
+  content = await res9.get();
   do_check_eq(content, JSON.stringify({"x-another-header": "hello world",
                                        "x-what-is-weave": "more awesomer"}));
 
   _("Setting headers object");
   res9.headers = {};
-  content = res9.get();
+  content = await res9.get();
   do_check_eq(content, "{}");
 
   _("PUT/POST: override default Content-Type");
   res9.setHeader("Content-Type", "application/foobar");
   do_check_eq(res9.headers["content-type"], "application/foobar");
-  content = res9.put("data");
+  content = await res9.put("data");
   do_check_eq(content, JSON.stringify({"content-type": "application/foobar"}));
-  content = res9.post("data");
+  content = await res9.post("data");
   do_check_eq(content, JSON.stringify({"content-type": "application/foobar"}));
 
 
@@ -385,7 +384,7 @@ function run_test() {
   Observers.add("weave:service:backoff:interval", onBackoff);
 
   let res10 = new Resource(server.baseURI + "/backoff");
-  content = res10.get();
+  content = await res10.get();
   do_check_eq(backoffInterval, 600);
 
 
@@ -397,12 +396,12 @@ function run_test() {
   Observers.add("weave:service:quota:remaining", onQuota);
 
   res10 = new Resource(server.baseURI + "/quota-error");
-  content = res10.get();
+  content = await res10.get();
   do_check_eq(content.status, 400);
   do_check_eq(quotaValue, undefined); // HTTP 400, so no observer notification.
 
   res10 = new Resource(server.baseURI + "/quota-notice");
-  content = res10.get();
+  content = await res10.get();
   do_check_eq(content.status, 200);
   do_check_eq(quotaValue, 1048576);
 
@@ -411,7 +410,7 @@ function run_test() {
   let error;
   let res11 = new Resource("http://localhost:12345/does/not/exist");
   try {
-    content = res11.get();
+    content = await res11.get();
   } catch (ex) {
     error = ex;
   }
@@ -430,14 +429,14 @@ function run_test() {
   res18._log.warn = function(msg) { warnings.push(msg) };
   error = undefined;
   try {
-    content = res18.get();
+    content = await res18.get();
   } catch (ex) {
     error = ex;
   }
 
   // It throws and logs.
   do_check_eq(error.result, Cr.NS_ERROR_MALFORMED_URI);
-  do_check_eq(error, "Error: NS_ERROR_MALFORMED_URI");
+  do_check_eq(error.message, "NS_ERROR_MALFORMED_URI");
   // Note the strings haven't been formatted yet, but that's OK for this test.
   do_check_eq(warnings.pop(), "${action} request to ${url} failed: ${ex}");
   do_check_eq(warnings.pop(),
@@ -447,7 +446,7 @@ function run_test() {
   // And this is what happens if JS throws an exception.
   res18 = new Resource(server.baseURI + "/json");
   onProgress = function(rec) {
-    throw "BOO!";
+    throw new Error("BOO!");
   };
   res18._onProgress = onProgress;
   let oldWarn = res18._log.warn;
@@ -455,14 +454,14 @@ function run_test() {
   res18._log.warn = function(msg) { warnings.push(msg) };
   error = undefined;
   try {
-    content = res18.get();
+    content = await res18.get();
   } catch (ex) {
     error = ex;
   }
 
   // It throws and logs.
-  do_check_eq(error.result, Cr.NS_ERROR_XPC_JS_THREW_STRING);
-  do_check_eq(error, "Error: NS_ERROR_XPC_JS_THREW_STRING");
+  do_check_eq(error.result, Cr.NS_ERROR_XPC_JAVASCRIPT_ERROR_WITH_DETAILS);
+  do_check_eq(error.message, "NS_ERROR_XPC_JAVASCRIPT_ERROR_WITH_DETAILS");
   do_check_eq(warnings.pop(), "${action} request to ${url} failed: ${ex}");
   do_check_eq(warnings.pop(),
               "Got exception calling onProgress handler during fetch of " +
@@ -475,7 +474,7 @@ function run_test() {
   res19.ABORT_TIMEOUT = 0;
   error = undefined;
   try {
-    content = res19.get();
+    content = await res19.get();
   } catch (ex) {
     error = ex;
   }
@@ -489,11 +488,11 @@ function run_test() {
 
   let query = "?" + args.join("&");
 
-  let uri1 = Utils.makeURI("http://foo/" + query)
+  let uri1 = CommonUtils.makeURI("http://foo/" + query)
                   .QueryInterface(Ci.nsIURL);
-  let uri2 = Utils.makeURI("http://foo/")
+  let uri2 = CommonUtils.makeURI("http://foo/")
                   .QueryInterface(Ci.nsIURL);
   uri2.query = query;
   do_check_eq(uri1.query, uri2.query);
   server.stop(do_test_finished);
-}
+});

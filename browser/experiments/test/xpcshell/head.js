@@ -14,8 +14,6 @@ var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/Promise.jsm");
-Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
 Cu.import("resource://testing-common/AddonManagerTesting.jsm");
 Cu.import("resource://testing-common/AddonTestUtils.jsm");
@@ -38,7 +36,7 @@ function getExperimentPath(base) {
 
 function sha1File(path) {
   let f = Cc["@mozilla.org/file/local;1"]
-            .createInstance(Ci.nsILocalFile);
+            .createInstance(Ci.nsIFile);
   f.initWithPath(path);
   let hasher = Cc["@mozilla.org/security/hash;1"]
                  .createInstance(Ci.nsICryptoHash);
@@ -157,20 +155,21 @@ function startAddonManagerOnly() {
                        .getService(Ci.nsIObserver)
                        .QueryInterface(Ci.nsITimerCallback);
   addonManager.observe(null, "addons-startup", null);
+  Services.obs.notifyObservers(null, "sessionstore-windows-restored");
 }
 
 function getExperimentAddons(previous = false) {
-  let deferred = Promise.defer();
+  return new Promise(resolve => {
 
-  AddonManager.getAddonsByTypes(["experiment"], (addons) => {
-    if (previous) {
-      deferred.resolve(addons);
-    } else {
-      deferred.resolve(addons.filter(a => !a.appDisabled));
-    }
+    AddonManager.getAddonsByTypes(["experiment"], (addons) => {
+      if (previous) {
+        resolve(addons);
+      } else {
+        resolve(addons.filter(a => !a.appDisabled));
+      }
+    });
+
   });
-
-  return deferred.promise;
 }
 
 function createAppInfo(ID = "xpcshell@tests.mozilla.org", name = "XPCShell",

@@ -72,6 +72,7 @@ pub trait Gl {
                                offset: isize,
                                size: GLsizeiptr,
                                data: *const GLvoid);
+    fn tex_buffer(&self, target: GLenum, internal_format: GLenum, buffer: GLuint);
     fn shader_source(&self, shader: GLuint, strings: &[&[u8]]);
     fn read_buffer(&self, mode: GLenum);
     fn read_pixels_into_buffer(&self,
@@ -213,6 +214,16 @@ pub trait Gl {
                         format: GLenum,
                         ty: GLenum,
                         data: &[u8]);
+    fn tex_sub_image_2d_pbo(&self,
+                            target: GLenum,
+                            level: GLint,
+                            xoffset: GLint,
+                            yoffset: GLint,
+                            width: GLsizei,
+                            height: GLsizei,
+                            format: GLenum,
+                            ty: GLenum,
+                            offset: usize);
     fn tex_sub_image_3d(&self,
                         target: GLenum,
                         level: GLint,
@@ -225,6 +236,18 @@ pub trait Gl {
                         format: GLenum,
                         ty: GLenum,
                         data: &[u8]);
+    fn tex_sub_image_3d_pbo(&self,
+                            target: GLenum,
+                            level: GLint,
+                            xoffset: GLint,
+                            yoffset: GLint,
+                            zoffset: GLint,
+                            width: GLsizei,
+                            height: GLsizei,
+                            depth: GLsizei,
+                            format: GLenum,
+                            ty: GLenum,
+                            offset: usize);
     fn get_integer_v(&self, name: GLenum) -> GLint;
     fn get_boolean_v(&self, name: GLenum) -> GLboolean;
     fn get_float_v(&self, name: GLenum) -> GLfloat;
@@ -353,10 +376,15 @@ pub trait Gl {
     fn get_program_iv(&self, program: GLuint, pname: GLenum) -> GLint;
     fn get_vertex_attrib_iv(&self, index: GLuint, pname: GLenum) -> GLint;
     fn get_vertex_attrib_fv(&self, index: GLuint, pname: GLenum) -> Vec<GLfloat>;
+    fn get_vertex_attrib_pointer_v(&self, index: GLuint, pname: GLenum) -> GLsizeiptr;
     fn get_buffer_parameter_iv(&self, target: GLuint, pname: GLenum) -> GLint;
     fn get_shader_info_log(&self, shader: GLuint) -> String;
     fn get_string(&self, which: GLenum) -> String;
     fn get_shader_iv(&self, shader: GLuint, pname: GLenum) -> GLint;
+    fn get_shader_precision_format(&self,
+                                   shader_type: GLuint,
+                                   precision_type: GLuint)
+                                   -> (GLint, GLint, GLint);
     fn compile_shader(&self, shader: GLuint);
     fn create_program(&self) -> GLuint;
     fn delete_program(&self, program: GLuint);
@@ -382,6 +410,10 @@ pub trait Gl {
     fn insert_event_marker_ext(&self, message: &str);
     fn push_group_marker_ext(&self, message: &str);
     fn pop_group_marker_ext(&self);
+    fn fence_sync(&self, condition: GLenum, flags: GLbitfield) -> GLsync;
+    fn client_wait_sync(&self, sync: GLsync, flags: GLbitfield, timeout: GLuint64);
+    fn wait_sync(&self, sync: GLsync, flags: GLbitfield, timeout: GLuint64);
+    fn delete_sync(&self, sync: GLsync);
 }
 
 #[inline]

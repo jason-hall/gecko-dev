@@ -24,23 +24,21 @@ function insertTempItemsIntoMenu(parentMenu) {
 }
 
 function checkSeparatorInsertion(menuId, buttonId, subviewId) {
-  return function*() {
+  return async function() {
     info("Checking for duplicate separators in " + buttonId + " widget");
     let menu = document.getElementById(menuId);
     insertTempItemsIntoMenu(menu);
 
-    let placement = CustomizableUI.getPlacementOfWidget(buttonId);
-    let changedPlacement = false;
-    if (!placement || placement.area != CustomizableUI.AREA_PANEL) {
-      CustomizableUI.addWidgetToArea(buttonId, CustomizableUI.AREA_PANEL);
-      changedPlacement = true;
-    }
-    yield PanelUI.show();
+    CustomizableUI.addWidgetToArea(buttonId, CustomizableUI.AREA_FIXED_OVERFLOW_PANEL);
+
+    await waitForOverflowButtonShown();
+
+    await document.getElementById("nav-bar").overflowable.show();
 
     let button = document.getElementById(buttonId);
     button.click();
 
-    yield waitForCondition(() => !PanelUI.multiView.hasAttribute("transitioning"));
+    await BrowserTestUtils.waitForEvent(PanelUI.overflowPanel, "ViewShown");
     let subview = document.getElementById(subviewId);
     ok(subview.firstChild, "Subview should have a kid");
     is(subview.firstChild.localName, "toolbarbutton", "There should be no separators to start with");
@@ -52,18 +50,15 @@ function checkSeparatorInsertion(menuId, buttonId, subviewId) {
       }
     }
 
-    let panelHiddenPromise = promisePanelHidden(window);
-    PanelUI.hide();
-    yield panelHiddenPromise;
+    let panelHiddenPromise = promiseOverflowHidden(window);
+    PanelUI.overflowPanel.hidePopup();
+    await panelHiddenPromise;
 
-    if (changedPlacement) {
-      CustomizableUI.reset();
-    }
+    CustomizableUI.reset();
   };
 }
 
 add_task(checkSeparatorInsertion("menuWebDeveloperPopup", "developer-button", "PanelUI-developerItems"));
-add_task(checkSeparatorInsertion("viewSidebarMenu", "sidebar-button", "PanelUI-sidebarItems"));
 
 registerCleanupFunction(function() {
   for (let el of tempElements) {

@@ -9,7 +9,7 @@
 #include "TextEditUtils.h"
 #include "gfxFontUtils.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/EditorUtils.h" // AutoEditBatch, AutoRules
+#include "mozilla/EditorUtils.h" // AutoPlaceholderBatch, AutoRules
 #include "mozilla/HTMLEditor.h"
 #include "mozilla/mozalloc.h"
 #include "mozilla/Preferences.h"
@@ -52,6 +52,7 @@
 #include "nsString.h"
 #include "nsStringFwd.h"
 #include "nsSubstringTuple.h"
+#include "nsTextNode.h"
 #include "nsUnicharUtils.h"
 #include "nsXPCOM.h"
 
@@ -78,18 +79,6 @@ TextEditor::TextEditor()
   GetDefaultEditorPrefs(mNewlineHandling, mCaretStyle);
 }
 
-HTMLEditor*
-TextEditor::AsHTMLEditor()
-{
-  return nullptr;
-}
-
-const HTMLEditor*
-TextEditor::AsHTMLEditor() const
-{
-  return nullptr;
-}
-
 TextEditor::~TextEditor()
 {
   // Remove event listeners. Note that if we had an HTML editor,
@@ -106,16 +95,18 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(TextEditor, EditorBase)
   if (tmp->mRules)
     tmp->mRules->DetachEditor();
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mRules)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCachedDocumentEncoder)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(TextEditor, EditorBase)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRules)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCachedDocumentEncoder)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_ADDREF_INHERITED(TextEditor, EditorBase)
 NS_IMPL_RELEASE_INHERITED(TextEditor, EditorBase)
 
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(TextEditor)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(TextEditor)
   NS_INTERFACE_MAP_ENTRY(nsIPlaintextEditor)
   NS_INTERFACE_MAP_ENTRY(nsIEditorMailSupport)
 NS_INTERFACE_MAP_END_INHERITING(EditorBase)
@@ -410,7 +401,7 @@ TextEditor::HandleKeyPressEvent(WidgetKeyboardEvent* aKeyboardEvent)
 NS_IMETHODIMP
 TextEditor::TypedText(const nsAString& aString, ETypingAction aAction)
 {
-  AutoPlaceHolderBatch batch(this, nsGkAtoms::TypingTxnName);
+  AutoPlaceholderBatch batch(this, nsGkAtoms::TypingTxnName);
 
   switch (aAction) {
     case eTypedText:
@@ -606,7 +597,7 @@ TextEditor::DeleteSelection(EDirection aAction,
   nsCOMPtr<nsIEditRules> rules(mRules);
 
   // delete placeholder txns merge.
-  AutoPlaceHolderBatch batch(this, nsGkAtoms::DeleteTxnName);
+  AutoPlaceholderBatch batch(this, nsGkAtoms::DeleteTxnName);
   AutoRules beginRulesSniffing(this, EditAction::deleteSelection, aAction);
 
   // pre-process
@@ -659,7 +650,7 @@ TextEditor::InsertText(const nsAString& aStringToInsert)
   if (ShouldHandleIMEComposition()) {
     opID = EditAction::insertIMEText;
   }
-  AutoPlaceHolderBatch batch(this, nullptr);
+  AutoPlaceholderBatch batch(this, nullptr);
   AutoRules beginRulesSniffing(this, opID, nsIEditor::eNext);
 
   // pre-process
@@ -697,7 +688,7 @@ TextEditor::InsertLineBreak()
   // Protect the edit rules object from dying
   nsCOMPtr<nsIEditRules> rules(mRules);
 
-  AutoEditBatch beginBatching(this);
+  AutoPlaceholderBatch beginBatching(this);
   AutoRules beginRulesSniffing(this, EditAction::insertBreak, nsIEditor::eNext);
 
   // pre-process
@@ -712,7 +703,7 @@ TextEditor::InsertLineBreak()
   if (!cancel && !handled) {
     // get the (collapsed) selection location
     NS_ENSURE_STATE(selection->GetRangeAt(0));
-    nsCOMPtr<nsINode> selNode = selection->GetRangeAt(0)->GetStartParent();
+    nsCOMPtr<nsINode> selNode = selection->GetRangeAt(0)->GetStartContainer();
     int32_t selOffset = selection->GetRangeAt(0)->StartOffset();
     NS_ENSURE_STATE(selNode);
 
@@ -726,8 +717,8 @@ TextEditor::InsertLineBreak()
     nsCOMPtr<nsIDocument> doc = GetDocument();
     NS_ENSURE_TRUE(doc, NS_ERROR_NOT_INITIALIZED);
 
-    // don't spaz my selection in subtransactions
-    AutoTransactionsConserveSelection dontSpazMySelection(this);
+    // don't change my selection in subtransactions
+    AutoTransactionsConserveSelection dontChangeMySelection(this);
 
     // insert a linefeed character
     rv = InsertTextImpl(NS_LITERAL_STRING("\n"), address_of(selNode),
@@ -762,6 +753,64 @@ TextEditor::InsertLineBreak()
     rv = rules->DidDoAction(selection, &ruleInfo, rv);
   }
   return rv;
+}
+
+NS_IMETHODIMP
+TextEditor::SetText(const nsAString& aString)
+{
+  if (NS_WARN_IF(!mRules)) {
+    return NS_ERROR_NOT_INITIALIZED;
+  }
+
+  // Protect the edit rules object from dying
+  nsCOMPtr<nsIEditRules> rules(mRules);
+
+  // delete placeholder txns merge.
+  AutoPlaceholderBatch batch(this, nullptr);
+  AutoRules beginRulesSniffing(this, EditAction::setText, nsIEditor::eNext);
+
+  // pre-process
+  RefPtr<Selection> selection = GetSelection();
+  if (NS_WARN_IF(!selection)) {
+    return NS_ERROR_NULL_POINTER;
+  }
+  TextRulesInfo ruleInfo(EditAction::setText);
+  ruleInfo.inString = &aString;
+  ruleInfo.maxLength = mMaxTextLength;
+
+  bool cancel;
+  bool handled;
+  nsresult rv = rules->WillDoAction(selection, &ruleInfo, &cancel, &handled);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+  if (cancel) {
+    return NS_OK;
+  }
+  if (!handled) {
+    // We want to select trailing BR node to remove all nodes to replace all,
+    // but TextEditor::SelectEntireDocument doesn't select that BR node.
+    if (rules->DocumentIsEmpty()) {
+      // if it's empty, don't select entire doc - that would select
+      // the bogus node
+      Element* rootElement = GetRoot();
+      if (NS_WARN_IF(!rootElement)) {
+        return NS_ERROR_FAILURE;
+      }
+      rv = selection->Collapse(rootElement, 0);
+    } else {
+      rv = EditorBase::SelectEntireDocument(selection);
+    }
+    if (NS_SUCCEEDED(rv)) {
+      if (aString.IsEmpty()) {
+        rv = DeleteSelection(eNone, eStrip);
+      } else {
+        rv = InsertText(aString);
+      }
+    }
+  }
+  // post-process
+  return rules->DidDoAction(selection, &ruleInfo, rv);
 }
 
 nsresult
@@ -812,19 +861,19 @@ TextEditor::UpdateIMEComposition(WidgetCompositionEvent* aCompsitionChangeEvent)
   //       of NotifiyEditorObservers(eNotifyEditorObserversOfEnd) or
   //       NotifiyEditorObservers(eNotifyEditorObserversOfCancel) which notifies
   //       TextComposition of a selection change.
-  MOZ_ASSERT(!mPlaceHolderBatch,
+  MOZ_ASSERT(!mPlaceholderBatch,
     "UpdateIMEComposition() must be called without place holder batch");
   TextComposition::CompositionChangeEventHandlingMarker
     compositionChangeEventHandlingMarker(mComposition, aCompsitionChangeEvent);
-
-  NotifyEditorObservers(eNotifyEditorObserversOfBefore);
 
   RefPtr<nsCaret> caretP = ps->GetCaret();
 
   nsresult rv;
   {
-    AutoPlaceHolderBatch batch(this, nsGkAtoms::IMETxnName);
+    AutoPlaceholderBatch batch(this, nsGkAtoms::IMETxnName);
 
+    MOZ_ASSERT(mIsInEditAction,
+      "AutoPlaceholderBatch should've notified the observes of before-edit");
     rv = InsertText(aCompsitionChangeEvent->mData);
 
     if (caretP) {
@@ -851,17 +900,41 @@ TextEditor::GetInputEventTargetContent()
   return target.forget();
 }
 
+nsresult
+TextEditor::DocumentIsEmpty(bool* aIsEmpty)
+{
+  NS_ENSURE_TRUE(mRules, NS_ERROR_NOT_INITIALIZED);
+
+  if (static_cast<TextEditRules*>(mRules.get())->HasBogusNode()) {
+    *aIsEmpty = true;
+    return NS_OK;
+  }
+
+  // Even if there is no bogus node, we should be detected as empty document
+  // if all the children are text nodes and these have no content.
+  Element* rootElement = GetRoot();
+  if (!rootElement) {
+    *aIsEmpty = true;
+    return NS_OK;
+  }
+
+  for (nsIContent* child = rootElement->GetFirstChild();
+       child; child = child->GetNextSibling()) {
+    if (!EditorBase::IsTextNode(child) ||
+        static_cast<nsTextNode*>(child)->TextDataLength()) {
+      *aIsEmpty = false;
+      return NS_OK;
+    }
+  }
+
+  *aIsEmpty = true;
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 TextEditor::GetDocumentIsEmpty(bool* aDocumentIsEmpty)
 {
-  NS_ENSURE_TRUE(aDocumentIsEmpty, NS_ERROR_NULL_POINTER);
-
-  NS_ENSURE_TRUE(mRules, NS_ERROR_NOT_INITIALIZED);
-
-  // Protect the edit rules object from dying
-  nsCOMPtr<nsIEditRules> rules(mRules);
-
-  return rules->DocumentIsEmpty(aDocumentIsEmpty);
+  return DocumentIsEmpty(aDocumentIsEmpty);
 }
 
 NS_IMETHODIMP
@@ -910,8 +983,12 @@ TextEditor::SetMaxTextLength(int32_t aMaxTextLength)
 NS_IMETHODIMP
 TextEditor::GetMaxTextLength(int32_t* aMaxTextLength)
 {
-  NS_ENSURE_TRUE(aMaxTextLength, NS_ERROR_INVALID_POINTER);
-  *aMaxTextLength = mMaxTextLength;
+  // NOTE: If you need to override this method, you need to make
+  //       MaxTextLength() virtual.
+  if (NS_WARN_IF(!aMaxTextLength)) {
+    return NS_ERROR_INVALID_POINTER;
+  }
+  *aMaxTextLength = MaxTextLength();
   return NS_OK;
 }
 
@@ -1028,7 +1105,7 @@ TextEditor::Undo(uint32_t aCount)
 
   AutoUpdateViewBatch beginViewBatching(this);
 
-  ForceCompositionEnd();
+  CommitComposition();
 
   NotifyEditorObservers(eNotifyEditorObserversOfBefore);
 
@@ -1056,7 +1133,7 @@ TextEditor::Redo(uint32_t aCount)
 
   AutoUpdateViewBatch beginViewBatching(this);
 
-  ForceCompositionEnd();
+  CommitComposition();
 
   NotifyEditorObservers(eNotifyEditorObserversOfBefore);
 
@@ -1098,7 +1175,7 @@ TextEditor::FireClipboardEvent(EventMessage aEventMessage,
                                bool* aActionTaken)
 {
   if (aEventMessage == ePaste) {
-    ForceCompositionEnd();
+    CommitComposition();
   }
 
   nsCOMPtr<nsIPresShell> presShell = GetPresShell();
@@ -1169,24 +1246,36 @@ TextEditor::CanDelete(bool* aCanDelete)
 }
 
 // Shared between OutputToString and OutputToStream
-nsresult
+already_AddRefed<nsIDocumentEncoder>
 TextEditor::GetAndInitDocEncoder(const nsAString& aFormatType,
                                  uint32_t aFlags,
-                                 const nsACString& aCharset,
-                                 nsIDocumentEncoder** encoder)
+                                 const nsACString& aCharset)
 {
-  nsresult rv = NS_OK;
+  nsCOMPtr<nsIDocumentEncoder> docEncoder;
+  if (!mCachedDocumentEncoder ||
+      !mCachedDocumentEncoderType.Equals(aFormatType)) {
+    nsAutoCString formatType(NS_DOC_ENCODER_CONTRACTID_BASE);
+    LossyAppendUTF16toASCII(aFormatType, formatType);
+    docEncoder = do_CreateInstance(formatType.get());
+    if (NS_WARN_IF(!docEncoder)) {
+      return nullptr;
+    }
+    mCachedDocumentEncoder = docEncoder;
+    mCachedDocumentEncoderType = aFormatType;
+  } else {
+    docEncoder = mCachedDocumentEncoder;
+  }
 
-  nsAutoCString formatType(NS_DOC_ENCODER_CONTRACTID_BASE);
-  LossyAppendUTF16toASCII(aFormatType, formatType);
-  nsCOMPtr<nsIDocumentEncoder> docEncoder (do_CreateInstance(formatType.get(), &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIDocument> doc = GetDocument();
+  NS_ASSERTION(doc, "Need a document");
 
-  nsCOMPtr<nsIDOMDocument> domDoc = do_QueryReferent(mDocWeak);
-  NS_ASSERTION(domDoc, "Need a document");
-
-  rv = docEncoder->Init(domDoc, aFormatType, aFlags);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsresult rv =
+    docEncoder->NativeInit(
+                  doc, aFormatType,
+                  aFlags | nsIDocumentEncoder::RequiresReinitAfterOutput);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return nullptr;
+  }
 
   if (!aCharset.IsEmpty() && !aCharset.EqualsLiteral("null")) {
     docEncoder->SetCharset(aCharset);
@@ -1203,23 +1292,30 @@ TextEditor::GetAndInitDocEncoder(const nsAString& aFormatType,
   // in which case we use our existing selection ...
   if (aFlags & nsIDocumentEncoder::OutputSelectionOnly) {
     RefPtr<Selection> selection = GetSelection();
-    NS_ENSURE_STATE(selection);
+    if (NS_WARN_IF(!selection)) {
+      return nullptr;
+    }
     rv = docEncoder->SetSelection(selection);
-    NS_ENSURE_SUCCESS(rv, rv);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return nullptr;
+    }
   }
   // ... or if the root element is not a body,
   // in which case we set the selection to encompass the root.
   else {
     dom::Element* rootElement = GetRoot();
-    NS_ENSURE_TRUE(rootElement, NS_ERROR_FAILURE);
+    if (NS_WARN_IF(!rootElement)) {
+      return nullptr;
+    }
     if (!rootElement->IsHTMLElement(nsGkAtoms::body)) {
       rv = docEncoder->SetNativeContainerNode(rootElement);
-      NS_ENSURE_SUCCESS(rv, rv);
+      if (NS_WARN_IF(NS_FAILED(rv))) {
+        return nullptr;
+      }
     }
   }
 
-  docEncoder.forget(encoder);
-  return NS_OK;
+  return docEncoder.forget();
 }
 
 
@@ -1234,6 +1330,7 @@ TextEditor::OutputToString(const nsAString& aFormatType,
   nsString resultString;
   TextRulesInfo ruleInfo(EditAction::outputText);
   ruleInfo.outString = &resultString;
+  ruleInfo.flags = aFlags;
   // XXX Struct should store a nsAReadable*
   nsAutoString str(aFormatType);
   ruleInfo.outputFormat = &str;
@@ -1251,12 +1348,15 @@ TextEditor::OutputToString(const nsAString& aFormatType,
   nsAutoCString charsetStr;
   rv = GetDocumentCharacterSet(charsetStr);
   if (NS_FAILED(rv) || charsetStr.IsEmpty()) {
-    charsetStr.AssignLiteral("ISO-8859-1");
+    charsetStr.AssignLiteral("windows-1252");
   }
 
-  nsCOMPtr<nsIDocumentEncoder> encoder;
-  rv = GetAndInitDocEncoder(aFormatType, aFlags, charsetStr, getter_AddRefs(encoder));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIDocumentEncoder> encoder =
+    GetAndInitDocEncoder(aFormatType, aFlags, charsetStr);
+  if (NS_WARN_IF(!encoder)) {
+    return NS_ERROR_FAILURE;
+  }
+
   return encoder->EncodeToString(aOutputString);
 }
 
@@ -1281,11 +1381,11 @@ TextEditor::OutputToStream(nsIOutputStream* aOutputStream,
     }
   }
 
-  nsCOMPtr<nsIDocumentEncoder> encoder;
-  rv = GetAndInitDocEncoder(aFormatType, aFlags, aCharset,
-                            getter_AddRefs(encoder));
-
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIDocumentEncoder> encoder =
+    GetAndInitDocEncoder(aFormatType, aFlags, aCharset);
+  if (NS_WARN_IF(!encoder)) {
+    return NS_ERROR_FAILURE;
+  }
 
   return encoder->EncodeToStream(aOutputStream);
 }
@@ -1329,7 +1429,7 @@ TextEditor::PasteAsQuotation(int32_t aSelectionType)
       if (textDataObj && len > 0) {
         nsAutoString stuffToPaste;
         textDataObj->GetData ( stuffToPaste );
-        AutoEditBatch beginBatching(this);
+        AutoPlaceholderBatch beginBatching(this);
         rv = InsertAsQuotation(stuffToPaste, 0);
       }
     }
@@ -1360,7 +1460,7 @@ TextEditor::InsertAsQuotation(const nsAString& aQuotedText,
   RefPtr<Selection> selection = GetSelection();
   NS_ENSURE_TRUE(selection, NS_ERROR_NULL_POINTER);
 
-  AutoEditBatch beginBatching(this);
+  AutoPlaceholderBatch beginBatching(this);
   AutoRules beginRulesSniffing(this, EditAction::insertText, nsIEditor::eNext);
 
   // give rules a chance to handle or cancel
@@ -1525,8 +1625,7 @@ TextEditor::SelectEntireDocument(Selection* aSelection)
   nsCOMPtr<nsIEditRules> rules(mRules);
 
   // is doc empty?
-  bool bDocIsEmpty;
-  if (NS_SUCCEEDED(rules->DocumentIsEmpty(&bDocIsEmpty)) && bDocIsEmpty) {
+  if (rules->DocumentIsEmpty()) {
     // get root node
     nsCOMPtr<nsIDOMElement> rootElement = do_QueryInterface(GetRoot());
     NS_ENSURE_TRUE(rootElement, NS_ERROR_FAILURE);
@@ -1541,15 +1640,15 @@ TextEditor::SelectEntireDocument(Selection* aSelection)
 
   // Don't select the trailing BR node if we have one
   int32_t selOffset;
-  nsCOMPtr<nsIDOMNode> selNode;
+  nsCOMPtr<nsINode> selNode;
   rv = GetEndNodeAndOffset(aSelection, getter_AddRefs(selNode), &selOffset);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIDOMNode> childNode = GetChildAt(selNode, selOffset - 1);
+  nsINode* childNode = selNode->GetChildAt(selOffset - 1);
 
   if (childNode && TextEditUtils::IsMozBR(childNode)) {
     int32_t parentOffset;
-    nsCOMPtr<nsIDOMNode> parentNode = GetNodeLocation(childNode, &parentOffset);
+    nsINode* parentNode = GetNodeLocation(childNode, &parentOffset);
 
     return aSelection->Extend(parentNode, parentOffset);
   }

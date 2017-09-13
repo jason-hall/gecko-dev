@@ -4,8 +4,8 @@ registerCleanupFunction(function() {
   Services.prefs.clearUserPref("browser.preferences.instantApply");
 });
 
-add_task(function*() {
-  yield openPreferencesViaOpenPreferencesAPI("paneGeneral", {leaveOpen: true});
+add_task(async function() {
+  await openPreferencesViaOpenPreferencesAPI("general", { leaveOpen: true });
   let doc = gBrowser.contentDocument;
   var langGroup = Services.prefs.getComplexValue("font.language.group", Ci.nsIPrefLocalizedString).data
   is(doc.getElementById("font.language.group").value, langGroup,
@@ -20,8 +20,9 @@ add_task(function*() {
   let fontSizeField = doc.getElementById("defaultFontSize");
   is(fontSizeField.value, defaultFontSize, "Font size should be set correctly.");
 
+  let promiseSubDialogLoaded = promiseLoadSubDialog("chrome://browser/content/preferences/fonts.xul");
   doc.getElementById("advancedFonts").click();
-  let win = yield promiseLoadSubDialog("chrome://browser/content/preferences/fonts.xul");
+  let win = await promiseSubDialogLoaded;
   doc = win.document;
 
   // Simulate a dumb font backend.

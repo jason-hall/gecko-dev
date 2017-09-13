@@ -18,7 +18,9 @@ function run_test() {
   gTestFiles[gTestFiles.length - 2].comparePerms = 0o644;
   gTestDirs = gTestDirsPartialSuccess;
   setupDistributionDir();
-  setupUpdaterTest(FILE_PARTIAL_MAR, false);
+  // The third parameter will test that a relative path that contains a
+  // directory traversal to the post update binary doesn't execute.
+  setupUpdaterTest(FILE_PARTIAL_MAR, false, "test/../");
 }
 
 /**
@@ -32,24 +34,10 @@ function setupUpdaterTestFinished() {
  * Called after the call to runUpdate finishes.
  */
 function runUpdateFinished() {
-  checkPostUpdateAppLog();
-}
-
-/**
- * Called after the call to checkPostUpdateAppLog finishes.
- */
-function checkPostUpdateAppLogFinished() {
   checkAppBundleModTime();
   standardInit();
-  Assert.equal(readStatusState(), STATE_NONE,
-               "the status file state" + MSG_SHOULD_EQUAL);
-  Assert.ok(!gUpdateManager.activeUpdate,
-            "the active update should not be defined");
-  Assert.equal(gUpdateManager.updateCount, 1,
-               "the update manager updateCount attribute" + MSG_SHOULD_EQUAL);
-  Assert.equal(gUpdateManager.getUpdateAt(0).state, STATE_SUCCEEDED,
-               "the update state" + MSG_SHOULD_EQUAL);
-  checkPostUpdateRunningFile(true);
+  checkUpdateManager(STATE_NONE, false, STATE_SUCCEEDED, 0, 1);
+  checkPostUpdateRunningFile(false);
   checkFilesAfterUpdateSuccess(getApplyDirFile);
   checkUpdateLogContents(LOG_PARTIAL_SUCCESS);
   checkDistributionDir();

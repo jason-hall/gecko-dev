@@ -9,7 +9,6 @@
 // React & Redux
 const {
   createClass,
-  createFactory,
   PropTypes
 } = require("devtools/client/shared/vendor/react");
 
@@ -31,40 +30,59 @@ const MessageContainer = createClass({
   displayName: "MessageContainer",
 
   propTypes: {
-    message: PropTypes.object.isRequired,
+    messageId: PropTypes.string.isRequired,
     open: PropTypes.bool.isRequired,
     serviceContainer: PropTypes.object.isRequired,
-    autoscroll: PropTypes.bool.isRequired,
-    indent: PropTypes.number.isRequired,
     tableData: PropTypes.object,
+    timestampsVisible: PropTypes.bool.isRequired,
+    repeat: PropTypes.number,
+    networkMessageUpdate: PropTypes.object,
+    getMessage: PropTypes.func.isRequired,
+    loadedObjectProperties: PropTypes.object,
+    loadedObjectEntries: PropTypes.object,
   },
 
   getDefaultProps: function () {
     return {
       open: false,
-      indent: 0,
     };
   },
 
   shouldComponentUpdate(nextProps, nextState) {
-    const repeatChanged = this.props.message.repeat !== nextProps.message.repeat;
+    const repeatChanged = this.props.repeat !== nextProps.repeat;
     const openChanged = this.props.open !== nextProps.open;
     const tableDataChanged = this.props.tableData !== nextProps.tableData;
-    const responseChanged = this.props.message.response !== nextProps.message.response;
-    const totalTimeChanged = this.props.message.totalTime !== nextProps.message.totalTime;
-    return repeatChanged || openChanged || tableDataChanged || responseChanged ||
-      totalTimeChanged;
+    const timestampVisibleChanged =
+      this.props.timestampsVisible !== nextProps.timestampsVisible;
+    const networkMessageUpdateChanged =
+      this.props.networkMessageUpdate !== nextProps.networkMessageUpdate;
+    const loadedObjectPropertiesChanged =
+      this.props.loadedObjectProperties !== nextProps.loadedObjectProperties;
+    const loadedObjectEntriesChanged =
+      this.props.loadedObjectEntries !== nextProps.loadedObjectEntries;
+
+    return repeatChanged
+      || openChanged
+      || tableDataChanged
+      || timestampVisibleChanged
+      || networkMessageUpdateChanged
+      || loadedObjectPropertiesChanged
+      || loadedObjectEntriesChanged;
   },
 
   render() {
-    const { message } = this.props;
+    const message = this.props.getMessage();
 
-    let MessageComponent = createFactory(getMessageComponent(message));
-    return MessageComponent(this.props);
+    let MessageComponent = getMessageComponent(message);
+    return MessageComponent(Object.assign({message}, this.props));
   }
 });
 
 function getMessageComponent(message) {
+  if (!message) {
+    return componentMap.get("DefaultRenderer");
+  }
+
   switch (message.source) {
     case MESSAGE_SOURCE.CONSOLE_API:
       return componentMap.get("ConsoleApiCall");

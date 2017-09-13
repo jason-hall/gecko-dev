@@ -74,10 +74,16 @@ public:
     eAll // Includes all stylesheets
   };
 
+  enum AnimationFlag {
+    eWithAnimation,
+    eWithoutAnimation,
+  };
+
   nsComputedDOMStyle(mozilla::dom::Element* aElement,
                      const nsAString& aPseudoElt,
                      nsIPresShell* aPresShell,
-                     StyleType aStyleType);
+                     StyleType aStyleType,
+                     AnimationFlag aFlag = eWithAnimation);
 
   virtual nsINode *GetParentObject() override
   {
@@ -88,11 +94,6 @@ public:
   GetStyleContext(mozilla::dom::Element* aElement, nsIAtom* aPseudo,
                   nsIPresShell* aPresShell,
                   StyleType aStyleType = eAll);
-
-  enum AnimationFlag {
-    eWithAnimation,
-    eWithoutAnimation,
-  };
 
   static already_AddRefed<nsStyleContext>
   GetStyleContextNoFlush(mozilla::dom::Element* aElement,
@@ -121,7 +122,7 @@ public:
   }
 
   static nsIPresShell*
-  GetPresShellForContent(nsIContent* aContent);
+  GetPresShellForContent(const nsIContent* aContent);
 
   // Helper for nsDOMWindowUtils::GetVisitedDependentComputedStyle
   void SetExposeVisitedStyle(bool aExpose) {
@@ -136,7 +137,7 @@ public:
   virtual nsresult SetCSSDeclaration(mozilla::DeclarationBlock*) override;
   virtual nsIDocument* DocToUpdate() override;
   virtual void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv) override;
-  mozilla::URLExtraData* GetURLData() const final;
+  nsDOMCSSDeclaration::ServoCSSParsingEnvironment GetServoCSSParsingEnvironment() const final;
 
   static already_AddRefed<nsROCSSPrimitiveValue>
     MatrixToCSSValue(const mozilla::gfx::Matrix4x4& aMatrix);
@@ -167,8 +168,9 @@ private:
 
   // Helper functions called by UpdateCurrentStyleSources.
   void ClearStyleContext();
-  void SetResolvedStyleContext(RefPtr<nsStyleContext>&& aContext);
-  void SetFrameStyleContext(nsStyleContext* aContext);
+  void SetResolvedStyleContext(RefPtr<nsStyleContext>&& aContext,
+                               uint64_t aGeneration);
+  void SetFrameStyleContext(nsStyleContext* aContext, uint64_t aGeneration);
 
   static already_AddRefed<nsStyleContext>
   DoGetStyleContextNoFlush(mozilla::dom::Element* aElement,
@@ -209,7 +211,11 @@ private:
 
   already_AddRefed<CSSValue> GetMarginWidthFor(mozilla::Side aSide);
 
+  already_AddRefed<CSSValue> GetFallbackValue(const nsStyleSVGPaint* aPaint);
+
   already_AddRefed<CSSValue> GetSVGPaintFor(bool aFill);
+
+  already_AddRefed<CSSValue> GetTransformValue(nsCSSValueSharedList* aSpecifiedTransform);
 
   // Appends all aLineNames (may be empty) space-separated to aResult.
   void AppendGridLineNames(nsString& aResult,
@@ -253,7 +259,6 @@ private:
    */
 
   already_AddRefed<CSSValue> DoGetAppearance();
-  already_AddRefed<CSSValue> DoGetMozAppearance();
 
   /* Box properties */
   already_AddRefed<CSSValue> DoGetBoxAlign();
@@ -526,6 +531,9 @@ private:
   already_AddRefed<CSSValue> DoGetUserModify();
   already_AddRefed<CSSValue> DoGetUserSelect();
   already_AddRefed<CSSValue> DoGetWindowDragging();
+  already_AddRefed<CSSValue> DoGetWindowOpacity();
+  already_AddRefed<CSSValue> DoGetWindowTransform();
+  already_AddRefed<CSSValue> DoGetWindowTransformOrigin();
 
   /* Column properties */
   already_AddRefed<CSSValue> DoGetColumnCount();
@@ -611,6 +619,8 @@ private:
   already_AddRefed<CSSValue> DoGetMaskType();
   already_AddRefed<CSSValue> DoGetPaintOrder();
 
+  already_AddRefed<CSSValue> DoGetContextProperties();
+
   /* Custom properties */
   already_AddRefed<CSSValue> DoGetCustomProperty(const nsAString& aPropertyName);
 
@@ -665,6 +675,12 @@ private:
                               PercentageBaseGetter aPercentageBaseGetter,
                               nscoord aDefaultValue,
                               bool aClampNegativeCalc);
+
+  /**
+   * Append coord values from four sides. It omits values when possible.
+   */
+  void AppendFourSideCoordValues(nsDOMCSSValueList* aList,
+                                 const nsStyleSides& aValues);
 
   bool GetCBContentWidth(nscoord& aWidth);
   bool GetCBContentHeight(nscoord& aWidth);
@@ -764,6 +780,11 @@ private:
    */
   bool mResolvedStyleContext;
 
+  /**
+   * Whether we include animation rules in the computed style.
+   */
+  AnimationFlag mAnimationFlag;
+
 #ifdef DEBUG
   bool mFlushedPendingReflows;
 #endif
@@ -774,6 +795,8 @@ NS_NewComputedDOMStyle(mozilla::dom::Element* aElement,
                        const nsAString& aPseudoElt,
                        nsIPresShell* aPresShell,
                        nsComputedDOMStyle::StyleType aStyleType =
-                         nsComputedDOMStyle::eAll);
+                         nsComputedDOMStyle::eAll,
+                       nsComputedDOMStyle::AnimationFlag aFlag =
+                         nsComputedDOMStyle::eWithAnimation);
 
 #endif /* nsComputedDOMStyle_h__ */

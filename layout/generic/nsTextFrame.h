@@ -11,6 +11,8 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/UniquePtr.h"
 #include "nsFrame.h"
+#include "nsFrameSelection.h"
+#include "nsGenericDOMDataNode.h"
 #include "nsSplittableFrame.h"
 #include "nsLineBox.h"
 #include "gfxSkipChars.h"
@@ -18,6 +20,7 @@
 #include "nsDisplayList.h"
 #include "JustificationUtils.h"
 #include "RubyUtils.h"
+#include "TextDrawTarget.h"
 
 // Undo the windows.h damage
 #if defined(XP_WIN) && defined(DrawText)
@@ -39,39 +42,36 @@ class SVGContextPaint;
 class nsTextFrame : public nsFrame
 {
   typedef mozilla::LayoutDeviceRect LayoutDeviceRect;
-  typedef mozilla::RawSelectionType RawSelectionType;
+  typedef mozilla::SelectionTypeMask SelectionTypeMask;
   typedef mozilla::SelectionType SelectionType;
   typedef mozilla::TextRangeStyle TextRangeStyle;
   typedef mozilla::gfx::DrawTarget DrawTarget;
   typedef mozilla::gfx::Point Point;
   typedef mozilla::gfx::Rect Rect;
   typedef mozilla::gfx::Size Size;
+  typedef mozilla::layout::TextDrawTarget TextDrawTarget;
   typedef gfxTextRun::Range Range;
 
 public:
-  NS_DECL_QUERYFRAME_TARGET(nsTextFrame)
-  NS_DECL_FRAMEARENA_HELPERS
-
-  friend class nsContinuingTextFrame;
-  friend class nsDisplayTextGeometry;
-  friend class nsDisplayText;
-
-  explicit nsTextFrame(nsStyleContext* aContext)
-    : nsFrame(aContext)
+  explicit nsTextFrame(nsStyleContext* aContext, ClassID aID = kClassID)
+    : nsFrame(aContext, aID)
     , mNextContinuation(nullptr)
     , mContentOffset(0)
     , mContentLengthHint(0)
     , mAscent(0)
-  {
-    NS_ASSERTION(mContentOffset == 0, "Bogus content offset");
-  }
+  {}
+
+  NS_DECL_FRAMEARENA_HELPERS(nsTextFrame)
+
+  friend class nsContinuingTextFrame;
+  friend class nsDisplayTextGeometry;
+  friend class nsDisplayText;
 
   // nsQueryFrame
   NS_DECL_QUERYFRAME
 
   // nsIFrame
   void BuildDisplayList(nsDisplayListBuilder* aBuilder,
-                        const nsRect& aDirtyRect,
                         const nsDisplayListSet& aLists) override;
 
   void Init(nsIContent* aContent,
@@ -88,8 +88,7 @@ public:
   nsTextFrame* GetNextContinuation() const final { return mNextContinuation; }
   void SetNextContinuation(nsIFrame* aNextContinuation) final
   {
-    NS_ASSERTION(!aNextContinuation ||
-                   GetType() == aNextContinuation->GetType(),
+    NS_ASSERTION(!aNextContinuation || Type() == aNextContinuation->Type(),
                  "setting a next continuation with incorrect type!");
     NS_ASSERTION(
       !nsSplittableFrame::IsInNextContinuationChain(aNextContinuation, this),
@@ -99,7 +98,10 @@ public:
       aNextContinuation->RemoveStateBits(NS_FRAME_IS_FLUID_CONTINUATION);
     // Setting a non-fluid continuation might affect our flow length (they're
     // quite rare so we assume it always does) so we delete our cached value:
-    GetContent()->DeleteProperty(nsGkAtoms::flowlength);
+    if (GetContent()->HasFlag(NS_HAS_FLOWLENGTH_PROPERTY)) {
+      GetContent()->DeleteProperty(nsGkAtoms::flowlength);
+      GetContent()->UnsetFlags(NS_HAS_FLOWLENGTH_PROPERTY);
+    }
   }
   nsIFrame* GetNextInFlowVirtual() const override { return GetNextInFlow(); }
   nsTextFrame* GetNextInFlow() const
@@ -112,7 +114,7 @@ public:
   }
   void SetNextInFlow(nsIFrame* aNextInFlow) final
   {
-    NS_ASSERTION(!aNextInFlow || GetType() == aNextInFlow->GetType(),
+    NS_ASSERTION(!aNextInFlow || Type() == aNextInFlow->Type(),
                  "setting a next in flow with incorrect type!");
     NS_ASSERTION(
       !nsSplittableFrame::IsInNextContinuationChain(aNextInFlow, this),
@@ -122,7 +124,10 @@ public:
         !mNextContinuation->HasAnyStateBits(NS_FRAME_IS_FLUID_CONTINUATION)) {
       // Changing from non-fluid to fluid continuation might affect our flow
       // length, so we delete our cached value:
-      GetContent()->DeleteProperty(nsGkAtoms::flowlength);
+      if (GetContent()->HasFlag(NS_HAS_FLOWLENGTH_PROPERTY)) {
+        GetContent()->DeleteProperty(nsGkAtoms::flowlength);
+        GetContent()->UnsetFlags(NS_HAS_FLOWLENGTH_PROPERTY);
+      }
     }
     if (aNextInFlow) {
       aNextInFlow->AddStateBits(NS_FRAME_IS_FLUID_CONTINUATION);
@@ -135,13 +140,6 @@ public:
   {
     return NS_FRAME_SPLITTABLE;
   }
-
-  /**
-    * Get the "type" of the frame
-   *
-   * @see nsGkAtoms::textFrame
-   */
-  nsIAtom* GetType() const final;
 
   bool IsFrameOfType(uint32_t aFlags) const final
   {
@@ -157,7 +155,7 @@ public:
     // suppress line break inside. This check is necessary, because when
     // a whitespace is only contained by pseudo ruby frames, its style
     // context won't have SuppressLineBreak bit set.
-    if (mozilla::RubyUtils::IsRubyContentBox(GetParent()->GetType())) {
+    if (mozilla::RubyUtils::IsRubyContentBox(GetParent()->Type())) {
       return true;
     }
     return StyleContext()->ShouldSuppressLineBreak();
@@ -198,9 +196,11 @@ public:
 
   FrameSearchResult PeekOffsetNoAmount(bool aForward,
                                        int32_t* aOffset) override;
-  FrameSearchResult PeekOffsetCharacter(bool aForward,
-                                        int32_t* aOffset,
-                                        bool aRespectClusters = true) override;
+  FrameSearchResult
+  PeekOffsetCharacter(bool aForward,
+                      int32_t* aOffset,
+                      PeekOffsetCharacterOptions aOptions =
+                        PeekOffsetCharacterOptions()) override;
   FrameSearchResult PeekOffsetWord(bool aForward,
                                    bool aWordSelectEatSpace,
                                    bool aIsKeyboardSelect,
@@ -275,13 +275,13 @@ public:
   void SetFontSizeInflation(float aInflation);
 
   void MarkIntrinsicISizesDirty() override;
-  nscoord GetMinISize(nsRenderingContext* aRenderingContext) override;
-  nscoord GetPrefISize(nsRenderingContext* aRenderingContext) override;
-  void AddInlineMinISize(nsRenderingContext* aRenderingContext,
+  nscoord GetMinISize(gfxContext* aRenderingContext) override;
+  nscoord GetPrefISize(gfxContext* aRenderingContext) override;
+  void AddInlineMinISize(gfxContext* aRenderingContext,
                          InlineMinISizeData* aData) override;
-  void AddInlinePrefISize(nsRenderingContext* aRenderingContext,
+  void AddInlinePrefISize(gfxContext* aRenderingContext,
                           InlinePrefISizeData* aData) override;
-  mozilla::LogicalSize ComputeSize(nsRenderingContext* aRenderingContext,
+  mozilla::LogicalSize ComputeSize(gfxContext* aRenderingContext,
                                    mozilla::WritingMode aWritingMode,
                                    const mozilla::LogicalSize& aCBSize,
                                    nscoord aAvailableISize,
@@ -290,7 +290,7 @@ public:
                                    const mozilla::LogicalSize& aPadding,
                                    ComputeSizeFlags aFlags) override;
   nsRect ComputeTightBounds(DrawTarget* aDrawTarget) const override;
-  nsresult GetPrefWidthTightBounds(nsRenderingContext* aContext,
+  nsresult GetPrefWidthTightBounds(gfxContext* aContext,
                                    nscoord* aX,
                                    nscoord* aXMost) override;
   void Reflow(nsPresContext* aPresContext,
@@ -330,10 +330,10 @@ public:
     eNotInflated
   };
 
-  void AddInlineMinISizeForFlow(nsRenderingContext* aRenderingContext,
+  void AddInlineMinISizeForFlow(gfxContext* aRenderingContext,
                                 nsIFrame::InlineMinISizeData* aData,
                                 TextRunType aTextRunType);
-  void AddInlinePrefISizeForFlow(nsRenderingContext* aRenderingContext,
+  void AddInlinePrefISizeForFlow(gfxContext* aRenderingContext,
                                  InlinePrefISizeData* aData,
                                  TextRunType aTextRunType);
 
@@ -443,6 +443,7 @@ public:
   struct PaintTextParams
   {
     gfxContext* context;
+    TextDrawTarget* textDrawer;
     gfxPoint framePt;
     LayoutDeviceRect dirtyRect;
     mozilla::SVGContextPaint* contextPaint = nullptr;
@@ -459,7 +460,7 @@ public:
     };
     uint8_t state = PaintText;
     explicit PaintTextParams(gfxContext* aContext)
-      : context(aContext)
+      : context(aContext), textDrawer(nullptr)
     {
     }
 
@@ -482,6 +483,7 @@ public:
   struct DrawTextRunParams
   {
     gfxContext* context;
+    TextDrawTarget* textDrawer;
     PropertyProvider* provider = nullptr;
     gfxFloat* advanceWidth = nullptr;
     mozilla::SVGContextPaint* contextPaint = nullptr;
@@ -491,7 +493,7 @@ public:
     float textStrokeWidth = 0.0f;
     bool drawSoftHyphen = false;
     explicit DrawTextRunParams(gfxContext* aContext)
-      : context(aContext)
+      : context(aContext), textDrawer(nullptr)
     {}
   };
 
@@ -522,13 +524,13 @@ public:
     const nsCharClipDisplayItem::ClipEdges& aClipEdges);
   // helper: paint text with foreground and background colors determined
   // by selection(s). Also computes a mask of all selection types applying to
-  // our text, returned in aAllTypes.
+  // our text, returned in aAllSelectionTypeMask.
   // Return false if the text was not painted and we should continue with
   // the fast path.
   bool PaintTextWithSelectionColors(
     const PaintTextSelectionParams& aParams,
     const mozilla::UniquePtr<SelectionDetails>& aDetails,
-    RawSelectionType* aAllRawSelectionTypes,
+    SelectionTypeMask* aAllSelectionTypeMask,
     const nsCharClipDisplayItem::ClipEdges& aClipEdges);
   // helper: paint text decorations for text selected by aSelectionType
   void PaintTextSelectionDecorations(const PaintTextSelectionParams& aParams,
@@ -708,6 +710,7 @@ protected:
     gfxPoint framePt;
     gfxPoint textBaselinePt;
     gfxContext* context;
+    TextDrawTarget* textDrawer;
     nscolor foregroundColor = NS_RGBA(0, 0, 0, 0);
     const nsCharClipDisplayItem::ClipEdges* clipEdges = nullptr;
     PropertyProvider* provider = nullptr;
@@ -716,6 +719,7 @@ protected:
       : dirtyRect(aParams.dirtyRect)
       , framePt(aParams.framePt)
       , context(aParams.context)
+      , textDrawer(aParams.textDrawer)
     {
     }
   };

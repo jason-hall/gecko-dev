@@ -10,6 +10,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/ThreadLocal.h"
 
@@ -39,7 +40,7 @@ mozilla::Atomic<AutoEnterOOMUnsafeRegion*> AutoEnterOOMUnsafeRegion::owner_;
 namespace oom {
 
 JS_PUBLIC_DATA(uint32_t) targetThread = 0;
-JS_PUBLIC_DATA(MOZ_THREAD_LOCAL(uint32_t)) threadType;
+MOZ_THREAD_LOCAL(uint32_t) threadType;
 JS_PUBLIC_DATA(uint64_t) maxAllocations = UINT64_MAX;
 JS_PUBLIC_DATA(uint64_t) counter = 0;
 JS_PUBLIC_DATA(bool) failAlways = true;
@@ -59,10 +60,22 @@ GetThreadType(void) {
     return threadType.get();
 }
 
+static inline bool
+IsHelperThreadType(uint32_t thread)
+{
+    return thread != THREAD_TYPE_NONE && thread != THREAD_TYPE_COOPERATING;
+}
+
 void
 SimulateOOMAfter(uint64_t allocations, uint32_t thread, bool always) {
+    Maybe<AutoLockHelperThreadState> lock;
+    if (IsHelperThreadType(targetThread) || IsHelperThreadType(thread)) {
+        lock.emplace();
+        HelperThreadState().waitForAllThreadsLocked(lock.ref());
+    }
+
     MOZ_ASSERT(counter + allocations > counter);
-    MOZ_ASSERT(thread > js::oom::THREAD_TYPE_NONE && thread < js::oom::THREAD_TYPE_MAX);
+    MOZ_ASSERT(thread > js::THREAD_TYPE_NONE && thread < js::THREAD_TYPE_MAX);
     targetThread = thread;
     maxAllocations = counter + allocations;
     failAlways = always;
@@ -70,8 +83,12 @@ SimulateOOMAfter(uint64_t allocations, uint32_t thread, bool always) {
 
 void
 ResetSimulatedOOM() {
-    if (targetThread != THREAD_TYPE_NONE && targetThread != THREAD_TYPE_COOPERATING)
-        HelperThreadState().waitForAllThreads();
+    Maybe<AutoLockHelperThreadState> lock;
+    if (IsHelperThreadType(targetThread)) {
+        lock.emplace();
+        HelperThreadState().waitForAllThreadsLocked(lock.ref());
+    }
+
     targetThread = THREAD_TYPE_NONE;
     maxAllocations = UINT64_MAX;
     failAlways = false;

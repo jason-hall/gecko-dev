@@ -1,3 +1,4 @@
+
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -60,6 +61,7 @@
 #include "nsIDocument.h"
 #include "nsGlobalWindow.h"
 #include "nsDOMDataChannel.h"
+#include "mozilla/dom/Location.h"
 #include "mozilla/dom/Performance.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Telemetry.h"
@@ -74,7 +76,6 @@
 #include "nsNetUtil.h"
 #include "nsIURLParser.h"
 #include "nsIDOMDataChannel.h"
-#include "nsIDOMLocation.h"
 #include "NullPrincipal.h"
 #include "mozilla/PeerIdentity.h"
 #include "mozilla/dom/RTCCertificate.h"
@@ -178,12 +179,12 @@ public:
       MOZ_ASSERT(NS_IsMainThread());
     }
   }
-  operator JSErrorResult &() { return *mRv; }
   operator ErrorResult &() { return *mRv; }
 private:
   mozilla::UniquePtr<JSErrorResult> mRv;
   bool isCopy;
 };
+
 }
 
 static nsresult InitNSSInContent()
@@ -309,14 +310,13 @@ PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
   , mForceIceTcp(false)
   , mMedia(nullptr)
   , mUuidGen(MakeUnique<PCUuidGenerator>())
-  , mNumAudioStreams(0)
-  , mNumVideoStreams(0)
   , mHaveConfiguredCodecs(false)
   , mHaveDataStream(false)
   , mAddCandidateErrorCount(0)
   , mTrickle(true) // TODO(ekr@rtfm.com): Use pref
   , mNegotiationNeeded(false)
   , mPrivateWindow(false)
+  , mActiveOnWindow(false)
 {
   MOZ_ASSERT(NS_IsMainThread());
   auto log = RLogConnector::CreateInstance();
@@ -326,6 +326,8 @@ PeerConnectionImpl::PeerConnectionImpl(const GlobalObject* aGlobal)
       mPrivateWindow = true;
       log->EnterPrivateMode();
     }
+    mWindow->AddPeerConnection();
+    mActiveOnWindow = true;
   }
   CSFLogInfo(logTag, "%s: PeerConnectionImpl constructor for %s",
              __FUNCTION__, mHandle.c_str());
@@ -350,6 +352,14 @@ PeerConnectionImpl::~PeerConnectionImpl()
   }
   // This aborts if not on main thread (in Debug builds)
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
+  if (mWindow && mActiveOnWindow) {
+    mWindow->RemovePeerConnection();
+    // No code is supposed to observe the assignment below, but
+    // hopefully it makes looking at this object in a debugger
+    // make more sense.
+    mActiveOnWindow = false;
+  }
+
   if (mPrivateWindow) {
     auto * log = RLogConnector::GetInstance();
     if (log) {
@@ -381,8 +391,7 @@ already_AddRefed<DOMMediaStream>
 PeerConnectionImpl::MakeMediaStream()
 {
   MediaStreamGraph* graph =
-    MediaStreamGraph::GetInstance(MediaStreamGraph::AUDIO_THREAD_DRIVER,
-                                  AudioChannel::Normal);
+    MediaStreamGraph::GetInstance(MediaStreamGraph::AUDIO_THREAD_DRIVER, GetWindow());
 
   RefPtr<DOMMediaStream> stream =
     DOMMediaStream::CreateSourceStreamAsInput(GetWindow(), graph);
@@ -501,7 +510,7 @@ PeerConnectionConfiguration::AddIceServer(const RTCIceServer &aServer)
       uint32_t hostPos;
       int32_t hostLen;
       nsAutoCString path;
-      rv = url->GetPath(path);
+      rv = url->GetPathQueryRef(path);
       NS_ENSURE_SUCCESS(rv, rv);
 
       // Tolerate query-string + parse 'transport=[udp|tcp]' by hand.
@@ -609,9 +618,10 @@ PeerConnectionImpl::Initialize(PeerConnectionObserver& aObserver,
 
   nsAutoCString locationCStr;
 
-  if (nsCOMPtr<nsIDOMLocation> location = mWindow->GetLocation()) {
+  if (RefPtr<Location> location = mWindow->GetLocation()) {
     nsAutoString locationAStr;
-    location->ToString(locationAStr);
+    res = location->ToString(locationAStr);
+    NS_ENSURE_SUCCESS(res, res);
 
     CopyUTF16toUTF8(locationAStr, locationCStr);
   }
@@ -1082,20 +1092,29 @@ PeerConnectionImpl::ConfigureJsepSessionCodecs() {
 // Data channels won't work without a window, so in order for the C++ unit
 // tests to work (it doesn't have a window available) we ifdef the following
 // two implementations.
+//
+// Note: 'media.peerconnection.sctp.force_ppid_fragmentation' and
+//       'media.peerconnection.sctp.force_maximum_message_size' change behaviour triggered by
+//       these parameters.
 NS_IMETHODIMP
-PeerConnectionImpl::EnsureDataConnection(uint16_t aNumstreams)
+PeerConnectionImpl::EnsureDataConnection(uint16_t aLocalPort,
+                                         uint16_t aNumstreams,
+                                         uint32_t aMaxMessageSize,
+                                         bool aMMSSet)
 {
   PC_AUTO_ENTER_API_CALL(false);
 
   if (mDataConnection) {
     CSFLogDebug(logTag,"%s DataConnection already connected",__FUNCTION__);
-    // Ignore the request to connect when already connected.  This entire
-    // implementation is temporary.  Ignore aNumstreams as it's merely advisory
-    // and we increase the number of streams dynamically as needed.
+    mDataConnection->SetMaxMessageSize(aMMSSet, aMaxMessageSize);
     return NS_OK;
   }
-  mDataConnection = new DataChannelConnection(this);
-  if (!mDataConnection->Init(5000, aNumstreams, true)) {
+
+  nsCOMPtr<nsIEventTarget> target = mWindow
+      ? mWindow->EventTargetFor(TaskCategory::Other)
+      : nullptr;
+  mDataConnection = new DataChannelConnection(this, target);
+  if (!mDataConnection->Init(aLocalPort, aNumstreams, aMMSSet, aMaxMessageSize)) {
     CSFLogError(logTag,"%s DataConnection Init Failed",__FUNCTION__);
     return NS_ERROR_FAILURE;
   }
@@ -1109,6 +1128,8 @@ PeerConnectionImpl::GetDatachannelParameters(
     uint32_t* channels,
     uint16_t* localport,
     uint16_t* remoteport,
+    uint32_t* remotemaxmessagesize,
+    bool*     mmsset,
     uint16_t* level) const {
 
   auto trackPairs = mJsepSession->GetNegotiatedTrackPairs();
@@ -1161,6 +1182,10 @@ PeerConnectionImpl::GetDatachannelParameters(
           static_cast<const JsepApplicationCodecDescription*>(codec)->mLocalPort;
         *remoteport =
           static_cast<const JsepApplicationCodecDescription*>(codec)->mRemotePort;
+        *remotemaxmessagesize = static_cast<const JsepApplicationCodecDescription*>
+          (codec)->mRemoteMaxMessageSize;
+        *mmsset = static_cast<const JsepApplicationCodecDescription*>
+          (codec)->mRemoteMMSSet;
         if (trackPair.HasBundleLevel()) {
           *level = static_cast<uint16_t>(trackPair.BundleLevel());
         } else {
@@ -1174,6 +1199,8 @@ PeerConnectionImpl::GetDatachannelParameters(
   *channels = 0;
   *localport = 0;
   *remoteport = 0;
+  *remotemaxmessagesize = 0;
+  *mmsset = false;
   *level = 0;
   return NS_ERROR_FAILURE;
 }
@@ -1233,8 +1260,11 @@ PeerConnectionImpl::InitializeDataChannel()
   uint32_t channels = 0;
   uint16_t localport = 0;
   uint16_t remoteport = 0;
+  uint32_t remotemaxmessagesize = 0;
+  bool mmsset = false;
   uint16_t level = 0;
-  nsresult rv = GetDatachannelParameters(&channels, &localport, &remoteport, &level);
+  nsresult rv = GetDatachannelParameters(&channels, &localport, &remoteport,
+                                         &remotemaxmessagesize, &mmsset, &level);
 
   if (NS_FAILED(rv)) {
     CSFLogDebug(logTag, "%s: We did not negotiate datachannel", __FUNCTION__);
@@ -1245,7 +1275,7 @@ PeerConnectionImpl::InitializeDataChannel()
     channels = MAX_NUM_STREAMS;
   }
 
-  rv = EnsureDataConnection(channels);
+  rv = EnsureDataConnection(localport, channels, remotemaxmessagesize, mmsset);
   if (NS_SUCCEEDED(rv)) {
     // use the specified TransportFlow
     RefPtr<TransportFlow> flow = mMedia->GetTransportFlow(level, false).get();
@@ -1301,7 +1331,10 @@ PeerConnectionImpl::CreateDataChannel(const nsAString& aLabel,
   DataChannelConnection::Type theType =
     static_cast<DataChannelConnection::Type>(aType);
 
-  nsresult rv = EnsureDataConnection(WEBRTC_DATACHANNEL_STREAMS_DEFAULT);
+  nsresult rv = EnsureDataConnection(WEBRTC_DATACHANNEL_PORT_DEFAULT,
+                                     WEBRTC_DATACHANNEL_STREAMS_DEFAULT,
+                                     WEBRTC_DATACHANNEL_MAX_MESSAGE_SIZE_REMOTE_DEFAULT,
+                                     false);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -1441,10 +1474,6 @@ PeerConnectionImpl::CreateOffer(const RTCOfferOptions& aOptions)
 
   options.mIceRestart = mozilla::Some(aOptions.mIceRestart);
 
-  if (aOptions.mMozDontOfferDataChannel.WasPassed()) {
-    options.mDontOfferDataChannel =
-      mozilla::Some(aOptions.mMozDontOfferDataChannel.Value());
-  }
   return CreateOffer(options);
 }
 
@@ -1489,7 +1518,8 @@ PeerConnectionImpl::CreateOffer(const JsepOfferOptions& aOptions)
   CSFLogDebug(logTag, "CreateOffer()");
 
   nsresult nrv;
-  if (restartIce && !mJsepSession->GetLocalDescription().empty()) {
+  if (restartIce &&
+      !mJsepSession->GetLocalDescription(kJsepDescriptionCurrent).empty()) {
     // If restart is requested and a restart is already in progress, we
     // need to make room for the restart request so we either rollback
     // or finalize to "clear" the previous restart.
@@ -2089,6 +2119,7 @@ class RTCStatsReportInternalConstruct : public RTCStatsReportInternal {
 public:
   RTCStatsReportInternalConstruct(const nsString &pcid, DOMHighResTimeStamp now) {
     mPcid = pcid;
+    mRtpContributingSourceStats.Construct();
     mInboundRTPStreamStats.Construct();
     mOutboundRTPStreamStats.Construct();
     mMediaStreamTrackStats.Construct();
@@ -2328,7 +2359,6 @@ PeerConnectionImpl::AddTrack(MediaStreamTrack& aTrack,
     if (NS_FAILED(res)) {
       return res;
     }
-    mNumAudioStreams++;
   }
 
   if (aTrack.AsVideoStreamTrack()) {
@@ -2342,15 +2372,13 @@ PeerConnectionImpl::AddTrack(MediaStreamTrack& aTrack,
     if (NS_FAILED(res)) {
       return res;
     }
-    mNumVideoStreams++;
   }
   OnNegotiationNeeded();
   return NS_OK;
 }
 
-nsresult
-PeerConnectionImpl::SelectSsrc(MediaStreamTrack& aRecvTrack,
-                               unsigned short aSsrcIndex)
+RefPtr<MediaPipeline>
+PeerConnectionImpl::GetMediaPipelineForTrack(MediaStreamTrack& aRecvTrack)
 {
   for (size_t i = 0; i < mMedia->RemoteStreamsLength(); ++i) {
     if (mMedia->GetRemoteStreamByIndex(i)->GetMediaStream()->
@@ -2359,9 +2387,32 @@ PeerConnectionImpl::SelectSsrc(MediaStreamTrack& aRecvTrack,
       std::string trackId = PeerConnectionImpl::GetTrackId(aRecvTrack);
       auto it = pipelines.find(trackId);
       if (it != pipelines.end()) {
-        it->second->SelectSsrc_m(aSsrcIndex);
+        return it->second;
       }
     }
+  }
+
+  return nullptr;
+}
+
+nsresult
+PeerConnectionImpl::AddRIDExtension(MediaStreamTrack& aRecvTrack,
+                                    unsigned short aExtensionId)
+{
+  RefPtr<MediaPipeline> pipeline = GetMediaPipelineForTrack(aRecvTrack);
+  if (pipeline) {
+    pipeline->AddRIDExtension_m(aExtensionId);
+  }
+  return NS_OK;
+}
+
+nsresult
+PeerConnectionImpl::AddRIDFilter(MediaStreamTrack& aRecvTrack,
+                                 const nsAString& aRid)
+{
+  RefPtr<MediaPipeline> pipeline = GetMediaPipelineForTrack(aRecvTrack);
+  if (pipeline) {
+    pipeline->AddRIDFilter_m(NS_ConvertUTF16toUTF8(aRid).get());
   }
   return NS_OK;
 }
@@ -2482,8 +2533,9 @@ PeerConnectionImpl::InsertDTMF(mozilla::dom::RTCRtpSender& sender,
   state->mDuration = duration;
   state->mInterToneGap = interToneGap;
   if (!state->mTones.IsEmpty()) {
-    state->mSendTimer->InitWithFuncCallback(DTMFSendTimerCallback_m, state, 0,
-                                            nsITimer::TYPE_ONE_SHOT);
+    state->mSendTimer->InitWithNamedFuncCallback(DTMFSendTimerCallback_m, state, 0,
+                                                 nsITimer::TYPE_ONE_SHOT,
+                                                 "DTMFSendTimerCallback_m");
   }
   return NS_OK;
 }
@@ -2750,32 +2802,70 @@ PeerConnectionImpl::GetFingerprint(char** fingerprint)
 }
 
 NS_IMETHODIMP
-PeerConnectionImpl::GetLocalDescription(char** aSDP)
+PeerConnectionImpl::GetLocalDescription(nsAString& aSDP)
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
-  MOZ_ASSERT(aSDP);
-  std::string localSdp = mJsepSession->GetLocalDescription();
 
-  char* tmp = new char[localSdp.size() + 1];
-  std::copy(localSdp.begin(), localSdp.end(), tmp);
-  tmp[localSdp.size()] = '\0';
+  std::string localSdp = mJsepSession->GetLocalDescription(
+      kJsepDescriptionPendingOrCurrent);
+  aSDP = NS_ConvertASCIItoUTF16(localSdp.c_str());
 
-  *aSDP = tmp;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-PeerConnectionImpl::GetRemoteDescription(char** aSDP)
+PeerConnectionImpl::GetCurrentLocalDescription(nsAString& aSDP)
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
-  MOZ_ASSERT(aSDP);
-  std::string remoteSdp = mJsepSession->GetRemoteDescription();
 
-  char* tmp = new char[remoteSdp.size() + 1];
-  std::copy(remoteSdp.begin(), remoteSdp.end(), tmp);
-  tmp[remoteSdp.size()] = '\0';
+  std::string localSdp = mJsepSession->GetLocalDescription(kJsepDescriptionCurrent);
+  aSDP = NS_ConvertASCIItoUTF16(localSdp.c_str());
 
-  *aSDP = tmp;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PeerConnectionImpl::GetPendingLocalDescription(nsAString& aSDP)
+{
+  PC_AUTO_ENTER_API_CALL_NO_CHECK();
+
+  std::string localSdp = mJsepSession->GetLocalDescription(kJsepDescriptionPending);
+  aSDP = NS_ConvertASCIItoUTF16(localSdp.c_str());
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PeerConnectionImpl::GetRemoteDescription(nsAString& aSDP)
+{
+  PC_AUTO_ENTER_API_CALL_NO_CHECK();
+
+  std::string remoteSdp = mJsepSession->GetRemoteDescription(
+      kJsepDescriptionPendingOrCurrent);
+  aSDP = NS_ConvertASCIItoUTF16(remoteSdp.c_str());
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PeerConnectionImpl::GetCurrentRemoteDescription(nsAString& aSDP)
+{
+  PC_AUTO_ENTER_API_CALL_NO_CHECK();
+
+  std::string remoteSdp = mJsepSession->GetRemoteDescription(kJsepDescriptionCurrent);
+  aSDP = NS_ConvertASCIItoUTF16(remoteSdp.c_str());
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PeerConnectionImpl::GetPendingRemoteDescription(nsAString& aSDP)
+{
+  PC_AUTO_ENTER_API_CALL_NO_CHECK();
+
+  std::string remoteSdp = mJsepSession->GetRemoteDescription(kJsepDescriptionPending);
+  aSDP = NS_ConvertASCIItoUTF16(remoteSdp.c_str());
+
   return NS_OK;
 }
 
@@ -2879,6 +2969,12 @@ void
 PeerConnectionImpl::RecordEndOfCallTelemetry() const
 {
   if (!mJsepSession) {
+    return;
+  }
+
+  // Exit early if no connection information was ever exchanged,
+  // This prevents distortion of telemetry data.
+  if (mLocalRequestedSDP.empty() && mRemoteRequestedSDP.empty()) {
     return;
   }
 
@@ -3059,6 +3155,11 @@ PeerConnectionImpl::SetSignalingState_m(PCImplSignalingState aSignalingState,
 
   if (mSignalingState == PCImplSignalingState::SignalingClosed) {
     CloseInt();
+    // Uncount this connection as active on the inner window upon close.
+    if (mWindow && mActiveOnWindow) {
+      mWindow->RemovePeerConnection();
+      mActiveOnWindow = false;
+    }
   }
 
   RefPtr<PeerConnectionObserver> pco = do_QueryObjectReferent(mPCObserver);
@@ -3311,6 +3412,12 @@ void PeerConnectionImpl::IceConnectionStateChange(
     }
   }
 
+  // Uncount this connection as active on the inner window upon close.
+  if (mWindow && mActiveOnWindow && mIceConnectionState == PCImplIceConnectionState::Closed) {
+    mWindow->RemovePeerConnection();
+    mActiveOnWindow = false;
+  }
+
   // Would be nice if we had a means of converting one of these dom enums
   // to a string that wasn't almost as much text as this switch statement...
   switch (mIceConnectionState) {
@@ -3459,8 +3566,13 @@ PeerConnectionImpl::BuildStatsQuery_m(
   // Populate SDP on main
   if (query->internalStats) {
     if (mJsepSession) {
-      std::string localDescription = mJsepSession->GetLocalDescription();
-      std::string remoteDescription = mJsepSession->GetRemoteDescription();
+      // TODO we probably should report Current and Pending SDPs here
+      // separately. Plus the raw SDP we got from JS (mLocalRequestedSDP).
+      // And if it's the offer or answer would also be nice.
+      std::string localDescription = mJsepSession->GetLocalDescription(
+          kJsepDescriptionPendingOrCurrent);
+      std::string remoteDescription = mJsepSession->GetRemoteDescription(
+          kJsepDescriptionPendingOrCurrent);
       query->report->mLocalSdp.Construct(
           NS_ConvertASCIItoUTF16(localDescription.c_str()));
       query->report->mRemoteSdp.Construct(
@@ -3533,7 +3645,7 @@ static void RecordIceStats_s(
     DOMHighResTimeStamp now,
     RTCStatsReportInternal* report) {
 
-  NS_ConvertASCIItoUTF16 componentId(mediaStream.name().c_str());
+  NS_ConvertASCIItoUTF16 transportId(mediaStream.name().c_str());
 
   std::vector<NrIceCandidatePair> candPairs;
   nsresult res = mediaStream.GetCandidatePairs(&candPairs);
@@ -3551,14 +3663,20 @@ static void RecordIceStats_s(
 
     RTCIceCandidatePairStats s;
     s.mId.Construct(codeword);
-    s.mComponentId.Construct(componentId);
+    s.mTransportId.Construct(transportId);
     s.mTimestamp.Construct(now);
     s.mType.Construct(RTCStatsType::Candidate_pair);
     s.mLocalCandidateId.Construct(localCodeword);
     s.mRemoteCandidateId.Construct(remoteCodeword);
     s.mNominated.Construct(candPair.nominated);
+    s.mWritable.Construct(candPair.writable);
+    s.mReadable.Construct(candPair.readable);
     s.mPriority.Construct(candPair.priority);
     s.mSelected.Construct(candPair.selected);
+    s.mBytesSent.Construct(candPair.bytes_sent);
+    s.mBytesReceived.Construct(candPair.bytes_recvd);
+    s.mLastPacketSentTimestamp.Construct(candPair.ms_since_last_send);
+    s.mLastPacketReceivedTimestamp.Construct(candPair.ms_since_last_recv);
     s.mState.Construct(RTCStatsIceCandidatePairState(candPair.state));
     report->mIceCandidatePairStats.Value().AppendElement(s, fallible);
   }
@@ -3567,7 +3685,7 @@ static void RecordIceStats_s(
   if (NS_SUCCEEDED(mediaStream.GetLocalCandidates(&candidates))) {
     ToRTCIceCandidateStats(candidates,
                            RTCStatsType::Local_candidate,
-                           componentId,
+                           transportId,
                            now,
                            report);
   }
@@ -3576,7 +3694,7 @@ static void RecordIceStats_s(
   if (NS_SUCCEEDED(mediaStream.GetRemoteCandidates(&candidates))) {
     ToRTCIceCandidateStats(candidates,
                            RTCStatsType::Remote_candidate,
-                           componentId,
+                           transportId,
                            now,
                            report);
   }
@@ -3781,20 +3899,26 @@ PeerConnectionImpl::ExecuteStatsQuery_s(RTCStatsQuery *query) {
           double bitrateMean;
           double bitrateStdDev;
           uint32_t discardedPackets;
+          uint32_t framesDecoded;
           if (mp.Conduit()->GetVideoDecoderStats(&framerateMean,
                                                  &framerateStdDev,
                                                  &bitrateMean,
                                                  &bitrateStdDev,
-                                                 &discardedPackets)) {
+                                                 &discardedPackets,
+                                                 &framesDecoded)) {
             s.mFramerateMean.Construct(framerateMean);
             s.mFramerateStdDev.Construct(framerateStdDev);
             s.mBitrateMean.Construct(bitrateMean);
             s.mBitrateStdDev.Construct(bitrateStdDev);
             s.mDiscardedPackets.Construct(discardedPackets);
+            s.mFramesDecoded.Construct(framesDecoded);
           }
         }
         query->report->mInboundRTPStreamStats.Value().AppendElement(s,
                                                                     fallible);
+        // Fill in Contributing Source statistics
+        mp.GetContributingSourceStats(localId,
+            query->report->mRtpContributingSourceStats.Value());
         break;
       }
     }
@@ -3992,13 +4116,15 @@ PeerConnectionImpl::DTMFSendTimerCallback_m(nsITimer* timer, void* closure)
     state->mTones.Cut(0, 1);
 
     if (tone == -1) {
-      state->mSendTimer->InitWithFuncCallback(DTMFSendTimerCallback_m, state,
-                                              2000, nsITimer::TYPE_ONE_SHOT);
+      state->mSendTimer->InitWithNamedFuncCallback(DTMFSendTimerCallback_m, state,
+                                                   2000, nsITimer::TYPE_ONE_SHOT,
+                                                   "DTMFSendTimerCallback_m");
     } else {
       // Reset delay if necessary
-      state->mSendTimer->InitWithFuncCallback(DTMFSendTimerCallback_m, state,
-                                              state->mDuration + state->mInterToneGap,
-                                              nsITimer::TYPE_ONE_SHOT);
+      state->mSendTimer->InitWithNamedFuncCallback(DTMFSendTimerCallback_m, state,
+                                                   state->mDuration + state->mInterToneGap,
+                                                   nsITimer::TYPE_ONE_SHOT,
+                                                   "DTMFSendTimerCallback_m");
 
       RefPtr<AudioSessionConduit> conduit =
         state->mPeerConnectionImpl->mMedia->GetAudioConduit(state->mLevel);

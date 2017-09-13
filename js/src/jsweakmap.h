@@ -108,7 +108,7 @@ class WeakMapBase : public mozilla::LinkedListElement<WeakMapBase>
 };
 
 template <typename T>
-static T extractUnbarriered(WriteBarrieredBase<T> v)
+static T extractUnbarriered(const WriteBarrieredBase<T>& v)
 {
     return v.get();
 }
@@ -200,9 +200,14 @@ class WeakMap : public HashMap<Key, Value, HashPolicy, RuntimeAllocPolicy>,
     }
 
     void trace(JSTracer* trc) override {
-        MOZ_ASSERT(isInList());
+        MOZ_ASSERT_IF(JS::CurrentThreadIsHeapBusy(), isInList());
 
-        if (trc->isMarkingTracer() || trc->isOmrMarkingTracer()) {
+        TraceNullableEdge(trc, &memberOf, "WeakMap owner");
+
+        if (!Base::initialized())
+            return;
+
+        if (trc->isMarkingTracer()) {
             MOZ_ASSERT(trc->weakMapAction() == ExpandWeakMaps);
             marked = true;
             (void) markIteratively(GCMarker::fromTracer(trc));
@@ -359,26 +364,6 @@ class WeakMap : public HashMap<Key, Value, HashPolicy, RuntimeAllocPolicy>,
 #endif
     }
 };
-
-/* WeakMap methods exposed so they can be installed in the self-hosting global. */
-
-extern JSObject*
-InitBareWeakMapCtor(JSContext* cx, js::HandleObject obj);
-
-extern bool
-WeakMap_has(JSContext* cx, unsigned argc, Value* vp);
-
-extern bool
-WeakMap_get(JSContext* cx, unsigned argc, Value* vp);
-
-extern bool
-WeakMap_set(JSContext* cx, unsigned argc, Value* vp);
-
-extern bool
-WeakMap_delete(JSContext* cx, unsigned argc, Value* vp);
-
-extern JSObject*
-InitWeakMapClass(JSContext* cx, HandleObject obj);
 
 
 class ObjectValueMap : public WeakMap<HeapPtr<JSObject*>, HeapPtr<Value>,

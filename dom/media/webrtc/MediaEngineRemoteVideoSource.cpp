@@ -36,9 +36,9 @@ MediaEngineRemoteVideoSource::MediaEngineRemoteVideoSource(
     mScary(aScary)
 {
   MOZ_ASSERT(aMediaSource != dom::MediaSourceEnum::Other);
-  mSettings.mWidth.Construct(0);
-  mSettings.mHeight.Construct(0);
-  mSettings.mFrameRate.Construct(0);
+  mSettings->mWidth.Construct(0);
+  mSettings->mHeight.Construct(0);
+  mSettings->mFrameRate.Construct(0);
   Init();
 }
 
@@ -61,8 +61,6 @@ MediaEngineRemoteVideoSource::Init()
   SetUUID(uniqueId);
 
   mInitDone = true;
-
-  return;
 }
 
 void
@@ -72,7 +70,6 @@ MediaEngineRemoteVideoSource::Shutdown()
   if (!mInitDone) {
     return;
   }
-  Super::Shutdown();
   if (mState == kStarted) {
     SourceMediaStream *source;
     bool empty;
@@ -98,8 +95,8 @@ MediaEngineRemoteVideoSource::Shutdown()
   }
 
   MOZ_ASSERT(mState == kReleased);
+  Super::Shutdown();
   mInitDone = false;
-  return;
 }
 
 nsresult
@@ -209,8 +206,10 @@ MediaEngineRemoteVideoSource::Stop(mozilla::SourceMediaStream* aSource,
     MonitorAutoLock lock(mMonitor);
 
     // Drop any cached image so we don't start with a stale image on next
-    // usage
+    // usage.  Also, gfx gets very upset if these are held until this object
+    // is gc'd in final-cc during shutdown (bug 1374164)
     mImage = nullptr;
+    // we drop mImageContainer only in MediaEngineCaptureVideoSource::Shutdown()
 
     size_t i = mSources.IndexOf(aSource);
     if (i == mSources.NoIndex) {
@@ -314,12 +313,26 @@ MediaEngineRemoteVideoSource::SetLastCapability(
   mLastCapability = mCapability;
 
   webrtc::CaptureCapability cap = aCapability;
-  RefPtr<MediaEngineRemoteVideoSource> that = this;
+  switch (mMediaSource) {
+    case dom::MediaSourceEnum::Screen:
+    case dom::MediaSourceEnum::Window:
+    case dom::MediaSourceEnum::Application:
+      // Undo the hack where ideal and max constraints are crammed together
+      // in mCapability for consumption by low-level code. We don't actually
+      // know the real resolution yet, so report min(ideal, max) for now.
+      cap.width = std::min(cap.width >> 16, cap.width & 0xffff);
+      cap.height = std::min(cap.height >> 16, cap.height & 0xffff);
+      break;
 
-  NS_DispatchToMainThread(media::NewRunnableFrom([that, cap]() mutable {
-    that->mSettings.mWidth.Value() = cap.width;
-    that->mSettings.mHeight.Value() = cap.height;
-    that->mSettings.mFrameRate.Value() = cap.maxFPS;
+    default:
+      break;
+  }
+  auto settings = mSettings;
+
+  NS_DispatchToMainThread(media::NewRunnableFrom([settings, cap]() mutable {
+    settings->mWidth.Value() = cap.width;
+    settings->mHeight.Value() = cap.height;
+    settings->mFrameRate.Value() = cap.maxFPS;
     return NS_OK;
   }));
 }
@@ -348,14 +361,18 @@ MediaEngineRemoteVideoSource::NotifyPull(MediaStreamGraph* aGraph,
 void
 MediaEngineRemoteVideoSource::FrameSizeChange(unsigned int w, unsigned int h)
 {
-#if defined(MOZ_WIDGET_GONK)
-  mMonitor.AssertCurrentThreadOwns(); // mWidth and mHeight are protected...
-#endif
   if ((mWidth < 0) || (mHeight < 0) ||
       (w !=  (unsigned int) mWidth) || (h != (unsigned int) mHeight)) {
     LOG(("MediaEngineRemoteVideoSource Video FrameSizeChange: %ux%u was %ux%u", w, h, mWidth, mHeight));
     mWidth = w;
     mHeight = h;
+
+    auto settings = mSettings;
+    NS_DispatchToMainThread(media::NewRunnableFrom([settings, w, h]() mutable {
+      settings->mWidth.Value() = w;
+      settings->mHeight.Value() = h;
+      return NS_OK;
+    }));
   }
 }
 
@@ -372,42 +389,48 @@ MediaEngineRemoteVideoSource::DeliverFrame(uint8_t* aBuffer ,
   // Update the dimensions
   FrameSizeChange(aProps.width(), aProps.height());
 
-  // Create a video frame and append it to the track.
-  RefPtr<layers::PlanarYCbCrImage> image = mImageContainer->CreatePlanarYCbCrImage();
-
-  uint8_t* frame = static_cast<uint8_t*> (aBuffer);
-  const uint8_t lumaBpp = 8;
-  const uint8_t chromaBpp = 4;
-
-  // Take lots of care to round up!
   layers::PlanarYCbCrData data;
-  data.mYChannel = frame;
-  data.mYSize = IntSize(mWidth, mHeight);
-  data.mYStride = (mWidth * lumaBpp + 7)/ 8;
-  data.mCbCrStride = (mWidth * chromaBpp + 7) / 8;
-  data.mCbChannel = frame + mHeight * data.mYStride;
-  data.mCrChannel = data.mCbChannel + ((mHeight+1)/2) * data.mCbCrStride;
-  data.mCbCrSize = IntSize((mWidth+1)/ 2, (mHeight+1)/ 2);
-  data.mPicX = 0;
-  data.mPicY = 0;
-  data.mPicSize = IntSize(mWidth, mHeight);
-  data.mStereoMode = StereoMode::MONO;
+  RefPtr<layers::PlanarYCbCrImage> image;
+  {
+    // We grab the lock twice, but don't hold it across the (long) CopyData
+    MonitorAutoLock lock(mMonitor);
+    if (!mImageContainer) {
+      LOG(("DeliverFrame() called after Stop()!"));
+      return 0;
+    }
+    // Create a video frame and append it to the track.
+    image = mImageContainer->CreatePlanarYCbCrImage();
+
+    uint8_t* frame = static_cast<uint8_t*> (aBuffer);
+    const uint8_t lumaBpp = 8;
+    const uint8_t chromaBpp = 4;
+
+    // Take lots of care to round up!
+    data.mYChannel = frame;
+    data.mYSize = IntSize(mWidth, mHeight);
+    data.mYStride = (mWidth * lumaBpp + 7)/ 8;
+    data.mCbCrStride = (mWidth * chromaBpp + 7) / 8;
+    data.mCbChannel = frame + mHeight * data.mYStride;
+    data.mCrChannel = data.mCbChannel + ((mHeight+1)/2) * data.mCbCrStride;
+    data.mCbCrSize = IntSize((mWidth+1)/ 2, (mHeight+1)/ 2);
+    data.mPicX = 0;
+    data.mPicY = 0;
+    data.mPicSize = IntSize(mWidth, mHeight);
+    data.mStereoMode = StereoMode::MONO;
+  }
 
   if (!image->CopyData(data)) {
     MOZ_ASSERT(false);
     return 0;
   }
 
+  MonitorAutoLock lock(mMonitor);
 #ifdef DEBUG
   static uint32_t frame_num = 0;
   LOGFRAME(("frame %d (%dx%d); timeStamp %u, ntpTimeMs %" PRIu64 ", renderTimeMs %" PRIu64,
             frame_num++, mWidth, mHeight,
             aProps.timeStamp(), aProps.ntpTimeMs(), aProps.renderTimeMs()));
 #endif
-
-  // we don't touch anything in 'this' until here (except for snapshot,
-  // which has it's own lock)
-  MonitorAutoLock lock(mMonitor);
 
   // implicitly releases last image
   mImage = image.forget();

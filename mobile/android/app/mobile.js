@@ -23,7 +23,7 @@ pref("toolkit.browser.cacheRatioHeight", 3000);
 // expires.
 pref("toolkit.browser.contentViewExpire", 3000);
 
-pref("toolkit.defaultChromeURI", "chrome://browser/content/browser.xul");
+pref("toolkit.defaultChromeURI", "chrome://geckoview/content/geckoview.xul");
 pref("browser.chromeURL", "chrome://browser/content/");
 
 // If a tab has not been active for this long (seconds), then it may be
@@ -122,7 +122,7 @@ pref("network.predictor.max-db-size", 2097152); // bytes
 pref("network.predictor.preserve", 50); // percentage of predictor data to keep when cleaning up
 
 // Use JS mDNS as a fallback
-pref("network.mdns.use_js_fallback", true);
+pref("network.mdns.use_js_fallback", false);
 
 /* history max results display */
 pref("browser.display.history.maxresults", 100);
@@ -141,7 +141,7 @@ pref("browser.sessionstore.resume_from_crash", true);
 pref("browser.sessionstore.interval", 10000); // milliseconds
 pref("browser.sessionstore.backupInterval", 120000); // milliseconds -> 2 minutes
 pref("browser.sessionstore.max_tabs_undo", 10);
-pref("browser.sessionstore.max_resumed_crashes", 1);
+pref("browser.sessionstore.max_resumed_crashes", 2);
 pref("browser.sessionstore.privacy_level", 0); // saving data: 0 = all, 1 = unencrypted sites, 2 = never
 pref("browser.sessionstore.debug_logging", false);
 
@@ -155,15 +155,6 @@ pref("layout.css.report_errors", false);
 /* download manager (don't show the window or alert) */
 pref("browser.download.useDownloadDir", true);
 pref("browser.download.folderList", 1); // Default to ~/Downloads
-pref("browser.download.manager.showAlertOnComplete", false);
-pref("browser.download.manager.showAlertInterval", 2000);
-pref("browser.download.manager.retention", 2);
-pref("browser.download.manager.showWhenStarting", false);
-pref("browser.download.manager.closeWhenDone", true);
-pref("browser.download.manager.openDelay", 0);
-pref("browser.download.manager.focusWhenStarting", false);
-pref("browser.download.manager.flashCount", 2);
-pref("browser.download.manager.displayedHistoryDays", 7);
 pref("browser.download.manager.addToRecentDocs", true);
 
 /* download helper */
@@ -418,16 +409,19 @@ pref("browser.ui.zoom.force-user-scalable", false);
 // When removing this Nightly flag, also remember to remove the flags surrounding this feature
 // in GeckoPreferences and BrowserApp (see bug 1245930).
 #ifdef NIGHTLY_BUILD
-pref("ui.zoomedview.enabled", true);
 pref("ui.bookmark.mobilefolder.enabled", true);
 #else
-pref("ui.zoomedview.enabled", false);
 pref("ui.bookmark.mobilefolder.enabled", false);
 #endif
-pref("ui.zoomedview.keepLimitSize", 16); // value in layer pixels, used to not keep the large elements in the cluster list (Bug 1191041)
-pref("ui.zoomedview.limitReadableSize", 8); // value in layer pixels
-pref("ui.zoomedview.defaultZoomFactor", 2);
-pref("ui.zoomedview.simplified", true); // Do not display all the zoomed view controls, do not use size heurisistic
+
+#if MOZ_UPDATE_CHANNEL == nightly
+pref("mma.enabled", true);
+#elif MOZ_UPDATE_CHANNEL == beta
+pref("mma.enabled", true);
+#else
+pref("mma.enabled", true);
+#endif
+
 
 pref("ui.touch.radius.enabled", false);
 pref("ui.touch.radius.leftmm", 3);
@@ -453,14 +447,8 @@ pref("browser.ui.scroll-toolbar-threshold", 10);
 pref("browser.ui.selection.distance", 250);
 
 // plugins
-pref("plugin.disable", false);
+pref("plugin.disable", true);
 pref("dom.ipc.plugins.enabled", false);
-
-// This pref isn't actually used anymore, but we're leaving this here to avoid changing
-// the default so that we can migrate a user-set pref. See bug 885357.
-pref("plugins.click_to_play", true);
-// The default value for nsIPluginTag.enabledState (STATE_CLICKTOPLAY = 1)
-pref("plugin.default.state", 1);
 
 // product URLs
 // The breakpad report server to link to in about:crashes
@@ -574,7 +562,14 @@ pref("apz.fling_friction", "0.004");
 pref("apz.fling_stopped_threshold", "0.0");
 pref("apz.max_velocity_inches_per_ms", "0.07");
 pref("apz.overscroll.enabled", true);
+pref("apz.second_tap_tolerance", "0.3");
+pref("apz.touch_move_tolerance", "0.03");
 pref("apz.touch_start_tolerance", "0.06");
+
+#ifdef NIGHTLY_BUILD
+// Temporary fix of Bug 1390145 for Fennec Nightly
+pref("apz.frame_delay.enabled", false);
+#endif
 
 pref("layers.progressive-paint", true);
 pref("layers.low-precision-buffer", true);
@@ -604,6 +599,9 @@ pref("media.cache_size", 32768);    // 32MB media cache
 // below 10s of buffered data.
 pref("media.cache_resume_threshold", 10);
 pref("media.cache_readahead_limit", 30);
+// On mobile we'll throttle the download once the readahead_limit is hit,
+// even if the download is slow. This is to preserve battery and data.
+pref("media.throttle-regardless-of-download-rate", true);
 
 // Number of video frames we buffer while decoding video.
 // On Android this is decided by a similar value which varies for
@@ -633,6 +631,13 @@ pref("media.mediadrm-widevinecdm.visible", true);
 // Enable EME (Encrypted Media Extensions)
 pref("media.eme.enabled", true);
 #endif
+
+#ifdef NIGHTLY_BUILD
+pref("media.hls.enabled", true);
+#endif
+
+// Whether to suspend decoding of videos in background tabs.
+pref("media.suspend-bkgnd-video.enabled", true);
 
 // optimize images memory usage
 pref("image.downscale-during-decode.enabled", true);
@@ -894,10 +899,6 @@ pref("dom.push.maxRecentMessageIDsPerSubscription", 0);
 pref("dom.push.enabled", true);
 #endif
 
-// Maximum number of setTimeout()/setInterval() callbacks to run in a single
-// event loop runnable. Minimum value of 1.
-pref("dom.timeout.max_consecutive_callbacks", 3);
-
 // The remote content URL where FxAccountsWebChannel messages originate.  Must use HTTPS.
 pref("identity.fxaccounts.remote.webchannel.uri", "https://accounts.firefox.com");
 
@@ -919,6 +920,7 @@ pref("dom.presentation.receiver.enabled", true); // enable 1-UA mode
 
 pref("dom.audiochannel.audioCompeting", true);
 pref("dom.audiochannel.mediaControl", true);
+pref("media.block-autoplay-until-in-foreground", false);
 
 // Space separated list of URLS that are allowed to send objects (instead of
 // only strings) through webchannels. This list is duplicated in browser/app/profile/firefox.js
@@ -927,3 +929,14 @@ pref("webchannel.allowObject.urlWhitelist", "https://accounts.firefox.com https:
 pref("media.openUnsupportedTypeWithExternalApp", true);
 
 pref("dom.keyboardevent.dispatch_during_composition", true);
+
+#if CPU_ARCH == aarch64
+pref("javascript.options.native_regexp", false);
+#endif
+
+// Ask for permission when enumerating WebRTC devices.
+pref("media.navigator.permission.device", true);
+
+#ifdef NIGHTLY_BUILD
+pref("media.videocontrols.lock-video-orientation", true);
+#endif

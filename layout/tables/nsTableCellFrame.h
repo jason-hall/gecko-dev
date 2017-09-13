@@ -37,25 +37,26 @@ class nsTableCellFrame : public nsContainerFrame,
   typedef mozilla::gfx::DrawTarget DrawTarget;
   typedef mozilla::image::DrawResult DrawResult;
 
+  friend nsTableCellFrame* NS_NewTableCellFrame(nsIPresShell*   aPresShell,
+                                                nsStyleContext* aContext,
+                                                nsTableFrame* aTableFrame);
+
+  nsTableCellFrame(nsStyleContext* aContext, nsTableFrame* aTableFrame)
+    : nsTableCellFrame(aContext, aTableFrame, kClassID) {}
+
 protected:
   typedef mozilla::WritingMode WritingMode;
   typedef mozilla::LogicalSide LogicalSide;
   typedef mozilla::LogicalMargin LogicalMargin;
 
 public:
-  NS_DECL_QUERYFRAME_TARGET(nsTableCellFrame)
   NS_DECL_QUERYFRAME
-  NS_DECL_FRAMEARENA_HELPERS
-
-  // default constructor supplied by the compiler
-
-  nsTableCellFrame(nsStyleContext* aContext, nsTableFrame* aTableFrame);
-  ~nsTableCellFrame();
+  NS_DECL_FRAMEARENA_HELPERS(nsTableCellFrame)
 
   nsTableRowFrame* GetTableRowFrame() const
   {
     nsIFrame* parent = GetParent();
-    MOZ_ASSERT(parent && parent->GetType() == nsGkAtoms::tableRowFrame);
+    MOZ_ASSERT(parent && parent->IsTableRowFrame());
     return static_cast<nsTableRowFrame*>(parent);
   }
 
@@ -104,33 +105,20 @@ public:
   virtual bool NeedsToObserve(const ReflowInput& aReflowInput) override;
 
   virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists) override;
 
-  DrawResult PaintCellBackground(nsRenderingContext& aRenderingContext,
-                                 const nsRect& aDirtyRect, nsPoint aPt,
-                                 uint32_t aFlags);
-
- 
   virtual nsresult ProcessBorders(nsTableFrame* aFrame,
                                   nsDisplayListBuilder* aBuilder,
                                   const nsDisplayListSet& aLists);
 
-  virtual nscoord GetMinISize(nsRenderingContext *aRenderingContext) override;
-  virtual nscoord GetPrefISize(nsRenderingContext *aRenderingContext) override;
+  virtual nscoord GetMinISize(gfxContext *aRenderingContext) override;
+  virtual nscoord GetPrefISize(gfxContext *aRenderingContext) override;
   virtual IntrinsicISizeOffsetData IntrinsicISizeOffsets() override;
 
   virtual void Reflow(nsPresContext*      aPresContext,
                       ReflowOutput& aDesiredSize,
                       const ReflowInput& aReflowInput,
                       nsReflowStatus&      aStatus) override;
-
-  /**
-   * Get the "type" of the frame
-   *
-   * @see nsLayoutAtoms::tableCellFrame
-   */
-  virtual nsIAtom* GetType() const override;
 
 #ifdef DEBUG_FRAME_DUMP
   virtual nsresult GetFrameName(nsAString& aResult) const override;
@@ -161,19 +149,16 @@ public:
 
   /**
    * return the cell's specified row span. this is what was specified in the
-   * content model or in the style info, and is always >= 1.
+   * content model or in the style info, and is always >= 0.
    * to get the effective row span (the actual value that applies), use GetEffectiveRowSpan()
    * @see nsTableFrame::GetEffectiveRowSpan()
    */
-  virtual int32_t GetRowSpan();
+  int32_t GetRowSpan();
 
   // there is no set row index because row index depends on the cell's parent row only
 
-  // Update the style on the block wrappers around our kids.
-  virtual void DoUpdateStyleOfOwnedAnonBoxes(
-    mozilla::ServoStyleSet& aStyleSet,
-    nsStyleChangeList& aChangeList,
-    nsChangeHint aHintForThisFrame) override;
+  // Return our cell content frame.
+  void AppendDirectlyOwnedAnonBoxes(nsTArray<OwnedAnonBox>& aResult) override;
 
   /*---------------- nsITableCellLayout methods ------------------------*/
 
@@ -193,7 +178,7 @@ public:
    * to get the effective col span (the actual value that applies), use GetEffectiveColSpan()
    * @see nsTableFrame::GetEffectiveColSpan()
    */
-  virtual int32_t GetColSpan();
+  int32_t GetColSpan();
 
   /** return the cell's column index (starting at 0 for the first column) */
   virtual nsresult GetColIndex(int32_t &aColIndex) const override;
@@ -211,7 +196,7 @@ public:
   /** set the desired size returned by this frame during its last reflow */
   inline void SetDesiredSize(const ReflowOutput & aDesiredSize);
 
-  bool GetContentEmpty();
+  bool GetContentEmpty() const;
   void SetContentEmpty(bool aContentEmpty);
 
   bool HasPctOverBSize();
@@ -221,7 +206,7 @@ public:
 
   virtual LogicalMargin GetBorderWidth(WritingMode aWM) const;
 
-  virtual DrawResult PaintBackground(nsRenderingContext& aRenderingContext,
+  virtual DrawResult PaintBackground(gfxContext&          aRenderingContext,
                                      const nsRect&        aDirtyRect,
                                      nsPoint              aPt,
                                      uint32_t             aFlags);
@@ -234,12 +219,20 @@ public:
   {
     return nsContainerFrame::IsFrameOfType(aFlags & ~(nsIFrame::eTablePart));
   }
-  
+
   virtual void InvalidateFrame(uint32_t aDisplayItemKey = 0) override;
   virtual void InvalidateFrameWithRect(const nsRect& aRect, uint32_t aDisplayItemKey = 0) override;
   virtual void InvalidateFrameForRemoval() override { InvalidateFrameSubtree(); }
 
+  bool ShouldPaintBordersAndBackgrounds() const;
+
+  bool ShouldPaintBackground(nsDisplayListBuilder* aBuilder);
+
 protected:
+  nsTableCellFrame(nsStyleContext* aContext, nsTableFrame* aTableFrame,
+                   ClassID aID);
+  ~nsTableCellFrame();
+
   virtual LogicalSides
   GetLogicalSkipSides(const ReflowInput* aReflowInput = nullptr) const override;
 
@@ -275,7 +268,7 @@ inline void nsTableCellFrame::SetDesiredSize(const ReflowOutput & aDesiredSize)
   mDesiredSize = aDesiredSize.Size(wm).ConvertTo(GetWritingMode(), wm);
 }
 
-inline bool nsTableCellFrame::GetContentEmpty()
+inline bool nsTableCellFrame::GetContentEmpty() const
 {
   return HasAnyStateBits(NS_TABLE_CELL_CONTENT_EMPTY);
 }
@@ -308,19 +301,13 @@ class nsBCTableCellFrame final : public nsTableCellFrame
 {
   typedef mozilla::image::DrawResult DrawResult;
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsBCTableCellFrame)
 
   nsBCTableCellFrame(nsStyleContext* aContext, nsTableFrame* aTableFrame);
 
   ~nsBCTableCellFrame();
 
-  virtual nsIAtom* GetType() const override;
-
   virtual nsMargin GetUsedBorder() const override;
-  virtual bool GetBorderRadii(const nsSize& aFrameSize,
-                              const nsSize& aBorderArea,
-                              Sides aSkipSides,
-                              nscoord aRadii[8]) const override;
 
   // Get the *inner half of the border only*, in twips.
   virtual LogicalMargin GetBorderWidth(WritingMode aWM) const override;
@@ -337,7 +324,7 @@ public:
   virtual nsresult GetFrameName(nsAString& aResult) const override;
 #endif
 
-  virtual DrawResult PaintBackground(nsRenderingContext& aRenderingContext,
+  virtual DrawResult PaintBackground(gfxContext&          aRenderingContext,
                                      const nsRect&        aDirtyRect,
                                      nsPoint              aPt,
                                      uint32_t             aFlags) override;

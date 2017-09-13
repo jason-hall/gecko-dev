@@ -9,6 +9,7 @@
 
 #include "mozilla/Atomics.h"
 #include "mozilla/EnumSet.h"
+#include "mozilla/Maybe.h"
 
 #include "jsfriendapi.h"
 #include "jsgc.h"
@@ -20,6 +21,7 @@
 #include "gc/StoreBuffer.h"
 #include "gc/Tracer.h"
 #include "js/GCAnnotations.h"
+#include "js/UniquePtr.h"
 
 namespace js {
 
@@ -341,8 +343,8 @@ enum IncrementalProgress
 
 template<typename F>
 struct Callback {
-    ActiveThreadData<F> op;
-    ActiveThreadData<void*> data;
+    ActiveThreadOrGCTaskData<F> op;
+    ActiveThreadOrGCTaskData<void*> data;
 
     Callback()
       : op(nullptr), data(nullptr)
@@ -358,6 +360,56 @@ using CallbackVector = ActiveThreadData<Vector<Callback<F>, 4, SystemAllocPolicy
 typedef HashMap<Value*, const char*, DefaultHasher<Value*>, SystemAllocPolicy> RootedValueMap;
 
 using AllocKinds = mozilla::EnumSet<AllocKind>;
+
+template <typename T>
+class MemoryCounter
+{
+    // Bytes counter to measure memory pressure for GC scheduling. It runs
+    // from maxBytes down to zero.
+    mozilla::Atomic<ptrdiff_t, mozilla::ReleaseAcquire> bytes_;
+
+    // GC trigger threshold for memory allocations.
+    js::ActiveThreadData<size_t> maxBytes_;
+
+    // Whether a GC has been triggered as a result of bytes falling below
+    // zero.
+    //
+    // This should be a bool, but Atomic only supports 32-bit and pointer-sized
+    // types.
+    mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire> triggered_;
+
+  public:
+    MemoryCounter()
+      : bytes_(0),
+        maxBytes_(0),
+        triggered_(false)
+    { }
+
+    void reset() {
+        bytes_ = maxBytes_;
+        triggered_ = false;
+    }
+
+    void setMax(size_t newMax) {
+        // For compatibility treat any value that exceeds PTRDIFF_T_MAX to
+        // mean that value.
+        maxBytes_ = (ptrdiff_t(newMax) >= 0) ? newMax : size_t(-1) >> 1;
+        reset();
+    }
+
+    bool update(T* owner, size_t bytes) {
+        bytes_ -= ptrdiff_t(bytes);
+        if (MOZ_UNLIKELY(isTooMuchMalloc())) {
+            if (!triggered_)
+                triggered_ = owner->triggerGCForTooMuchMalloc();
+        }
+        return triggered_;
+    }
+
+    ptrdiff_t bytes() const { return bytes_; }
+    size_t maxBytes() const { return maxBytes_; }
+    bool isTooMuchMalloc() const { return bytes_ <= 0; }
+};
 
 class GCRuntime
 {
@@ -376,6 +428,7 @@ class GCRuntime
     void removeRoot(Value* vp);
 
     MOZ_MUST_USE bool setParameter(JSGCParamKey key, uint32_t value, AutoLockGC& lock);
+    void resetParameter(JSGCParamKey key, AutoLockGC& lock);
     uint32_t getParameter(JSGCParamKey key, const AutoLockGC& lock);
 
     void maybeGC(Zone* zone);
@@ -387,10 +440,7 @@ class GCRuntime
 
     bool canChangeActiveContext(JSContext* cx);
 
-    void triggerFullGCForAtoms() {
-    }
-
-    inline void poke();
+    void triggerFullGCForAtoms(JSContext* cx);
 
     enum TraceOrMarkRuntime {
         TraceRuntime,
@@ -430,6 +480,7 @@ class GCRuntime
     bool isHeapCompacting() const { return false; }
     bool isForegroundSweeping() const { return false; }
     void waitBackgroundSweepEnd() { }
+    void waitBackgroundSweepOrAllocEnd() { }
 
 #ifdef DEBUG
     bool onBackgroundThread() { return false; }
@@ -457,7 +508,9 @@ class GCRuntime
 	
 	bool isShrinkingGC() const { return false; }
 
-    static bool initializeSweepActions();
+    bool isShrinkingGC() const { return invocationKind == GC_SHRINK; }
+
+    bool initSweepActions();
 
     void setGrayRootsTracer(JSTraceDataOp traceOp, void* data);
     MOZ_MUST_USE bool addBlackRootsTracer(JSTraceDataOp traceOp, void* data);
@@ -516,14 +569,18 @@ class GCRuntime
     UnprotectedData<ZoneGroup*> systemZoneGroup;
 
     // List of all zone groups (protected by the GC lock).
-    ActiveThreadOrGCTaskData<ZoneGroupVector> groups;
+
+  private:
+    ActiveThreadOrGCTaskData<ZoneGroupVector> groups_;
+  public:
+    ZoneGroupVector& groups() { return groups_.ref(); }
 
     // The unique atoms zone, which has no zone group.
     WriteOnceData<Zone*> atomsZone;
 
   private:
     UnprotectedData<gcstats::Statistics> stats_;
-    mozilla::Atomic<size_t, mozilla::ReleaseAcquire> numActiveZoneIters;
+
   public:
     gcstats::Statistics& stats() { return stats_.ref(); }
 
@@ -534,11 +591,11 @@ class GCRuntime
     AtomMarkingRuntime atomMarking;
 
   private:
-
     ActiveThreadData<RootedValueMap> rootsHash;
 
     // An incrementing id used to assign unique ids to cells that require one.
     mozilla::Atomic<uint64_t, mozilla::ReleaseAcquire> nextCellUniqueId_;
+
     /* Whether all zones are being collected in first GC slice. */
     ActiveThreadData<bool> isFull;
 
@@ -553,17 +610,21 @@ class GCRuntime
      */
     ActiveThreadData<JS::Zone*> sweepGroups;
     ActiveThreadOrGCTaskData<JS::Zone*> currentSweepGroup;
-    ActiveThreadData<size_t> sweepPhaseIndex;
-    ActiveThreadData<JS::Zone*> sweepZone;
-    ActiveThreadData<size_t> sweepActionIndex;
+    ActiveThreadData<UniquePtr<SweepAction<GCRuntime*, FreeOp*, SliceBudget&>>> sweepActions;
+    ActiveThreadOrGCTaskData<JS::Zone*> sweepZone;
+    ActiveThreadData<mozilla::Maybe<AtomSet::Enum>> maybeAtomsToSweep;
+    ActiveThreadOrGCTaskData<JS::detail::WeakCacheBase*> sweepCache;
     ActiveThreadData<bool> abortSweepAfterCurrentGroup;
 
     /*
      * Whether compacting GC can is enabled globally.
+     *
+     * JSGC_COMPACTING_ENABLED
+     * pref: javascript.options.mem.gc_compacting
      */
     ActiveThreadData<bool> compactingEnabled;
 
-    ActiveThreadData<bool> poked;
+    ActiveThreadData<bool> rootsRemoved;
 
     /*
      * These options control the zealousness of the GC. At every allocation,
@@ -579,7 +640,8 @@ class GCRuntime
      *     (see the help for details)
      *
      * If gcZeal_ == 1 then we perform GCs in select places (during MaybeGC and
-     * whenever a GC poke happens). This option is mainly useful to embedders.
+     * whenever we are notified that GC roots have been removed). This option is
+     * mainly useful to embedders.
      *
      * We use zeal_ == 4 to enable write barrier verification. See the comment
      * in jsgc.cpp for more information about this.
@@ -593,7 +655,6 @@ class GCRuntime
     ActiveThreadData<uint32_t> zealModeBits;
     ActiveThreadData<int> nextScheduled;
 #endif
-
     Callback<JSGCCallback> gcCallback;
     CallbackVector<JSFinalizeCallback> finalizeCallbacks;
 

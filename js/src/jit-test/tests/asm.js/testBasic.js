@@ -69,8 +69,8 @@ assertEq(asmLink(asmCompile('glob', USE_ASM + 'var im=glob.Math.imul; function f
 
 var module = asmCompile('glob','i','b', USE_ASM + 'var i32=new glob.Int32Array(b); function f(){} return f');
 assertAsmLinkAlwaysFail(module, null, null);
-assertAsmLinkAlwaysFail(module, this, null, null);
-assertAsmLinkAlwaysFail(module, this, null, null);
+assertAsmLinkFail(module, this, null, null);
+assertAsmLinkFail(module, this, null, null);
 assertAsmLinkAlwaysFail(module, this, null, new ArrayBuffer(1));
 assertAsmLinkFail(module, this, null, new ArrayBuffer(4));
 assertAsmLinkFail(module, this, null, new ArrayBuffer(100));
@@ -138,6 +138,10 @@ assertTypeFailInEval('function *f() { "use asm"; function g() {} return g }');
 assertTypeFailInEval('f => { "use asm"; function g() {} return g }');
 assertTypeFailInEval('var f = { method() {"use asm"; return {}} }');
 assertAsmTypeFail(USE_ASM + 'return {m() {}};');
+assertTypeFailInEval('var f = { get p() {"use asm"; return {}} }');
+assertAsmTypeFail(USE_ASM + 'return {get p() {}};');
+assertTypeFailInEval('var f = { set p(x) {"use asm"; return {}} }');
+assertAsmTypeFail(USE_ASM + 'return {set p(x) {}};');
 assertTypeFailInEval('class f { constructor() {"use asm"; return {}} }');
 assertAsmTypeFail(USE_ASM + 'class c { constructor() {}}; return c;');
 

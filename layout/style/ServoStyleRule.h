@@ -11,8 +11,11 @@
 
 #include "mozilla/BindingStyleRule.h"
 #include "mozilla/ServoBindingTypes.h"
+#include "mozilla/WeakPtr.h"
 
+#include "nsICSSStyleRuleDOMWrapper.h"
 #include "nsIDOMCSSStyleRule.h"
+#include "nsICSSStyleRuleDOMWrapper.h"
 #include "nsDOMCSSDeclaration.h"
 
 namespace mozilla {
@@ -33,7 +36,7 @@ protected:
   nsresult SetCSSDeclaration(DeclarationBlock* aDecl) final;
   nsIDocument* DocToUpdate() final;
   void GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv) final;
-  URLExtraData* GetURLData() const final;
+  ServoCSSParsingEnvironment GetServoCSSParsingEnvironment() const final;
 
 private:
   // For accessing the constructor.
@@ -50,21 +53,38 @@ private:
 };
 
 class ServoStyleRule final : public BindingStyleRule
-                           , public nsIDOMCSSStyleRule
+                           , public nsICSSStyleRuleDOMWrapper
+                           , public SupportsWeakPtr<ServoStyleRule>
 {
 public:
-  explicit ServoStyleRule(already_AddRefed<RawServoStyleRule> aRawRule);
+  ServoStyleRule(already_AddRefed<RawServoStyleRule> aRawRule,
+                 uint32_t aLine, uint32_t aColumn);
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(ServoStyleRule,
                                                          css::Rule)
-  virtual bool IsCCLeaf() const final MOZ_MUST_OVERRIDE;
+  bool IsCCLeaf() const final MOZ_MUST_OVERRIDE;
   NS_DECL_NSIDOMCSSSTYLERULE
+
+  MOZ_DECLARE_WEAKREFERENCE_TYPENAME(ServoStyleRule)
+
+  // nsICSSStyleRuleDOMWrapper
+  NS_IMETHOD GetCSSStyleRule(BindingStyleRule **aResult) override;
+
+  uint32_t GetSelectorCount() override;
+  nsresult GetSelectorText(uint32_t aSelectorIndex,
+                           nsAString& aText) override;
+  nsresult GetSpecificity(uint32_t aSelectorIndex,
+                          uint64_t* aSpecificity) override;
+  nsresult SelectorMatchesElement(dom::Element* aElement,
+                                  uint32_t aSelectorIndex,
+                                  const nsAString& aPseudo,
+                                  bool* aMatches) override;
 
   // WebIDL interface
   uint16_t Type() const final;
   void GetCssTextImpl(nsAString& aCssText) const final;
-  virtual nsICSSDeclaration* Style() final;
+  nsICSSDeclaration* Style() final;
 
   RawServoStyleRule* Raw() const { return mRawRule; }
 

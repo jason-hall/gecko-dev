@@ -58,13 +58,18 @@ interface NavigatorCookies {
   readonly attribute boolean cookieEnabled;
 };
 
-// https://w3c.github.io/webvr/#interface-navigator
+// https://w3c.github.io/webvr/spec/1.1/#interface-navigator
 partial interface Navigator {
-  [SameObject, Pref="dom.webvr.enabled"] readonly attribute VR vr;
+  [Pref="dom.webvr.enabled"] Promise<sequence<VRDisplay>> getVRDisplays();
 };
 
 // https://w3c.github.io/permissions/#navigator-and-workernavigator-extension
 [Exposed=(Window)]
 partial interface Navigator {
   [Pref="dom.permissions.enabled"] readonly attribute Permissions permissions;
+};
+
+// https://w3c.github.io/gamepad/#navigator-interface-extension
+partial interface Navigator {
+    [Pref="dom.gamepad.enabled"] GamepadList getGamepads();
 };

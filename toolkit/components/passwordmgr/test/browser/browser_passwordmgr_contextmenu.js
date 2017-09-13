@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-add_task(function* test() {
-  yield new Promise(resolve => {
+add_task(async function test() {
+  await new Promise(resolve => {
     Services.logins.removeAllLogins();
 
     // Add some initial logins
@@ -76,8 +76,8 @@ add_task(function* test() {
         }
 
         function cleanUp() {
-            Services.ww.registerNotification(function(aSubject, aTopic, aData) {
-                Services.ww.unregisterNotification(arguments.callee);
+            Services.ww.registerNotification(function notification(aSubject, aTopic, aData) {
+                Services.ww.unregisterNotification(notification);
                 Services.logins.removeAllLogins();
                 doc.getElementById("passwordCol").hidden = true;
                 resolve();

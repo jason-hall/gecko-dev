@@ -15,9 +15,8 @@ use fragment::{Fragment, FragmentBorderBoxIterator, Overflow, SpecificFragmentIn
 use layout_debug;
 use std::cmp::max;
 use std::fmt;
-use std::sync::Arc;
 use style::logical_geometry::LogicalSize;
-use style::properties::ServoComputedValues;
+use style::properties::ComputedValues;
 use style::values::computed::LengthOrPercentageOrAuto;
 
 /// A table formatting context.
@@ -93,9 +92,12 @@ impl Flow for TableColGroupFlow {
     // Table columns are invisible.
     fn build_display_list(&mut self, _: &mut DisplayListBuildState) { }
 
-    fn collect_stacking_contexts(&mut self, _: &mut DisplayListBuildState) {}
+    fn collect_stacking_contexts(&mut self, state: &mut DisplayListBuildState) {
+        self.base.stacking_context_id = state.current_stacking_context_id;
+        self.base.clip_and_scroll_info = Some(state.current_clip_and_scroll_info);
+    }
 
-    fn repair_style(&mut self, _: &Arc<ServoComputedValues>) {}
+    fn repair_style(&mut self, _: &::ServoArc<ComputedValues>) {}
 
     fn compute_overflow(&self) -> Overflow {
         Overflow::new()

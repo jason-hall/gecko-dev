@@ -12,26 +12,36 @@ const {
   PropTypes
 } = require("devtools/client/shared/vendor/react");
 const Message = createFactory(require("devtools/client/webconsole/new-console-output/components/message"));
-const GripMessageBody = createFactory(require("devtools/client/webconsole/new-console-output/components/grip-message-body"));
+const GripMessageBody = require("devtools/client/webconsole/new-console-output/components/grip-message-body");
 
 EvaluationResult.displayName = "EvaluationResult";
 
 EvaluationResult.propTypes = {
+  dispatch: PropTypes.func.isRequired,
   message: PropTypes.object.isRequired,
-  indent: PropTypes.number.isRequired,
-};
-
-EvaluationResult.defaultProps = {
-  indent: 0,
+  timestampsVisible: PropTypes.bool.isRequired,
+  serviceContainer: PropTypes.object,
+  loadedObjectProperties: PropTypes.object,
+  loadedObjectEntries: PropTypes.object,
 };
 
 function EvaluationResult(props) {
-  const { message, serviceContainer, indent } = props;
+  const {
+    dispatch,
+    message,
+    serviceContainer,
+    timestampsVisible,
+    loadedObjectProperties,
+    loadedObjectEntries,
+  } = props;
+
   const {
     source,
     type,
+    helperType,
     level,
     id: messageId,
+    indent,
     exceptionDocURL,
     frame,
     timeStamp,
@@ -41,14 +51,32 @@ function EvaluationResult(props) {
 
   let messageBody;
   if (message.messageText) {
-    messageBody = message.messageText;
+    if (typeof message.messageText === "string") {
+      messageBody = message.messageText;
+    } else if (
+      typeof message.messageText === "object"
+      && message.messageText.type === "longString"
+    ) {
+      messageBody = `${message.messageText.initial}…`;
+    }
   } else {
-    messageBody = GripMessageBody({grip: parameters, serviceContainer, useQuotes: true});
+    messageBody = GripMessageBody({
+      dispatch,
+      messageId,
+      grip: parameters,
+      serviceContainer,
+      useQuotes: true,
+      escapeWhitespace: false,
+      loadedObjectProperties,
+      loadedObjectEntries,
+      type,
+      helperType,
+    });
   }
 
   const topLevelClasses = ["cm-s-mozilla"];
 
-  const childProps = {
+  return Message({
     source,
     type,
     level,
@@ -56,15 +84,14 @@ function EvaluationResult(props) {
     topLevelClasses,
     messageBody,
     messageId,
-    scrollToMessage: props.autoscroll,
     serviceContainer,
     exceptionDocURL,
     frame,
     timeStamp,
     parameters,
     notes,
-  };
-  return Message(childProps);
+    timestampsVisible,
+  });
 }
 
 module.exports = EvaluationResult;

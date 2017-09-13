@@ -8,11 +8,11 @@
 
 const chromeRegistry = Cc["@mozilla.org/chrome/chrome-registry;1"].getService(Ci.nsIChromeRegistry);
 const env = Cc["@mozilla.org/process/environment;1"].getService(Ci.nsIEnvironment);
-const EXTENSION_DIR = "chrome://mochitests/content/extensions/mozscreenshots/browser/";
+const EXTENSION_DIR = "chrome://mochitests/content/browser/browser/tools/mozscreenshots/mozscreenshots/extension/mozscreenshots/browser/";
 
 let TestRunner;
 
-function* setup() {
+async function setup() {
   // This timeout doesn't actually end the job even if it is hit - the buildbot timeout will
   // handle things for us if the test actually hangs.
   requestLongerTimeout(100);
@@ -20,7 +20,7 @@ function* setup() {
   info("installing extension temporarily");
   let chromeURL = Services.io.newURI(EXTENSION_DIR);
   let dir = chromeRegistry.convertChromeURL(chromeURL).QueryInterface(Ci.nsIFileURL).file;
-  yield AddonManager.installTemporaryAddon(dir);
+  await AddonManager.installTemporaryAddon(dir);
 
   info("Checking for mozscreenshots extension");
   return new Promise((resolve) => {

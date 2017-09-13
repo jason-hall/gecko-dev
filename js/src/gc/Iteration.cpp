@@ -20,6 +20,7 @@ using namespace js;
 using namespace js::gc;
 
 #ifndef OMR // OMRTODO
+
 void
 js::IterateHeapUnbarriered(JSContext* cx, void* data,
                            IterateZoneCallback zoneCallback,

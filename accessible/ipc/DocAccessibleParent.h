@@ -80,13 +80,26 @@ public:
                                                        const uint64_t& aState,
                                                        const bool& aEnabled) override final;
 
-  virtual mozilla::ipc::IPCResult RecvCaretMoveEvent(const uint64_t& aID, const int32_t& aOffset)
-    override final;
+  virtual mozilla::ipc::IPCResult RecvCaretMoveEvent(const uint64_t& aID,
+#if defined(XP_WIN)
+                                                     const LayoutDeviceIntRect& aCaretRect,
+#endif
+                                                     const int32_t& aOffset) override final;
 
   virtual mozilla::ipc::IPCResult RecvTextChangeEvent(const uint64_t& aID, const nsString& aStr,
                                                       const int32_t& aStart, const uint32_t& aLen,
                                                       const bool& aIsInsert,
                                                       const bool& aFromUser) override;
+
+#if defined(XP_WIN)
+  virtual mozilla::ipc::IPCResult RecvSyncTextChangeEvent(const uint64_t& aID, const nsString& aStr,
+                                                          const int32_t& aStart, const uint32_t& aLen,
+                                                          const bool& aIsInsert,
+                                                          const bool& aFromUser) override;
+
+  virtual mozilla::ipc::IPCResult RecvFocusEvent(const uint64_t& aID,
+                                                 const LayoutDeviceIntRect& aCaretRect) override;
+#endif // defined(XP_WIN)
 
   virtual mozilla::ipc::IPCResult RecvSelectionEvent(const uint64_t& aID,
                                                      const uint64_t& aWidgetID,
@@ -142,7 +155,6 @@ public:
     DebugOnly<bool> result = mChildDocs.RemoveElement(aChildDoc->mActorID);
     aChildDoc->mParentDoc = kNoParentDoc;
     MOZ_ASSERT(result);
-    MOZ_ASSERT(aChildDoc->mChildDocs.Length() == 0);
   }
 
   void RemoveAccessible(ProxyAccessible* aAccessible)
@@ -224,7 +236,11 @@ private:
 #if defined(XP_WIN)
   // The handle associated with the emulated window that contains this document
   HWND mEmulatedWindowHandle;
-#endif
+
+#if defined(MOZ_CONTENT_SANDBOX)
+  mscom::PreservedStreamPtr mParentProxyStream;
+#endif // defined(MOZ_CONTENT_SANDBOX)
+#endif // defined(XP_WIN)
 
   /*
    * Conceptually this is a map from IDs to proxies, but we store the ID in the

@@ -20,6 +20,7 @@
 #define wasm_generator_h
 
 #include "jit/MacroAssembler.h"
+#include "wasm/WasmCompile.h"
 #include "wasm/WasmModule.h"
 #include "wasm/WasmValidate.h"
 
@@ -89,12 +90,6 @@ class FuncBytes
 typedef UniquePtr<FuncBytes> UniqueFuncBytes;
 typedef Vector<UniqueFuncBytes, 8, SystemAllocPolicy> UniqueFuncBytesVector;
 
-enum class CompileMode
-{
-    Baseline,
-    Ion
-};
-
 // FuncCompileUnit contains all the data necessary to produce and store the
 // results of a single function's compilation.
 
@@ -137,6 +132,7 @@ typedef Vector<FuncCompileUnit, 8, SystemAllocPolicy> FuncCompileUnitVector;
 class CompileTask
 {
     const ModuleEnvironment&   env_;
+    Tier                       tier_;
     CompileMode                mode_;
     LifoAlloc                  lifo_;
     Maybe<jit::TempAllocator>  alloc_;
@@ -154,8 +150,9 @@ class CompileTask
     }
 
   public:
-    CompileTask(const ModuleEnvironment& env, CompileMode mode, size_t defaultChunkSize)
+    CompileTask(const ModuleEnvironment& env, Tier tier, CompileMode mode, size_t defaultChunkSize)
       : env_(env),
+        tier_(tier),
         mode_(mode),
         lifo_(defaultChunkSize)
     {
@@ -175,6 +172,9 @@ class CompileTask
     }
     FuncCompileUnitVector& units() {
         return units_;
+    }
+    Tier tier() const {
+        return tier_;
     }
     CompileMode mode() const {
         return mode_;
@@ -201,6 +201,8 @@ class CompileTask
     }
 };
 
+struct Tier2GeneratorTask;
+
 // A ModuleGenerator encapsulates the creation of a wasm module. During the
 // lifetime of a ModuleGenerator, a sequence of FunctionGenerators are created
 // and destroyed to compile the individual function bodies. After generating all
@@ -215,13 +217,19 @@ class MOZ_STACK_CLASS ModuleGenerator
     typedef EnumeratedArray<Trap, Trap::Limit, CallableOffsets> TrapExitOffsetArray;
 
     // Constant parameters
+    SharedCompileArgs               compileArgs_;
     CompileMode                     compileMode_;
+    Tier                            tier_;
     UniqueChars*                    error_;
+    Atomic<bool>*                   cancelled_;
 
     // Data that is moved into the result of finish()
     Assumptions                     assumptions_;
+    LinkDataTier*                   linkDataTier_; // Owned by linkData_
     LinkData                        linkData_;
+    MetadataTier*                   metadataTier_; // Owned by metadata_
     MutableMetadata                 metadata_;
+    UniqueJumpTable                 jumpTable_;
 
     // Data scoped to the ModuleGenerator's lifetime
     UniqueModuleEnvironment         env_;
@@ -264,6 +272,10 @@ class MOZ_STACK_CLASS ModuleGenerator
     MOZ_MUST_USE bool finishFuncExports();
     MOZ_MUST_USE bool finishCodegen();
     MOZ_MUST_USE bool finishLinkData();
+    void generateBytecodeHash(const ShareableBytes& bytecode);
+    MOZ_MUST_USE bool finishMetadata(const ShareableBytes& bytecode);
+    MOZ_MUST_USE UniqueConstCodeSegment finishCodeSegment(const ShareableBytes& bytecode);
+    UniqueJumpTable createJumpTable(const CodeSegment& codeSegment);
     MOZ_MUST_USE bool addFuncImport(const Sig& sig, uint32_t globalDataOffset);
     MOZ_MUST_USE bool allocateGlobalBytes(uint32_t bytes, uint32_t align, uint32_t* globalDataOff);
     MOZ_MUST_USE bool allocateGlobal(GlobalDesc* global);
@@ -274,16 +286,19 @@ class MOZ_STACK_CLASS ModuleGenerator
     MOZ_MUST_USE bool initWasm(const CompileArgs& args);
 
   public:
-    explicit ModuleGenerator(UniqueChars* error);
+    explicit ModuleGenerator(UniqueChars* error, Atomic<bool>* cancelled);
     ~ModuleGenerator();
 
     MOZ_MUST_USE bool init(UniqueModuleEnvironment env, const CompileArgs& args,
+                           CompileMode compileMode = CompileMode::Once,
                            Metadata* maybeAsmJSMetadata = nullptr);
 
     const ModuleEnvironment& env() const { return *env_; }
     ModuleEnvironment& mutableEnv();
 
     bool isAsmJS() const { return metadata_->kind == ModuleKind::AsmJS; }
+    CompileMode mode() const { return compileMode_; }
+    Tier tier() const { return tier_; }
     jit::MacroAssembler& masm() { return masm_; }
 
     // Memory:
@@ -321,7 +336,11 @@ class MOZ_STACK_CLASS ModuleGenerator
     MOZ_MUST_USE bool addExport(CacheableChars&& fieldChars, uint32_t funcIndex);
 
     // Finish compilation of the given bytecode.
-    SharedModule finish(const ShareableBytes& bytecode);
+    SharedModule finishModule(const ShareableBytes& bytecode);
+
+    // Finish compilation of the given bytecode, installing tier-variant parts
+    // for Tier 2 into module.
+    MOZ_MUST_USE bool finishTier2(Module& module);
 };
 
 // A FunctionGenerator encapsulates the generation of a single function body.

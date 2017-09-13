@@ -68,8 +68,8 @@ function DeregisterSmartCardObservers() {
 }
 
 function LoadCerts() {
-  Services.obs.addObserver(smartCardObserver, "smartcard-insert", false);
-  Services.obs.addObserver(smartCardObserver, "smartcard-remove", false);
+  Services.obs.addObserver(smartCardObserver, "smartcard-insert");
+  Services.obs.addObserver(smartCardObserver, "smartcard-remove");
 
   certdb = Components.classes[nsX509CertDB].getService(nsIX509CertDB);
   var certcache = certdb.getCerts();
@@ -399,11 +399,11 @@ function restoreCerts() {
   });
 }
 
-function exportCerts() {
+async function exportCerts() {
   getSelectedCerts();
 
   for (let cert of selected_certs) {
-    exportToFile(window, cert);
+    await exportToFile(window, cert);
   }
 }
 

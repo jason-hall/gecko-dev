@@ -13,9 +13,11 @@ import subprocess
 import sys
 import which
 
-from mach.mixin.logging import LoggingMixin
 from mach.mixin.process import ProcessExecutionMixin
-from mozversioncontrol import get_repository_object
+from mozversioncontrol import (
+    get_repository_from_build_config,
+    get_repository_object,
+)
 
 from .backend.configenvironment import ConfigEnvironment
 from .controller.clobber import Clobberer
@@ -24,6 +26,7 @@ from .mozconfig import (
     MozconfigLoadException,
     MozconfigLoader,
 )
+from .pythonutil import find_python3_executable
 from .util import memoized_property
 from .virtualenv import VirtualenvManager
 
@@ -286,7 +289,33 @@ class MozbuildObject(ProcessExecutionMixin):
     def repository(self):
         '''Get a `mozversioncontrol.Repository` object for the
         top source directory.'''
+        # We try to obtain a repo using the configured VCS info first.
+        # If we don't have a configure context, fall back to auto-detection.
+        try:
+            return get_repository_from_build_config(self)
+        except BuildEnvironmentNotFoundException:
+            pass
+
         return get_repository_object(self.topsrcdir)
+
+    @memoized_property
+    def python3(self):
+        """Obtain info about a Python 3 executable.
+
+        Returns a tuple of an executable path and its version (as a tuple).
+        Either both entries will have a value or both will be None.
+        """
+        # Search configured build info first. Then fall back to system.
+        try:
+            subst = self.substs
+
+            if 'PYTHON3' in subst:
+                version = tuple(map(int, subst['PYTHON3_VERSION'].split('.')))
+                return subst['PYTHON3'], version
+        except BuildEnvironmentNotFoundException:
+            pass
+
+        return find_python3_executable()
 
     def is_clobber_needed(self):
         if not os.path.exists(self.topobjdir):
@@ -451,7 +480,7 @@ class MozbuildObject(ProcessExecutionMixin):
             srcdir=False, allow_parallel=True, line_handler=None,
             append_env=None, explicit_env=None, ignore_errors=False,
             ensure_exit_code=0, silent=True, print_directory=True,
-            pass_thru=False, num_jobs=0):
+            pass_thru=False, num_jobs=0, keep_going=False):
         """Invoke make.
 
         directory -- Relative directory to look for Makefile in.
@@ -512,6 +541,9 @@ class MozbuildObject(ProcessExecutionMixin):
         # these to measure progress.
         if print_directory:
             args.append('-w')
+
+        if keep_going:
+            args.append('-k')
 
         if isinstance(target, list):
             args.extend(target)
@@ -622,6 +654,10 @@ class MozbuildObject(ProcessExecutionMixin):
     def _activate_virtualenv(self):
         self.virtualenv_manager.ensure()
         self.virtualenv_manager.activate()
+
+
+    def _set_log_level(self, verbose):
+        self.log_manager.terminal_handler.setLevel(logging.INFO if not verbose else logging.DEBUG)
 
 
 class MachCommandBase(MozbuildObject):
@@ -735,37 +771,6 @@ class MachCommandConditions(object):
         return False
 
     @staticmethod
-    def is_mulet(cls):
-        """Must have a Mulet build."""
-        if hasattr(cls, 'substs'):
-            return cls.substs.get('MOZ_BUILD_APP') == 'b2g/dev'
-        return False
-
-    @staticmethod
-    def is_b2g(cls):
-        """Must have a B2G build."""
-        if hasattr(cls, 'substs'):
-            return cls.substs.get('MOZ_WIDGET_TOOLKIT') == 'gonk'
-        return False
-
-    @staticmethod
-    def is_b2g_desktop(cls):
-        """Must have a B2G desktop build."""
-        if hasattr(cls, 'substs'):
-            return cls.substs.get('MOZ_BUILD_APP') == 'b2g' and \
-                   cls.substs.get('MOZ_WIDGET_TOOLKIT') != 'gonk'
-        return False
-
-    @staticmethod
-    def is_emulator(cls):
-        """Must have a B2G build with an emulator configured."""
-        try:
-            return MachCommandConditions.is_b2g(cls) and \
-                   cls.device_name.startswith('emulator')
-        except AttributeError:
-            return False
-
-    @staticmethod
     def is_android(cls):
         """Must have an Android build."""
         if hasattr(cls, 'substs'):
@@ -775,24 +780,17 @@ class MachCommandConditions(object):
     @staticmethod
     def is_hg(cls):
         """Must have a mercurial source checkout."""
-        if hasattr(cls, 'substs'):
-            top_srcdir = cls.substs.get('top_srcdir')
-        elif hasattr(cls, 'topsrcdir'):
-            top_srcdir = cls.topsrcdir
-        else:
-            return False
-        return top_srcdir and os.path.isdir(os.path.join(top_srcdir, '.hg'))
+        return getattr(cls, 'substs', {}).get('VCS_CHECKOUT_TYPE') == 'hg'
 
     @staticmethod
     def is_git(cls):
         """Must have a git source checkout."""
-        if hasattr(cls, 'substs'):
-            top_srcdir = cls.substs.get('top_srcdir')
-        elif hasattr(cls, 'topsrcdir'):
-            top_srcdir = cls.topsrcdir
-        else:
-            return False
-        return top_srcdir and os.path.exists(os.path.join(top_srcdir, '.git'))
+        return getattr(cls, 'substs', {}).get('VCS_CHECKOUT_TYPE') == 'git'
+
+    @staticmethod
+    def is_artifact_build(cls):
+        """Must be an artifact build."""
+        return getattr(cls, 'substs', {}).get('MOZ_ARTIFACT_BUILDS')
 
 
 class PathArgument(object):

@@ -59,7 +59,7 @@ GetDocumentFromView(nsView* aView)
 }
 
 nsSubDocumentFrame::nsSubDocumentFrame(nsStyleContext* aContext)
-  : nsAtomicContainerFrame(aContext)
+  : nsAtomicContainerFrame(aContext, kClassID)
   , mOuterView(nullptr)
   , mInnerView(nullptr)
   , mIsInline(false)
@@ -84,10 +84,14 @@ NS_QUERYFRAME_TAIL_INHERITING(nsAtomicContainerFrame)
 class AsyncFrameInit : public Runnable
 {
 public:
-  explicit AsyncFrameInit(nsIFrame* aFrame) : mFrame(aFrame) {}
+  explicit AsyncFrameInit(nsIFrame* aFrame)
+    : mozilla::Runnable("AsyncFrameInit")
+    , mFrame(aFrame)
+  {
+  }
   NS_IMETHOD Run() override
   {
-    PROFILER_LABEL("mozilla", "AsyncFrameInit::Run", js::ProfileEntry::Category::OTHER);
+    AUTO_PROFILER_LABEL("AsyncFrameInit::Run", OTHER);
     if (mFrame.IsAlive()) {
       static_cast<nsSubDocumentFrame*>(mFrame.GetFrame())->ShowViewer();
     }
@@ -312,7 +316,7 @@ WrapBackgroundColorInOwnLayer(nsDisplayListBuilder* aBuilder,
   nsDisplayList tempItems;
   nsDisplayItem* item;
   while ((item = aList->RemoveBottom()) != nullptr) {
-    if (item->GetType() == nsDisplayItem::TYPE_BACKGROUND_COLOR) {
+    if (item->GetType() == DisplayItemType::TYPE_BACKGROUND_COLOR) {
       nsDisplayList tmpList;
       tmpList.AppendToTop(item);
       item = new (aBuilder) nsDisplayOwnLayer(aBuilder, aFrame, &tmpList, aBuilder->CurrentActiveScrolledRoot());
@@ -324,7 +328,6 @@ WrapBackgroundColorInOwnLayer(nsDisplayListBuilder* aBuilder,
 
 void
 nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                     const nsRect&           aDirtyRect,
                                      const nsDisplayListSet& aLists)
 {
   if (!IsVisibleForPainting(aBuilder))
@@ -365,7 +368,7 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   }
 
   if (rfp) {
-    rfp->BuildDisplayList(aBuilder, this, aDirtyRect, aLists);
+    rfp->BuildDisplayList(aBuilder, this, aLists);
     return;
   }
 
@@ -390,17 +393,19 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   nsIFrame* savedIgnoreScrollFrame = nullptr;
   if (subdocRootFrame) {
     // get the dirty rect relative to the root frame of the subdoc
-    dirty = aDirtyRect + GetOffsetToCrossDoc(subdocRootFrame);
+    dirty = aBuilder->GetDirtyRect() + GetOffsetToCrossDoc(subdocRootFrame);
     // and convert into the appunits of the subdoc
     dirty = dirty.ScaleToOtherAppUnitsRoundOut(parentAPD, subdocAPD);
 
     if (nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame()) {
       nsIScrollableFrame* rootScrollableFrame = presShell->GetRootScrollFrameAsScrollable();
       MOZ_ASSERT(rootScrollableFrame);
-      // Use a copy, so the dirty rect doesn't get modified to the display port.
-      nsRect copy = dirty;
+      // Use a copy, so the rects don't get modified.
+      nsRect copyOfDirty = dirty;
       haveDisplayPort = rootScrollableFrame->DecideScrollableLayer(aBuilder,
-                          &copy, /* aAllowCreateDisplayPort = */ true);
+                          &copyOfDirty,
+                          /* aAllowCreateDisplayPort = */ true);
+
       if (!gfxPrefs::LayoutUseContainersForRootFrames()) {
         haveDisplayPort = false;
       }
@@ -414,7 +419,7 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
     aBuilder->EnterPresShell(subdocRootFrame, pointerEventsNone);
   } else {
-    dirty = aDirtyRect;
+    dirty = aBuilder->GetDirtyRect();
   }
 
   DisplayListClipState::AutoSaveRestore clipState(aBuilder);
@@ -435,6 +440,7 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   {
     needsOwnLayer = true;
   }
+
   if (!needsOwnLayer && aBuilder->IsBuildingLayerEventRegions() &&
       nsLayoutUtils::HasDocumentLevelListenersForApzAwareEvents(presShell))
   {
@@ -453,6 +459,13 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       nestedClipState.Clear();
     }
 
+    // Invoke AutoBuildingDisplayList to ensure that the correct dirty rect
+    // is used to compute the visible rect if AddCanvasBackgroundColorItem
+    // creates a display item.
+    nsIFrame* frame = subdocRootFrame ? subdocRootFrame : this;
+    nsDisplayListBuilder::AutoBuildingDisplayList
+      building(aBuilder, frame, dirty, true);
+
     if (subdocRootFrame) {
       nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame();
       nsDisplayListBuilder::AutoCurrentScrollParentIdSetter idSetter(
@@ -463,7 +476,7 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
       aBuilder->SetAncestorHasApzAwareEventHandler(false);
       subdocRootFrame->
-        BuildDisplayListForStackingContext(aBuilder, dirty, &childItems);
+        BuildDisplayListForStackingContext(aBuilder, &childItems);
     }
 
     if (!aBuilder->IsForEventDelivery()) {
@@ -482,19 +495,12 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       // painted on the page itself.
       if (nsLayoutUtils::NeedsPrintPreviewBackground(presContext)) {
         presShell->AddPrintPreviewBackgroundItem(
-          *aBuilder, childItems, subdocRootFrame ? subdocRootFrame : this,
-          bounds);
+          *aBuilder, childItems, frame, bounds);
       } else {
-        // Invoke AutoBuildingDisplayList to ensure that the correct dirty rect
-        // is used to compute the visible rect if AddCanvasBackgroundColorItem
-        // creates a display item.
-        nsIFrame* frame = subdocRootFrame ? subdocRootFrame : this;
-        nsDisplayListBuilder::AutoBuildingDisplayList
-          building(aBuilder, frame, dirty, true);
         // Add the canvas background color to the bottom of the list. This
         // happens after we've built the list so that AddCanvasBackgroundColorItem
         // can monkey with the contents if necessary.
-        uint32_t flags = nsIPresShell::FORCE_DRAW;
+        uint32_t flags = nsIPresShell::FORCE_DRAW | nsIPresShell::ADD_FOR_SUBDOC;
         presShell->AddCanvasBackgroundColorItem(
           *aBuilder, childItems, frame, bounds, NS_RGBA(0,0,0,0), flags);
       }
@@ -548,10 +554,33 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     childItems.AppendToTop(layerItem);
   }
 
+  // If we're using containers for root frames, then the earlier call
+  // to AddCanvasBackgroundColorItem won't have been able to add an
+  // unscrolled color item for overscroll. Try again now that we're
+  // outside the scrolled ContainerLayer.
+  if (!aBuilder->IsForEventDelivery() &&
+      gfxPrefs::LayoutUseContainersForRootFrames() &&
+      !nsLayoutUtils::NeedsPrintPreviewBackground(presContext)) {
+     nsRect bounds = GetContentRectRelativeToSelf() +
+       aBuilder->ToReferenceFrame(this);
+
+    // Invoke AutoBuildingDisplayList to ensure that the correct dirty rect
+    // is used to compute the visible rect if AddCanvasBackgroundColorItem
+    // creates a display item.
+    nsDisplayListBuilder::AutoBuildingDisplayList
+      building(aBuilder, this, dirty, true);
+    // Add the canvas background color to the bottom of the list. This
+    // happens after we've built the list so that AddCanvasBackgroundColorItem
+    // can monkey with the contents if necessary.
+    uint32_t flags = nsIPresShell::FORCE_DRAW | nsIPresShell::APPEND_UNSCROLLED_ONLY;
+    presShell->AddCanvasBackgroundColorItem(
+      *aBuilder, childItems, this, bounds, NS_RGBA(0,0,0,0), flags);
+   }
+
   if (aBuilder->IsForFrameVisibility()) {
     // We don't add the childItems to the return list as we're dealing with them here.
     presShell->RebuildApproximateFrameVisibilityDisplayList(childItems);
-    childItems.DeleteAll();
+    childItems.DeleteAll(aBuilder);
   } else {
     aLists.Content()->AppendToTop(&childItems);
   }
@@ -620,14 +649,8 @@ nsresult nsSubDocumentFrame::GetFrameName(nsAString& aResult) const
 }
 #endif
 
-nsIAtom*
-nsSubDocumentFrame::GetType() const
-{
-  return nsGkAtoms::subDocumentFrame;
-}
-
 /* virtual */ nscoord
-nsSubDocumentFrame::GetMinISize(nsRenderingContext *aRenderingContext)
+nsSubDocumentFrame::GetMinISize(gfxContext *aRenderingContext)
 {
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
@@ -643,7 +666,7 @@ nsSubDocumentFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 }
 
 /* virtual */ nscoord
-nsSubDocumentFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
+nsSubDocumentFrame::GetPrefISize(gfxContext *aRenderingContext)
 {
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
@@ -680,7 +703,7 @@ nsSubDocumentFrame::GetIntrinsicRatio()
 
 /* virtual */
 LogicalSize
-nsSubDocumentFrame::ComputeAutoSize(nsRenderingContext* aRenderingContext,
+nsSubDocumentFrame::ComputeAutoSize(gfxContext*         aRenderingContext,
                                     WritingMode         aWM,
                                     const LogicalSize&  aCBSize,
                                     nscoord             aAvailableISize,
@@ -703,7 +726,7 @@ nsSubDocumentFrame::ComputeAutoSize(nsRenderingContext* aRenderingContext,
 
 /* virtual */
 LogicalSize
-nsSubDocumentFrame::ComputeSize(nsRenderingContext* aRenderingContext,
+nsSubDocumentFrame::ComputeSize(gfxContext*         aRenderingContext,
                                 WritingMode         aWM,
                                 const LogicalSize&  aCBSize,
                                 nscoord             aAvailableISize,
@@ -837,7 +860,7 @@ nsSubDocumentFrame::AttributeChanged(int32_t aNameSpaceID,
   if (aNameSpaceID != kNameSpaceID_None) {
     return NS_OK;
   }
-  
+
   // If the noResize attribute changes, dis/allow frame to be resized
   if (aAttribute == nsGkAtoms::noresize) {
     // Note that we're not doing content type checks, but that's ok -- if
@@ -891,10 +914,11 @@ public:
                nsFrameLoader* aFrameLoader,
                nsIPresShell* aPresShell,
                bool aHideViewerIfFrameless)
-    : mFrameElement(aFrameElement),
-      mFrameLoader(aFrameLoader),
-      mPresShell(aPresShell),
-      mHideViewerIfFrameless(aHideViewerIfFrameless)
+    : mozilla::Runnable("nsHideViewer")
+    , mFrameElement(aFrameElement)
+    , mFrameLoader(aFrameLoader)
+    , mPresShell(aPresShell)
+    , mHideViewerIfFrameless(aHideViewerIfFrameless)
   {
     NS_ASSERTION(mFrameElement, "Must have a frame element");
     NS_ASSERTION(mFrameLoader, "Must have a frame loader");
@@ -1088,7 +1112,7 @@ InsertViewsInReverseOrder(nsView* aSibling, nsView* aParent)
 nsresult
 nsSubDocumentFrame::BeginSwapDocShells(nsIFrame* aOther)
 {
-  if (!aOther || aOther->GetType() != nsGkAtoms::subDocumentFrame) {
+  if (!aOther || !aOther->IsSubDocumentFrame()) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
@@ -1231,7 +1255,7 @@ nsSubDocumentFrame::ObtainIntrinsicSizeFrame()
 {
   nsCOMPtr<nsIObjectLoadingContent> olc = do_QueryInterface(GetContent());
   if (olc) {
-    // We are an HTML <object>, <embed> or <applet> (a replaced element).
+    // We are an HTML <object> or <embed> (a replaced element).
 
     // Try to get an nsIFrame for our sub-document's document element
     nsIFrame* subDocRoot = nullptr;

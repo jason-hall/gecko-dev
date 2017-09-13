@@ -15,8 +15,9 @@ using namespace mozilla::dom;
 
 namespace mozilla {
 
-ServoMediaRule::ServoMediaRule(RefPtr<RawServoMediaRule> aRawRule)
-  : CSSMediaRule(Servo_MediaRule_GetRules(aRawRule).Consume())
+ServoMediaRule::ServoMediaRule(RefPtr<RawServoMediaRule> aRawRule,
+                               uint32_t aLine, uint32_t aColumn)
+  : CSSMediaRule(Servo_MediaRule_GetRules(aRawRule).Consume(), aLine, aColumn)
   , mRawRule(Move(aRawRule))
 {
 }
@@ -29,7 +30,7 @@ NS_IMPL_ADDREF_INHERITED(ServoMediaRule, CSSMediaRule)
 NS_IMPL_RELEASE_INHERITED(ServoMediaRule, CSSMediaRule)
 
 // QueryInterface implementation for MediaRule
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(ServoMediaRule)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ServoMediaRule)
 NS_INTERFACE_MAP_END_INHERITING(CSSMediaRule)
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(ServoMediaRule, CSSMediaRule,

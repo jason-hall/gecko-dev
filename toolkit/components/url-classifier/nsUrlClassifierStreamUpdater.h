@@ -9,6 +9,7 @@
 #include <nsISupportsUtils.h>
 
 #include "nsCOMPtr.h"
+#include "nsINamed.h"
 #include "nsIObserver.h"
 #include "nsIUrlClassifierStreamUpdater.h"
 #include "nsIStreamListener.h"
@@ -25,7 +26,8 @@ class nsUrlClassifierStreamUpdater final : public nsIUrlClassifierStreamUpdater,
                                            public nsIStreamListener,
                                            public nsIObserver,
                                            public nsIInterfaceRequestor,
-                                           public nsITimerCallback
+                                           public nsITimerCallback,
+                                           public nsINamed
 {
 public:
   nsUrlClassifierStreamUpdater();
@@ -38,6 +40,7 @@ public:
   NS_DECL_NSISTREAMLISTENER
   NS_DECL_NSIOBSERVER
   NS_DECL_NSITIMERCALLBACK
+  NS_DECL_NSINAMED
 
 private:
   // No subclassing
@@ -68,6 +71,11 @@ private:
   // Fetches the next request, from mPendingRequests
   nsresult FetchNextRequest();
 
+  enum UpdateTimeout {
+    eNoTimeout = 0,
+    eResponseTimeout = 1,
+    eDownloadTimeout = 2,
+  };
 
   bool mIsUpdating;
   bool mInitialized;
@@ -81,7 +89,21 @@ private:
 
   nsCOMPtr<nsIChannel> mChannel;
   nsCOMPtr<nsIUrlClassifierDBService> mDBService;
-  nsCOMPtr<nsITimer> mTimer;
+
+  // In v2, a update response might contain redirection and this
+  // timer is for fetching the redirected update.
+  nsCOMPtr<nsITimer> mFetchIndirectUpdatesTimer;
+
+  // When we DownloadUpdate(), the DBService might be busy on processing
+  // request issused outside of StreamUpdater. We have to fire a timer to
+  // retry on our own.
+  nsCOMPtr<nsITimer> mFetchNextRequestTimer;
+
+  // Timer to abort the download if the server takes too long to respond.
+  nsCOMPtr<nsITimer> mResponseTimeoutTimer;
+
+  // Timer to abort the download if it takes too long.
+  nsCOMPtr<nsITimer> mTimeoutTimer;
 
   struct PendingRequest {
     nsCString mTables;

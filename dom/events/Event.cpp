@@ -32,6 +32,7 @@
 #include "nsJSEnvironment.h"
 #include "nsLayoutUtils.h"
 #include "nsPIWindowRoot.h"
+#include "nsRFPService.h"
 #include "WorkerPrivate.h"
 
 namespace mozilla {
@@ -82,10 +83,10 @@ Event::ConstructorInit(EventTarget* aOwner,
       A derived class might want to allocate its own type of aEvent
       (derived from WidgetEvent). To do this, it should take care to pass
       a non-nullptr aEvent to this ctor, e.g.:
-      
+
         FooEvent::FooEvent(..., WidgetEvent* aEvent)
           : Event(..., aEvent ? aEvent : new WidgetEvent())
-      
+
       Then, to override the mEventIsInternal assignments done by the
       base ctor, it should do this in its own ctor:
 
@@ -123,7 +124,7 @@ Event::InitPresContextData(nsPresContext* aPresContext)
   }
 }
 
-Event::~Event() 
+Event::~Event()
 {
   NS_ASSERT_OWNINGTHREAD(Event);
 
@@ -665,12 +666,12 @@ PopupAllowedForEvent(const char *eventName)
 
   nsDependentCString events(sPopupAllowedEvents);
 
-  nsAFlatCString::const_iterator start, end;
-  nsAFlatCString::const_iterator startiter(events.BeginReading(start));
+  nsCString::const_iterator start, end;
+  nsCString::const_iterator startiter(events.BeginReading(start));
   events.EndReading(end);
 
   while (startiter != end) {
-    nsAFlatCString::const_iterator enditer(end);
+    nsCString::const_iterator enditer(end);
 
     if (!FindInReadable(nsDependentCString(eventName), startiter, enditer))
       return false;
@@ -712,6 +713,7 @@ Event::GetEventPopupControlState(WidgetEvent* aEvent, nsIDOMEvent* aDOMEvent)
     // triggered while handling user input. See
     // nsPresShell::HandleEventInternal() for details.
     if (EventStateManager::IsHandlingUserInput()) {
+      abuse = openBlocked;
       switch(aEvent->mMessage) {
       case eFormSelect:
         if (PopupAllowedForEvent("select")) {
@@ -733,6 +735,7 @@ Event::GetEventPopupControlState(WidgetEvent* aEvent, nsIDOMEvent* aDOMEvent)
     // while handling user input. See
     // nsPresShell::HandleEventInternal() for details.
     if (EventStateManager::IsHandlingUserInput()) {
+      abuse = openBlocked;
       switch(aEvent->mMessage) {
       case eEditorInput:
         if (PopupAllowedForEvent("input")) {
@@ -749,6 +752,7 @@ Event::GetEventPopupControlState(WidgetEvent* aEvent, nsIDOMEvent* aDOMEvent)
     // while handling user input. See
     // nsPresShell::HandleEventInternal() for details.
     if (EventStateManager::IsHandlingUserInput()) {
+      abuse = openBlocked;
       switch(aEvent->mMessage) {
       case eFormChange:
         if (PopupAllowedForEvent("change")) {
@@ -765,6 +769,7 @@ Event::GetEventPopupControlState(WidgetEvent* aEvent, nsIDOMEvent* aDOMEvent)
     break;
   case eKeyboardEventClass:
     if (aEvent->IsTrusted()) {
+      abuse = openBlocked;
       uint32_t key = aEvent->AsKeyboardEvent()->mKeyCode;
       switch(aEvent->mMessage) {
       case eKeyPress:
@@ -795,6 +800,7 @@ Event::GetEventPopupControlState(WidgetEvent* aEvent, nsIDOMEvent* aDOMEvent)
     break;
   case eTouchEventClass:
     if (aEvent->IsTrusted()) {
+      abuse = openBlocked;
       switch (aEvent->mMessage) {
       case eTouchStart:
         if (PopupAllowedForEvent("touchstart")) {
@@ -814,6 +820,7 @@ Event::GetEventPopupControlState(WidgetEvent* aEvent, nsIDOMEvent* aDOMEvent)
   case eMouseEventClass:
     if (aEvent->IsTrusted() &&
         aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
+      abuse = openBlocked;
       switch(aEvent->mMessage) {
       case eMouseUp:
         if (PopupAllowedForEvent("mouseup")) {
@@ -868,6 +875,7 @@ Event::GetEventPopupControlState(WidgetEvent* aEvent, nsIDOMEvent* aDOMEvent)
     // triggered while handling user input. See
     // nsPresShell::HandleEventInternal() for details.
     if (EventStateManager::IsHandlingUserInput()) {
+      abuse = openBlocked;
       switch(aEvent->mMessage) {
       case eFormSubmit:
         if (PopupAllowedForEvent("submit")) {
@@ -899,7 +907,8 @@ Event::PopupAllowedEventsChanged()
     free(sPopupAllowedEvents);
   }
 
-  nsAdoptingCString str = Preferences::GetCString("dom.popup_allowed_events");
+  nsAutoCString str;
+  Preferences::GetCString("dom.popup_allowed_events", str);
 
   // We'll want to do this even if str is empty to avoid looking up
   // this pref all the time if it's not set.
@@ -1094,7 +1103,7 @@ Event::DefaultPrevented(CallerType aCallerType) const
 }
 
 double
-Event::TimeStamp() const
+Event::TimeStampImpl() const
 {
   if (!sReturnHighResTimeStamp) {
     return static_cast<double>(mEvent->mTime);
@@ -1127,6 +1136,12 @@ Event::TimeStamp() const
   MOZ_ASSERT(workerPrivate);
 
   return workerPrivate->TimeStampToDOMHighRes(mEvent->mTimeStamp);
+}
+
+double
+Event::TimeStamp() const
+{
+  return nsRFPService::ReduceTimePrecisionAsMSecs(TimeStampImpl());
 }
 
 bool
@@ -1328,7 +1343,7 @@ using namespace mozilla::dom;
 already_AddRefed<Event>
 NS_NewDOMEvent(EventTarget* aOwner,
                nsPresContext* aPresContext,
-               WidgetEvent* aEvent) 
+               WidgetEvent* aEvent)
 {
   RefPtr<Event> it = new Event(aOwner, aPresContext, aEvent);
   return it.forget();

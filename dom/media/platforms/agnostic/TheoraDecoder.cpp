@@ -10,6 +10,7 @@
 #include "gfx2DGlue.h"
 #include "mozilla/PodOperations.h"
 #include "nsError.h"
+#include "ImageContainer.h"
 
 #include <algorithm>
 
@@ -38,7 +39,8 @@ ogg_packet InitTheoraPacket(const unsigned char* aData, size_t aLength,
 }
 
 TheoraDecoder::TheoraDecoder(const CreateDecoderParams& aParams)
-  : mImageContainer(aParams.mImageContainer)
+  : mImageAllocator(aParams.mKnowsCompositor)
+  , mImageContainer(aParams.mImageContainer)
   , mTaskQueue(aParams.mTaskQueue)
   , mTheoraSetupInfo(nullptr)
   , mTheoraDecoderContext(nullptr)
@@ -133,7 +135,8 @@ TheoraDecoder::ProcessDecode(MediaRawData* aSample)
 
   bool bos = mPacketCount == 0;
   ogg_packet pkt = InitTheoraPacket(
-    aData, aLength, bos, false, aSample->mTimecode, mPacketCount++);
+    aData, aLength, bos, false,
+    aSample->mTimecode.ToMicroseconds(), mPacketCount++);
 
   int ret = th_decode_packetin(mTheoraDecoderContext, &pkt, nullptr);
   if (ret == 0 || ret == TH_DUPFRAME) {
@@ -177,7 +180,8 @@ TheoraDecoder::ProcessDecode(MediaRawData* aSample)
                                    aSample->mKeyframe,
                                    aSample->mTimecode,
                                    mInfo.ScaledImageRect(mTheoraInfo.frame_width,
-                                                         mTheoraInfo.frame_height));
+                                                         mTheoraInfo.frame_height),
+                                   mImageAllocator);
     if (!v) {
       LOG(
         "Image allocation error source %ux%u display %ux%u picture %ux%u",

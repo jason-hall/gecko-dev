@@ -331,12 +331,12 @@ SVGDocumentWrapper::SetupViewer(nsIRequest* aRequest,
   nsCOMPtr<nsICategoryManager> catMan =
     do_GetService(NS_CATEGORYMANAGER_CONTRACTID);
   NS_ENSURE_TRUE(catMan, NS_ERROR_NOT_AVAILABLE);
-  nsXPIDLCString contractId;
+  nsCString contractId;
   nsresult rv = catMan->GetCategoryEntry("Gecko-Content-Viewers", IMAGE_SVG_XML,
                                          getter_Copies(contractId));
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIDocumentLoaderFactory> docLoaderFactory =
-    do_GetService(contractId);
+    do_GetService(contractId.get());
   NS_ENSURE_TRUE(docLoaderFactory, NS_ERROR_NOT_AVAILABLE);
 
   nsCOMPtr<nsIContentViewer> viewer;
@@ -361,7 +361,7 @@ SVGDocumentWrapper::SetupViewer(nsIRequest* aRequest,
   // For a root document, DocShell would do these sort of things
   // automatically. Since there is no DocShell for this wrapped SVG document,
   // we must set it up manually.
-  RefPtr<nsDOMNavigationTiming> timing = new nsDOMNavigationTiming();
+  RefPtr<nsDOMNavigationTiming> timing = new nsDOMNavigationTiming(nullptr);
   timing->NotifyNavigationStart(nsDOMNavigationTiming::DocShellState::eInactive);
   viewer->SetNavigationTiming(timing);
 

@@ -42,7 +42,7 @@ class ServiceWorkerContainer;
 class DOMRequest;
 struct FlyWebPublishOptions;
 struct FlyWebFilter;
-class WebAuthentication;
+class CredentialsContainer;
 } // namespace dom
 } // namespace mozilla
 
@@ -73,7 +73,6 @@ namespace network {
 class Connection;
 } // namespace network
 
-class PowerManager;
 class Presentation;
 class LegacyMozTCPSocket;
 class VRDisplay;
@@ -83,12 +82,6 @@ class StorageManager;
 namespace time {
 class TimeManager;
 } // namespace time
-
-namespace system {
-#ifdef MOZ_AUDIO_CHANNEL_MANAGER
-class AudioChannelManager;
-#endif
-} // namespace system
 
 class Navigator final : public nsIDOMNavigator
                       , public nsIMozNavigatorNetwork
@@ -181,7 +174,6 @@ public:
   bool CookieEnabled();
   void GetBuildID(nsAString& aBuildID, CallerType aCallerType,
                   ErrorResult& aRv) const;
-  PowerManager* GetMozPower(ErrorResult& aRv);
   bool JavaEnabled(CallerType aCallerType, ErrorResult& aRv);
   uint64_t HardwareConcurrency();
   bool CpuHasSSE2();
@@ -204,12 +196,12 @@ public:
   already_AddRefed<Promise> GetVRDisplays(ErrorResult& aRv);
   void GetActiveVRDisplays(nsTArray<RefPtr<VRDisplay>>& aDisplays) const;
   VRServiceTest* RequestVRServiceTest();
+  bool IsWebVRContentDetected() const;
+  bool IsWebVRContentPresenting() const;
+  void RequestVRPresentation(VRDisplay& aDisplay);
 #ifdef MOZ_TIME_MANAGER
   time::TimeManager* GetMozTime(ErrorResult& aRv);
 #endif // MOZ_TIME_MANAGER
-#ifdef MOZ_AUDIO_CHANNEL_MANAGER
-  system::AudioChannelManager* GetMozAudioChannelManager(ErrorResult& aRv);
-#endif // MOZ_AUDIO_CHANNEL_MANAGER
 
   Presentation* GetPresentation(ErrorResult& aRv);
 
@@ -231,7 +223,7 @@ public:
 
   already_AddRefed<ServiceWorkerContainer> ServiceWorker();
 
-  mozilla::dom::WebAuthentication* Authentication();
+  mozilla::dom::CredentialsContainer* Credentials();
 
   void GetLanguages(nsTArray<nsString>& aLanguages);
 
@@ -298,12 +290,8 @@ private:
   RefPtr<DesktopNotificationCenter> mNotification;
   RefPtr<battery::BatteryManager> mBatteryManager;
   RefPtr<Promise> mBatteryPromise;
-  RefPtr<PowerManager> mPowerManager;
   RefPtr<network::Connection> mConnection;
-  RefPtr<WebAuthentication> mAuthentication;
-#ifdef MOZ_AUDIO_CHANNEL_MANAGER
-  RefPtr<system::AudioChannelManager> mAudioChannelManager;
-#endif
+  RefPtr<CredentialsContainer> mCredentials;
   RefPtr<MediaDevices> mMediaDevices;
   RefPtr<time::TimeManager> mTimeManager;
   RefPtr<ServiceWorkerContainer> mServiceWorkerContainer;

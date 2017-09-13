@@ -40,8 +40,7 @@ public:
 
   ~OverflowChangedTracker()
   {
-    // XXXheycam Temporarily downgrade this assertion (bug 1324647).
-    NS_ASSERTION_STYLO_WARNING(mEntryList.empty(), "Need to flush before destroying!");
+    NS_ASSERTION(mEntryList.empty(), "Need to flush before destroying!");
   }
 
   /**
@@ -113,12 +112,12 @@ public:
         // Take a faster path that doesn't require unioning the overflow areas
         // of our children.
 
-        NS_ASSERTION(frame->Properties().Get(
+        NS_ASSERTION(frame->GetProperty(
                        nsIFrame::DebugInitialOverflowPropertyApplied()),
                      "InitialOverflowProperty must be set first.");
 
         nsOverflowAreas* overflow =
-          frame->Properties().Get(nsIFrame::InitialOverflowProperty());
+          frame->GetProperty(nsIFrame::InitialOverflowProperty());
         if (overflow) {
           // FinishAndStoreOverflow will change the overflow areas passed in,
           // so make a copy.

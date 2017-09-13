@@ -26,7 +26,7 @@ static LazyLogModule gCaptivePortalLog("CaptivePortalService");
 
 NS_IMPL_ISUPPORTS(CaptivePortalService, nsICaptivePortalService, nsIObserver,
                   nsISupportsWeakReference, nsITimerCallback,
-                  nsICaptivePortalCallback)
+                  nsICaptivePortalCallback, nsINamed)
 
 CaptivePortalService::CaptivePortalService()
   : mState(UNKNOWN)
@@ -83,6 +83,13 @@ CaptivePortalService::RearmTimer()
   MOZ_ASSERT(XRE_GetProcessType() == GeckoProcessType_Default);
   if (mTimer) {
     mTimer->Cancel();
+  }
+
+  // If we have successfully determined the state, and we have never detected
+  // a captive portal, we don't need to keep polling, but will rely on events
+  // to trigger detection.
+  if (mState == NOT_CAPTIVE) {
+    return NS_OK;
   }
 
   if (!mTimer) {
@@ -268,6 +275,17 @@ CaptivePortalService::Notify(nsITimer *aTimer)
   // Note - if mDelay is 0, the timer will not be rearmed.
   RearmTimer();
 
+  return NS_OK;
+}
+
+//-----------------------------------------------------------------------------
+// CaptivePortalService::nsINamed
+//-----------------------------------------------------------------------------
+
+NS_IMETHODIMP
+CaptivePortalService::GetName(nsACString& aName)
+{
+  aName.AssignLiteral("CaptivePortalService");
   return NS_OK;
 }
 

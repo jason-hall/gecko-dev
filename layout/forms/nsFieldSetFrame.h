@@ -15,15 +15,15 @@ class nsFieldSetFrame final : public nsContainerFrame
   typedef mozilla::image::DrawResult DrawResult;
 
 public:
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsFieldSetFrame)
 
   explicit nsFieldSetFrame(nsStyleContext* aContext);
 
   nscoord
-    GetIntrinsicISize(nsRenderingContext* aRenderingContext,
+    GetIntrinsicISize(gfxContext* aRenderingContext,
                       nsLayoutUtils::IntrinsicISizeType);
-  virtual nscoord GetMinISize(nsRenderingContext* aRenderingContext) override;
-  virtual nscoord GetPrefISize(nsRenderingContext* aRenderingContext) override;
+  virtual nscoord GetMinISize(gfxContext* aRenderingContext) override;
+  virtual nscoord GetPrefISize(gfxContext* aRenderingContext) override;
 
   /**
    * The area to paint box-shadows around.  It's the border rect except
@@ -31,11 +31,11 @@ public:
    */
   virtual nsRect VisualBorderRectRelativeToSelf() const override;
 
-  virtual void Reflow(nsPresContext*           aPresContext,
-                      ReflowOutput&     aDesiredSize,
+  virtual void Reflow(nsPresContext* aPresContext,
+                      ReflowOutput& aDesiredSize,
                       const ReflowInput& aReflowInput,
-                      nsReflowStatus&          aStatus) override;
-                               
+                      nsReflowStatus& aStatus) override;
+
   nscoord GetLogicalBaseline(mozilla::WritingMode aWM) const override;
   bool GetVerticalAlignBaseline(mozilla::WritingMode aWM,
                                 nscoord* aBaseline) const override;
@@ -44,11 +44,10 @@ public:
                                  nscoord* aBaseline) const override;
 
   virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists) override;
 
   DrawResult PaintBorder(nsDisplayListBuilder* aBuilder,
-                         nsRenderingContext& aRenderingContext,
+                         gfxContext& aRenderingContext,
                          nsPoint aPt, const nsRect& aDirtyRect);
 
 #ifdef DEBUG
@@ -63,7 +62,6 @@ public:
                            nsIFrame*      aOldFrame) override;
 #endif
 
-  virtual nsIAtom* GetType() const override;
   virtual bool IsFrameOfType(uint32_t aFlags) const override
   {
     return nsContainerFrame::IsFrameOfType(aFlags &
@@ -74,13 +72,10 @@ public:
     return do_QueryFrame(GetInner());
   }
 
-  // Update the style on the block wrappers around our kids.
-  virtual void DoUpdateStyleOfOwnedAnonBoxes(
-    mozilla::ServoStyleSet& aStyleSet,
-    nsStyleChangeList& aChangeList,
-    nsChangeHint aHintForThisFrame) override;
+  // Return the block wrapper around our kids.
+  void AppendDirectlyOwnedAnonBoxes(nsTArray<OwnedAnonBox>& aResult) override;
 
-#ifdef ACCESSIBILITY  
+#ifdef ACCESSIBILITY
   virtual mozilla::a11y::AccType AccessibleType() override;
 #endif
 

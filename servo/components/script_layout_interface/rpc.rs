@@ -2,13 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use PendingImage;
 use app_units::Au;
-use euclid::point::Point2D;
-use euclid::rect::Rect;
-use gfx_traits::ScrollRootId;
+use euclid::{Point2D, Rect};
 use script_traits::UntrustedNodeAddress;
 use style::properties::longhands::{margin_top, margin_right, margin_bottom, margin_left, overflow_x};
+use webrender_api::ClipId;
 
 /// Synchronous messages that script can send to layout.
 ///
@@ -38,8 +36,6 @@ pub trait LayoutRPC {
     fn offset_parent(&self) -> OffsetParentResponse;
     /// Query layout for the resolve values of the margin properties for an element.
     fn margin_style(&self) -> MarginStyleResponse;
-    /// Requests the list of not-yet-loaded images that were encountered in the last reflow.
-    fn pending_images(&self) -> Vec<PendingImage>;
     /// Requests the list of nodes from the given point.
     fn nodes_from_point_response(&self) -> Vec<UntrustedNodeAddress>;
 
@@ -56,7 +52,7 @@ pub struct NodeGeometryResponse {
 
 pub struct NodeOverflowResponse(pub Option<Point2D<overflow_x::computed_value::T>>);
 
-pub struct NodeScrollRootIdResponse(pub ScrollRootId);
+pub struct NodeScrollRootIdResponse(pub ClipId);
 
 pub struct HitTestResponse {
     pub node_address: Option<UntrustedNodeAddress>,

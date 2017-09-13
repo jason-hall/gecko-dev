@@ -2,17 +2,21 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
+// The ext-* files are imported into the same scopes.
+/* import-globals-from ext-devtools.js */
+/* import-globals-from ext-browser.js */
+
 Cu.import("resource://gre/modules/ExtensionParent.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "E10SUtils",
                                   "resource:///modules/E10SUtils.jsm");
 
 var {
+  IconDetails,
   watchExtensionProxyContextLoad,
 } = ExtensionParent;
 
 var {
-  IconDetails,
   promiseEvent,
 } = ExtensionUtils;
 
@@ -57,15 +61,9 @@ class ParentDevToolsPanel {
     this.id = this.panelOptions.id;
 
     this.onToolboxPanelSelect = this.onToolboxPanelSelect.bind(this);
-    this.onToolboxReady = this.onToolboxReady.bind(this);
 
     this.panelAdded = false;
-
-    if (this.toolbox.isReady) {
-      this.onToolboxReady();
-    } else {
-      this.toolbox.once("ready", this.onToolboxReady);
-    }
+    this.addPanel();
 
     this.waitTopLevelContext = new Promise(resolve => {
       this._resolveTopLevelContext = resolve;
@@ -82,7 +80,7 @@ class ParentDevToolsPanel {
       icon: icon,
       label: title,
       tooltip: `DevTools Panel added by "${extensionName}" add-on.`,
-      invertIconForLightTheme: true,
+      invertIconForLightTheme: false,
       visibilityswitch:  `devtools.webext-${this.id}.enabled`,
       isTargetSupported: target => target.isLocalTab,
       build: (window, toolbox) => {
@@ -95,6 +93,8 @@ class ParentDevToolsPanel {
         return {toolbox, destroy};
       },
     });
+
+    this.panelAdded = true;
   }
 
   buildPanel(window, toolbox) {
@@ -176,13 +176,6 @@ class ParentDevToolsPanel {
     };
   }
 
-  onToolboxReady() {
-    if (!this.panelAdded) {
-      this.panelAdded = true;
-      this.addPanel();
-    }
-  }
-
   onToolboxPanelSelect(what, id) {
     if (!this.waitTopLevelContext || !this.panelAdded) {
       return;
@@ -210,11 +203,9 @@ class ParentDevToolsPanel {
       throw new Error("Unable to destroy a closed devtools panel");
     }
 
-    toolbox.off("ready", this.onToolboxReady);
-
     // Explicitly remove the panel if it is registered and the toolbox is not
     // closing itself.
-    if (toolbox.isToolRegistered(this.id) && !toolbox._destroyer) {
+    if (this.panelAdded && toolbox.isToolRegistered(this.id) && !toolbox._destroyer) {
       toolbox.removeAdditionalTool(this.id);
     }
 
@@ -225,14 +216,214 @@ class ParentDevToolsPanel {
   }
 }
 
+class DevToolsSelectionObserver extends EventEmitter {
+  constructor(context) {
+    if (!context.devToolsToolbox) {
+      // This should never happen when this constructor is called with a valid
+      // devtools extension context.
+      throw Error("Missing mandatory toolbox");
+    }
+
+    super();
+    context.callOnClose(this);
+
+    this.toolbox = context.devToolsToolbox;
+    this.onSelected = this.onSelected.bind(this);
+    this.initialized = false;
+  }
+
+  on(...args) {
+    this.lazyInit();
+    super.on.apply(this, args);
+  }
+
+  once(...args) {
+    this.lazyInit();
+    super.once.apply(this, args);
+  }
+
+  async lazyInit() {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.toolbox.on("selection-changed", this.onSelected);
+    }
+  }
+
+  close() {
+    if (this.destroyed) {
+      throw new Error("Unable to close a destroyed DevToolsSelectionObserver");
+    }
+
+    if (this.initialized) {
+      this.toolbox.off("selection-changed", this.onSelected);
+    }
+
+    this.toolbox = null;
+    this.destroyed = true;
+  }
+
+  onSelected(event) {
+    this.emit("selectionChanged");
+  }
+}
+
+/**
+ * Represents an addon devtools inspector sidebar in the main process.
+ *
+ * @param {ExtensionChildProxyContext} context
+ *        A devtools extension proxy context running in a main process.
+ * @param {object} options
+ * @param {string} options.id
+ *        The id of the addon devtools sidebar.
+ * @param {string} options.title
+ *        The title of the addon devtools sidebar.
+ */
+class ParentDevToolsInspectorSidebar {
+  constructor(context, sidebarOptions) {
+    const toolbox = context.devToolsToolbox;
+    if (!toolbox) {
+      // This should never happen when this constructor is called with a valid
+      // devtools extension context.
+      throw Error("Missing mandatory toolbox");
+    }
+
+    this.extension = context.extension;
+    this.visible = false;
+    this.destroyed = false;
+
+    this.toolbox = toolbox;
+    this.context = context;
+    this.sidebarOptions = sidebarOptions;
+
+    this.context.callOnClose(this);
+
+    this.id = this.sidebarOptions.id;
+    this.onSidebarSelect = this.onSidebarSelect.bind(this);
+    this.onSidebarCreated = this.onSidebarCreated.bind(this);
+
+    this.toolbox.once(`extension-sidebar-created-${this.id}`, this.onSidebarCreated);
+    this.toolbox.on(`inspector-sidebar-select`, this.onSidebarSelect);
+
+    // Set by setObject if the sidebar has not been created yet.
+    this._initializeSidebar = null;
+
+    this.toolbox.registerInspectorExtensionSidebar(this.id, {
+      title: sidebarOptions.title,
+    });
+  }
+
+  close() {
+    if (this.destroyed) {
+      throw new Error("Unable to close a destroyed DevToolsSelectionObserver");
+    }
+
+    this.toolbox.off(`extension-sidebar-created-${this.id}`, this.onSidebarCreated);
+    this.toolbox.off(`inspector-sidebar-select`, this.onSidebarSelect);
+
+    this.toolbox.unregisterInspectorExtensionSidebar(this.id);
+    this.extensionSidebar = null;
+    this._initializeSidebar = null;
+
+    this.destroyed = true;
+  }
+
+  onSidebarCreated(evt, sidebar) {
+    this.extensionSidebar = sidebar;
+
+    if (typeof this._initializeSidebar === "function") {
+      this._initializeSidebar();
+      this._initializeSidebar = null;
+    }
+  }
+
+  onSidebarSelect(what, id) {
+    if (!this.extensionSidebar) {
+      return;
+    }
+
+    if (!this.visible && id === this.id) {
+      // TODO: Wait for top level context if extension page
+      this.visible = true;
+      this.context.parentMessageManager.sendAsyncMessage("Extension:DevToolsInspectorSidebarShown", {
+        inspectorSidebarId: this.id,
+      });
+    } else if (this.visible && id !== this.id) {
+      this.visible = false;
+      this.context.parentMessageManager.sendAsyncMessage("Extension:DevToolsInspectorSidebarHidden", {
+        inspectorSidebarId: this.id,
+      });
+    }
+  }
+
+  setObject(object, rootTitle) {
+    // Nest the object inside an object, as the value of the `rootTitle` property.
+    if (rootTitle) {
+      object = {[rootTitle]: object};
+    }
+
+    if (this.extensionSidebar) {
+      this.extensionSidebar.setObject(object);
+    } else {
+      // Defer the sidebar.setObject call.
+      this._initializeSidebar = () => this.extensionSidebar.setObject(object);
+    }
+  }
+}
+
+const sidebarsById = new Map();
+
 this.devtools_panels = class extends ExtensionAPI {
   getAPI(context) {
     // An incremental "per context" id used in the generated devtools panel id.
     let nextPanelId = 0;
 
+    const toolboxSelectionObserver = new DevToolsSelectionObserver(context);
+
+    function newBasePanelId() {
+      return `${context.extension.id}-${context.contextId}-${nextPanelId++}`;
+    }
+
     return {
       devtools: {
         panels: {
+          elements: {
+            onSelectionChanged: new EventManager(
+              context, "devtools.panels.elements.onSelectionChanged", fire => {
+                const listener = (eventName) => {
+                  fire.async();
+                };
+                toolboxSelectionObserver.on("selectionChanged", listener);
+                return () => {
+                  toolboxSelectionObserver.off("selectionChanged", listener);
+                };
+              }).api(),
+            createSidebarPane(title) {
+              const id = `devtools-inspector-sidebar-${makeWidgetId(newBasePanelId())}`;
+
+              const parentSidebar = new ParentDevToolsInspectorSidebar(context, {title, id});
+              sidebarsById.set(id, parentSidebar);
+
+              context.callOnClose({
+                close() {
+                  sidebarsById.delete(id);
+                },
+              });
+
+              // Resolved to the devtools sidebar id into the child addon process,
+              // where it will be used to identify the messages related
+              // to the panel API onShown/onHidden events.
+              return Promise.resolve(id);
+            },
+            // The following methods are used internally to allow the sidebar API
+            // piece that is running in the child process to asks the parent process
+            // to execute the sidebar methods.
+            Sidebar: {
+              setObject(sidebarId, jsonObject, rootTitle) {
+                const sidebar = sidebarsById.get(sidebarId);
+                return sidebar.setObject(jsonObject, rootTitle);
+              },
+            },
+          },
           create(title, icon, url) {
             // Get a fallback icon from the manifest data.
             if (icon === "" && context.extension.manifest.icons) {
@@ -244,8 +435,7 @@ this.devtools_panels = class extends ExtensionAPI {
             icon = context.extension.baseURI.resolve(icon);
             url = context.extension.baseURI.resolve(url);
 
-            const baseId = `${context.extension.id}-${context.contextId}-${nextPanelId++}`;
-            const id = `${makeWidgetId(baseId)}-devtools-panel`;
+            const id = `${makeWidgetId(newBasePanelId())}-devtools-panel`;
 
             new ParentDevToolsPanel(context, {title, icon, url, id});
 

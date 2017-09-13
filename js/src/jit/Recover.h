@@ -65,7 +65,7 @@ namespace jit {
     _(Lsh)                                      \
     _(Rsh)                                      \
     _(Ursh)                                     \
-    _(SignExtend)                               \
+    _(SignExtendInt32)                          \
     _(Add)                                      \
     _(Sub)                                      \
     _(Mul)                                      \
@@ -102,10 +102,11 @@ namespace jit {
     _(NewObject)                                \
     _(NewTypedArray)                            \
     _(NewArray)                                 \
-    _(NewArrayIterator)                         \
+    _(NewIterator)                              \
     _(NewDerivedTypedObject)                    \
     _(CreateThisWithTemplate)                   \
     _(Lambda)                                   \
+    _(LambdaArrow)                              \
     _(SimdBox)                                  \
     _(ObjectState)                              \
     _(ArrayState)                               \
@@ -257,13 +258,13 @@ class RUrsh final : public RInstruction
     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator& iter) const override;
 };
 
-class RSignExtend final : public RInstruction
+class RSignExtendInt32 final : public RInstruction
 {
   private:
     uint8_t mode_;
 
   public:
-    RINSTRUCTION_HEADER_NUM_OP_(SignExtend, 1)
+    RINSTRUCTION_HEADER_NUM_OP_(SignExtendInt32, 1)
 
     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator& iter) const override;
 };
@@ -484,7 +485,7 @@ class RRandom final : public RInstruction
 class RStringSplit final : public RInstruction
 {
   public:
-    RINSTRUCTION_HEADER_NUM_OP_(StringSplit, 3)
+    RINSTRUCTION_HEADER_NUM_OP_(StringSplit, 2)
 
     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator& iter) const override;
 };
@@ -594,10 +595,13 @@ class RNewArray final : public RInstruction
     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator& iter) const override;
 };
 
-class RNewArrayIterator final : public RInstruction
+class RNewIterator final : public RInstruction
 {
+  private:
+    uint8_t type_;
+
   public:
-    RINSTRUCTION_HEADER_NUM_OP_(NewArrayIterator, 1)
+    RINSTRUCTION_HEADER_NUM_OP_(NewIterator, 1)
 
     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator& iter) const override;
 };
@@ -622,6 +626,14 @@ class RLambda final : public RInstruction
 {
   public:
     RINSTRUCTION_HEADER_NUM_OP_(Lambda, 2)
+
+    MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator& iter) const override;
+};
+
+class RLambdaArrow final : public RInstruction
+{
+  public:
+    RINSTRUCTION_HEADER_NUM_OP_(LambdaArrow, 3)
 
     MOZ_MUST_USE bool recover(JSContext* cx, SnapshotIterator& iter) const override;
 };

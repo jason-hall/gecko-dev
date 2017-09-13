@@ -137,10 +137,18 @@ GDIFontEntry::GDIFontEntry(const nsAString& aFaceName,
     InitLogFont(aFaceName, aFontType);
 }
 
+gfxFontEntry*
+GDIFontEntry::Clone() const
+{
+    MOZ_ASSERT(!IsUserFont(), "we can only clone installed fonts!");
+    return new GDIFontEntry(Name(), mFontType, mStyle, mWeight, mStretch,
+                            nullptr, mFamilyHasItalicFace);
+}
+
 nsresult
 GDIFontEntry::ReadCMAP(FontInfoData *aFontInfoData)
 {
-    PROFILER_LABEL_FUNC(js::ProfileEntry::Category::OTHER);
+    AUTO_PROFILER_LABEL("GDIFontEntry::ReadCMAP", OTHER);
 
     // attempt this once, if errors occur leave a blank cmap
     if (mCharacterMap) {
@@ -912,6 +920,7 @@ gfxGDIFontList::MakePlatformFont(const nsAString& aFontName,
 bool
 gfxGDIFontList::FindAndAddFamilies(const nsAString& aFamily,
                                    nsTArray<gfxFontFamily*>* aOutput,
+                                   FindFamiliesFlags aFlags,
                                    gfxFontStyle* aStyle,
                                    gfxFloat aDevToCssSize)
 {
@@ -928,7 +937,10 @@ gfxGDIFontList::FindAndAddFamilies(const nsAString& aFamily,
         return false;
     }
 
-    return gfxPlatformFontList::FindAndAddFamilies(aFamily, aOutput, aStyle,
+    return gfxPlatformFontList::FindAndAddFamilies(aFamily,
+                                                   aOutput,
+                                                   aFlags,
+                                                   aStyle,
                                                    aDevToCssSize);
 }
 
@@ -1164,6 +1176,12 @@ gfxGDIFontList::CreateFontInfoData()
         new GDIFontInfo(true, NeedFullnamePostscriptNames(), loadCmaps);
 
     return fi.forget();
+}
+
+gfxFontFamily*
+gfxGDIFontList::CreateFontFamily(const nsAString& aName) const
+{
+    return new GDIFontFamily(aName);
 }
 
 #ifdef MOZ_BUNDLED_FONTS

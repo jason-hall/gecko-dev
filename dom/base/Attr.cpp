@@ -251,7 +251,8 @@ Attr::SetNodeValueInternal(const nsAString& aNodeValue, ErrorResult& aError)
 }
 
 nsresult
-Attr::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const
+Attr::Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
+            bool aPreallocateChildren) const
 {
   nsAutoString value;
   const_cast<Attr*>(this)->GetValue(value);
@@ -315,13 +316,6 @@ Attr::GetChildCount() const
 nsIContent *
 Attr::GetChildAt(uint32_t aIndex) const
 {
-  return nullptr;
-}
-
-nsIContent * const *
-Attr::GetChildArray(uint32_t* aChildCount) const
-{
-  *aChildCount = 0;
   return nullptr;
 }
 

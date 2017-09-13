@@ -146,7 +146,7 @@ LIRGeneratorX64::lowerUntypedPhiInput(MPhi* phi, uint32_t inputPosition, LBlock*
 {
     lowerTypedPhiInput(phi, inputPosition, block, lirIndex);
 }
- 
+
 void
 LIRGeneratorX64::defineInt64Phi(MPhi* phi, size_t lirIndex)
 {
@@ -494,4 +494,10 @@ void
 LIRGeneratorX64::visitExtendInt32ToInt64(MExtendInt32ToInt64* ins)
 {
     defineInt64(new(alloc()) LExtendInt32ToInt64(useAtStart(ins->input())), ins);
+}
+
+void
+LIRGeneratorX64::visitSignExtendInt64(MSignExtendInt64* ins)
+{
+    defineInt64(new(alloc()) LSignExtendInt64(useInt64RegisterAtStart(ins->input())), ins);
 }

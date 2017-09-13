@@ -25,6 +25,7 @@ struct Class;
 template <typename T, AllowGC allowGC = CanGC>
 T*
 Allocate(JSContext* cx, gc::AllocKind kind);
+
 template <typename T, AllowGC allowGC = CanGC>
 T*
 Allocate(JSContext* cx);

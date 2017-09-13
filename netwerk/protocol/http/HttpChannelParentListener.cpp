@@ -12,10 +12,10 @@
 #include "mozilla/Unused.h"
 #include "nsIAuthPrompt.h"
 #include "nsIAuthPrompt2.h"
-#include "nsIHttpEventSink.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsIRedirectChannelRegistrar.h"
 #include "nsIPromptFactory.h"
+#include "nsIWindowWatcher.h"
 #include "nsQueryObject.h"
 
 using mozilla::Unused;
@@ -122,7 +122,6 @@ NS_IMETHODIMP
 HttpChannelParentListener::GetInterface(const nsIID& aIID, void **result)
 {
   if (aIID.Equals(NS_GET_IID(nsIChannelEventSink)) ||
-      aIID.Equals(NS_GET_IID(nsIHttpEventSink))  ||
       aIID.Equals(NS_GET_IID(nsINetworkInterceptController))  ||
       aIID.Equals(NS_GET_IID(nsIRedirectResultListener)))
   {
@@ -304,7 +303,8 @@ class FinishSynthesizedResponse : public Runnable
   nsCOMPtr<nsIInterceptedChannel> mChannel;
 public:
   explicit FinishSynthesizedResponse(nsIInterceptedChannel* aChannel)
-  : mChannel(aChannel)
+    : Runnable("net::FinishSynthesizedResponse")
+    , mChannel(aChannel)
   {
   }
 

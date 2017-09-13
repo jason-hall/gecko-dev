@@ -15,7 +15,6 @@
 #include "nsGkAtoms.h"
 #include "nsContentUtils.h"
 #include "nsContentCreatorFunctions.h"
-#include "nsContentList.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "nsNodeInfoManager.h"
 #include "nsIDateTimeInputArea.h"
@@ -43,24 +42,34 @@ NS_QUERYFRAME_HEAD(nsDateTimeControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 nsDateTimeControlFrame::nsDateTimeControlFrame(nsStyleContext* aContext)
-  : nsContainerFrame(aContext)
+  : nsContainerFrame(aContext, kClassID)
 {
 }
 
 void
 nsDateTimeControlFrame::DestroyFrom(nsIFrame* aDestructRoot)
 {
-  nsContentUtils::DestroyAnonymousContent(&mInputAreaContent);
+  DestroyAnonymousContent(mInputAreaContent.forget());
   nsContainerFrame::DestroyFrom(aDestructRoot);
 }
 
 void
-nsDateTimeControlFrame::UpdateInputBoxValue()
+nsDateTimeControlFrame::OnValueChanged()
 {
   nsCOMPtr<nsIDateTimeInputArea> inputAreaContent =
     do_QueryInterface(mInputAreaContent);
   if (inputAreaContent) {
     inputAreaContent->NotifyInputElementValueChanged();
+  }
+}
+
+void
+nsDateTimeControlFrame::OnMinMaxStepAttrChanged()
+{
+  nsCOMPtr<nsIDateTimeInputArea> inputAreaContent =
+    do_QueryInterface(mInputAreaContent);
+  if (inputAreaContent) {
+    inputAreaContent->NotifyMinMaxStepAttrChanged();
   }
 }
 
@@ -125,8 +134,22 @@ nsDateTimeControlFrame::HandleBlurEvent()
   }
 }
 
+bool
+nsDateTimeControlFrame::HasBadInput()
+{
+  nsCOMPtr<nsIDateTimeInputArea> inputAreaContent =
+    do_QueryInterface(mInputAreaContent);
+
+  bool result = false;
+  if (inputAreaContent) {
+    inputAreaContent->HasBadInput(&result);
+  }
+
+  return result;
+}
+
 nscoord
-nsDateTimeControlFrame::GetMinISize(nsRenderingContext* aRenderingContext)
+nsDateTimeControlFrame::GetMinISize(gfxContext* aRenderingContext)
 {
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
@@ -144,7 +167,7 @@ nsDateTimeControlFrame::GetMinISize(nsRenderingContext* aRenderingContext)
 }
 
 nscoord
-nsDateTimeControlFrame::GetPrefISize(nsRenderingContext* aRenderingContext)
+nsDateTimeControlFrame::GetPrefISize(gfxContext* aRenderingContext)
 {
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
@@ -380,7 +403,7 @@ nsDateTimeControlFrame::AttributeChanged(int32_t aNameSpaceID,
         aAttribute == nsGkAtoms::readonly ||
         aAttribute == nsGkAtoms::tabindex) {
       MOZ_ASSERT(mContent->IsHTMLElement(nsGkAtoms::input), "bad cast");
-      auto contentAsInputElem = static_cast<dom::HTMLInputElement*>(mContent);
+      auto contentAsInputElem = static_cast<dom::HTMLInputElement*>(GetContent());
       // If script changed the <input>'s type before setting these attributes
       // then we don't need to do anything since we are going to be reframed.
       if (contentAsInputElem->ControlType() == NS_FORM_INPUT_TIME ||
@@ -389,7 +412,9 @@ nsDateTimeControlFrame::AttributeChanged(int32_t aNameSpaceID,
           do_QueryInterface(mInputAreaContent);
         if (aAttribute == nsGkAtoms::value) {
           if (inputAreaContent) {
-            nsContentUtils::AddScriptRunner(NewRunnableMethod(inputAreaContent,
+            nsContentUtils::AddScriptRunner(NewRunnableMethod(
+              "nsIDateTimeInputArea::NotifyInputElementValueChanged",
+              inputAreaContent,
               &nsIDateTimeInputArea::NotifyInputElementValueChanged));
           }
         } else {
@@ -423,10 +448,4 @@ nsDateTimeControlFrame::ContentStatesChanged(EventStates aStates)
   if (aStates.HasState(NS_EVENT_STATE_DISABLED)) {
     nsContentUtils::AddScriptRunner(new SyncDisabledStateEvent(this));
   }
-}
-
-nsIAtom*
-nsDateTimeControlFrame::GetType() const
-{
-  return nsGkAtoms::dateTimeControlFrame;
 }

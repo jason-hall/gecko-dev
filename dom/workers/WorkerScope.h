@@ -58,6 +58,7 @@ class WorkerGlobalScope : public DOMEventTargetHelper,
   RefPtr<Performance> mPerformance;
   RefPtr<IDBFactory> mIndexedDB;
   RefPtr<cache::CacheStorage> mCacheStorage;
+  nsCOMPtr<nsISerialEventTarget> mSerialEventTarget;
 
   uint32_t mWindowInteractionsAllowed;
 
@@ -155,6 +156,11 @@ public:
 
   Performance* GetPerformance();
 
+  Performance* GetPerformanceIfExists() const
+  {
+    return mPerformance;
+  }
+
   already_AddRefed<Promise>
   Fetch(const RequestOrUSVString& aInput, const RequestInit& aInit,
         CallerType aCallerType, ErrorResult& aRv);
@@ -203,18 +209,38 @@ public:
     MOZ_ASSERT(mWindowInteractionsAllowed > 0);
     mWindowInteractionsAllowed--;
   }
+
+  // Override DispatchTrait API to target the worker thread.  Dispatch may
+  // return failure if the worker thread is not alive.
+  nsresult
+  Dispatch(TaskCategory aCategory,
+           already_AddRefed<nsIRunnable>&& aRunnable) override;
+
+  nsISerialEventTarget*
+  EventTargetFor(TaskCategory aCategory) const override;
+
+  AbstractThread*
+  AbstractMainThreadFor(TaskCategory aCategory) override;
 };
 
 class DedicatedWorkerGlobalScope final : public WorkerGlobalScope
 {
+  const nsString mName;
+
   ~DedicatedWorkerGlobalScope() { }
 
 public:
-  explicit DedicatedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate);
+  DedicatedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate,
+                             const nsString& aName);
 
   virtual bool
   WrapGlobalObject(JSContext* aCx,
                    JS::MutableHandle<JSObject*> aReflector) override;
+
+  void GetName(DOMString& aName) const
+  {
+    aName.AsAString() = mName;
+  }
 
   void
   PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
@@ -229,13 +255,13 @@ public:
 
 class SharedWorkerGlobalScope final : public WorkerGlobalScope
 {
-  const nsCString mName;
+  const nsString mName;
 
   ~SharedWorkerGlobalScope() { }
 
 public:
   SharedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate,
-                          const nsCString& aName);
+                          const nsString& aName);
 
   virtual bool
   WrapGlobalObject(JSContext* aCx,
@@ -243,7 +269,7 @@ public:
 
   void GetName(DOMString& aName) const
   {
-    aName.AsAString() = NS_ConvertUTF8toUTF16(mName);
+    aName.AsAString() = mName;
   }
 
   void
@@ -320,6 +346,7 @@ class WorkerDebuggerGlobalScope final : public DOMEventTargetHelper,
 
   WorkerPrivate* mWorkerPrivate;
   RefPtr<Console> mConsole;
+  nsCOMPtr<nsISerialEventTarget> mSerialEventTarget;
 
 public:
   explicit WorkerDebuggerGlobalScope(WorkerPrivate* aWorkerPrivate);
@@ -395,6 +422,18 @@ public:
 
   void
   Dump(JSContext* aCx, const Optional<nsAString>& aString) const;
+
+  // Override DispatchTrait API to target the worker thread.  Dispatch may
+  // return failure if the worker thread is not alive.
+  nsresult
+  Dispatch(TaskCategory aCategory,
+           already_AddRefed<nsIRunnable>&& aRunnable) override;
+
+  nsISerialEventTarget*
+  EventTargetFor(TaskCategory aCategory) const override;
+
+  AbstractThread*
+  AbstractMainThreadFor(TaskCategory aCategory) override;
 
 private:
   virtual ~WorkerDebuggerGlobalScope();

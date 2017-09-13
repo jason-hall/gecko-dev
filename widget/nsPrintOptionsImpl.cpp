@@ -139,37 +139,37 @@ nsPrintOptions::SerializeToPrintData(nsIPrintSettings* aSettings,
   aSettings->GetPrintRange(&data->printRange());
 
   // I have no idea if I'm doing this string copying correctly...
-  nsXPIDLString title;
+  nsString title;
   aSettings->GetTitle(getter_Copies(title));
   data->title() = title;
 
-  nsXPIDLString docURL;
+  nsString docURL;
   aSettings->GetDocURL(getter_Copies(docURL));
   data->docURL() = docURL;
 
   // Header strings...
-  nsXPIDLString headerStrLeft;
+  nsString headerStrLeft;
   aSettings->GetHeaderStrLeft(getter_Copies(headerStrLeft));
   data->headerStrLeft() = headerStrLeft;
 
-  nsXPIDLString headerStrCenter;
+  nsString headerStrCenter;
   aSettings->GetHeaderStrCenter(getter_Copies(headerStrCenter));
   data->headerStrCenter() = headerStrCenter;
 
-  nsXPIDLString headerStrRight;
+  nsString headerStrRight;
   aSettings->GetHeaderStrRight(getter_Copies(headerStrRight));
   data->headerStrRight() = headerStrRight;
 
   // Footer strings...
-  nsXPIDLString footerStrLeft;
+  nsString footerStrLeft;
   aSettings->GetFooterStrLeft(getter_Copies(footerStrLeft));
   data->footerStrLeft() = footerStrLeft;
 
-  nsXPIDLString footerStrCenter;
+  nsString footerStrCenter;
   aSettings->GetFooterStrCenter(getter_Copies(footerStrCenter));
   data->footerStrCenter() = footerStrCenter;
 
-  nsXPIDLString footerStrRight;
+  nsString footerStrRight;
   aSettings->GetFooterStrRight(getter_Copies(footerStrRight));
   data->footerStrRight() = footerStrRight;
 
@@ -181,7 +181,7 @@ nsPrintOptions::SerializeToPrintData(nsIPrintSettings* aSettings,
   aSettings->GetShrinkToFit(&data->shrinkToFit());
   aSettings->GetShowPrintProgress(&data->showPrintProgress());
 
-  nsXPIDLString paperName;
+  nsString paperName;
   aSettings->GetPaperName(getter_Copies(paperName));
   data->paperName() = paperName;
 
@@ -196,13 +196,13 @@ nsPrintOptions::SerializeToPrintData(nsIPrintSettings* aSettings,
 
   aSettings->GetNumCopies(&data->numCopies());
 
-  nsXPIDLString printerName;
+  nsString printerName;
   aSettings->GetPrinterName(getter_Copies(printerName));
   data->printerName() = printerName;
 
   aSettings->GetPrintToFile(&data->printToFile());
 
-  nsXPIDLString toFileName;
+  nsString toFileName;
   aSettings->GetToFileName(getter_Copies(toFileName));
   data->toFileName() = toFileName;
 
@@ -492,27 +492,33 @@ nsPrintOptions::ReadPrefs(nsIPrintSettings* aPS, const nsAString& aPrinterName,
     bool success = GETINTPREF(kPrintPaperSizeUnit, &sizeUnit)
                   && GETDBLPREF(kPrintPaperWidth, width)
                   && GETDBLPREF(kPrintPaperHeight, height)
-                  && GETSTRPREF(kPrintPaperName, &str);
+                  && GETSTRPREF(kPrintPaperName, str);
 
     // Bug 315687: Sanity check paper size to avoid paper size values in
     // mm when the size unit flag is inches. The value 100 is arbitrary
     // and can be changed.
+#if defined(XP_WIN)
+    bool saveSanitizedSizePrefs = false;
+#endif
     if (success) {
       success = (sizeUnit != nsIPrintSettings::kPaperSizeInches)
              || (width < 100.0)
              || (height < 100.0);
 #if defined(XP_WIN)
       // Work around legacy invalid prefs where the size unit gets set to
-      // millimeters, but the height and width remains as the default inches
-      // ones for letter. See bug 1276717.
+      // millimeters, but the height and width remains as the previous inches
+      // settings. See bug 1276717 and bug 1369386 for details.
       if (sizeUnit == nsIPrintSettings::kPaperSizeMillimeters &&
-          height == 11L && width == 8.5L) {
+          height >= 0L && height < 25L &&
+          width >= 0L && width < 25L) {
 
-        // As an extra precaution only override, when the resolution is also
-        // set to the legacy invalid, uninitialized value. We'll just broadly
-        // assume that anything outside of a million DPI is invalid.
-        if (GETINTPREF(kPrintResolution, &iVal) &&
-            (iVal < 0 || iVal > 1000000)) {
+        // As small pages sizes can be valid we only override when the old
+        // (now no longer set) pref print_paper_size_type exists. This will be
+        // removed when we save the prefs below.
+        const char* paperSizeTypePref =
+          GetPrefName("print_paper_size_type", aPrinterName);
+        if (Preferences::HasUserValue(paperSizeTypePref)) {
+          saveSanitizedSizePrefs = true;
           height = -1L;
           width = -1L;
         }
@@ -529,6 +535,12 @@ nsPrintOptions::ReadPrefs(nsIPrintSettings* aPS, const nsAString& aPrinterName,
       DUMP_DBL(kReadStr, kPrintPaperHeight, height);
       aPS->SetPaperName(str.get());
       DUMP_STR(kReadStr, kPrintPaperName, str.get());
+#if defined(XP_WIN)
+      if (saveSanitizedSizePrefs) {
+        SavePrintSettingsToPrefs(aPS, !aPrinterName.IsEmpty(),
+                                 nsIPrintSettings::kInitSavePaperSize);
+      }
+#endif
     }
   }
 
@@ -547,42 +559,42 @@ nsPrintOptions::ReadPrefs(nsIPrintSettings* aPS, const nsAString& aPrinterName,
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveHeaderLeft) {
-    if (GETSTRPREF(kPrintHeaderStrLeft, &str)) {
+    if (GETSTRPREF(kPrintHeaderStrLeft, str)) {
       aPS->SetHeaderStrLeft(str.get());
       DUMP_STR(kReadStr, kPrintHeaderStrLeft, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveHeaderCenter) {
-    if (GETSTRPREF(kPrintHeaderStrCenter, &str)) {
+    if (GETSTRPREF(kPrintHeaderStrCenter, str)) {
       aPS->SetHeaderStrCenter(str.get());
       DUMP_STR(kReadStr, kPrintHeaderStrCenter, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveHeaderRight) {
-    if (GETSTRPREF(kPrintHeaderStrRight, &str)) {
+    if (GETSTRPREF(kPrintHeaderStrRight, str)) {
       aPS->SetHeaderStrRight(str.get());
       DUMP_STR(kReadStr, kPrintHeaderStrRight, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterLeft) {
-    if (GETSTRPREF(kPrintFooterStrLeft, &str)) {
+    if (GETSTRPREF(kPrintFooterStrLeft, str)) {
       aPS->SetFooterStrLeft(str.get());
       DUMP_STR(kReadStr, kPrintFooterStrLeft, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterCenter) {
-    if (GETSTRPREF(kPrintFooterStrCenter, &str)) {
+    if (GETSTRPREF(kPrintFooterStrCenter, str)) {
       aPS->SetFooterStrCenter(str.get());
       DUMP_STR(kReadStr, kPrintFooterStrCenter, str.get());
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveFooterRight) {
-    if (GETSTRPREF(kPrintFooterStrRight, &str)) {
+    if (GETSTRPREF(kPrintFooterStrRight, str)) {
       aPS->SetFooterStrRight(str.get());
       DUMP_STR(kReadStr, kPrintFooterStrRight, str.get());
     }
@@ -638,7 +650,7 @@ nsPrintOptions::ReadPrefs(nsIPrintSettings* aPS, const nsAString& aPrinterName,
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveToFileName) {
-    if (GETSTRPREF(kPrintToFileName, &str)) {
+    if (GETSTRPREF(kPrintToFileName, str)) {
       aPS->SetToFileName(str.get());
       DUMP_STR(kReadStr, kPrintToFileName, str.get());
     }
@@ -770,6 +782,20 @@ nsPrintOptions::WritePrefs(nsIPrintSettings *aPS, const nsAString& aPrinterName,
       WritePrefDouble(GetPrefName(kPrintPaperHeight, aPrinterName), height);
       DUMP_STR(kWriteStr, kPrintPaperName, name);
       Preferences::SetString(GetPrefName(kPrintPaperName, aPrinterName), name);
+#if defined(XP_WIN)
+      // If the height and width are -1 then this might be a save triggered by
+      // print pref sanitizing code. This is done as a one off and is partly
+      // triggered by the existence of an old (now no longer set) pref. We
+      // remove that pref if it exists here, so that we don't try and sanitize
+      // what might be valid prefs. See bug 1276717 and bug 1369386 for details.
+      if (height == -1L && width == -1L) {
+        const char* paperSizeTypePref =
+          GetPrefName("print_paper_size_type", aPrinterName);
+        if (Preferences::HasUserValue(paperSizeTypePref)) {
+          Preferences::ClearUser(paperSizeTypePref);
+        }
+      }
+#endif
     }
   }
 
@@ -958,7 +984,7 @@ nsresult nsPrintOptions::_CreatePrintSettings(nsIPrintSettings **_retval)
 
   NS_ADDREF(*_retval = printSettings); // ref count
 
-  nsXPIDLString printerName;
+  nsString printerName;
   nsresult rv = GetDefaultPrinterName(getter_Copies(printerName));
   NS_ENSURE_SUCCESS(rv, rv);
   (*_retval)->SetPrinterName(printerName.get());
@@ -998,7 +1024,7 @@ nsPrintOptions::GetDefaultPrinterName(char16_t * *aDefaultPrinterName)
 
   // Look up the printer from the last print job
   nsAutoString lastPrinterName;
-  Preferences::GetString(kPrinterName, &lastPrinterName);
+  Preferences::GetString(kPrinterName, lastPrinterName);
   if (!lastPrinterName.IsEmpty()) {
     // Verify it's still a valid printer
     nsCOMPtr<nsIStringEnumerator> printers;
@@ -1039,7 +1065,7 @@ nsPrintOptions::InitPrintSettingsFromPrinter(const char16_t *aPrinterName,
   NS_ENSURE_ARG_POINTER(aPrinterName);
 
 #ifdef DEBUG
-  nsXPIDLString printerName;
+  nsString printerName;
   aPrintSettings->GetPrinterName(getter_Copies(printerName));
   if (!printerName.Equals(aPrinterName)) {
     NS_WARNING("Printer names should match!");
@@ -1188,7 +1214,7 @@ nsPrintOptions::ReadPrefDouble(const char * aPrefId, double& aVal)
   NS_ENSURE_ARG_POINTER(aPrefId);
 
   nsAutoCString str;
-  nsresult rv = Preferences::GetCString(aPrefId, &str);
+  nsresult rv = Preferences::GetCString(aPrefId, str);
   if (NS_SUCCEEDED(rv) && !str.IsEmpty()) {
     aVal = atof(str.get());
   }
@@ -1211,9 +1237,9 @@ nsPrintOptions::ReadInchesToTwipsPref(const char * aPrefId, int32_t& aTwips,
                                       const char * aMarginPref)
 {
   nsAutoString str;
-  nsresult rv = Preferences::GetString(aPrefId, &str);
+  nsresult rv = Preferences::GetString(aPrefId, str);
   if (NS_FAILED(rv) || str.IsEmpty()) {
-    rv = Preferences::GetString(aMarginPref, &str);
+    rv = Preferences::GetString(aMarginPref, str);
   }
   if (NS_SUCCEEDED(rv) && !str.IsEmpty()) {
     nsresult errCode;
@@ -1265,7 +1291,7 @@ nsPrintOptions::ReadJustification(const char * aPrefId, int16_t& aJust,
 {
   aJust = aInitValue;
   nsAutoString justStr;
-  if (NS_SUCCEEDED(Preferences::GetString(aPrefId, &justStr))) {
+  if (NS_SUCCEEDED(Preferences::GetString(aPrefId, justStr))) {
     if (justStr.EqualsASCII(kJustRight)) {
       aJust = nsIPrintSettings::kJustRight;
     } else if (justStr.EqualsASCII(kJustCenter)) {

@@ -11,30 +11,20 @@ const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
-const {EventEmitter} = Cu.import("resource://devtools/shared/event-emitter.js", {});
+const {EventEmitter} = Cu.import("resource://gre/modules/EventEmitter.jsm", {});
 
-XPCOMUtils.defineLazyModuleGetter(this, "AppConstants",
-                                  "resource://gre/modules/AppConstants.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "AsyncShutdown",
-                                  "resource://gre/modules/AsyncShutdown.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionChild",
-                                  "resource://gre/modules/ExtensionChild.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "OS",
-                                  "resource://gre/modules/osfile.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Schemas",
-                                  "resource://gre/modules/Schemas.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Services",
-                                  "resource://gre/modules/Services.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Subprocess",
-                                  "resource://gre/modules/Subprocess.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Task",
-                                  "resource://gre/modules/Task.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "clearTimeout",
-                                  "resource://gre/modules/Timer.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "setTimeout",
-                                  "resource://gre/modules/Timer.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "WindowsRegistry",
-                                  "resource://gre/modules/WindowsRegistry.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  AppConstants: "resource://gre/modules/AppConstants.jsm",
+  AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
+  ExtensionChild: "resource://gre/modules/ExtensionChild.jsm",
+  OS: "resource://gre/modules/osfile.jsm",
+  Schemas: "resource://gre/modules/Schemas.jsm",
+  Services: "resource://gre/modules/Services.jsm",
+  Subprocess: "resource://gre/modules/Subprocess.jsm",
+  clearTimeout: "resource://gre/modules/Timer.jsm",
+  setTimeout: "resource://gre/modules/Timer.jsm",
+  WindowsRegistry: "resource://gre/modules/WindowsRegistry.jsm",
+});
 
 const HOST_MANIFEST_SCHEMA = "chrome://extensions/content/schemas/native_host_manifest.json";
 const VALID_APPLICATION = /^\w+(\.\w+)*$/;
@@ -60,6 +50,8 @@ const PREF_MAX_READ = "webextensions.native-messaging.max-input-message-bytes";
 const PREF_MAX_WRITE = "webextensions.native-messaging.max-output-message-bytes";
 
 const REGPATH = "Software\\Mozilla\\NativeMessagingHosts";
+
+const global = this;
 
 this.HostManifestManager = {
   _initializePromise: null,
@@ -133,16 +125,16 @@ this.HostManifestManager = {
       });
   },
 
-  _tryPaths: Task.async(function* (application, dirs, context) {
+  async _tryPaths(application, dirs, context) {
     for (let dir of dirs) {
       let path = OS.Path.join(dir, `${application}.json`);
-      let manifest = yield this._tryPath(path, application, context);
+      let manifest = await this._tryPath(path, application, context);
       if (manifest) {
         return {path, manifest};
       }
     }
     return null;
-  }),
+  },
 
   /**
    * Search for a valid native host manifest for the given application name.
@@ -200,7 +192,7 @@ this.NativeApp = class extends EventEmitter {
 
         let subprocessOpts = {
           command: command,
-          arguments: [hostInfo.path],
+          arguments: [hostInfo.path, context.extension.id],
           workdir: OS.Path.dirname(command),
           stderr: "pipe",
         };
@@ -238,7 +230,7 @@ this.NativeApp = class extends EventEmitter {
     app.on("message", (what, msg) => port.postMessage(msg));
     /* eslint-enable mozilla/balanced-listeners */
 
-    port.registerOnMessage(msg => app.send(msg));
+    port.registerOnMessage(holder => app.send(holder));
     port.registerOnDisconnect(msg => app.close());
   }
 
@@ -313,10 +305,10 @@ this.NativeApp = class extends EventEmitter {
   _startStderrRead() {
     let proc = this.proc;
     let app = this.name;
-    Task.spawn(function* () {
+    (async function() {
       let partial = "";
       while (true) {
-        let data = yield proc.stderr.readString();
+        let data = await proc.stderr.readString();
         if (data.length == 0) {
           // We have hit EOF, just stop reading
           if (partial) {
@@ -333,13 +325,14 @@ this.NativeApp = class extends EventEmitter {
           Services.console.logStringMessage(`stderr output from native app ${app}: ${line}`);
         }
       }
-    });
+    })();
   }
 
-  send(msg) {
+  send(holder) {
     if (this._isDisconnected) {
       throw new this.context.cloneScope.Error("Attempt to postMessage on disconnected port");
     }
+    let msg = holder.deserialize(global);
     if (Cu.getClassName(msg, true) != "ArrayBuffer") {
       // This error cannot be triggered by extensions; it indicates an error in
       // our implementation.
@@ -414,14 +407,14 @@ this.NativeApp = class extends EventEmitter {
     this._cleanup();
   }
 
-  sendMessage(msg) {
+  sendMessage(holder) {
     let responsePromise = new Promise((resolve, reject) => {
       this.once("message", (what, msg) => { resolve(msg); });
       this.once("disconnect", (what, err) => { reject(err); });
     });
 
     let result = this.startupPromise.then(() => {
-      this.send(msg);
+      this.send(holder);
       return responsePromise;
     });
 

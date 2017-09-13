@@ -3,8 +3,5 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 extern crate gfx;
-extern crate ipc_channel;
-extern crate style;
 
-#[cfg(test)] mod font_cache_thread;
 #[cfg(test)] mod text_util;

@@ -60,6 +60,7 @@
 #include "nsXPCOMCIDInternal.h"
 #include "nsServiceManagerUtils.h"
 #include "nsString.h"
+#include "nsSystemInfo.h"
 #include "nsAutoPtr.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsXULAppAPI.h"
@@ -326,14 +327,9 @@ nsresult InitOSFileConstants()
   // Get the umask from the system-info service.
   // The property will always be present, but it will be zero on
   // non-Unix systems.
-  nsCOMPtr<nsIPropertyBag2> infoService =
-    do_GetService("@mozilla.org/system-info;1");
-  MOZ_ASSERT(infoService, "Could not access the system information service");
-  rv = infoService->GetPropertyAsUint32(NS_LITERAL_STRING("umask"),
-                                        &gUserUmask);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  // nsSystemInfo::gUserUmask is initialized by NS_InitXPCOM2 so we don't need
+  // to initialize the service.
+  gUserUmask = nsSystemInfo::gUserUmask;
 
   return NS_OK;
 }
@@ -551,6 +547,7 @@ static const dom::ConstantSpec gLibcProperties[] =
   INT_CONSTANT(EFAULT),
   INT_CONSTANT(EFBIG),
   INT_CONSTANT(EINVAL),
+  INT_CONSTANT(EINTR),
   INT_CONSTANT(EIO),
   INT_CONSTANT(EISDIR),
 #if defined(ELOOP) // not defined with VC9
@@ -928,16 +925,6 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
     return false;
   }
 
-#if defined(MOZ_WIDGET_GONK)
-    JSString* strVersion = JS_NewStringCopyZ(cx, "Gonk");
-    if (!strVersion){
-      return false;
-    }
-    JS::Rooted<JS::Value> valVersion(cx, JS::StringValue(strVersion));
-    if (!JS_SetProperty(cx, objSys, "Name", valVersion)) {
-      return false;
-  }
-#else
   nsCOMPtr<nsIXULRuntime> runtime = do_GetService(XULRUNTIME_SERVICE_CONTRACTID);
   if (runtime) {
     nsAutoCString os;
@@ -954,7 +941,6 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
       return false;
     }
   }
-#endif // defined(MOZ_WIDGET_GONK)
 
 #if defined(DEBUG)
   JS::Rooted<JS::Value> valDebug(cx, JS::TrueValue());
@@ -1110,8 +1096,7 @@ OSFileConstantsService::Init(JSContext *aCx)
 
   mozJSComponentLoader* loader = mozJSComponentLoader::Get();
   JS::Rooted<JSObject*> targetObj(aCx);
-  rv = loader->FindTargetObject(aCx, &targetObj);
-  NS_ENSURE_SUCCESS(rv, rv);
+  loader->FindTargetObject(aCx, &targetObj);
 
   if (!mozilla::DefineOSFileConstants(aCx, targetObj)) {
     return NS_ERROR_FAILURE;

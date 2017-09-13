@@ -278,6 +278,30 @@ TEST_F(APZHitTestingTester, HitTesting2) {
   EXPECT_EQ(ScreenPoint(25, 25), transformToGecko.TransformPoint(ParentLayerPoint(25, 25)));
 }
 
+TEST_F(APZHitTestingTester, HitTesting3) {
+  const char* layerTreeSyntax = "c(t)";
+  // LayerID                     0 1
+  nsIntRegion layerVisibleRegions[] = {
+      nsIntRegion(IntRect(0,0,200,200)),
+      nsIntRegion(IntRect(0,0,50,50))
+  };
+  Matrix4x4 transforms[] = {
+      Matrix4x4(),
+      Matrix4x4::Scaling(2, 2, 1)
+  };
+  root = CreateLayerTree(layerTreeSyntax, layerVisibleRegions, transforms, lm, layers);
+  // No actual room to scroll
+  SetScrollableFrameMetrics(root, FrameMetrics::START_SCROLL_ID, CSSRect(0, 0, 200, 200));
+  SetScrollableFrameMetrics(layers[1], FrameMetrics::START_SCROLL_ID + 1, CSSRect(0, 0, 50, 50));
+
+  ScopedLayerTreeRegistration registration(manager, 0, root, mcc);
+
+  manager->UpdateHitTestingTree(0, root, false, 0, 0);
+
+  RefPtr<AsyncPanZoomController> hit = GetTargetAPZC(ScreenPoint(75, 75));
+  EXPECT_EQ(ApzcOf(layers[1]), hit.get());
+}
+
 TEST_F(APZHitTestingTester, ComplexMultiLayerTree) {
   CreateComplexMultiLayerTree();
   ScopedLayerTreeRegistration registration(manager, 0, root, mcc);
@@ -483,8 +507,8 @@ TEST_F(APZHitTestingTester, TestForceDisableApz) {
   EXPECT_EQ(10, point.y);
   EXPECT_EQ(0, viewTransform.mTranslation.x);
   EXPECT_EQ(-10, viewTransform.mTranslation.y);
-  viewTransform = apzcroot->GetCurrentAsyncTransform(AsyncPanZoomController::RESPECT_FORCE_DISABLE);
-  point = apzcroot->GetCurrentAsyncScrollOffset(AsyncPanZoomController::RESPECT_FORCE_DISABLE);
+  viewTransform = apzcroot->GetCurrentAsyncTransform(AsyncPanZoomController::eForCompositing);
+  point = apzcroot->GetCurrentAsyncScrollOffset(AsyncPanZoomController::eForCompositing);
   EXPECT_EQ(0, point.x);
   EXPECT_EQ(0, point.y);
   EXPECT_EQ(0, viewTransform.mTranslation.x);

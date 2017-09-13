@@ -22,6 +22,8 @@ public:
   static void ShutdownStatic();
   static SystemGroupImpl* Get();
 
+  static bool Initialized() { return !!sSingleton; }
+
   NS_METHOD_(MozExternalRefCountType) AddRef(void)
   {
     return 2;
@@ -76,22 +78,34 @@ SystemGroup::Shutdown()
   SystemGroupImpl::ShutdownStatic();
 }
 
-/* static */ nsresult
-SystemGroup::Dispatch(const char* aName,
-                      TaskCategory aCategory,
-                      already_AddRefed<nsIRunnable>&& aRunnable)
+bool
+SystemGroup::Initialized()
 {
-  return SystemGroupImpl::Get()->Dispatch(aName, aCategory, Move(aRunnable));
+  return SystemGroupImpl::Initialized();
 }
 
-/* static */ nsIEventTarget*
+/* static */ nsresult
+SystemGroup::Dispatch(TaskCategory aCategory,
+                      already_AddRefed<nsIRunnable>&& aRunnable)
+{
+  if (!SystemGroupImpl::Initialized()) {
+    return NS_DispatchToMainThread(Move(aRunnable));
+  }
+  return SystemGroupImpl::Get()->Dispatch(aCategory, Move(aRunnable));
+}
+
+/* static */ nsISerialEventTarget*
 SystemGroup::EventTargetFor(TaskCategory aCategory)
 {
+  if (!SystemGroupImpl::Initialized()) {
+    return GetMainThreadSerialEventTarget();
+  }
   return SystemGroupImpl::Get()->EventTargetFor(aCategory);
 }
 
 /* static */ AbstractThread*
 SystemGroup::AbstractMainThreadFor(TaskCategory aCategory)
 {
+  MOZ_ASSERT(SystemGroupImpl::Initialized());
   return SystemGroupImpl::Get()->AbstractMainThreadFor(aCategory);
 }

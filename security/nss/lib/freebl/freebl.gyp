@@ -142,7 +142,8 @@
   'target_defaults': {
     'include_dirs': [
       'mpi',
-      'ecl'
+      'ecl',
+      'verified',
     ],
     'defines': [
       'SHLIB_SUFFIX=\"<(dll_suffix)\"',
@@ -153,13 +154,36 @@
       'MP_API_COMPATIBLE'
     ],
     'conditions': [
+      [ 'target_arch=="ia32" or target_arch=="x64"', {
+        'cflags_mozilla': [
+          '-mpclmul',
+          '-maes',
+        ],
+        'conditions': [
+          [ 'OS=="dragonfly" or OS=="freebsd" or OS=="netbsd" or OS=="openbsd"', {
+            'cflags': [
+              '-mpclmul',
+              '-maes',
+            ],
+          }],
+        ],
+      }],
+      [ 'OS=="mac"', {
+        'xcode_settings': {
+          # I'm not sure since when this is supported.
+          # But I hope that doesn't matter. We also assume this is x86/x64.
+          'OTHER_CFLAGS': [
+            '-mpclmul',
+            '-maes',
+            '-std=gnu99',
+          ],
+        },
+      }],
       [ 'OS=="win" and target_arch=="ia32"', {
         'msvs_settings': {
           'VCCLCompilerTool': {
             #TODO: -Ox optimize flags
             'PreprocessorDefinitions': [
-              'NSS_X86_OR_X64',
-              'NSS_X86',
               'MP_ASSEMBLY_MULTIPLY',
               'MP_ASSEMBLY_SQUARE',
               'MP_ASSEMBLY_DIV_2DX1D',
@@ -176,9 +200,7 @@
           'VCCLCompilerTool': {
             #TODO: -Ox optimize flags
             'PreprocessorDefinitions': [
-              'NSS_USE_64',
-              'NSS_X86_OR_X64',
-              'NSS_X64',
+              # Should be copied to mingw defines below
               'MP_IS_LITTLE_ENDIAN',
               'NSS_BEVAND_ARCFOUR',
               'MPI_AMD64',
@@ -190,25 +212,23 @@
           },
         },
       }],
+      [ 'cc_use_gnu_ld==1 and OS=="win" and target_arch=="x64"', {
+        'defines': [
+          'MP_IS_LITTLE_ENDIAN',
+          'NSS_BEVAND_ARCFOUR',
+          'MPI_AMD64',
+          'MP_ASSEMBLY_MULTIPLY',
+          'NSS_USE_COMBA',
+          'USE_HW_AES',
+          'INTEL_GCM',
+         ],
+      }],
       [ 'OS!="win"', {
         'conditions': [
-          [ 'target_arch=="x64"', {
+          [ 'target_arch=="x64" or target_arch=="arm64" or target_arch=="aarch64"', {
             'defines': [
-              'NSS_USE_64',
-              'NSS_X86_OR_X64',
-              'NSS_X64',
               # The Makefile does version-tests on GCC, but we're not doing that here.
               'HAVE_INT128_SUPPORT',
-            ],
-          }, {
-            'sources': [
-              'ecl/uint128.c',
-            ],
-          }],
-          [ 'target_arch=="ia32"', {
-            'defines': [
-              'NSS_X86_OR_X64',
-              'NSS_X86',
             ],
           }],
         ],
@@ -217,6 +237,9 @@
         'defines': [
           'FREEBL_LOWHASH',
           'FREEBL_NO_DEPEND',
+        ],
+        'cflags': [
+          '-std=gnu99',
         ],
       }],
       [ 'OS=="linux" or OS=="android"', {
@@ -245,17 +268,21 @@
               'MP_USE_UINT_DIGIT',
             ],
           }],
+          [ 'target_arch=="ia32" or target_arch=="x64"', {
+            'cflags': [
+              # enable isa option for pclmul am aes-ni; supported since gcc 4.4
+              # This is only support by x84/x64. It's not needed for Windows.
+              '-mpclmul',
+              '-maes',
+            ],
+          }],
           [ 'target_arch=="arm"', {
             'defines': [
               'MP_ASSEMBLY_MULTIPLY',
               'MP_ASSEMBLY_SQUARE',
               'MP_USE_UINT_DIGIT',
               'SHA_NO_LONG_LONG',
-            ],
-          }],
-          [ 'target_arch=="arm64" or target_arch=="aarch64"', {
-            'defines': [
-              'NSS_USE_64',
+              'ARMHF',
             ],
           }],
         ],

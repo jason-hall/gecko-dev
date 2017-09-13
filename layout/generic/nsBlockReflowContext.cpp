@@ -28,18 +28,18 @@ using namespace mozilla;
 #endif
 
 nsBlockReflowContext::nsBlockReflowContext(nsPresContext* aPresContext,
-                                           const ReflowInput& aParentRS)
+                                           const ReflowInput& aParentRI)
   : mPresContext(aPresContext),
-    mOuterReflowInput(aParentRS),
-    mSpace(aParentRS.GetWritingMode()),
-    mMetrics(aParentRS)
+    mOuterReflowInput(aParentRI),
+    mSpace(aParentRI.GetWritingMode()),
+    mMetrics(aParentRI)
 {
 }
 
 static nsIFrame* DescendIntoBlockLevelFrame(nsIFrame* aFrame)
 {
-  nsIAtom* type = aFrame->GetType();
-  if (type == nsGkAtoms::columnSetFrame) {
+  LayoutFrameType type = aFrame->Type();
+  if (type == LayoutFrameType::ColumnSet) {
     static_cast<nsColumnSetFrame*>(aFrame)->DrainOverflowColumns();
     nsIFrame* child = aFrame->PrincipalChildList().FirstChild();
     if (child) {
@@ -211,7 +211,7 @@ nsBlockReflowContext::ComputeCollapsedBStartMargin(const ReflowInput& aRI,
   if (!setBlockIsEmpty && aBlockIsEmpty) {
     *aBlockIsEmpty = aRI.mFrame->IsEmpty();
   }
-  
+
 #ifdef NOISY_BLOCKDIR_MARGINS
   nsFrame::ListTag(stdout, aRI.mFrame);
   printf(": => %d\n", aMargin->get());

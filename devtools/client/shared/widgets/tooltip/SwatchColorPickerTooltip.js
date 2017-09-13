@@ -13,7 +13,7 @@ const SwatchBasedEditorTooltip = require("devtools/client/shared/widgets/tooltip
 const {LocalizationHelper} = require("devtools/shared/l10n");
 const L10N = new LocalizationHelper("devtools/client/locales/inspector.properties");
 
-const Heritage = require("sdk/core/heritage");
+const {extend} = require("devtools/shared/extend");
 
 const colorWidgetPref = "devtools.inspector.colorWidget.enabled";
 const NEW_COLOR_WIDGET = Services.prefs.getBoolPref(colorWidgetPref);
@@ -38,11 +38,7 @@ const XHTML_NS = "http://www.w3.org/1999/xhtml";
 function SwatchColorPickerTooltip(document,
                                   inspector,
                                   {supportsCssColor4ColorFunction}) {
-  let stylesheet = NEW_COLOR_WIDGET ?
-    null :
-    "chrome://devtools/content/shared/widgets/spectrum.css";
-  let tooltipDocument = NEW_COLOR_WIDGET ? inspector.panelDoc : document;
-  SwatchBasedEditorTooltip.call(this, tooltipDocument, stylesheet, NEW_COLOR_WIDGET);
+  SwatchBasedEditorTooltip.call(this, document);
 
   this.inspector = inspector;
 
@@ -54,7 +50,7 @@ function SwatchColorPickerTooltip(document,
   this.cssColor4 = supportsCssColor4ColorFunction();
 }
 
-SwatchColorPickerTooltip.prototype = Heritage.extend(SwatchBasedEditorTooltip.prototype, {
+SwatchColorPickerTooltip.prototype = extend(SwatchBasedEditorTooltip.prototype, {
   /**
    * Fill the tooltip with a new instance of the spectrum color picker widget
    * initialized with the given color, and return the instance of spectrum
@@ -175,11 +171,12 @@ SwatchColorPickerTooltip.prototype = Heritage.extend(SwatchBasedEditorTooltip.pr
       this.hide();
 
       this.tooltip.emit("eyedropper-opened");
-    }, e => console.error(e));
+    }, console.error);
 
     inspector.once("color-picked", color => {
       toolbox.win.focus();
       this._selectColor(color);
+      this._onEyeDropperDone();
     });
 
     inspector.once("color-pick-canceled", () => {
@@ -194,7 +191,7 @@ SwatchColorPickerTooltip.prototype = Heritage.extend(SwatchBasedEditorTooltip.pr
 
   _colorToRgba: function (color) {
     color = new colorUtils.CssColor(color, this.cssColor4);
-    let rgba = color._getRGBATuple();
+    let rgba = color.getRGBATuple();
     return [rgba.r, rgba.g, rgba.b, rgba.a];
   },
 
@@ -202,6 +199,14 @@ SwatchColorPickerTooltip.prototype = Heritage.extend(SwatchBasedEditorTooltip.pr
     let colorObj = new colorUtils.CssColor(color);
     colorObj.setAuthoredUnitFromColor(this._originalColor, this.cssColor4);
     return colorObj.toString();
+  },
+
+  /**
+   * Overriding the SwatchBasedEditorTooltip.isEditing function to consider the
+   * eyedropper.
+   */
+  isEditing: function () {
+    return this.tooltip.isVisible() || this.eyedropperOpen;
   },
 
   destroy: function () {

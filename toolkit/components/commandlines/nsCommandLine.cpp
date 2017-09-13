@@ -187,11 +187,15 @@ nsCommandLine::HandleFlagWithParam(const nsAString& aFlag, bool aCaseSensitive,
 
   ++found;
 
-  if (mArgs[found].First() == '-') {
-    return NS_ERROR_INVALID_ARG;
+  { // scope for validity of |param|, which RemoveArguments call invalidates
+    const nsString& param = mArgs[found];
+    if (!param.IsEmpty() && param.First() == '-') {
+      return NS_ERROR_INVALID_ARG;
+    }
+
+    aResult = param;
   }
 
-  aResult = mArgs[found];
   RemoveArguments(found - 1, found);
 
   return NS_OK;
@@ -484,14 +488,13 @@ LogConsoleMessage(const char16_t* fmt, ...)
 {
   va_list args;
   va_start(args, fmt);
-  char16_t* msg = nsTextFormatter::vsmprintf(fmt, args);
+  nsString msg;
+  nsTextFormatter::vssprintf(msg, fmt, args);
   va_end(args);
 
   nsCOMPtr<nsIConsoleService> cs = do_GetService("@mozilla.org/consoleservice;1");
   if (cs)
-    cs->LogStringMessage(msg);
-
-  free(msg);
+    cs->LogStringMessage(msg.get());
 }
 
 nsresult
@@ -562,11 +565,11 @@ nsCommandLine::EnumerateValidators(EnumerateValidatorsCallback aCallback, void *
   while (NS_SUCCEEDED(strenum->HasMore(&hasMore)) && hasMore) {
     strenum->GetNext(entry);
 
-    nsXPIDLCString contractID;
+    nsCString contractID;
     rv = catman->GetCategoryEntry("command-line-validator",
 				  entry.get(),
 				  getter_Copies(contractID));
-    if (!contractID)
+    if (contractID.IsVoid())
       continue;
 
     nsCOMPtr<nsICommandLineValidator> clv(do_GetService(contractID.get()));
@@ -587,13 +590,13 @@ static nsresult
 EnumValidate(nsICommandLineValidator* aValidator, nsICommandLine* aThis, void*)
 {
   return aValidator->Validate(aThis);
-}  
+}
 
 static nsresult
 EnumRun(nsICommandLineHandler* aHandler, nsICommandLine* aThis, void*)
 {
   return aHandler->Handle(aThis);
-}  
+}
 
 NS_IMETHODIMP
 nsCommandLine::Run()
@@ -627,7 +630,7 @@ EnumHelp(nsICommandLineHandler* aHandler, nsICommandLine* aThis, void* aClosure)
   }
 
   return NS_OK;
-}  
+}
 
 NS_IMETHODIMP
 nsCommandLine::GetHelpText(nsACString& aResult)

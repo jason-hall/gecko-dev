@@ -53,13 +53,6 @@ APZChild::RecvUpdateOverscrollOffset(const float& aX, const float& aY, const boo
 }
 
 mozilla::ipc::IPCResult
-APZChild::RecvSetScrollingRootContent(const bool& aIsRootContent)
-{
-  mController->SetScrollingRootContent(aIsRootContent);
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
 APZChild::RecvNotifyMozMouseScrollEvent(const ViewID& aScrollId,
                                         const nsString& aEvent)
 {
@@ -89,6 +82,13 @@ mozilla::ipc::IPCResult
 APZChild::RecvNotifyAsyncScrollbarDragRejected(const ViewID& aScrollId)
 {
   mController->NotifyAsyncScrollbarDragRejected(aScrollId);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+APZChild::RecvNotifyAutoscrollHandledByAPZ(const ViewID& aScrollId)
+{
+  mController->NotifyAutoscrollHandledByAPZ(aScrollId);
   return IPC_OK();
 }
 

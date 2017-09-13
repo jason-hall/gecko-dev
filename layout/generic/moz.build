@@ -67,9 +67,6 @@ with Files('nsPluginFrame.*'):
 with Files('nsVideoFrame.*'):
     BUG_COMPONENT = ('Core', 'Audio/Video')
 
-with Files('*Selection*'):
-    BUG_COMPONENT = ('Core', 'Selection')
-
 EXPORTS += [
     'AsyncScrollBase.h',
     'nsCanvasFrame.h',
@@ -101,24 +98,23 @@ EXPORTS += [
     'nsRubyTextFrame.h',
     'nsSplittableFrame.h',
     'nsSubDocumentFrame.h',
+    'nsTextFrameUtils.h',
     'nsTextRunTransformations.h',
     'RubyUtils.h',
     'ScrollbarActivity.h',
     'ScrollSnap.h',
+    'TextDrawTarget.h',
     'Visibility.h',
 ]
 
 EXPORTS.mozilla += [
     'CSSAlignUtils.h',
     'CSSOrderAwareFrameIterator.h',
+    'FrameTypeList.h',
     'ReflowInput.h',
     'ReflowOutput.h',
     'ViewportFrame.h',
     'WritingModes.h',
-]
-
-EXPORTS.mozilla.dom += [
-    'Selection.h',
 ]
 
 EXPORTS.mozilla.layout += [
@@ -148,6 +144,7 @@ UNIFIED_SOURCES += [
     'nsFontInflationData.cpp',
     'nsFrame.cpp',
     'nsFrameList.cpp',
+    'nsFrameSelection.cpp',
     'nsFrameSetFrame.cpp',
     'nsFrameState.cpp',
     'nsFrameUtil.cpp',
@@ -170,7 +167,6 @@ UNIFIED_SOURCES += [
     'nsRubyFrame.cpp',
     'nsRubyTextContainerFrame.cpp',
     'nsRubyTextFrame.cpp',
-    'nsSelection.cpp',
     'nsSimplePageSequenceFrame.cpp',
     'nsSplittableFrame.cpp',
     'nsSubDocumentFrame.cpp',

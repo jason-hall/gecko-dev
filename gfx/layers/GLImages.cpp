@@ -78,12 +78,11 @@ GLImage::GetAsSourceSurface()
   }
 
   const gl::OriginPos destOrigin = gl::OriginPos::TopLeft;
-
-  if (!sSnapshotContext->BlitHelper()->BlitImageToFramebuffer(this, size,
-                                                              autoFBForTex.FB(),
-                                                              destOrigin))
   {
-    return nullptr;
+    const ScopedBindFramebuffer bindFB(sSnapshotContext, autoFBForTex.FB());
+    if (!sSnapshotContext->BlitHelper()->BlitImageToFramebuffer(this, size, destOrigin)) {
+      return nullptr;
+    }
   }
 
   RefPtr<gfx::DataSourceSurface> source =
@@ -98,14 +97,17 @@ GLImage::GetAsSourceSurface()
 }
 
 #ifdef MOZ_WIDGET_ANDROID
-SurfaceTextureImage::SurfaceTextureImage(gl::AndroidSurfaceTexture* aSurfTex,
+SurfaceTextureImage::SurfaceTextureImage(AndroidSurfaceTextureHandle aHandle,
                                          const gfx::IntSize& aSize,
+                                         bool aContinuous,
                                          gl::OriginPos aOriginPos)
  : GLImage(ImageFormat::SURFACE_TEXTURE),
-   mSurfaceTexture(aSurfTex),
+   mHandle(aHandle),
    mSize(aSize),
+   mContinuous(aContinuous),
    mOriginPos(aOriginPos)
 {
+  MOZ_ASSERT(mHandle);
 }
 #endif
 

@@ -7,27 +7,27 @@
 
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/LayersSurfaces.h"
-#include "mozilla/webrender/RenderBufferTextureHost.h"
-#include "mozilla/webrender/RenderTextureHost.h"
 #include "mozilla/webrender/RenderThread.h"
-
-#ifdef XP_MACOSX
-#include "mozilla/layers/MacIOSurfaceTextureHostOGL.h"
-#include "mozilla/webrender/RenderMacIOSurfaceTextureHostOGL.h"
-#endif
 
 namespace mozilla {
 namespace layers {
 
-uint64_t WebRenderTextureHost::sSerialCounter(0);
-
 WebRenderTextureHost::WebRenderTextureHost(const SurfaceDescriptor& aDesc,
                                            TextureFlags aFlags,
-                                           TextureHost* aTexture)
+                                           TextureHost* aTexture,
+                                           wr::ExternalImageId& aExternalImageId)
   : TextureHost(aFlags)
-  , mExternalImageId(++sSerialCounter)
-  , mIsWrappingNativeHandle(false)
+  , mExternalImageId(aExternalImageId)
 {
+  // The wrapped textureHost will be used in WebRender, and the WebRender could
+  // run at another thread. It's hard to control the life-time when gecko
+  // receives PTextureParent destroy message. It's possible that textureHost is
+  // still used by WebRender. So, we only accept the textureHost without
+  // DEALLOCATE_CLIENT flag here. If the buffer deallocation is controlled by
+  // parent, we could do something to make sure the wrapped textureHost is not
+  // used by WebRender and then release it.
+  MOZ_ASSERT(!(aFlags & TextureFlags::DEALLOCATE_CLIENT));
+
   MOZ_COUNT_CTOR(WebRenderTextureHost);
   mWrappedTextureHost = aTexture;
 
@@ -37,38 +37,16 @@ WebRenderTextureHost::WebRenderTextureHost(const SurfaceDescriptor& aDesc,
 WebRenderTextureHost::~WebRenderTextureHost()
 {
   MOZ_COUNT_DTOR(WebRenderTextureHost);
-  wr::RenderThread::Get()->UnregisterExternalImage(mExternalImageId);
+  wr::RenderThread::Get()->UnregisterExternalImage(wr::AsUint64(mExternalImageId));
 }
 
 void
 WebRenderTextureHost::CreateRenderTextureHost(const layers::SurfaceDescriptor& aDesc,
                                               TextureHost* aTexture)
 {
-  RefPtr<wr::RenderTextureHost> texture;
+  MOZ_ASSERT(aTexture);
 
-  switch (aDesc.type()) {
-    case SurfaceDescriptor::TSurfaceDescriptorBuffer: {
-      BufferTextureHost* bufferTexture = aTexture->AsBufferTextureHost();
-      MOZ_ASSERT(bufferTexture);
-      texture = new wr::RenderBufferTextureHost(bufferTexture->GetBuffer(),
-                                                bufferTexture->GetBufferDescriptor());
-      mIsWrappingNativeHandle = false;
-      break;
-    }
-#ifdef XP_MACOSX
-    case SurfaceDescriptor::TSurfaceDescriptorMacIOSurface: {
-      MacIOSurfaceTextureHostOGL* macTexture = aTexture->AsMacIOSurfaceTextureHost();
-      MOZ_ASSERT(macTexture);
-      texture = new wr::RenderMacIOSurfaceTextureHostOGL(macTexture->GetMacIOSurface());
-      mIsWrappingNativeHandle = true;
-      break;
-    }
-#endif
-    default:
-      gfxCriticalError() << "No WR implement for texture type:" << aDesc.type();
-  }
-
-  wr::RenderThread::Get()->RegisterExternalImage(mExternalImageId, texture);
+  aTexture->CreateRenderTexture(mExternalImageId);
 }
 
 bool
@@ -82,7 +60,6 @@ void
 WebRenderTextureHost::Unlock()
 {
   MOZ_ASSERT_UNREACHABLE("unexpected to be called");
-  return;
 }
 
 bool
@@ -155,6 +132,44 @@ WebRenderTextureHost::GetRGBStride()
     return gfx::GetAlignedStride<16>(GetSize().width, BytesPerPixel(gfx::SurfaceFormat::B8G8R8A8));
   }
   return ImageDataSerializer::ComputeRGBStride(format, GetSize().width);
+}
+
+void
+WebRenderTextureHost::GetWRImageKeys(nsTArray<wr::ImageKey>& aImageKeys,
+                                     const std::function<wr::ImageKey()>& aImageKeyAllocator)
+{
+  MOZ_ASSERT(mWrappedTextureHost);
+  MOZ_ASSERT(aImageKeys.IsEmpty());
+
+  mWrappedTextureHost->GetWRImageKeys(aImageKeys, aImageKeyAllocator);
+}
+
+void
+WebRenderTextureHost::AddWRImage(wr::ResourceUpdateQueue& aResources,
+                                 Range<const wr::ImageKey>& aImageKeys,
+                                 const wr::ExternalImageId& aExtID)
+{
+  MOZ_ASSERT(mWrappedTextureHost);
+  MOZ_ASSERT(mExternalImageId == aExtID);
+
+  mWrappedTextureHost->AddWRImage(aResources, aImageKeys, aExtID);
+}
+
+void
+WebRenderTextureHost::PushExternalImage(wr::DisplayListBuilder& aBuilder,
+                                        const wr::LayoutRect& aBounds,
+                                        const wr::LayoutRect& aClip,
+                                        wr::ImageRendering aFilter,
+                                        Range<const wr::ImageKey>& aImageKeys)
+{
+  MOZ_ASSERT(mWrappedTextureHost);
+  MOZ_ASSERT(aImageKeys.length() > 0);
+
+  mWrappedTextureHost->PushExternalImage(aBuilder,
+                                         aBounds,
+                                         aClip,
+                                         aFilter,
+                                         aImageKeys);
 }
 
 } // namespace layers

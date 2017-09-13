@@ -18,7 +18,6 @@
 #include "nsFontMetrics.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLMeterElement.h"
-#include "nsContentList.h"
 #include "nsCSSPseudoElements.h"
 #include "nsStyleSet.h"
 #include "mozilla/StyleSetHandle.h"
@@ -39,7 +38,7 @@ NS_NewMeterFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 NS_IMPL_FRAMEARENA_HELPERS(nsMeterFrame)
 
 nsMeterFrame::nsMeterFrame(nsStyleContext* aContext)
-  : nsContainerFrame(aContext)
+  : nsContainerFrame(aContext, kClassID)
   , mBarDiv(nullptr)
 {
 }
@@ -55,14 +54,8 @@ nsMeterFrame::DestroyFrom(nsIFrame* aDestructRoot)
                "nsMeterFrame should not have continuations; if it does we "
                "need to call RegUnregAccessKey only for the first.");
   nsFormControlFrame::RegUnRegAccessKey(static_cast<nsIFrame*>(this), false);
-  nsContentUtils::DestroyAnonymousContent(&mBarDiv);
+  DestroyAnonymousContent(mBarDiv.forget());
   nsContainerFrame::DestroyFrom(aDestructRoot);
-}
-
-nsIAtom*
-nsMeterFrame::GetType() const
-{
-  return nsGkAtoms::meterFrame;
 }
 
 nsresult
@@ -151,7 +144,7 @@ nsMeterFrame::ReflowBarFrame(nsIFrame*                aBarFrame,
   nscoord yoffset = aReflowInput.ComputedPhysicalBorderPadding().top;
 
   // NOTE: Introduce a new function getPosition in the content part ?
-  HTMLMeterElement* meterElement = static_cast<HTMLMeterElement*>(mContent);
+  HTMLMeterElement* meterElement = static_cast<HTMLMeterElement*>(GetContent());
 
   double max = meterElement->Max();
   double min = meterElement->Min();
@@ -216,7 +209,7 @@ nsMeterFrame::AttributeChanged(int32_t  aNameSpaceID,
 }
 
 LogicalSize
-nsMeterFrame::ComputeAutoSize(nsRenderingContext* aRenderingContext,
+nsMeterFrame::ComputeAutoSize(gfxContext*         aRenderingContext,
                               WritingMode         aWM,
                               const LogicalSize&  aCBSize,
                               nscoord             aAvailableISize,
@@ -242,7 +235,7 @@ nsMeterFrame::ComputeAutoSize(nsRenderingContext* aRenderingContext,
 }
 
 nscoord
-nsMeterFrame::GetMinISize(nsRenderingContext *aRenderingContext)
+nsMeterFrame::GetMinISize(gfxContext *aRenderingContext)
 {
   RefPtr<nsFontMetrics> fontMet =
     nsLayoutUtils::GetFontMetricsForFrame(this, 1.0f);
@@ -258,7 +251,7 @@ nsMeterFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 }
 
 nscoord
-nsMeterFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
+nsMeterFrame::GetPrefISize(gfxContext *aRenderingContext)
 {
   return GetMinISize(aRenderingContext);
 }
@@ -272,11 +265,11 @@ nsMeterFrame::ShouldUseNativeStyle() const
   // - both frames use the native appearance;
   // - neither frame has author specified rules setting the border or the
   //   background.
-  return StyleDisplay()->UsedAppearance() == NS_THEME_METERBAR &&
+  return StyleDisplay()->mAppearance == NS_THEME_METERBAR &&
          !PresContext()->HasAuthorSpecifiedRules(this,
                                                  NS_AUTHOR_SPECIFIED_BORDER | NS_AUTHOR_SPECIFIED_BACKGROUND) &&
          barFrame &&
-         barFrame->StyleDisplay()->UsedAppearance() == NS_THEME_METERCHUNK &&
+         barFrame->StyleDisplay()->mAppearance == NS_THEME_METERCHUNK &&
          !PresContext()->HasAuthorSpecifiedRules(barFrame,
                                                  NS_AUTHOR_SPECIFIED_BORDER | NS_AUTHOR_SPECIFIED_BACKGROUND);
 }

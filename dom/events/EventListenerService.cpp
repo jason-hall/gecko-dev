@@ -360,22 +360,32 @@ EventListenerService::NotifyAboutMainThreadListenerChangeInternal(dom::EventTarg
                                                                   nsIAtom* aName)
 {
   MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(aTarget);
   if (mChangeListeners.IsEmpty()) {
     return;
   }
 
   if (!mPendingListenerChanges) {
     mPendingListenerChanges = nsArrayBase::Create();
-    NS_DispatchToCurrentThread(NewRunnableMethod(this,
-                                                 &EventListenerService::NotifyPendingChanges));
+    nsCOMPtr<nsIRunnable> runnable =
+      NewRunnableMethod("EventListenerService::NotifyPendingChanges",
+                        this, &EventListenerService::NotifyPendingChanges);
+    if (nsCOMPtr<nsIGlobalObject> global = aTarget->GetOwnerGlobal()) {
+      global->Dispatch(TaskCategory::Other, runnable.forget());
+    } else if (nsCOMPtr<nsINode> node = do_QueryInterface(aTarget)) {
+      node->OwnerDoc()->Dispatch(TaskCategory::Other, runnable.forget());
+    } else {
+      NS_DispatchToCurrentThread(runnable);
+    }
   }
 
-  RefPtr<EventListenerChange> changes = mPendingListenerChangesSet.Get(aTarget);
-  if (!changes) {
-    changes = new EventListenerChange(aTarget);
-    mPendingListenerChanges->AppendElement(changes, false);
-    mPendingListenerChangesSet.Put(aTarget, changes);
-  }
+  RefPtr<EventListenerChange> changes =
+    mPendingListenerChangesSet.LookupForAdd(aTarget).OrInsert(
+      [this, aTarget] () {
+        EventListenerChange* c = new EventListenerChange(aTarget);
+        mPendingListenerChanges->AppendElement(c, false);
+        return c;
+      });
   changes->AddChangedListenerName(aName);
 }
 

@@ -46,7 +46,7 @@ EXEC			= exec
 # ELOG prints out failed command when building silently (gmake -s). Pymake
 # prints out failed commands anyway, so ELOG just makes things worse by
 # forcing shell invocations.
-ifneq (,$(findstring s, $(filter-out --%, $(MAKEFLAGS))))
+ifneq (,$(findstring -s, $(filter-out --%, $(MAKEFLAGS))))
   ELOG := $(EXEC) sh $(BUILD_TOOLS)/print-failed-commands.sh
 else
   ELOG :=
@@ -130,7 +130,6 @@ HOST_LIBRARY		:= $(LIB_PREFIX)$(HOST_LIBRARY_NAME).$(LIB_SUFFIX)
 endif
 endif
 
-ifdef LIBRARY
 ifdef FORCE_SHARED_LIB
 ifdef MKSHLIB
 
@@ -142,7 +141,6 @@ EMBED_MANIFEST_AT=2
 
 endif # MKSHLIB
 endif # FORCE_SHARED_LIB
-endif # LIBRARY
 
 ifeq ($(OS_ARCH),WINNT)
 ifndef GNU_CC
@@ -329,47 +327,17 @@ HOST_CPP_PROG_LINK	= 1
 endif
 
 #
-# This will strip out symbols that the component should not be
-# exporting from the .dynsym section.
-#
-ifdef IS_COMPONENT
-EXTRA_DSO_LDOPTS += $(MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS)
-endif # IS_COMPONENT
-
-#
 # MacOS X specific stuff
 #
 
 ifeq ($(OS_ARCH),Darwin)
 ifdef SHARED_LIBRARY
-ifdef IS_COMPONENT
-EXTRA_DSO_LDOPTS	+= -bundle
-else
 ifdef MOZ_IOS
 _LOADER_PATH := @rpath
 else
 _LOADER_PATH := @executable_path
 endif
 EXTRA_DSO_LDOPTS	+= -dynamiclib -install_name $(_LOADER_PATH)/$(SHARED_LIBRARY) -compatibility_version 1 -current_version 1 -single_module
-endif
-endif
-endif
-
-#
-# On NetBSD a.out systems, use -Bsymbolic.  This fixes what would otherwise be
-# fatal symbol name clashes between components.
-#
-ifeq ($(OS_ARCH),NetBSD)
-ifeq ($(DLL_SUFFIX),.so.1.0)
-ifdef IS_COMPONENT
-EXTRA_DSO_LDOPTS += -Wl,-Bsymbolic
-endif
-endif
-endif
-
-ifeq ($(OS_ARCH),FreeBSD)
-ifdef IS_COMPONENT
-EXTRA_DSO_LDOPTS += -Wl,-Bsymbolic
 endif
 endif
 
@@ -383,41 +351,9 @@ endif
 endif
 
 #
-# HP-UXBeOS specific section: for COMPONENTS only, add -Bsymbolic flag
-# which uses internal symbols first
-#
-ifeq ($(OS_ARCH),HP-UX)
-ifdef IS_COMPONENT
-ifeq ($(GNU_CC)$(GNU_CXX),)
-EXTRA_DSO_LDOPTS += -Wl,-Bsymbolic
-ifneq ($(HAS_EXTRAEXPORTS),1)
-MKSHLIB  += -Wl,+eNSGetModule -Wl,+eerrno
-MKCSHLIB += +eNSGetModule +eerrno
-ifneq ($(OS_TEST),ia64)
-MKSHLIB  += -Wl,+e_shlInit
-MKCSHLIB += +e_shlInit
-endif # !ia64
-endif # !HAS_EXTRAEXPORTS
-endif # non-gnu compilers
-endif # IS_COMPONENT
-endif # HP-UX
-
-ifeq ($(OS_ARCH),AIX)
-ifdef IS_COMPONENT
-ifneq ($(HAS_EXTRAEXPORTS),1)
-MKSHLIB += -bE:$(MOZILLA_DIR)/build/unix/aix.exp -bnoexpall
-MKCSHLIB += -bE:$(MOZILLA_DIR)/build/unix/aix.exp -bnoexpall
-endif # HAS_EXTRAEXPORTS
-endif # IS_COMPONENT
-endif # AIX
-
-#
 # Linux: add -Bsymbolic flag for components
 #
 ifeq ($(OS_ARCH),Linux)
-ifdef IS_COMPONENT
-EXTRA_DSO_LDOPTS += -Wl,-Bsymbolic
-endif
 ifdef LD_VERSION_SCRIPT
 EXTRA_DSO_LDOPTS += -Wl,--version-script,$(LD_VERSION_SCRIPT)
 EXTRA_DEPS += $(LD_VERSION_SCRIPT)
@@ -455,9 +391,7 @@ endif
 #
 ifeq ($(OS_ARCH),WINNT)
 ifdef GNU_CC
-ifndef IS_COMPONENT
 DSO_LDOPTS += -Wl,--out-implib -Wl,$(IMPORT_LIBRARY)
-endif
 endif
 endif
 
@@ -632,6 +566,10 @@ alltags:
 	$(RM) TAGS
 	find $(topsrcdir) -name dist -prune -o \( -name '*.[hc]' -o -name '*.cp' -o -name '*.cpp' -o -name '*.idl' \) -print | $(TAG_PROGRAM)
 
+define EXPAND_CC_OR_CXX
+$(if $(PROG_IS_C_ONLY_$(1)),$(EXPAND_CC),$(EXPAND_CCC))
+endef
+
 #
 # PROGRAM = Foo
 # creates OBJS, links with LIBS to create Foo
@@ -661,7 +599,7 @@ ifdef MOZ_PROFILE_GENERATE
 	touch -t `date +%Y%m%d%H%M.%S -d 'now+5seconds'` pgo.relink
 endif
 else # !WINNT || GNU_CC
-	$(EXPAND_CCC) -o $@ $(CXXFLAGS) $(PROGOBJS) $(RESFILE) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(STATIC_LIBS) $(MOZ_PROGRAM_LDFLAGS) $(SHARED_LIBS) $(EXTRA_LIBS) $(OS_LIBS) $(BIN_FLAGS) $(EXE_DEF_FILE)
+	$(call EXPAND_CC_OR_CXX,$@) -o $@ $(CXXFLAGS) $(PROGOBJS) $(RESFILE) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(STATIC_LIBS) $(MOZ_PROGRAM_LDFLAGS) $(SHARED_LIBS) $(EXTRA_LIBS) $(OS_LIBS) $(BIN_FLAGS) $(EXE_DEF_FILE)
 	$(call CHECK_BINARY,$@)
 endif # WINNT && !GNU_CC
 
@@ -720,7 +658,7 @@ ifdef MSMANIFEST_TOOL
 	fi
 endif	# MSVC with manifest tool
 else
-	$(EXPAND_CCC) $(CXXFLAGS) -o $@ $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(STATIC_LIBS) $(MOZ_PROGRAM_LDFLAGS) $(SHARED_LIBS) $(EXTRA_LIBS) $(OS_LIBS) $(BIN_FLAGS)
+	$(call EXPAND_CC_OR_CXX,$@) $(CXXFLAGS) -o $@ $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(STATIC_LIBS) $(MOZ_PROGRAM_LDFLAGS) $(SHARED_LIBS) $(EXTRA_LIBS) $(OS_LIBS) $(BIN_FLAGS)
 	$(call CHECK_BINARY,$@)
 endif # WINNT && !GNU_CC
 
@@ -900,13 +838,12 @@ endif
 
 $(foreach file,$(DUMP_SYMS_TARGETS),$(eval $(call syms_template,$(file),$(file)_syms.track)))
 
-ifdef MOZ_RUST
 cargo_host_flag := --target=$(RUST_HOST_TARGET)
 cargo_target_flag := --target=$(RUST_TARGET)
 
 # Permit users to pass flags to cargo from their mozconfigs (e.g. --color=always).
 cargo_build_flags = $(CARGOFLAGS)
-ifndef MOZ_DEBUG
+ifndef MOZ_DEBUG_RUST
 cargo_build_flags += --release
 endif
 cargo_build_flags += --frozen
@@ -914,7 +851,11 @@ cargo_build_flags += --frozen
 cargo_build_flags += --manifest-path $(CARGO_FILE)
 ifdef BUILD_VERBOSE_LOG
 cargo_build_flags += --verbose
-endif
+else
+ifdef MOZ_AUTOMATION
+cargo_build_flags += --verbose
+endif # MOZ_AUTOMATION
+endif # BUILD_VERBOSE_LOG
 
 # Enable color output if original stdout was a TTY and color settings
 # aren't already present. This essentially restores the default behavior
@@ -922,6 +863,16 @@ endif
 ifdef MACH_STDOUT_ISATTY
 ifeq (,$(findstring --color,$(cargo_build_flags)))
 cargo_build_flags += --color=always
+endif
+endif
+
+# These flags are passed via `cargo rustc` and only apply to the final rustc
+# invocation (i.e., only the top-level crate, not its dependencies).
+cargo_rustc_flags = $(CARGO_RUSTCFLAGS)
+ifndef DEVELOPER_OPTIONS
+ifndef MOZ_DEBUG_RUST
+# Enable link-time optimization for release builds.
+cargo_rustc_flags += -C lto
 endif
 endif
 
@@ -933,15 +884,16 @@ endif
 # optimization levels in our Cargo.toml files all the time, and override the
 # optimization level here, if necessary.  (The Cargo.toml files already
 # specify debug-assertions appropriately for --{disable,enable}-debug.)
+default_rustflags =
 ifndef MOZ_OPTIMIZE
-rustflags = -C opt-level=0
+default_rustflags = -C opt-level=0
 # Unfortunately, -C opt-level=0 implies -C debug-assertions, so we need
-# to explicitly disable them when MOZ_DEBUG is not set.
-ifndef MOZ_DEBUG
-rustflags += -C debug-assertions=no
+# to explicitly disable them when MOZ_DEBUG_RUST is not set.
+ifndef MOZ_DEBUG_RUST
+default_rustflags += -C debug-assertions=no
 endif
-rustflags_override = RUSTFLAGS='$(rustflags)'
 endif
+rustflags_override = RUSTFLAGS='$(default_rustflags) $(RUSTFLAGS)'
 
 ifdef MOZ_MSVCBITS
 # If we are building a MozillaBuild shell, we want to clear out the
@@ -949,23 +901,89 @@ ifdef MOZ_MSVCBITS
 # a 32-bit MozillaBuild shell on a 64-bit machine will try to use
 # the 32-bit compiler/linker for everything, while cargo/rustc wants
 # to use the 64-bit linker for build.rs scripts. This conflict results
-# in a build failure (see bug 1350001). Clearing out *just* the changes
-# from vcvars.bat is hard, so we just clear out the whole environment.
-environment_cleaner = -i
+# in a build failure (see bug 1350001). So we clear out the environment
+# variables that are actually relevant to 32- vs 64-bit builds.
+environment_cleaner = -u VCINSTALLDIR PATH='' LIB='' LIBPATH=''
+# The servo build needs to know where python is, and we're removing the PATH
+# so we tell it explicitly via the PYTHON env var.
+environment_cleaner += PYTHON='$(shell which $(PYTHON))'
 else
 environment_cleaner =
 endif
 
-CARGO_BUILD = env $(environment_cleaner) $(rustflags_override) \
+rust_unlock_unstable =
+ifdef MOZ_RUST_SIMD
+rust_unlock_unstable += RUSTC_BOOTSTRAP=1
+endif
+
+ifdef MOZ_USING_SCCACHE
+sccache_wrap := RUSTC_WRAPPER='$(CCACHE)'
+endif
+
+# XXX hack to work around dsymutil failing on cross-OSX builds (bug 1380381)
+ifeq ($(HOST_OS_ARCH)-$(OS_ARCH),Linux-Darwin)
+default_rustflags += -C debuginfo=1
+else
+default_rustflags += -C debuginfo=2
+endif
+
+# We use the + prefix to pass down the jobserver fds to cargo, but we
+# don't use the prefix when make -n is used, so that cargo doesn't run
+# in that case)
+define RUN_CARGO
+$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)env $(environment_cleaner) $(rust_unlock_unstable) $(rustflags_override) $(sccache_wrap) \
 	CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) \
 	RUSTC=$(RUSTC) \
+	MOZ_SRC=$(topsrcdir) \
 	MOZ_DIST=$(ABS_DIST) \
-	LIBCLANG_PATH=$(MOZ_LIBCLANG_PATH) \
-	CLANG_PATH=$(MOZ_CLANG_PATH) \
+	LIBCLANG_PATH="$(MOZ_LIBCLANG_PATH)" \
+	CLANG_PATH="$(MOZ_CLANG_PATH)" \
 	PKG_CONFIG_ALLOW_CROSS=1 \
-	RUST_BACKTRACE=1 \
+	RUST_BACKTRACE=full \
 	MOZ_TOPOBJDIR=$(topobjdir) \
-	$(CARGO) build $(cargo_build_flags)
+	$(2) \
+	$(CARGO) $(1) $(cargo_build_flags)
+endef
+
+# This function is intended to be called by:
+#
+#   $(call CARGO_BUILD,EXTRA_ENV_VAR1=X EXTRA_ENV_VAR2=Y ...)
+#
+# but, given the idiosyncracies of make, can also be called without arguments:
+#
+#   $(call CARGO_BUILD)
+define CARGO_BUILD
+$(call RUN_CARGO,rustc,$(1))
+endef
+
+define CARGO_CHECK
+$(call RUN_CARGO,check,$(1))
+endef
+
+cargo_linker_env_var := CARGO_TARGET_$(RUST_TARGET_ENV_NAME)_LINKER
+
+# Don't define a custom linker on Windows, as it's difficult to have a
+# non-binary file that will get executed correctly by Cargo.  We don't
+# have to worry about a cross-compiling (besides x86-64 -> x86, which
+# already works with the current setup) setup on Windows, and we don't
+# have to pass in any special linker options on Windows.
+ifneq (WINNT,$(OS_ARCH))
+
+# Defining all of this for ASan/TSan builds results in crashes while running
+# some crates's build scripts (!), so disable it for now.
+ifndef MOZ_ASAN
+ifndef MOZ_TSAN
+# Cargo needs the same linker flags as the C/C++ compiler,
+# but not the final libraries. Filter those out because they
+# cause problems on macOS 10.7; see bug 1365993 for details.
+target_cargo_env_vars := \
+	MOZ_CARGO_WRAP_LDFLAGS="$(filter-out -framework Cocoa -lobjc AudioToolbox ExceptionHandling,$(LDFLAGS))" \
+	MOZ_CARGO_WRAP_LD="$(CC)" \
+	$(cargo_linker_env_var)=$(topsrcdir)/build/cargo-linker
+endif # MOZ_TSAN
+endif # MOZ_ASAN
+
+endif # ifneq WINNT
 
 ifdef RUST_LIBRARY_FILE
 
@@ -980,9 +998,15 @@ endif
 # build.
 force-cargo-library-build:
 	$(REPORT_BUILD)
-	$(CARGO_BUILD) --lib $(cargo_target_flag) $(rust_features_flag)
+	$(call CARGO_BUILD,$(target_cargo_env_vars)) --lib $(cargo_target_flag) $(rust_features_flag) -- $(cargo_rustc_flags)
 
 $(RUST_LIBRARY_FILE): force-cargo-library-build
+
+force-cargo-library-check:
+	$(call CARGO_CHECK,$(target_cargo_env_vars)) --lib $(cargo_target_flag) $(rust_features_flag)
+else
+force-cargo-library-check:
+	@true
 endif # RUST_LIBRARY_FILE
 
 ifdef HOST_RUST_LIBRARY_FILE
@@ -993,26 +1017,44 @@ endif
 
 force-cargo-host-library-build:
 	$(REPORT_BUILD)
-	$(CARGO_BUILD) --lib $(cargo_host_flag) $(host_rust_features_flag)
+	$(call CARGO_BUILD) --lib $(cargo_host_flag) $(host_rust_features_flag)
 
 $(HOST_RUST_LIBRARY_FILE): force-cargo-host-library-build
+
+force-cargo-host-library-check:
+	$(call CARGO_CHECK) --lib $(cargo_host_flag) $(host_rust_features_flag)
+else
+force-cargo-host-library-check:
+	@true
 endif # HOST_RUST_LIBRARY_FILE
 
 ifdef RUST_PROGRAMS
 force-cargo-program-build:
 	$(REPORT_BUILD)
-	$(CARGO_BUILD) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
+	$(call CARGO_BUILD,$(target_cargo_env_vars)) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
 
 $(RUST_PROGRAMS): force-cargo-program-build
+
+force-cargo-program-check:
+	$(call CARGO_CHECK,$(target_cargo_env_vars)) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
+else
+force-cargo-program-check:
+	@true
 endif # RUST_PROGRAMS
 ifdef HOST_RUST_PROGRAMS
 force-cargo-host-program-build:
 	$(REPORT_BUILD)
-	$(CARGO_BUILD) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
+	$(call CARGO_BUILD) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
 
 $(HOST_RUST_PROGRAMS): force-cargo-host-program-build
+
+force-cargo-host-program-check:
+	$(REPORT_BUILD)
+	$(call CARGO_CHECK) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
+else
+force-cargo-host-program-check:
+	@true
 endif # HOST_RUST_PROGRAMS
-endif # MOZ_RUST
 
 $(SOBJS):
 	$(REPORT_BUILD)

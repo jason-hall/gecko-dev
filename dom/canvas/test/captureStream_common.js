@@ -42,8 +42,9 @@ CaptureStreamTestHelper.prototype = {
   startDrawing: function (f) {
     var stop = false;
     var draw = () => {
+      if (stop) { return; }
       f();
-      if (!stop) { window.requestAnimationFrame(draw); }
+      window.requestAnimationFrame(draw);
     };
     draw();
     return { stop: () => stop = true };
@@ -107,7 +108,7 @@ CaptureStreamTestHelper.prototype = {
    */
   isOpaquePixelNot: function(px, refColor, threshold) {
     px[3] = refColor.data[3];
-    return h.isPixelNot(px, refColor, threshold);
+    return this.isPixelNot(px, refColor, threshold);
   },
 
   /*

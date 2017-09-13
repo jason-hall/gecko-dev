@@ -74,15 +74,15 @@ static char *GetModulePassword(PK11SlotInfo *slot, int retry, void *arg) {
   return nullptr;
 }
 
-static std::vector<char> ReadFromIstream(std::istream &is) {
-  std::vector<char> certData;
+static std::vector<uint8_t> ReadFromIstream(std::istream &is) {
+  std::vector<uint8_t> data;
   while (is) {
     char buf[1024];
     is.read(buf, sizeof(buf));
-    certData.insert(certData.end(), buf, buf + is.gcount());
+    data.insert(data.end(), buf, buf + is.gcount());
   }
 
-  return certData;
+  return data;
 }
 
 static std::string GetNewPasswordFromUser(void) {
@@ -181,8 +181,8 @@ std::string StringToHex(const ScopedSECItem &input) {
   return ss.str();
 }
 
-std::vector<char> ReadInputData(std::string &dataPath) {
-  std::vector<char> data;
+std::vector<uint8_t> ReadInputData(std::string dataPath) {
+  std::vector<uint8_t> data;
   if (dataPath.empty()) {
     std::cout << "No input file path given, using stdin." << std::endl;
     data = ReadFromIstream(std::cin);
@@ -198,4 +198,19 @@ std::vector<char> ReadInputData(std::string &dataPath) {
   }
 
   return data;
+}
+
+std::istream &GetStreamFromFileOrStdin(std::string &path, std::ifstream &ifs) {
+  if (path.empty()) {
+    return std::cin;
+  }
+
+  ifs.open(path, std::ifstream::binary);
+  if (!ifs.good()) {
+    std::cerr << "IO Error when opening " << path << std::endl;
+    std::cerr << "Input file does not exist or you don't have permissions."
+              << std::endl;
+  }
+
+  return ifs;
 }

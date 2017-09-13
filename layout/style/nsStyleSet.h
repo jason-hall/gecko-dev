@@ -41,8 +41,11 @@ struct TreeMatchContext;
 
 namespace mozilla {
 class CSSStyleSheet;
-class EventStates;
 enum class CSSPseudoElementType : uint8_t;
+class EventStates;
+namespace dom {
+class ShadowRoot;
+} // namespace dom
 } // namespace mozilla
 
 class nsEmptyStyleRule final : public nsIStyleRule
@@ -103,33 +106,41 @@ class nsStyleSet final
   nsStyleSet();
   ~nsStyleSet();
 
-  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+  void AddSizeOfIncludingThis(nsWindowSizes& aSizes) const;
 
-  void Init(nsPresContext *aPresContext);
+  void Init(nsPresContext* aPresContext, nsBindingManager* aBindingManager);
 
   nsRuleNode* GetRuleTree() { return mRuleTree; }
 
   // get a style context for a non-pseudo frame.
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveStyleFor(mozilla::dom::Element* aElement,
-                  nsStyleContext* aParentContext);
+                  mozilla::GeckoStyleContext* aParentContext);
 
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveStyleFor(mozilla::dom::Element* aElement,
-                  nsStyleContext* aParentContext,
+                  mozilla::GeckoStyleContext* aParentContext,
                   mozilla::LazyComputeBehavior)
   {
     return ResolveStyleFor(aElement, aParentContext);
   }
 
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
+  ResolveCleanStyleFor(mozilla::dom::Element* aElement,
+                       mozilla::GeckoStyleContext* aParentContext,
+                       mozilla::LazyComputeBehavior)
+  {
+    return ResolveStyleFor(aElement, aParentContext);
+  }
+
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveStyleFor(mozilla::dom::Element* aElement,
-                  nsStyleContext* aParentContext,
+                  mozilla::GeckoStyleContext* aParentContext,
                   TreeMatchContext& aTreeMatchContext);
 
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveStyleFor(mozilla::dom::Element* aElement,
-                  nsStyleContext* aParentContext,
+                  mozilla::GeckoStyleContext* aParentContext,
                   mozilla::LazyComputeBehavior aMayCompute,
                   TreeMatchContext& aTreeMatchContext)
   {
@@ -138,8 +149,8 @@ class nsStyleSet final
 
   // Get a style context (with the given parent) for the
   // sequence of style rules in the |aRules| array.
-  already_AddRefed<nsStyleContext>
-  ResolveStyleForRules(nsStyleContext* aParentContext,
+  already_AddRefed<mozilla::GeckoStyleContext>
+  ResolveStyleForRules(mozilla::GeckoStyleContext* aParentContext,
                        const nsTArray< nsCOMPtr<nsIStyleRule> > &aRules);
 
   // Get a style context that represents aBaseContext, but as though
@@ -156,8 +167,8 @@ class nsStyleSet final
   //    level of the cascade, which is the highest level of the cascade.
   //    (This is the case for one current caller, the cover rule used
   //    for CSS transitions.)
-  already_AddRefed<nsStyleContext>
-  ResolveStyleByAddingRules(nsStyleContext* aBaseContext,
+  already_AddRefed<mozilla::GeckoStyleContext>
+  ResolveStyleByAddingRules(mozilla::GeckoStyleContext* aBaseContext,
                             const nsCOMArray<nsIStyleRule> &aRules);
 
   // Resolve style by making replacements in the list of style rules as
@@ -169,11 +180,11 @@ class nsStyleSet final
     // Skip starting CSS animations that result from the style.
     eSkipStartingAnimations = (1<<0),
   };
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveStyleWithReplacement(mozilla::dom::Element* aElement,
                               mozilla::dom::Element* aPseudoElement,
-                              nsStyleContext* aNewParentContext,
-                              nsStyleContext* aOldStyleContext,
+                              mozilla::GeckoStyleContext* aNewParentContext,
+                              mozilla::GeckoStyleContext* aOldStyleContext,
                               nsRestyleHint aReplacements,
                               uint32_t aFlags = 0);
 
@@ -181,23 +192,23 @@ class nsStyleSet final
   // animation data removed.  It is allowable to remove all animation
   // data with eRestyle_AllHintsWithAnimations, or by using any other
   // hints that are allowed by ResolveStyleWithReplacement.
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
     ResolveStyleByRemovingAnimation(mozilla::dom::Element* aElement,
-                                    nsStyleContext* aStyleContext,
+                                    mozilla::GeckoStyleContext* aStyleContext,
                                     nsRestyleHint aWhichToRemove);
 
   // Similar to the above, but resolving style without all animation data in
   // the first place.
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
     ResolveStyleWithoutAnimation(mozilla::dom::Element* aTarget,
-                                 nsStyleContext* aParentContext);
+                                 mozilla::GeckoStyleContext* aParentContext);
 
   // Pseudo-element version of the above, ResolveStyleWithoutAnimation.
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolvePseudoElementStyleWithoutAnimation(
     mozilla::dom::Element* aParentElement,
     mozilla::CSSPseudoElementType aType,
-    nsStyleContext* aParentContext,
+    mozilla::GeckoStyleContext* aParentContext,
     mozilla::dom::Element* aPseudoElement);
 
   // Get a style context for a text node (which no rules will match).
@@ -207,8 +218,8 @@ class nsStyleSet final
   // (Perhaps mozText should go away and we shouldn't even create style
   // contexts for such content nodes, when text-combine-upright is not
   // present.  However, not doing any rule matching for them is a first step.)
-  already_AddRefed<nsStyleContext>
-  ResolveStyleForText(nsIContent* aTextNode, nsStyleContext* aParentContext);
+  already_AddRefed<mozilla::GeckoStyleContext>
+  ResolveStyleForText(nsIContent* aTextNode, mozilla::GeckoStyleContext* aParentContext);
 
   // Get a style context for a first-letter continuation (which no rules will
   // match).
@@ -220,8 +231,8 @@ class nsStyleSet final
   // shouldn't even create style contexts for such frames.  However, not doing
   // any rule matching for them is a first step.  And right now we do use this
   // style context for some things)
-  already_AddRefed<nsStyleContext>
-  ResolveStyleForFirstLetterContinuation(nsStyleContext* aParentContext);
+  already_AddRefed<mozilla::GeckoStyleContext>
+  ResolveStyleForFirstLetterContinuation(mozilla::GeckoStyleContext* aParentContext);
 
   // Get a style context for a placeholder frame (which no rules will match).
   //
@@ -231,7 +242,7 @@ class nsStyleSet final
   // (Perhaps nsCSSAnonBoxes::oofPlaceholder should go away and we shouldn't
   // even create style contexts for placeholders.  However, not doing any rule
   // matching for them is a first step.)
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveStyleForPlaceholder();
 
   // Get a style context for a pseudo-element.  aParentElement must be
@@ -239,29 +250,27 @@ class nsStyleSet final
   // pseudo-element.  aPseudoElement must be non-null if the pseudo-element
   // type is one that allows user action pseudo-classes after it or allows
   // style attributes; otherwise, it is ignored.
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolvePseudoElementStyle(mozilla::dom::Element* aParentElement,
                             mozilla::CSSPseudoElementType aType,
-                            nsStyleContext* aParentContext,
+                            mozilla::GeckoStyleContext* aParentContext,
                             mozilla::dom::Element* aPseudoElement);
 
   // This functions just like ResolvePseudoElementStyle except that it will
   // return nullptr if there are no explicit style rules for that
   // pseudo element.
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ProbePseudoElementStyle(mozilla::dom::Element* aParentElement,
                           mozilla::CSSPseudoElementType aType,
-                          nsStyleContext* aParentContext);
-  already_AddRefed<nsStyleContext>
+                          mozilla::GeckoStyleContext* aParentContext);
+  already_AddRefed<mozilla::GeckoStyleContext>
   ProbePseudoElementStyle(mozilla::dom::Element* aParentElement,
                           mozilla::CSSPseudoElementType aType,
-                          nsStyleContext* aParentContext,
-                          TreeMatchContext& aTreeMatchContext,
-                          mozilla::dom::Element* aPseudoElement = nullptr);
+                          mozilla::GeckoStyleContext* aParentContext,
+                          TreeMatchContext& aTreeMatchContext);
 
   /**
-   * Bit-flags that can be passed to ResolveInheritingAnonymousBoxStyle and
-   * GetContext in their parameter 'aFlags'.
+   * Bit-flags that can be passed to GetContext in its parameter 'aFlags'.
    */
   enum {
     eNoFlags =          0,
@@ -279,27 +288,25 @@ class nsStyleSet final
 
   // Get a style context for an anonymous box.  aPseudoTag is the pseudo-tag to
   // use and must be non-null.  It must be an anon box, and must be one that
-  // inherits style from the given aParentContext.  aFlags will be forwarded to
-  // a GetContext call internally.
-  already_AddRefed<nsStyleContext>
+  // inherits style from the given aParentContext.
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveInheritingAnonymousBoxStyle(nsIAtom* aPseudoTag,
-                                     nsStyleContext* aParentContext,
-                                     uint32_t aFlags = eNoFlags);
+                                     mozilla::GeckoStyleContext* aParentContext);
 
   // Get a style context for an anonymous box that does not inherit style from
   // anything.  aPseudoTag is the pseudo-tag to use and must be non-null.  It
   // must be an anon box, and must be a non-inheriting one.
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveNonInheritingAnonymousBoxStyle(nsIAtom* aPseudoTag);
 
 #ifdef MOZ_XUL
   // Get a style context for a XUL tree pseudo.  aPseudoTag is the
   // pseudo-tag to use and must be non-null.  aParentContent must be
   // non-null.  aComparator must be non-null.
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveXULTreePseudoStyle(mozilla::dom::Element* aParentElement,
-                            nsIAtom* aPseudoTag,
-                            nsStyleContext* aParentContext,
+                            nsICSSAnonBoxPseudo* aPseudoTag,
+                            mozilla::GeckoStyleContext* aParentContext,
                             nsICSSPseudoComparator* aComparator);
 #endif
 
@@ -311,10 +318,10 @@ class nsStyleSet final
   nsCSSKeyframesRule* KeyframesRuleForName(const nsString& aName);
 
   // Return the winning (in the cascade) @counter-style rule for the given name.
-  nsCSSCounterStyleRule* CounterStyleRuleForName(const nsAString& aName);
+  nsCSSCounterStyleRule* CounterStyleRuleForName(nsIAtom* aName);
 
-  // Fetch object for looking up font feature values
-  already_AddRefed<gfxFontFeatureValueSet> GetFontFeatureValuesLookup();
+  // Return gfxFontFeatureValueSet from font feature values rules.
+  already_AddRefed<gfxFontFeatureValueSet> BuildFontFeatureValueSet();
 
   // Append all the currently-active font feature values rules to aArray.
   // Return true for success and false for failure.
@@ -332,15 +339,29 @@ class nsStyleSet final
   // Free all of the data associated with this style set.
   void Shutdown();
 
+  // Notes that a style sheet has changed.
+  void RecordStyleSheetChange(mozilla::CSSStyleSheet* aStyleSheet,
+                              mozilla::StyleSheet::ChangeType);
+
+  // Notes that style sheets have changed in a shadow root.
+  void RecordShadowStyleChange(mozilla::dom::ShadowRoot* aShadowRoot);
+
+  bool StyleSheetsHaveChanged() const
+  {
+    return mStylesHaveChanged || !mChangedScopeStyleRoots.IsEmpty();
+  }
+
+  void InvalidateStyleForCSSRuleChanges();
+
   // Get a new style context that lives in a different parent
   // The new context will be the same as the old if the new parent is the
   // same as the old parent.
   // aElement should be non-null if this is a style context for an
   // element or pseudo-element; in the latter case it should be the
   // real element the pseudo-element is for.
-  already_AddRefed<nsStyleContext>
-  ReparentStyleContext(nsStyleContext* aStyleContext,
-                       nsStyleContext* aNewParentContext,
+  already_AddRefed<mozilla::GeckoStyleContext>
+  ReparentStyleContext(mozilla::GeckoStyleContext* aStyleContext,
+                       mozilla::GeckoStyleContext* aNewParentContext,
                        mozilla::dom::Element* aElement);
 
   // Test if style is dependent on a document state.
@@ -367,17 +388,10 @@ class nsStyleSet final
 
   /*
    * Do any processing that needs to happen as a result of a change in
-   * the characteristics of the medium, and return whether style rules
-   * may have changed as a result.
+   * the characteristics of the medium, and return restyle hint needed
+   * for the change.
    */
-  bool MediumFeaturesChanged();
-
-  // APIs for registering objects that can supply additional
-  // rules during processing.
-  void SetBindingManager(nsBindingManager* aBindingManager)
-  {
-    mBindingManager = aBindingManager;
-  }
+  nsRestyleHint MediumFeaturesChanged(bool aViewportChanged);
 
   // APIs to manipulate the style sheet lists.  The sheets in each
   // list are stored with the most significant sheet last.
@@ -406,7 +420,7 @@ class nsStyleSet final
     return mSheets[aType][aIndex];
   }
 
-  void AppendAllXBLStyleSheets(nsTArray<mozilla::CSSStyleSheet*>& aArray) const;
+  void AppendAllXBLStyleSheets(nsTArray<mozilla::StyleSheet*>& aArray) const;
 
   nsresult RemoveDocStyleSheet(mozilla::CSSStyleSheet* aSheet);
   nsresult AddDocStyleSheet(mozilla::CSSStyleSheet* aSheet,
@@ -466,7 +480,7 @@ class nsStyleSet final
   // sheet inners.
   bool EnsureUniqueInnerOnCSSSheets();
 
-  // Called by CSSStyleSheet::EnsureUniqueInner to let us know it cloned
+  // Called by StyleSheet::EnsureUniqueInner to let us know it cloned
   // its inner.
   void SetNeedsRestyleAfterEnsureUniqueInner() {
     mNeedsRestyleAfterEnsureUniqueInner = true;
@@ -484,6 +498,10 @@ class nsStyleSet final
   // CSSStyleSheets.  See gCSSSheetTypes in nsStyleSet.cpp for the list
   // of CSS sheet types.
   static bool IsCSSSheetType(mozilla::SheetType aSheetType);
+
+  void SetUsesViewportUnits(bool aValue) {
+    mUsesViewportUnits = aValue;
+  }
 
 private:
   nsStyleSet(const nsStyleSet& aCopy) = delete;
@@ -551,8 +569,8 @@ private:
                                       mozilla::CSSPseudoElementType aPseudoType,
                                       nsRestyleHint aReplacements);
 
-  already_AddRefed<nsStyleContext>
-  GetContext(nsStyleContext* aParentContext,
+  already_AddRefed<mozilla::GeckoStyleContext>
+  GetContext(mozilla::GeckoStyleContext* aParentContext,
              nsRuleNode* aRuleNode,
              nsRuleNode* aVisitedRuleNode,
              nsIAtom* aPseudoTag,
@@ -564,16 +582,16 @@ private:
     eWithAnimation,
     eWithoutAnimation,
   };
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolveStyleForInternal(mozilla::dom::Element* aElement,
-                          nsStyleContext* aParentContext,
+                          mozilla::GeckoStyleContext* aParentContext,
                           TreeMatchContext& aTreeMatchContext,
                           AnimationFlag aAnimationFlag);
 
-  already_AddRefed<nsStyleContext>
+  already_AddRefed<mozilla::GeckoStyleContext>
   ResolvePseudoElementStyleInternal(mozilla::dom::Element* aParentElement,
                                     mozilla::CSSPseudoElementType aType,
-                                    nsStyleContext* aParentContext,
+                                    mozilla::GeckoStyleContext* aParentContext,
                                     mozilla::dom::Element* aPseudoElement,
                                     AnimationFlag aAnimationFlag);
 
@@ -606,14 +624,28 @@ private:
                                 // lexicographic tree of matched rules that style
                                 // contexts use to look up properties.
 
+  // List of subtrees rooted at style scope roots that need to be restyled.
+  // When a change to a scoped style sheet is made, we add the style scope
+  // root to this array rather than setting mStylesHaveChanged = true, since
+  // we know we don't need to restyle the whole document.  However, if in the
+  // same update block we have already had other changes that require
+  // the whole document to be restyled (i.e., mStylesHaveChanged is already
+  // true), then we don't bother adding the scope root here.
+  AutoTArray<RefPtr<mozilla::dom::Element>,1> mChangedScopeStyleRoots;
+
   uint16_t mBatching;
 
+  // Indicates that the whole document must be restyled.  Changes to scoped
+  // style sheets are recorded in mChangedScopeStyleRoots rather than here
+  // in mStylesHaveChanged.
+  unsigned mStylesHaveChanged : 1;
   unsigned mInShutdown : 1;
   unsigned mInGC : 1;
   unsigned mAuthorStyleDisabled: 1;
   unsigned mInReconstruct : 1;
-  unsigned mInitFontFeatureValuesLookup : 1;
   unsigned mNeedsRestyleAfterEnsureUniqueInner : 1;
+  // Does the associated document use viewport units (vw/vh/vmin/vmax)?
+  unsigned mUsesViewportUnits : 1;
   unsigned mDirty : int(mozilla::SheetType::Count);  // one bit per sheet type
 
   uint32_t mRootStyleContextCount;
@@ -645,14 +677,11 @@ private:
   // <svg:text> elements to disable the effect of text zooming.
   RefPtr<nsDisableTextZoomStyleRule> mDisableTextZoomStyleRule;
 
-  // whether font feature values lookup object needs initialization
-  RefPtr<gfxFontFeatureValueSet> mFontFeatureValuesLookup;
-
   // Stores pointers to our cached style contexts for non-inheriting anonymous
   // boxes.
   mozilla::EnumeratedArray<nsCSSAnonBoxes::NonInheriting,
                            nsCSSAnonBoxes::NonInheriting::_Count,
-                           RefPtr<nsStyleContext>> mNonInheritingStyleContexts;
+                           RefPtr<mozilla::GeckoStyleContext>> mNonInheritingStyleContexts;
 };
 
 #ifdef MOZILLA_INTERNAL_API

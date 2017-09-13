@@ -12,6 +12,8 @@ const { getStack } = require("devtools/shared/platform/stack");
 
 // A symbol used to hold onto the frame loader from the outer browser while tunneling.
 const FRAME_LOADER = Symbol("devtools/responsive/frame-loader");
+// Export for use in tests.
+exports.OUTER_FRAME_LOADER_SYMBOL = FRAME_LOADER;
 
 function debug(msg) {
   // console.log(msg);
@@ -161,9 +163,9 @@ function tunnelToInnerBrowser(outer, inner) {
       // The constructor of the new XBL binding is run asynchronously and there is no
       // event to signal its completion.  Spin an event loop to watch for properties that
       // are set by the contructor.
-      while (!outer._remoteWebNavigation) {
-        Services.tm.currentThread.processNextEvent(true);
-      }
+      Services.tm.spinEventLoopUntil(() => {
+        return outer._remoteWebNavigation;
+      });
 
       // Replace the `webNavigation` object with our own version which tries to use
       // mozbrowser APIs where possible.  This replaces the webNavigation object that the
@@ -245,7 +247,8 @@ function tunnelToInnerBrowser(outer, inner) {
       // this event doesn't give enough info to use them.
       browserWindow.browserDOMWindow
         .openURI(uri, null, Ci.nsIBrowserDOMWindow.OPEN_NEWTAB,
-                 Ci.nsIBrowserDOMWindow.OPEN_NEW);
+                 Ci.nsIBrowserDOMWindow.OPEN_NEW,
+                 outer.contentPrincipal);
     },
 
     stop() {
@@ -474,7 +477,7 @@ MessageManagerTunnel.prototype = {
       this.tunneledMessageNames.add(name);
     }
 
-    Services.obs.addObserver(this, "message-manager-close", false);
+    Services.obs.addObserver(this, "message-manager-close");
 
     // Replace the outer browser's messageManager with this tunnel
     Object.defineProperty(this.outer, "messageManager", {

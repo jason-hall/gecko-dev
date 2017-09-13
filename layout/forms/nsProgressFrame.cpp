@@ -18,7 +18,6 @@
 #include "nsFontMetrics.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLProgressElement.h"
-#include "nsContentList.h"
 #include "nsCSSPseudoElements.h"
 #include "nsStyleSet.h"
 #include "mozilla/StyleSetHandle.h"
@@ -38,7 +37,7 @@ NS_NewProgressFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 NS_IMPL_FRAMEARENA_HELPERS(nsProgressFrame)
 
 nsProgressFrame::nsProgressFrame(nsStyleContext* aContext)
-  : nsContainerFrame(aContext)
+  : nsContainerFrame(aContext, kClassID)
   , mBarDiv(nullptr)
 {
 }
@@ -54,14 +53,8 @@ nsProgressFrame::DestroyFrom(nsIFrame* aDestructRoot)
                "nsProgressFrame should not have continuations; if it does we "
                "need to call RegUnregAccessKey only for the first.");
   nsFormControlFrame::RegUnRegAccessKey(static_cast<nsIFrame*>(this), false);
-  nsContentUtils::DestroyAnonymousContent(&mBarDiv);
+  DestroyAnonymousContent(mBarDiv.forget());
   nsContainerFrame::DestroyFrom(aDestructRoot);
-}
-
-nsIAtom*
-nsProgressFrame::GetType() const
-{
-  return nsGkAtoms::progressFrame;
 }
 
 nsresult
@@ -98,10 +91,9 @@ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 void
 nsProgressFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                  const nsRect&           aDirtyRect,
                                   const nsDisplayListSet& aLists)
 {
-  BuildDisplayListForInline(aBuilder, aDirtyRect, aLists);
+  BuildDisplayListForInline(aBuilder, aLists);
 }
 
 void
@@ -158,7 +150,7 @@ nsProgressFrame::ReflowChildFrame(nsIFrame*          aChild,
   nscoord xoffset = aReflowInput.ComputedPhysicalBorderPadding().left;
   nscoord yoffset = aReflowInput.ComputedPhysicalBorderPadding().top;
 
-  double position = static_cast<HTMLProgressElement*>(mContent)->Position();
+  double position = static_cast<HTMLProgressElement*>(GetContent())->Position();
 
   // Force the bar's size to match the current progress.
   // When indeterminate, the progress' size will be 100%.
@@ -230,7 +222,7 @@ nsProgressFrame::AttributeChanged(int32_t  aNameSpaceID,
 }
 
 LogicalSize
-nsProgressFrame::ComputeAutoSize(nsRenderingContext* aRenderingContext,
+nsProgressFrame::ComputeAutoSize(gfxContext*         aRenderingContext,
                                  WritingMode         aWM,
                                  const LogicalSize&  aCBSize,
                                  nscoord             aAvailableISize,
@@ -255,7 +247,7 @@ nsProgressFrame::ComputeAutoSize(nsRenderingContext* aRenderingContext,
 }
 
 nscoord
-nsProgressFrame::GetMinISize(nsRenderingContext *aRenderingContext)
+nsProgressFrame::GetMinISize(gfxContext *aRenderingContext)
 {
   RefPtr<nsFontMetrics> fontMet =
     nsLayoutUtils::GetFontMetricsForFrame(this, 1.0f);
@@ -271,7 +263,7 @@ nsProgressFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 }
 
 nscoord
-nsProgressFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
+nsProgressFrame::GetPrefISize(gfxContext *aRenderingContext)
 {
   return GetMinISize(aRenderingContext);
 }
@@ -285,11 +277,11 @@ nsProgressFrame::ShouldUseNativeStyle() const
   // - both frames use the native appearance;
   // - neither frame has author specified rules setting the border or the
   //   background.
-  return StyleDisplay()->UsedAppearance() == NS_THEME_PROGRESSBAR &&
+  return StyleDisplay()->mAppearance == NS_THEME_PROGRESSBAR &&
          !PresContext()->HasAuthorSpecifiedRules(this,
                                                  NS_AUTHOR_SPECIFIED_BORDER | NS_AUTHOR_SPECIFIED_BACKGROUND) &&
          barFrame &&
-         barFrame->StyleDisplay()->UsedAppearance() == NS_THEME_PROGRESSCHUNK &&
+         barFrame->StyleDisplay()->mAppearance == NS_THEME_PROGRESSCHUNK &&
          !PresContext()->HasAuthorSpecifiedRules(barFrame,
                                                  NS_AUTHOR_SPECIFIED_BORDER | NS_AUTHOR_SPECIFIED_BACKGROUND);
 }

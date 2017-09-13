@@ -1,6 +1,7 @@
 "use strict";
 
 module.exports = {
+<<<<<<< HEAD
   // When adding items to this file please check for effects on sub-directories.
   "plugins": [
     "mozilla"
@@ -24,5 +25,21 @@ module.exports = {
   },
   "parserOptions": {
     "ecmaVersion": 8,
+=======
+  // New rules and configurations should generally be added in
+  // tools/lint/eslint/eslint-plugin-mozilla/lib/configs/recommended.js to
+  // allow external repositories that use the plugin to pick them up as well.
+  "extends": [
+    "plugin:mozilla/recommended"
+  ],
+  "plugins": [
+    "mozilla"
+  ],
+  // The html plugin is enabled via a command line option on eslint. To avoid
+  // bad interactions with the xml preprocessor in eslint-plugin-mozilla, we
+  // turn off processing of the html plugin for .xml files.
+  "settings": {
+    "html/xml-extensions": [ ".xhtml" ]
+>>>>>>> a17af05f6f9f79dd18cb2721cc8d0a0dfa1d04de
   },
 };

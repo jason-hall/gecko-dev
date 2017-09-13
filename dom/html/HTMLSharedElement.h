@@ -8,9 +8,6 @@
 #define mozilla_dom_HTMLSharedElement_h
 
 #include "nsIDOMHTMLBaseElement.h"
-#include "nsIDOMHTMLDirectoryElement.h"
-#include "nsIDOMHTMLQuoteElement.h"
-#include "nsIDOMHTMLHeadElement.h"
 #include "nsIDOMHTMLHtmlElement.h"
 #include "nsGenericHTMLElement.h"
 
@@ -24,9 +21,6 @@ namespace dom {
 
 class HTMLSharedElement final : public nsGenericHTMLElement,
                                 public nsIDOMHTMLBaseElement,
-                                public nsIDOMHTMLDirectoryElement,
-                                public nsIDOMHTMLQuoteElement,
-                                public nsIDOMHTMLHeadElement,
                                 public nsIDOMHTMLHtmlElement
 {
 public:
@@ -45,12 +39,6 @@ public:
   // nsIDOMHTMLBaseElement
   NS_DECL_NSIDOMHTMLBASEELEMENT
 
-  // nsIDOMHTMLQuoteElement
-  NS_DECL_NSIDOMHTMLQUOTEELEMENT
-
-  // nsIDOMHTMLHeadElement
-  NS_DECL_NSIDOMHTMLHEADELEMENT
-
   // nsIDOMHTMLHtmlElement
   NS_DECL_NSIDOMHTMLHTMLELEMENT
 
@@ -59,17 +47,6 @@ public:
                                 nsIAtom* aAttribute,
                                 const nsAString& aValue,
                                 nsAttrValue& aResult) override;
-  nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                   const nsAString& aValue, bool aNotify)
-  {
-    return SetAttr(aNameSpaceID, aName, nullptr, aValue, aNotify);
-  }
-  virtual nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                           nsIAtom* aPrefix, const nsAString& aValue,
-                           bool aNotify) override;
-
-  virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                             bool aNotify) override;
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
@@ -81,7 +58,8 @@ public:
   virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const override;
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const override;
 
-  virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const override;
+  virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
+                         bool aPreallocateChildren) const override;
 
   // WebIDL API
   // HTMLParamElement
@@ -157,7 +135,11 @@ public:
   }
 
   // HTMLQuoteElement
-  // The XPCOM GetCite works fine for us
+  void GetCite(nsString& aCite)
+  {
+    GetHTMLURIAttr(nsGkAtoms::cite, aCite);
+  }
+
   void SetCite(const nsAString& aValue, ErrorResult& aResult)
   {
     MOZ_ASSERT(mNodeInfo->Equals(nsGkAtoms::q) ||
@@ -181,6 +163,11 @@ protected:
   virtual ~HTMLSharedElement();
 
   virtual JSObject* WrapNode(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) override;
+
+  virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
+                                const nsAttrValue* aValue,
+                                const nsAttrValue* aOldValue,
+                                bool aNotify) override;
 };
 
 } // namespace dom

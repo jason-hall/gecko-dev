@@ -13,9 +13,9 @@ add_task(function* () {
                    "<p>hello world";
   let firstTab = gBrowser.selectedTab;
 
-  Services.prefs.setBoolPref("browser.tabs.animate", false);
+  Services.prefs.setBoolPref("toolkit.cosmeticAnimations.enabled", false);
   registerCleanupFunction(() => {
-    Services.prefs.clearUserPref("browser.tabs.animate");
+    Services.prefs.clearUserPref("toolkit.cosmeticAnimations.enabled");
   });
 
   yield loadTab(TEST_URI);
@@ -23,9 +23,9 @@ add_task(function* () {
   let hud = yield openConsole();
   ok(hud, "Web Console opened");
 
-  let tabClosed = promise.defer();
-  let toolboxDestroyed = promise.defer();
-  let tabSelected = promise.defer();
+  let tabClosed = defer();
+  let toolboxDestroyed = defer();
+  let tabSelected = defer();
 
   let target = TargetFactory.forTab(gBrowser.selectedTab);
   let toolbox = gDevTools.getToolbox(target);
@@ -59,14 +59,14 @@ add_task(function* () {
   hud = yield HUDService.toggleBrowserConsole();
   ok(hud, "Browser Console opened");
 
-  let deferred = promise.defer();
+  let deferred = defer();
 
   Services.obs.addObserver(function onDestroy() {
     Services.obs.removeObserver(onDestroy, "web-console-destroyed");
     ok(true, "the Browser Console closed");
 
     deferred.resolve(null);
-  }, "web-console-destroyed", false);
+  }, "web-console-destroyed");
 
   waitForFocus(() => {
     EventUtils.synthesizeKey("w", { accelKey: true }, hud.iframeWindow);

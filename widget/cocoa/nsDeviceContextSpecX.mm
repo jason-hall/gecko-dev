@@ -70,10 +70,7 @@ NS_IMETHODIMP nsDeviceContextSpecX::Init(nsIWidget *aWidget,
   bool toPrinter = !toFile && !aIsPrintPreview;
   if (!toPrinter) {
     double width, height;
-    settings->GetEffectivePageSize(&width, &height);
-    width /= TWIPS_PER_POINT_FLOAT;
-    height /= TWIPS_PER_POINT_FLOAT;
-
+    settings->GetFilePageSize(&width, &height);
     settings->SetCocoaPaperSize(width, height);
   }
 
@@ -83,9 +80,9 @@ NS_IMETHODIMP nsDeviceContextSpecX::Init(nsIWidget *aWidget,
   mPrintSettings = settings->GetPMPrintSettings();
 
 #ifdef MOZ_ENABLE_SKIA_PDF
-  const nsAdoptingString& printViaPdf =
-    mozilla::Preferences::GetString("print.print_via_pdf_encoder");
-  if (printViaPdf == NS_LITERAL_STRING("skia-pdf")) {
+  nsAutoString printViaPdf;
+  mozilla::Preferences::GetString("print.print_via_pdf_encoder", printViaPdf);
+  if (printViaPdf.EqualsLiteral("skia-pdf")) {
     // Annoyingly, PMPrinterPrintWithFile does not pay attention to the
     // kPMDestination* value set in the PMPrintSession; it always sends the PDF
     // to the specified printer.  This means that if we create the PDF using
@@ -243,8 +240,10 @@ void nsDeviceContextSpecX::GetPaperRect(double* aTop, double* aLeft, double* aBo
     PMRect paperRect;
     ::PMGetAdjustedPaperRect(mPageFormat, &paperRect);
 
-    *aTop = paperRect.top, *aLeft = paperRect.left;
-    *aBottom = paperRect.bottom, *aRight = paperRect.right;
+    *aTop = paperRect.top;
+    *aLeft = paperRect.left;
+    *aBottom = paperRect.bottom;
+    *aRight = paperRect.right;
 
     NS_OBJC_END_TRY_ABORT_BLOCK;
 }

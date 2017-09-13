@@ -9,9 +9,12 @@
 #include "RenderTextureHost.h"
 
 namespace mozilla {
-namespace wr {
 
-class RenderMacIOSurfaceTextureHostOGL;
+namespace gl {
+class GLContext;
+}
+
+namespace wr {
 
 class RenderTextureHostOGL : public RenderTextureHost
 {
@@ -20,10 +23,10 @@ public:
 
   virtual void SetGLContext(gl::GLContext* aContext) = 0;
 
-  virtual GLuint GetGLHandle() = 0;
+  virtual gfx::IntSize GetSize(uint8_t aChannelIndex) const = 0;
+  virtual GLuint GetGLHandle(uint8_t aChannelIndex) const = 0;
 
-  virtual RenderTextureHostOGL* AsTextureHostOGL() { return this; }
-  virtual RenderMacIOSurfaceTextureHostOGL* AsMacIOSurfaceTextureHostOGL() { return nullptr; }
+  virtual RenderTextureHostOGL* AsTextureHostOGL()  override { return this; }
 
 protected:
   virtual ~RenderTextureHostOGL();

@@ -8,8 +8,6 @@ var Ci = Components.interfaces;
 var Cr = Components.results;
 
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Promise.jsm");
-Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/AsyncShutdown.jsm");
 
 var asyncShutdownService = Cc["@mozilla.org/async-shutdown-service;1"].
@@ -44,7 +42,7 @@ function makeLock(kind) {
         return phase.removeBlocker(blocker);
       },
       wait() {
-        Services.obs.notifyObservers(null, topic, null);
+        Services.obs.notifyObservers(null, topic);
         return Promise.resolve();
       }
     };
@@ -76,17 +74,17 @@ function makeLock(kind) {
             name: blockerName,
             state,
             blockShutdown(aBarrierClient) {
-              return Task.spawn(function*() {
+              return (async function() {
                 try {
                   if (typeof condition == "function") {
-                    yield Promise.resolve(condition());
+                    await Promise.resolve(condition());
                   } else {
-                    yield Promise.resolve(condition);
+                    await Promise.resolve(condition);
                   }
                 } finally {
                   aBarrierClient.removeBlocker(blocker);
                 }
-              });
+              })();
             },
           };
           makeLock.xpcomMap.set(condition, blocker);
@@ -143,13 +141,13 @@ function longRunningAsyncTask(resolution = undefined, outResult = {}) {
   if (!("countFinished" in outResult)) {
     outResult.countFinished = 0;
   }
-  let deferred = Promise.defer();
-  do_timeout(100, function() {
-    ++outResult.countFinished;
-    outResult.isFinished = true;
-    deferred.resolve(resolution);
+  return new Promise(resolve => {
+    do_timeout(100, function() {
+      ++outResult.countFinished;
+      outResult.isFinished = true;
+      resolve(resolution);
+    });
   });
-  return deferred.promise;
 }
 
 function get_exn(f) {

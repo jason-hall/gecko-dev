@@ -38,6 +38,7 @@ class NativeObject;
 class Nursery;
 class HeapSlot;
 class ZoneGroup;
+class JSONPrinter;
 
 void SetGCZeal(JSRuntime*, uint8_t, uint32_t);
 
@@ -120,13 +121,13 @@ class Nursery
     JSObject* allocateObject(JSContext* cx, size_t size, size_t numDynamic, const js::Class* clasp, bool canGC);
 
     /* Allocate a buffer for a given zone, using the nursery if possible. */
-    void* allocateBuffer(JS::Zone* zone, uint32_t nbytes) { return malloc(nbytes); }
+    void* allocateBuffer(JS::Zone* zone, size_t nbytes) { return malloc(nbytes); }
 
     /*
      * Allocate a buffer for a given object, using the nursery if possible and
      * obj is in the nursery.
      */
-    void* allocateBuffer(JSObject* obj, uint32_t nbytes) { return malloc(nbytes); }
+    void* allocateBuffer(JSObject* obj, size_t nbytes) { return malloc(nbytes); }
 
     /* Free an object buffer. */
     void freeBuffer(void* buffer) {}
@@ -139,7 +140,7 @@ class Nursery
      * sets |*ref| to the new location of the object and returns true. Otherwise
      * returns false and leaves |*ref| unset.
      */
-    MOZ_ALWAYS_INLINE MOZ_MUST_USE bool getForwardedPointer(JSObject** ref) const { return true; }
+    MOZ_ALWAYS_INLINE MOZ_MUST_USE static bool getForwardedPointer(JSObject** ref) { return true; }
 
     /* Forward a slots/elements pointer stored in an Ion frame. */
     void forwardBufferPointer(HeapSlot** pSlotsElems) {}
@@ -152,14 +153,12 @@ class Nursery
     }
 
     MOZ_MUST_USE bool addedUniqueIdToCell(gc::Cell* cell) {
-        MOZ_ASSERT(cellsWithUid_.initialized());
-        MOZ_ASSERT(!cellsWithUid_.has(cell));
-        return cellsWithUid_.put(cell);
+        //MOZ_ASSERT(IsInsideNursery(cell));
+        //MOZ_ASSERT(isEnabled());
+        return cellsWithUid_.append(cell);
     }
 
-    using SweepThunk = void (*)(void *data);
-
-    MOZ_MUST_USE bool queueDictionaryModeObjectToSweep(NativeObject* obj) { return true; }
+    MOZ_MUST_USE bool queueDictionaryModeObjectToSweep(NativeObject* obj) {}
 
     size_t sizeOfHeapCommitted() const {
         return 0;
@@ -169,6 +168,7 @@ class Nursery
     }
 
   private:
+
     /*
      * When we assign a unique id to cell in the nursery, that almost always
      * means that the cell will be in a hash table, and thus, held live,
@@ -181,8 +181,8 @@ class Nursery
      *       sweep. This is because this structure is used to help implement
      *       stable object hashing and we have to break the cycle somehow.
      */
-    using CellsWithUniqueIdSet = HashSet<gc::Cell*, PointerHasher<gc::Cell*, 3>, SystemAllocPolicy>;
-    CellsWithUniqueIdSet cellsWithUid_;
+    using CellsWithUniqueIdVector = Vector<gc::Cell*, 8, SystemAllocPolicy>;
+    CellsWithUniqueIdVector cellsWithUid_;
 
     /*
      * The start and end pointers are stored under the runtime so that we can

@@ -9,7 +9,7 @@
 #include <stack>                        // for stack
 #include "BasicContainerLayer.h"        // for BasicContainerLayer
 #include "BasicLayersImpl.h"            // for ToData, BasicReadbackLayer, etc
-#include "GeckoProfiler.h"              // for PROFILER_LABEL
+#include "GeckoProfiler.h"              // for AUTO_PROFILER_LABEL
 #include "ImageContainer.h"             // for ImageFactory
 #include "Layers.h"                     // for Layer, ContainerLayer, etc
 #include "ReadbackLayer.h"              // for ReadbackLayer
@@ -62,7 +62,7 @@ using namespace mozilla::gfx;
 static bool
 ClipToContain(gfxContext* aContext, const IntRect& aRect)
 {
-  gfxRect userRect(aRect.x, aRect.y, aRect.width, aRect.height);
+  gfxRect userRect(aRect.x, aRect.y, aRect.Width(), aRect.Height());
   gfxRect deviceRect = aContext->UserToDevice(userRect);
   deviceRect.RoundOut();
 
@@ -270,7 +270,7 @@ public:
         !mTransform.HasNonAxisAlignedTransform()) {
 
       gfx::Rect opaqueRect = dt->GetTransform().TransformBounds(
-        gfx::Rect(bounds.x, bounds.y, bounds.width, bounds.height));
+              gfx::Rect(bounds.x, bounds.y, bounds.Width(), bounds.Height()));
       opaqueRect.RoundIn();
       IntRect intOpaqueRect;
       if (opaqueRect.ToIntRect(&intOpaqueRect)) {
@@ -374,7 +374,7 @@ static void
 TransformIntRect(IntRect& aRect, const Matrix& aMatrix,
                  IntRect (*aRoundMethod)(const gfxRect&))
 {
-  Rect gr = Rect(aRect.x, aRect.y, aRect.width, aRect.height);
+  Rect gr = Rect(aRect.x, aRect.y, aRect.Width(), aRect.Height());
   gr = aMatrix.TransformBounds(gr);
   aRect = (*aRoundMethod)(ThebesRect(gr));
 }
@@ -562,8 +562,7 @@ BasicLayerManager::EndTransactionInternal(DrawPaintedLayerCallback aCallback,
                                           void* aCallbackData,
                                           EndTransactionFlags aFlags)
 {
-  PROFILER_LABEL("BasicLayerManager", "EndTransactionInternal",
-    js::ProfileEntry::Category::GRAPHICS);
+  AUTO_PROFILER_LABEL("BasicLayerManager::EndTransactionInternal", GRAPHICS);
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   MOZ_LAYERS_LOG(("  ----- (beginning paint)"));
@@ -572,6 +571,8 @@ BasicLayerManager::EndTransactionInternal(DrawPaintedLayerCallback aCallback,
 
   NS_ASSERTION(InConstruction(), "Should be in construction phase");
   mPhase = PHASE_DRAWING;
+
+  SetCompositionTime(TimeStamp::Now());
 
   RenderTraceLayers(mRoot, "FF00");
 
@@ -623,14 +624,13 @@ BasicLayerManager::EndTransactionInternal(DrawPaintedLayerCallback aCallback,
     if (!mRegionToClear.IsEmpty()) {
       for (auto iter = mRegionToClear.RectIter(); !iter.Done(); iter.Next()) {
         const IntRect& r = iter.Get();
-        mTarget->GetDrawTarget()->ClearRect(Rect(r.x, r.y, r.width, r.height));
+        mTarget->GetDrawTarget()->ClearRect(Rect(r.x, r.y, r.Width(), r.Height()));
       }
     }
     if (mWidget) {
       FlashWidgetUpdateArea(mTarget);
     }
     RecordFrame();
-    PostPresent();
 
     if (!mTransactionIncomplete) {
       // Clear out target if we have a complete transaction.
@@ -801,7 +801,7 @@ InstallLayerClipPreserves3D(gfxContext* aTarget, Layer* aLayer)
 
   aTarget->NewPath();
   aTarget->SnappedRectangle(gfxRect(clipRect->x, clipRect->y,
-                                    clipRect->width, clipRect->height));
+                                    clipRect->Width(), clipRect->Height()));
   aTarget->Clip();
 
   aTarget->SetMatrix(oldTransform);
@@ -815,8 +815,7 @@ BasicLayerManager::PaintLayer(gfxContext* aTarget,
 {
   MOZ_ASSERT(aTarget);
 
-  PROFILER_LABEL("BasicLayerManager", "PaintLayer",
-    js::ProfileEntry::Category::GRAPHICS);
+  AUTO_PROFILER_LABEL("BasicLayerManager::PaintLayer", GRAPHICS);
 
   PaintLayerContext paintLayerContext(aTarget, aLayer,
                                       aCallback, aCallbackData);
@@ -907,7 +906,7 @@ BasicLayerManager::PaintLayer(gfxContext* aTarget,
     IntRect bounds = visibleRegion.GetBounds();
     // DrawTarget without the 3D transform applied:
     RefPtr<DrawTarget> untransformedDT =
-      gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(IntSize(bounds.width, bounds.height),
+      gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(IntSize(bounds.Width(), bounds.Height()),
                                                                    SurfaceFormat::B8G8R8A8);
     if (!untransformedDT || !untransformedDT->IsValid()) {
       return;
@@ -940,7 +939,7 @@ BasicLayerManager::PaintLayer(gfxContext* aTarget,
 
     RefPtr<SourceSurface> untransformedSurf = untransformedDT->Snapshot();
     RefPtr<DrawTarget> xformDT =
-      untransformedDT->CreateSimilarDrawTarget(IntSize::Truncate(xformBounds.width, xformBounds.height),
+      untransformedDT->CreateSimilarDrawTarget(IntSize::Truncate(xformBounds.Width(), xformBounds.Height()),
                                                SurfaceFormat::B8G8R8A8);
     RefPtr<SourceSurface> xformSurf;
     if(xformDT && untransformedSurf &&

@@ -20,27 +20,28 @@ public:
   virtual bool Lock() override;
   virtual void Unlock() override;
 
-  virtual gfx::IntSize GetSize() const override
-  {
-    return mSize;
-  }
-  virtual gfx::SurfaceFormat GetFormat() const override
-  {
-    return mFormat;
-  }
-
   virtual RenderBufferTextureHost* AsBufferTextureHost() override
   {
     return this;
   }
 
-  const uint8_t* GetDataForRender() const;
-  size_t GetBufferSizeForRender() const;
+  class RenderBufferData
+  {
+  public:
+    RenderBufferData(uint8_t* aData, size_t aBufferSize)
+      : mData(aData)
+      , mBufferSize(aBufferSize)
+    {
+    }
+    const uint8_t* mData;
+    size_t mBufferSize;
+  };
+
+  RenderBufferData GetBufferDataForRender(uint8_t aChannelIndex);
 
 private:
   virtual ~RenderBufferTextureHost();
 
-  already_AddRefed<gfx::DataSourceSurface> GetAsSurface();
   uint8_t* GetBuffer() const
   {
     return mBuffer;
@@ -50,8 +51,17 @@ private:
   layers::BufferDescriptor mDescriptor;
   gfx::IntSize mSize;
   gfx::SurfaceFormat mFormat;
+
   RefPtr<gfx::DataSourceSurface> mSurface;
   gfx::DataSourceSurface::MappedSurface mMap;
+
+  RefPtr<gfx::DataSourceSurface> mYSurface;
+  RefPtr<gfx::DataSourceSurface> mCbSurface;
+  RefPtr<gfx::DataSourceSurface> mCrSurface;
+  gfx::DataSourceSurface::MappedSurface mYMap;
+  gfx::DataSourceSurface::MappedSurface mCbMap;
+  gfx::DataSourceSurface::MappedSurface mCrMap;
+
   bool mLocked;
 };
 

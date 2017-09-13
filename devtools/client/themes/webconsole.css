@@ -148,7 +148,7 @@ a {
   display: flex;
 }
 
-.message-body > * {
+.message-body {
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -215,10 +215,6 @@ a {
 .webconsole-filter-button[category="net"] > .toolbarbutton-menubutton-button:before {
   background-image: linear-gradient(#444444, #000000);
   border-color: #777;
-}
-
-.message:hover {
-  background-color: var(--theme-selection-background-semitransparent) !important;
 }
 
 .theme-light .message[severity=error],
@@ -402,6 +398,15 @@ a {
 }
 
 /* JSTerm Styles */
+
+html #jsterm-wrapper,
+html .jsterm-stack-node,
+html .jsterm-input-node-html,
+html #webconsole-notificationbox {
+  flex: 0;
+  width: 100vw;
+}
+
 .jsterm-input-container {
   background-color: var(--theme-tab-toolbar-background);
   border-top: 1px solid var(--theme-splitter-color);
@@ -424,7 +429,7 @@ a {
   padding: 0;
   padding-inline-start: 20px;
   margin: 0;
-  -moz-appearance: none; appearance: none;
+  -moz-appearance: none;
   background-color: transparent;
 }
 
@@ -625,7 +630,7 @@ a.learn-more-link.webconsole-learn-more-link {
   padding: 0 1px;
   -moz-box-align: stretch;
   --toolbarbutton-checked-color: var(--theme-body-color);
-  --toolbarbutton-checked-background: var(--theme-selection-background-semitransparent);
+  --toolbarbutton-checked-background: var(--theme-selection-background-hover);
 }
 
 .devtools-toolbarbutton > .toolbarbutton-menubutton-button > .toolbarbutton-icon {
@@ -728,8 +733,81 @@ a.learn-more-link.webconsole-learn-more-link {
   -moz-user-focus: normal;
 }
 
-.webconsole-filterbar-wrapper {
-  flex-grow: 0;
+/*
+  This element contains the different toolbars in the console
+    - primary, containing the clear messages button and the text search input.
+      It can expand as much as it need.
+    - filtered messages, containing the "X items hidden by filters" and the reset filters button.
+      It should be on the same row than the primary bar if it fits there, or on its own 100% row if it is wrapped.
+    - secondary, containing the filter buttons (Error, Warning, …).
+      It should be on its own 100% row.
+
+  Basically here's what we can have :
+
+  -----------------------------------------------------------------------------------------------------------
+  | Clear button - Open filter bar button - Filter Input | X items hidden by filters - Reset Filters button |
+  -----------------------------------------------------------------------------------------------------------
+  | Error - Warning - Log - Info - Debug - CSS - Network - XHR                                              |
+  -----------------------------------------------------------------------------------------------------------
+
+  or
+
+  ------------------------------------------------------------------------------------
+  | Clear button - Open filter bar button - Filter Input                             |
+  ------------------------------------------------------------------------------------
+  |                                X items hidden by filters  - Reset Filters button |
+  ------------------------------------------------------------------------------------
+  | Error - Warning - Log - Info - Debug - CSS - Network - XHR                       |
+  ------------------------------------------------------------------------------------
+*/
+.webconsole-filteringbar-wrapper {
+  display: flex;
+  /* Wrap so the "Hidden messages" bar can go to its own row if needed */
+  flex-wrap: wrap;
+}
+
+.webconsole-filterbar-primary {
+  display: flex;
+  /* We want the toolbar (which contain the text search input) to be at least 200px
+  so we don't allow to shrink it */
+  flex: 100 0 200px;
+}
+
+.devtools-toolbar.webconsole-filterbar-secondary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  -moz-user-select: none;
+}
+
+.webconsole-filterbar-primary .devtools-plaininput {
+  flex: 1 1 100%;
+}
+
+.webconsole-filterbar-primary .filter-checkbox {
+  flex-shrink: 0;
+  margin: 0 3px;
+}
+
+.webconsole-filterbar-secondary .devtools-separator {
+  margin: 0 5px;
+}
+
+.webconsole-filterbar-filtered-messages {
+  /* Needed so the bar takes the whole horizontal space when it is wrapped */
+  flex-grow: 1;
+  justify-content: flex-end;
+  color: var(--theme-comment);
+  text-align: end;
+}
+
+.webconsole-filterbar-filtered-messages .filter-message-text {
+  font-style: italic;
+  -moz-user-select: none;
+}
+
+.webconsole-filterbar-filtered-messages .reset-filters-button {
+  margin-inline-start: 0.5em;
 }
 
 .webconsole-output {
@@ -737,24 +815,31 @@ a.learn-more-link.webconsole-learn-more-link {
   overflow: auto;
 }
 
-.webconsole-filterbar-primary {
+.webconsole-output-wrapper .message {
+  --border-size: 3px;
+  border-inline-start: var(--border-size) solid transparent;
+}
+
+.webconsole-output-wrapper .message:hover {
+  border-inline-start-color: #0a84ff; /* Photon Design System Blue 50 */
+}
+
+.webconsole-output-wrapper .message-flex-body > .message-body {
   display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
-.devtools-toolbar.webconsole-filterbar-secondary {
-  height: initial;
-}
-
-.webconsole-filterbar-primary .devtools-plaininput {
-  flex: 1 1 100%;
+.webconsole-output-wrapper .message-body > * {
+  flex-shrink: 0;
 }
 
 .webconsole-output.hideTimestamps > .message > .timestamp {
   display: none;
 }
 
-.message.startGroup .message-body,
-.message.startGroupCollapsed .message-body {
+.message.startGroup .message-body > .objectBox-string,
+.message.startGroupCollapsed .message-body > .objectBox-string {
   color: var(--theme-body-color);
   font-weight: bold;
 }
@@ -776,17 +861,49 @@ a.learn-more-link.webconsole-learn-more-link {
   background-position: -36px -36px;
 }
 
+/* Network Messages */
+
 .message.network .method {
   margin-inline-end: 5px;
+}
+
+.network.message .network-info {
+  display: none;
+  margin-top: 8px;
+  border: solid 1px var(--theme-splitter-color);
+}
+
+.network.message.open .network-info {
+  display: block;
+}
+
+.network.message .network-info .panels {
+  max-height: 250px;
+  min-height: 100px;
+}
+
+/* Hide 'Edit And Resend' button since the feature isn't
+   supported in the Console panel. */
+.network.message #headers-panel .edit-and-resend-button {
+  display: none;
+}
+
+.network.message #response-panel .treeTable {
+  overflow-y: hidden;
 }
 
 .network .message-flex-body > .message-body {
   display: flex;
 }
 
+/* Output Wrapper */
+
 .webconsole-output-wrapper .message .indent {
   display: inline-block;
   border-inline-end: solid 1px var(--theme-splitter-color);
+}
+.webconsole-output-wrapper .message .indent[data-indent="0"] {
+  border-inline-end: none;
 }
 
 .message.startGroup .indent,
@@ -798,6 +915,17 @@ a.learn-more-link.webconsole-learn-more-link {
 .message.startGroup .icon,
 .message.startGroupCollapsed .icon {
   display: none;
+}
+
+/*
+ * Open DOMNode in inspector button. Style need to be reset in the new
+ * console since its style is already defined in reps.css .
+ */
+.webconsole-output-wrapper .open-inspector {
+  background: unset;
+  padding-left: unset;
+  margin-left: unset;
+  cursor: unset;
 }
 
 /* console.table() */
@@ -835,3 +963,44 @@ a.learn-more-link.webconsole-learn-more-link {
   height: 1.25em;
   line-height: 1.25em;
 }
+
+/* Layout */
+
+.webconsole-output {
+  flex: 1;
+  direction: ltr;
+  overflow: auto;
+  -moz-user-select: text;
+  position: relative;
+}
+
+html,
+body,
+#app-wrapper {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+#app-wrapper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+body #output-container {
+  flex: 1;
+  overflow: hidden;
+}
+
+.webconsole-output-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Object Inspector */

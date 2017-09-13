@@ -137,7 +137,9 @@ public:
   ServiceWorkerClientPostMessageRunnable(uint64_t aSourceID,
                                          const nsACString& aSourceScope,
                                          uint64_t aWindowId)
-    : StructuredCloneHolder(CloningSupported, TransferringSupported,
+    : mozilla::Runnable("ServiceWorkerClientPostMessageRunnable")
+    , StructuredCloneHolder(CloningSupported,
+                            TransferringSupported,
                             StructuredCloneScope::SameProcessDifferentThread)
     , mSourceID(aSourceID)
     , mSourceScope(aSourceScope)
@@ -153,10 +155,9 @@ public:
       return NS_ERROR_FAILURE;
     }
 
-    ErrorResult result;
-    dom::Navigator* navigator = window->GetNavigator(result);
-    if (NS_WARN_IF(result.Failed())) {
-      return result.StealNSResult();
+    dom::Navigator* navigator = window->Navigator();
+    if (!navigator) {
+      return NS_ERROR_FAILURE;
     }
 
     RefPtr<ServiceWorkerContainer> container = navigator->ServiceWorker();

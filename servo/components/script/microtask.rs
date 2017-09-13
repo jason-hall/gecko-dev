@@ -11,13 +11,17 @@ use dom::bindings::cell::DOMRefCell;
 use dom::bindings::codegen::Bindings::PromiseBinding::PromiseJobCallback;
 use dom::bindings::js::Root;
 use dom::globalscope::GlobalScope;
+use dom::htmlimageelement::ImageElementMicrotask;
+use dom::htmlmediaelement::MediaElementMicrotask;
+use dom::mutationobserver::MutationObserver;
 use msg::constellation_msg::PipelineId;
+use script_thread::ScriptThread;
 use std::cell::Cell;
 use std::mem;
 use std::rc::Rc;
 
 /// A collection of microtasks in FIFO order.
-#[derive(JSTraceable, HeapSizeOf, Default)]
+#[derive(Default, HeapSizeOf, JSTraceable)]
 pub struct MicrotaskQueue {
     /// The list of enqueued microtasks that will be invoked at the next microtask checkpoint.
     microtask_queue: DOMRefCell<Vec<Microtask>>,
@@ -25,13 +29,21 @@ pub struct MicrotaskQueue {
     performing_a_microtask_checkpoint: Cell<bool>,
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 pub enum Microtask {
     Promise(EnqueuedPromiseCallback),
+    MediaElement(MediaElementMicrotask),
+    ImageElement(ImageElementMicrotask),
+    CustomElementReaction,
+    NotifyMutationObservers,
+}
+
+pub trait MicrotaskRunnable {
+    fn handler(&self) {}
 }
 
 /// A promise callback scheduled to run during the next microtask checkpoint (#4283).
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 pub struct EnqueuedPromiseCallback {
     #[ignore_heap_size_of = "Rc has unclear ownership"]
     pub callback: Rc<PromiseJobCallback>,
@@ -70,6 +82,18 @@ impl MicrotaskQueue {
                         if let Some(target) = target_provider(job.pipeline) {
                             let _ = job.callback.Call_(&*target, ExceptionHandling::Report);
                         }
+                    },
+                    Microtask::MediaElement(ref task) => {
+                        task.handler();
+                    },
+                    Microtask::ImageElement(ref task) => {
+                        task.handler();
+                    },
+                    Microtask::CustomElementReaction => {
+                        ScriptThread::invoke_backup_element_queue();
+                    },
+                    Microtask::NotifyMutationObservers => {
+                        MutationObserver::notify_mutation_observers();
                     }
                 }
             }

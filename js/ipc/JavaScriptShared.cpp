@@ -501,6 +501,30 @@ JavaScriptShared::ConvertID(const JSIID& from, nsID* to)
 }
 
 JSObject*
+JavaScriptShared::findCPOWById(const ObjectId& objId)
+{
+    JSObject* obj = findCPOWByIdPreserveColor(objId);
+    if (obj)
+        JS::ExposeObjectToActiveJS(obj);
+    return obj;
+}
+
+JSObject*
+JavaScriptShared::findCPOWByIdPreserveColor(const ObjectId& objId)
+{
+    JSObject* obj = cpows_.findPreserveColor(objId);
+    if (!obj)
+        return nullptr;
+
+    if (js::gc::EdgeNeedsSweepUnbarriered(&obj)) {
+        cpows_.remove(objId);
+        return nullptr;
+    }
+
+    return obj;
+}
+
+JSObject*
 JavaScriptShared::findObjectById(JSContext* cx, const ObjectId& objId)
 {
     RootedObject obj(cx, objects_.find(objId));
@@ -551,7 +575,6 @@ JavaScriptShared::fromDescriptor(JSContext* cx, Handle<PropertyDescriptor> desc,
             return false;
         out->getter() = objVar;
     } else {
-        MOZ_ASSERT(desc.getter() != JS_PropertyStub);
         out->getter() = UnknownPropertyOp;
     }
 
@@ -564,7 +587,6 @@ JavaScriptShared::fromDescriptor(JSContext* cx, Handle<PropertyDescriptor> desc,
             return false;
         out->setter() = objVar;
     } else {
-        MOZ_ASSERT(desc.setter() != JS_StrictPropertyStub);
         out->setter() = UnknownPropertyOp;
     }
 

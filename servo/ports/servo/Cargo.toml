@@ -17,6 +17,7 @@ bench = false
 compiletest_helper = {path = "../../tests/compiletest/helper"}
 gfx_tests = {path = "../../tests/unit/gfx"}
 layout_tests = {path = "../../tests/unit/layout"}
+metrics_tests = {path = "../../tests/unit/metrics"}
 net_tests = {path = "../../tests/unit/net"}
 net_traits_tests = {path = "../../tests/unit/net_traits"}
 plugin_compiletest = {path = "../../tests/compiletest/plugin"}
@@ -31,7 +32,6 @@ default = ["webdriver", "max_log_level"]
 max_log_level = ["log/release_max_level_info"]
 webdriver = ["libservo/webdriver_server"]
 energy-profiling = ["libservo/energy-profiling"]
-testing = ["libservo/testing"]
 debugmozjs = ["libservo/debugmozjs"]
 
 [dependencies]
@@ -45,4 +45,4 @@ libservo = {path = "../../components/servo"}
 sig = "0.1"
 
 [target.'cfg(target_os = "android")'.dependencies]
-android_injected_glue = {git = "https://github.com/mmatyas/android-rs-injected-glue"}
+android_injected_glue = "0.2"

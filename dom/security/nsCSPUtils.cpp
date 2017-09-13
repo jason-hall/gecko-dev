@@ -88,10 +88,10 @@ CSP_PercentDecodeStr(const nsAString& aEncStr, nsAString& outDecStr)
 }
 
 void
-CSP_GetLocalizedStr(const char16_t* aName,
+CSP_GetLocalizedStr(const char* aName,
                     const char16_t** aParams,
                     uint32_t aLength,
-                    char16_t** outResult)
+                    nsAString& outResult)
 {
   nsCOMPtr<nsIStringBundle> keyStringBundle;
   nsCOMPtr<nsIStringBundleService> stringBundleService =
@@ -106,7 +106,8 @@ CSP_GetLocalizedStr(const char16_t* aName,
   if (!keyStringBundle) {
     return;
   }
-  keyStringBundle->FormatStringFromName(aName, aParams, aLength, outResult);
+  keyStringBundle->FormatStringFromName(aName, aParams, aLength,
+                                        outResult);
 }
 
 void
@@ -181,7 +182,7 @@ CSP_LogMessage(const nsAString& aMessage,
  * Combines CSP_LogMessage and CSP_GetLocalizedStr into one call.
  */
 void
-CSP_LogLocalizedStr(const char16_t* aName,
+CSP_LogLocalizedStr(const char* aName,
                     const char16_t** aParams,
                     uint32_t aLength,
                     const nsAString& aSourceName,
@@ -192,8 +193,8 @@ CSP_LogLocalizedStr(const char16_t* aName,
                     const char* aCategory,
                     uint64_t aInnerWindowID)
 {
-  nsXPIDLString logMsg;
-  CSP_GetLocalizedStr(aName, aParams, aLength, getter_Copies(logMsg));
+  nsAutoString logMsg;
+  CSP_GetLocalizedStr(aName, aParams, aLength, logMsg);
   CSP_LogMessage(logMsg, aSourceName, aSourceLine,
                  aLineNumber, aColumnNumber, aFlags,
                  aCategory, aInnerWindowID);
@@ -267,20 +268,30 @@ CSP_ContentTypeToDirective(nsContentPolicyType aType)
 }
 
 nsCSPHostSrc*
-CSP_CreateHostSrcFromURI(nsIURI* aURI)
+CSP_CreateHostSrcFromSelfURI(nsIURI* aSelfURI)
 {
   // Create the host first
   nsCString host;
-  aURI->GetAsciiHost(host);
+  aSelfURI->GetAsciiHost(host);
   nsCSPHostSrc *hostsrc = new nsCSPHostSrc(NS_ConvertUTF8toUTF16(host));
+  hostsrc->setGeneratedFromSelfKeyword();
 
   // Add the scheme.
   nsCString scheme;
-  aURI->GetScheme(scheme);
+  aSelfURI->GetScheme(scheme);
   hostsrc->setScheme(NS_ConvertUTF8toUTF16(scheme));
 
+  // An empty host (e.g. for data:) indicates it's effectively a unique origin.
+  // Please note that we still need to set the scheme on hostsrc (see above),
+  // because it's used for reporting.
+  if (host.EqualsLiteral("")) {
+    hostsrc->setIsUniqueOrigin();
+    // no need to query the port in that case.
+    return hostsrc;
+  }
+
   int32_t port;
-  aURI->GetPort(&port);
+  aSelfURI->GetPort(&port);
   // Only add port if it's not default port.
   if (port > 0) {
     nsAutoString portStr;
@@ -349,13 +360,17 @@ CSP_IsQuotelessKeyword(const nsAString& aKey)
  * @param aUpgradeInsecure
  *        Whether the policy makes use of the directive
  *        'upgrade-insecure-requests'.
+ * @param aFromSelfURI
+ *        Whether a scheme was generated from the keyword 'self'
+ *        which then allows schemeless sources to match ws and wss.
  */
 
 bool
 permitsScheme(const nsAString& aEnforcementScheme,
               nsIURI* aUri,
               bool aReportOnly,
-              bool aUpgradeInsecure)
+              bool aUpgradeInsecure,
+              bool aFromSelfURI)
 {
   nsAutoCString scheme;
   nsresult rv = aUri->GetScheme(scheme);
@@ -374,8 +389,20 @@ permitsScheme(const nsAString& aEnforcementScheme,
   // allow scheme-less sources where the protected resource is http
   // and the load is https, see:
   // http://www.w3.org/TR/CSP2/#match-source-expression
-  if (aEnforcementScheme.EqualsASCII("http") &&
-      scheme.EqualsASCII("https")) {
+  if (aEnforcementScheme.EqualsASCII("http")) {
+    if (scheme.EqualsASCII("https")) {
+      return true;
+    }
+    if ((scheme.EqualsASCII("ws") || scheme.EqualsASCII("wss")) && aFromSelfURI) {
+      return true;
+    }
+  }
+  if (aEnforcementScheme.EqualsASCII("https")) {
+    if (scheme.EqualsLiteral("wss") && aFromSelfURI) {
+      return true;
+    }
+  }
+  if (aEnforcementScheme.EqualsASCII("ws") && scheme.EqualsASCII("wss")) {
     return true;
   }
 
@@ -411,7 +438,7 @@ CSP_AppendCSPFromHeader(nsIContentSecurityPolicy* aCsp,
   nsresult rv = NS_OK;
   nsCharSeparatedTokenizer tokenizer(aHeaderValue, ',');
   while (tokenizer.hasMoreTokens()) {
-    const nsSubstring& policy = tokenizer.nextToken();
+    const nsAString& policy = tokenizer.nextToken();
     rv = aCsp->AppendPolicy(policy, aReportOnly, false);
     NS_ENSURE_SUCCESS(rv, rv);
     {
@@ -484,7 +511,7 @@ nsCSPSchemeSrc::permits(nsIURI* aUri, const nsAString& aNonce, bool aWasRedirect
   if (mInvalidated) {
     return false;
   }
-  return permitsScheme(mScheme, aUri, aReportOnly, aUpgradeInsecure);
+  return permitsScheme(mScheme, aUri, aReportOnly, aUpgradeInsecure, false);
 }
 
 bool
@@ -504,6 +531,9 @@ nsCSPSchemeSrc::toString(nsAString& outStr) const
 
 nsCSPHostSrc::nsCSPHostSrc(const nsAString& aHost)
   : mHost(aHost)
+  , mGeneratedFromSelfKeyword(false)
+  , mIsUniqueOrigin(false)
+  , mWithinFrameAncstorsDir(false)
 {
   ToLowerCase(mHost);
 }
@@ -604,7 +634,7 @@ nsCSPHostSrc::permits(nsIURI* aUri, const nsAString& aNonce, bool aWasRedirected
                  aUri->GetSpecOrDefault().get()));
   }
 
-  if (mInvalidated) {
+  if (mInvalidated || mIsUniqueOrigin) {
     return false;
   }
 
@@ -612,7 +642,7 @@ nsCSPHostSrc::permits(nsIURI* aUri, const nsAString& aNonce, bool aWasRedirected
   // http://www.w3.org/TR/CSP11/#match-source-expression
 
   // 4.3) scheme matching: Check if the scheme matches.
-  if (!permitsScheme(mScheme, aUri, aReportOnly, aUpgradeInsecure)) {
+  if (!permitsScheme(mScheme, aUri, aReportOnly, aUpgradeInsecure, mGeneratedFromSelfKeyword)) {
     return false;
   }
 
@@ -686,6 +716,11 @@ nsCSPHostSrc::permits(nsIURI* aUri, const nsAString& aNonce, bool aWasRedirected
     nsAutoCString uriPath;
     rv = url->GetFilePath(uriPath);
     NS_ENSURE_SUCCESS(rv, false);
+
+    if (mWithinFrameAncstorsDir) {
+      // no path matching for frame-ancestors to not leak any path information.
+      return true;
+    }
 
     nsString decodedUriPath;
     CSP_PercentDecodeStr(NS_ConvertUTF8toUTF16(uriPath), decodedUriPath);
@@ -919,10 +954,6 @@ nsCSPHashSrc::allows(enum CSPKeyword aKeyword, const nsAString& aHashOrNonce,
   rv = hasher->Finish(true, hash);
   NS_ENSURE_SUCCESS(rv, false);
 
-  // The NSS Base64 encoder automatically adds linebreaks "\r\n" every 64
-  // characters. We need to remove these so we can properly validate longer
-  // (SHA-512) base64-encoded hashes
-  hash.StripChars("\r\n");
   return NS_ConvertUTF16toUTF8(mHash).Equals(hash);
 }
 

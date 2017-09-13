@@ -8,7 +8,7 @@ config = {
     "mozconfig": "%(branch)s/browser/config/mozconfigs/macosx64/l10n-mozconfig",
     "bootstrap_env": {
         "SHELL": '/bin/bash',
-        "MOZ_OBJDIR": "obj-l10n",
+        "MOZ_OBJDIR": "obj-firefox",
         "EN_US_BINARY_URL": "%(en_us_binary_url)s",
         "MOZ_UPDATE_CHANNEL": "%(update_channel)s",
         "MOZ_PKG_PLATFORM": "mac",
@@ -18,12 +18,11 @@ config = {
         "L10NBASEDIR": "../../l10n",
         "MOZ_MAKE_COMPLETE_MAR": "1",
         "LOCALE_MERGEDIR": "%(abs_merge_dir)s/",
-        'TOOLTOOL_CACHE': '/builds/tooltool_cache',
-        'TOOLTOOL_HOME': '/builds',
+        'EN_US_PACKAGE_NAME': 'target.dmg',
     },
     "ssh_key_dir": "~/.ssh",
     "log_name": "single_locale",
-    "objdir": "obj-l10n",
+    "objdir": "obj-firefox",
     "js_src_dir": "js/src",
     "vcs_share_base": "/builds/hg-shared",
 
@@ -31,11 +30,6 @@ config = {
         "MOZ_PKG_PLATFORM": "mac",
     },
 
-    # tooltool
-    'tooltool_url': 'https://api.pub.build.mozilla.org/tooltool/',
-    'tooltool_script': ["/builds/tooltool.py"],
-    'tooltool_bootstrap': "setup.sh",
-    'tooltool_manifest_src': 'browser/config/tooltool-manifests/macosx64/releng.manifest',
     # balrog credential file:
     'balrog_credentials_file': 'oauth.txt',
 

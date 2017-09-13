@@ -551,7 +551,7 @@ class ECCServerKEXFilter : public TlsHandshakeFilter {
     // Replace the server key exchange message with an empty point
     output->Allocate(4);
     output->Write(0, 3U, 1);  // named curve
-    uint32_t curve;
+    uint32_t curve = 0;
     EXPECT_TRUE(input.Read(1, 2, &curve));  // get curve id
     output->Write(1, curve, 2);             // write curve id
     output->Write(3, 0U, 1);                // point length 0
@@ -574,12 +574,12 @@ TEST_P(TlsConnectGenericPre13, ConnectECDHEmptyClientPoint) {
 }
 
 INSTANTIATE_TEST_CASE_P(KeyExchangeTest, TlsKeyExchangeTest,
-                        ::testing::Combine(TlsConnectTestBase::kTlsModesAll,
+                        ::testing::Combine(TlsConnectTestBase::kTlsVariantsAll,
                                            TlsConnectTestBase::kTlsV11Plus));
 
 #ifndef NSS_DISABLE_TLS_1_3
 INSTANTIATE_TEST_CASE_P(KeyExchangeTest, TlsKeyExchangeTest13,
-                        ::testing::Combine(TlsConnectTestBase::kTlsModesAll,
+                        ::testing::Combine(TlsConnectTestBase::kTlsVariantsAll,
                                            TlsConnectTestBase::kTlsV13));
 #endif
 

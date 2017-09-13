@@ -17,7 +17,6 @@ import org.mozilla.gecko.sync.net.AuthHeaderProvider;
 import org.mozilla.gecko.sync.net.SyncResponse;
 import org.mozilla.gecko.sync.net.SyncStorageResponse;
 import org.mozilla.gecko.sync.repositories.RepositorySession;
-import org.mozilla.gecko.sync.repositories.RepositoryStateProvider;
 import org.mozilla.gecko.sync.repositories.delegates.RepositorySessionStoreDelegate;
 
 import static org.mockito.Mockito.mock;
@@ -81,7 +80,7 @@ public class PayloadUploadDelegateTest {
         }
 
         @Override
-        public void lastPayloadFailed() {
+        public void lastPayloadFailed(Exception e) {
             didLastPayloadFail = true;
         }
     }
@@ -102,13 +101,15 @@ public class PayloadUploadDelegateTest {
         }
 
         @Override
-        public void onStoreCompleted(long storeEnd) {
-
-        }
+        public void onStoreCompleted() {}
 
         @Override
         public void onStoreFailed(Exception e) {
             storeFailedException = e;
+        }
+
+        @Override
+        public void onRecordStoreReconciled(String guid, String oldGuid, Integer newVersion) {
         }
 
         @Override

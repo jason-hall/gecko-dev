@@ -41,14 +41,12 @@ function ElementEditor(container, node) {
   this.container = container;
   this.node = node;
   this.markup = this.container.markup;
-  this.template = this.markup.template.bind(this.markup);
   this.doc = this.markup.doc;
   this._cssProperties = getCssProperties(this.markup.toolbox);
 
   this.attrElements = new Map();
   this.animationTimers = {};
 
-  // The templates will fill the following properties
   this.elt = null;
   this.tag = null;
   this.closeTag = null;
@@ -57,7 +55,7 @@ function ElementEditor(container, node) {
   this.closeElt = null;
 
   // Create the main editor
-  this.template("element", this);
+  this.buildMarkup();
 
   // Make the tag name editable (unless this is a remote node or
   // a document element)
@@ -71,7 +69,6 @@ function ElementEditor(container, node) {
       trigger: "dblclick",
       stopOnReturn: true,
       done: this.onTagEdit.bind(this),
-      contextMenu: this.markup.inspector.onTextBoxContextMenu,
       cssProperties: this._cssProperties
     });
   }
@@ -99,7 +96,6 @@ function ElementEditor(container, node) {
         undoMods.apply();
       });
     },
-    contextMenu: this.markup.inspector.onTextBoxContextMenu,
     cssProperties: this._cssProperties
   });
 
@@ -117,6 +113,51 @@ function ElementEditor(container, node) {
 }
 
 ElementEditor.prototype = {
+  buildMarkup: function () {
+    this.elt = this.doc.createElement("span");
+    this.elt.classList.add("editor");
+
+    let open = this.doc.createElement("span");
+    open.classList.add("open");
+    open.appendChild(this.doc.createTextNode("<"));
+    this.elt.appendChild(open);
+
+    this.tag = this.doc.createElement("span");
+    this.tag.classList.add("tag", "theme-fg-color3");
+    this.tag.setAttribute("tabindex", "-1");
+    open.appendChild(this.tag);
+
+    this.attrList = this.doc.createElement("span");
+    open.appendChild(this.attrList);
+
+    this.newAttr = this.doc.createElement("span");
+    this.newAttr.classList.add("newattr");
+    this.newAttr.setAttribute("tabindex", "-1");
+    open.appendChild(this.newAttr);
+
+    let closingBracket = this.doc.createElement("span");
+    closingBracket.classList.add("closing-bracket");
+    closingBracket.textContent = ">";
+    open.appendChild(closingBracket);
+
+    let close = this.doc.createElement("span");
+    close.classList.add("close");
+    close.appendChild(this.doc.createTextNode("</"));
+    this.elt.appendChild(close);
+
+    this.closeTag = this.doc.createElement("span");
+    this.closeTag.classList.add("tag", "theme-fg-color3");
+    close.appendChild(this.closeTag);
+
+    close.appendChild(this.doc.createTextNode(">"));
+
+    this.eventNode = this.doc.createElement("div");
+    this.eventNode.classList.add("markupview-events");
+    this.eventNode.dataset.event = "true";
+    this.eventNode.textContent = "ev";
+    this.elt.appendChild(this.eventNode);
+  },
+
   set selected(value) {
     if (this.textEditor) {
       this.textEditor.selected = value;
@@ -188,7 +229,7 @@ ElementEditor.prototype = {
 
       if (canSimplyShowEditor) {
         // Element already exists and doesn't need to be recreated.
-        // Just show it (it's hidden by default due to the template).
+        // Just show it (it's hidden by default).
         el.style.removeProperty("display");
       } else {
         // Create a new editor, because the value of an existing attribute
@@ -228,8 +269,7 @@ ElementEditor.prototype = {
       // This editor won't receive an update automatically, so we rely on
       // child text editors to let us know that we need updating.
       this.textEditor = new TextEditor(this.container, node, "text");
-      this.elt.insertBefore(this.textEditor.elt,
-                            this.elt.firstChild.nextSibling.nextSibling);
+      this.elt.insertBefore(this.textEditor.elt, this.elt.querySelector(".close"));
     }
 
     if (this.textEditor) {
@@ -268,14 +308,32 @@ ElementEditor.prototype = {
   },
 
   _createAttribute: function (attribute, before = null) {
-    // Create the template editor, which will save some variables here.
-    let data = {
-      attrName: attribute.name,
-      attrValue: attribute.value,
-      tabindex: this.container.canFocus ? "0" : "-1",
-    };
-    this.template("attribute", data);
-    let {attr, inner, name, val} = data;
+    let attr = this.doc.createElement("span");
+    attr.dataset.attr = attribute.name;
+    attr.dataset.value = attribute.value;
+    attr.classList.add("attreditor");
+    attr.style.display = "none";
+
+    attr.appendChild(this.doc.createTextNode(" "));
+
+    let inner = this.doc.createElement("span");
+    inner.classList.add("editable");
+    inner.setAttribute("tabindex", this.container.canFocus ? "0" : "-1");
+    attr.appendChild(inner);
+
+    let name = this.doc.createElement("span");
+    name.classList.add("attr-name");
+    name.classList.add("theme-fg-color2");
+    inner.appendChild(name);
+
+    inner.appendChild(this.doc.createTextNode('="'));
+
+    let val = this.doc.createElement("span");
+    val.classList.add("attr-value");
+    val.classList.add("theme-fg-color6");
+    inner.appendChild(val);
+
+    inner.appendChild(this.doc.createTextNode('"'));
 
     // Double quotes need to be handled specially to prevent DOMParser failing.
     // name="v"a"l"u"e" when editing -> name='v"a"l"u"e"'
@@ -342,7 +400,6 @@ ElementEditor.prototype = {
           undoMods.apply();
         });
       },
-      contextMenu: this.markup.inspector.onTextBoxContextMenu,
       cssProperties: this._cssProperties
     });
 
@@ -551,7 +608,7 @@ ElementEditor.prototype = {
     // Changing the tagName removes the node. Make sure the replacing node gets
     // selected afterwards.
     this.markup.reselectOnRemoved(this.node, "edittagname");
-    this.markup.walker.editTagName(this.node, newTagName).then(null, () => {
+    this.markup.walker.editTagName(this.node, newTagName).catch(() => {
       // Failed to edit the tag name, cancel the reselection.
       this.markup.cancelReselectOnRemoved();
     });

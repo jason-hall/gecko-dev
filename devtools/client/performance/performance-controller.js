@@ -40,7 +40,8 @@ var RecordingListItem = React.createFactory(require("devtools/client/performance
 
 var Services = require("Services");
 var promise = require("promise");
-var EventEmitter = require("devtools/shared/event-emitter");
+const defer = require("devtools/shared/defer");
+var EventEmitter = require("devtools/shared/old-event-emitter");
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 var flags = require("devtools/shared/flags");
 var system = require("devtools/shared/system");
@@ -235,11 +236,6 @@ var PerformanceController = {
    * @return Promise:boolean
    */
   canCurrentlyRecord: Task.async(function* () {
-    // If we're testing the legacy front, the performance actor will exist,
-    // with `canCurrentlyRecord` method; this ensures we test the legacy path.
-    if (gFront.LEGACY_FRONT) {
-      return true;
-    }
     let hasActor = yield gTarget.hasActor("performance");
     if (!hasActor) {
       return true;
@@ -296,7 +292,7 @@ var PerformanceController = {
    *
    * @param PerformanceRecording recording
    *        The model that holds the recording data.
-   * @param nsILocalFile file
+   * @param nsIFile file
    *        The file to stream the data into.
    */
   exportRecording: Task.async(function* (_, recording, file) {
@@ -340,7 +336,7 @@ var PerformanceController = {
    * Loads a recording from a file, adding it to the recordings list. Emits
    * `EVENTS.RECORDING_IMPORTED` when the file was loaded.
    *
-   * @param nsILocalFile file
+   * @param nsIFile file
    *        The file to import the data from.
    */
   importRecording: Task.async(function* (_, file) {
@@ -540,7 +536,7 @@ var PerformanceController = {
    * @return {Promise}
    */
   waitForStateChangeOnRecording: Task.async(function* (recording, expectedState) {
-    let deferred = promise.defer();
+    let deferred = defer();
     this.on(EVENTS.RECORDING_STATE_CHANGE, function handler(state, model) {
       if (state === expectedState && model === recording) {
         this.off(EVENTS.RECORDING_STATE_CHANGE, handler);

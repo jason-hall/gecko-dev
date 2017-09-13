@@ -31,7 +31,7 @@ namespace js {
 struct GSNCache {
     typedef HashMap<jsbytecode*,
                     jssrcnote*,
-                    PointerHasher<jsbytecode*, 0>,
+                    PointerHasher<jsbytecode*>,
                     SystemAllocPolicy> Map;
 
     jsbytecode*     code;
@@ -113,37 +113,6 @@ struct LazyScriptHashPolicy
 
 typedef FixedSizeHashSet<JSScript*, LazyScriptHashPolicy, 769> LazyScriptCache;
 
-class PropertyIteratorObject;
-
-class NativeIterCache
-{
-    static const size_t SIZE = size_t(1) << 8;
-
-    /* Cached native iterators. */
-    PropertyIteratorObject* data[SIZE];
-
-    static size_t getIndex(uint32_t key) {
-        return size_t(key) % SIZE;
-    }
-
-  public:
-    NativeIterCache() {
-        mozilla::PodArrayZero(data);
-    }
-
-    void purge() {
-        mozilla::PodArrayZero(data);
-    }
-
-    PropertyIteratorObject* get(uint32_t key) const {
-        return data[getIndex(key)];
-    }
-
-    void set(uint32_t key, PropertyIteratorObject* iterobj) {
-        data[getIndex(key)] = iterobj;
-    }
-};
-
 /*
  * Cache for speeding up repetitive creation of objects in the VM.
  * When an object is created which matches the criteria in the 'key' section
@@ -152,6 +121,7 @@ class NativeIterCache
 class NewObjectCache
 {
     /* Statically asserted to be equal to sizeof(JSObject_Slots16) */
+	// OMR note: Changed from 4 * to 5 *
     static const unsigned MAX_OBJ_SIZE = 5 * sizeof(void*) + 16 * sizeof(Value);
 
     static void staticAsserts() {
@@ -293,7 +263,6 @@ class RuntimeCaches
     js::GSNCache gsnCache;
     js::EnvironmentCoordinateNameCache envCoordinateNameCache;
     js::NewObjectCache newObjectCache;
-    js::NativeIterCache nativeIterCache;
     js::UncompressedSourceCache uncompressedSourceCache;
     js::EvalCache evalCache;
     LazyScriptCache lazyScriptCache;

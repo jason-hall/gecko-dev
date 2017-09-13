@@ -37,7 +37,7 @@ using namespace mozilla::dom;
 NS_IMPL_ADDREF_INHERITED(PresentationRequest, DOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(PresentationRequest, DOMEventTargetHelper)
 
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(PresentationRequest)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(PresentationRequest)
 NS_INTERFACE_MAP_END_INHERITING(DOMEventTargetHelper)
 
 static nsresult
@@ -47,11 +47,13 @@ GetAbsoluteURL(const nsAString& aUrl,
                nsAString& aAbsoluteUrl)
 {
   nsCOMPtr<nsIURI> uri;
-  nsresult rv = NS_NewURI(getter_AddRefs(uri),
-                          aUrl,
-                          aDocument ? aDocument->GetDocumentCharacterSet().get()
-                                    : nullptr,
-                          aBaseUri);
+  nsresult rv;
+  if (aDocument) {
+    rv = NS_NewURI(getter_AddRefs(uri), aUrl,
+                   aDocument->GetDocumentCharacterSet(), aBaseUri);
+  } else {
+    rv = NS_NewURI(getter_AddRefs(uri), aUrl, nullptr, aBaseUri);
+  }
 
   if (NS_FAILED(rv)) {
     return rv;
@@ -181,8 +183,7 @@ PresentationRequest::StartWithDevice(const nsAString& aDeviceId,
     return promise.forget();
   }
 
-  RefPtr<Navigator> navigator =
-    nsGlobalWindow::Cast(GetOwner())->GetNavigator(aRv);
+  RefPtr<Navigator> navigator = nsGlobalWindow::Cast(GetOwner())->Navigator();
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
@@ -282,12 +283,12 @@ PresentationRequest::Reconnect(const nsAString& aPresentationId,
   }
 
   nsString presentationId = nsString(aPresentationId);
-  nsCOMPtr<nsIRunnable> r =
-    NewRunnableMethod<nsString, RefPtr<Promise>>(
-      this,
-      &PresentationRequest::FindOrCreatePresentationConnection,
-      presentationId,
-      promise);
+  nsCOMPtr<nsIRunnable> r = NewRunnableMethod<nsString, RefPtr<Promise>>(
+    "dom::PresentationRequest::FindOrCreatePresentationConnection",
+    this,
+    &PresentationRequest::FindOrCreatePresentationConnection,
+    presentationId,
+    promise);
 
   if (NS_WARN_IF(NS_FAILED(NS_DispatchToMainThread(r)))) {
     promise->MaybeReject(NS_ERROR_DOM_OPERATION_ERR);
@@ -468,13 +469,12 @@ PresentationRequest::NotifyPromiseSettled()
     return;
   }
 
-  ErrorResult rv;
-  RefPtr<Navigator> navigator =
-    nsGlobalWindow::Cast(GetOwner())->GetNavigator(rv);
+  RefPtr<Navigator> navigator = nsGlobalWindow::Cast(GetOwner())->Navigator();
   if (!navigator) {
     return;
   }
 
+  ErrorResult rv;
   RefPtr<Presentation> presentation = navigator->GetPresentation(rv);
 
   if (presentation) {

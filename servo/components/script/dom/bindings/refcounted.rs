@@ -11,7 +11,7 @@
 //! To guarantee the lifetime of a DOM object when performing asynchronous operations,
 //! obtain a `Trusted<T>` from that object and pass it along with each operation.
 //! A usable pointer to the original DOM object can be obtained on the script thread
-//! from a `Trusted<T>` via the `to_temporary` method.
+//! from a `Trusted<T>` via the `root` method.
 //!
 //! The implementation of `Trusted<T>` is as follows:
 //! The `Trusted<T>` object contains an atomic reference counted pointer to the Rust DOM object.
@@ -23,12 +23,17 @@
 //! as JS roots.
 
 use core::nonzero::NonZero;
+use dom::bindings::conversions::ToJSValConvertible;
+use dom::bindings::error::Error;
 use dom::bindings::js::Root;
 use dom::bindings::reflector::{DomObject, Reflector};
 use dom::bindings::trace::trace_reflector;
 use dom::promise::Promise;
+use js::jsapi::JSAutoCompartment;
 use js::jsapi::JSTracer;
 use libc;
+use script_thread::Runnable;
+use script_thread::ScriptThread;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::hash_map::HashMap;
@@ -115,6 +120,42 @@ impl TrustedPromise {
             promise
         })
     }
+
+    /// A runnable which will reject the promise.
+    #[allow(unrooted_must_root)]
+    pub fn reject_runnable(self, error: Error) -> impl Runnable + Send {
+        struct RejectPromise(TrustedPromise, Error);
+        impl Runnable for RejectPromise {
+            fn main_thread_handler(self: Box<Self>, script_thread: &ScriptThread) {
+                debug!("Rejecting promise.");
+                let this = *self;
+                let cx = script_thread.get_cx();
+                let promise = this.0.root();
+                let _ac = JSAutoCompartment::new(cx, promise.reflector().get_jsobject().get());
+                promise.reject_error(cx, this.1);
+            }
+        }
+        RejectPromise(self, error)
+    }
+
+    /// A runnable which will resolve the promise.
+    #[allow(unrooted_must_root)]
+    pub fn resolve_runnable<T>(self, value: T) -> impl Runnable + Send where
+        T: ToJSValConvertible + Send
+    {
+        struct ResolvePromise<T>(TrustedPromise, T);
+        impl<T: ToJSValConvertible> Runnable for ResolvePromise<T> {
+            fn main_thread_handler(self: Box<Self>, script_thread: &ScriptThread) {
+                debug!("Resolving promise.");
+                let this = *self;
+                let cx = script_thread.get_cx();
+                let promise = this.0.root();
+                let _ac = JSAutoCompartment::new(cx, promise.reflector().get_jsobject().get());
+                promise.resolve_native(cx, &this.1);
+            }
+        }
+        ResolvePromise(self, value)
+    }
 }
 
 /// A safe wrapper around a raw pointer to a DOM object that can be
@@ -159,7 +200,7 @@ impl<T: DomObject> Trusted<T> {
             self.owner_thread == (&*live_references) as *const _ as *const libc::c_void
         }));
         unsafe {
-            Root::new(NonZero::new(self.refcount.0 as *const T))
+            Root::new(NonZero::new_unchecked(self.refcount.0 as *const T))
         }
     }
 }

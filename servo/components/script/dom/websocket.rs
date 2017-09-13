@@ -4,7 +4,6 @@
 
 use dom::bindings::cell::DOMRefCell;
 use dom::bindings::codegen::Bindings::BlobBinding::BlobMethods;
-use dom::bindings::codegen::Bindings::EventHandlerBinding::EventHandlerNonNull;
 use dom::bindings::codegen::Bindings::WebSocketBinding;
 use dom::bindings::codegen::Bindings::WebSocketBinding::{BinaryType, WebSocketMethods};
 use dom::bindings::codegen::UnionTypes::StringOrStringSequence;
@@ -42,7 +41,7 @@ use std::thread;
 use task_source::TaskSource;
 use task_source::networking::NetworkingTaskSource;
 
-#[derive(JSTraceable, PartialEq, Copy, Clone, Debug, HeapSizeOf)]
+#[derive(Clone, Copy, Debug, HeapSizeOf, JSTraceable, PartialEq)]
 enum WebSocketRequestState {
     Connecting = 0,
     Open = 1,
@@ -316,7 +315,7 @@ impl WebSocketMethods for WebSocket {
     // https://html.spec.whatwg.org/multipage/#dom-websocket-send
     fn Send(&self, data: USVString) -> ErrorResult {
         let data_byte_len = data.0.as_bytes().len() as u64;
-        let send_data = try!(self.send_impl(data_byte_len));
+        let send_data = self.send_impl(data_byte_len)?;
 
         if send_data {
             let mut other_sender = self.sender.borrow_mut();
@@ -334,7 +333,7 @@ impl WebSocketMethods for WebSocket {
            If the buffer limit is reached in the first place, there are likely other major problems
         */
         let data_byte_len = blob.Size();
-        let send_data = try!(self.send_impl(data_byte_len));
+        let send_data = self.send_impl(data_byte_len)?;
 
         if send_data {
             let mut other_sender = self.sender.borrow_mut();
@@ -395,8 +394,6 @@ struct ConnectionEstablishedTask {
 }
 
 impl Runnable for ConnectionEstablishedTask {
-    fn name(&self) -> &'static str { "ConnectionEstablishedTask" }
-
     /// https://html.spec.whatwg.org/multipage/#feedback-from-the-protocol:concept-websocket-established
     fn handler(self: Box<Self>) {
         let ws = self.address.root();
@@ -427,8 +424,6 @@ impl Runnable for BufferedAmountTask {
     // To be compliant with standards, we need to reset bufferedAmount only when the event loop
     // reaches step 1.  In our implementation, the bytes will already have been sent on a background
     // thread.
-    fn name(&self) -> &'static str { "BufferedAmountTask" }
-
     fn handler(self: Box<Self>) {
         let ws = self.address.root();
 
@@ -445,8 +440,6 @@ struct CloseTask {
 }
 
 impl Runnable for CloseTask {
-    fn name(&self) -> &'static str { "CloseTask" }
-
     fn handler(self: Box<Self>) {
         let ws = self.address.root();
 
@@ -487,8 +480,6 @@ struct MessageReceivedTask {
 }
 
 impl Runnable for MessageReceivedTask {
-    fn name(&self) -> &'static str { "MessageReceivedTask" }
-
     #[allow(unsafe_code)]
     fn handler(self: Box<Self>) {
         let ws = self.address.root();

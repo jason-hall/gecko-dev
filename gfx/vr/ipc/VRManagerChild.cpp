@@ -19,6 +19,7 @@
 #include "nsContentUtils.h"
 #include "mozilla/dom/GamepadManager.h"
 #include "mozilla/dom/VRServiceTest.h"
+#include "mozilla/layers/SyncObject.h"
 
 using layers::TextureClient;
 
@@ -40,7 +41,6 @@ void ReleaseVRManagerParentSingleton() {
 VRManagerChild::VRManagerChild()
   : TextureForwarder()
   , mDisplaysInitialized(false)
-  , mInputFrameID(-1)
   , mMessageLoop(MessageLoop::current())
   , mFrameRequestCallbackCounter(0)
   , mBackend(layers::LayersBackend::LAYERS_NONE)
@@ -62,7 +62,8 @@ VRManagerChild::IdentifyTextureHost(const TextureFactoryIdentifier& aIdentifier)
 {
   if (sVRManagerChildSingleton) {
     sVRManagerChildSingleton->mBackend = aIdentifier.mParentBackend;
-    sVRManagerChildSingleton->mSyncObject = SyncObject::CreateSyncObject(aIdentifier.mSyncHandle);
+    sVRManagerChildSingleton->mSyncObject =
+        layers::SyncObjectClient::CreateSyncObjectClient(aIdentifier.mSyncHandle);
   }
 }
 
@@ -190,17 +191,16 @@ VRManagerChild::AllocPVRLayerChild(const uint32_t& aDisplayID,
                                    const float& aRightEyeX,
                                    const float& aRightEyeY,
                                    const float& aRightEyeWidth,
-                                   const float& aRightEyeHeight)
+                                   const float& aRightEyeHeight,
+                                   const uint32_t& aGroup)
 {
-  RefPtr<VRLayerChild> layer = new VRLayerChild(aDisplayID, this);
-  return layer.forget().take();
+  return VRLayerChild::CreateIPDLActor();
 }
 
 bool
 VRManagerChild::DeallocPVRLayerChild(PVRLayerChild* actor)
 {
-  delete actor;
-  return true;
+  return VRLayerChild::DestroyIPDLActor(actor);
 }
 
 void
@@ -279,9 +279,8 @@ VRManagerChild::RecvUpdateDisplayInfo(nsTArray<VRDisplayInfo>&& aDisplayUpdates)
     if (!window) {
       continue;
     }
-    ErrorResult result;
-    dom::Navigator* nav = window->GetNavigator(result);
-    if (NS_WARN_IF(result.Failed())) {
+    dom::Navigator* nav = window->Navigator();
+    if (!nav) {
       continue;
     }
     nav->NotifyVRDisplaysUpdated();
@@ -323,12 +322,6 @@ VRManagerChild::CreateVRServiceTestController(const nsCString& aID, dom::Promise
   ++mPromiseID;
 }
 
-int
-VRManagerChild::GetInputFrameID()
-{
-  return mInputFrameID;
-}
-
 mozilla::ipc::IPCResult
 VRManagerChild::RecvParentAsyncMessages(InfallibleTArray<AsyncParentMessageData>&& aMessages)
 {
@@ -353,7 +346,9 @@ PTextureChild*
 VRManagerChild::CreateTexture(const SurfaceDescriptor& aSharedData,
                               LayersBackend aLayersBackend,
                               TextureFlags aFlags,
-                              uint64_t aSerial)
+                              uint64_t aSerial,
+                              wr::MaybeExternalImageId& aExternalImageId,
+                              nsIEventTarget* aTarget)
 {
   return SendPTextureConstructor(aSharedData, aLayersBackend, aFlags, aSerial);
 }
@@ -404,23 +399,26 @@ PVRLayerChild*
 VRManagerChild::CreateVRLayer(uint32_t aDisplayID,
                               const Rect& aLeftEyeRect,
                               const Rect& aRightEyeRect,
-                              nsIEventTarget* aTarget)
+                              nsIEventTarget* aTarget,
+                              uint32_t aGroup)
 {
   PVRLayerChild* vrLayerChild = AllocPVRLayerChild(aDisplayID, aLeftEyeRect.x,
-                                                   aLeftEyeRect.y, aLeftEyeRect.width,
-                                                   aLeftEyeRect.height, aRightEyeRect.x,
-                                                   aRightEyeRect.y, aRightEyeRect.width,
-                                                   aRightEyeRect.height);
+                                                   aLeftEyeRect.y, aLeftEyeRect.Width(),
+                                                   aLeftEyeRect.Height(), aRightEyeRect.x,
+                                                   aRightEyeRect.y, aRightEyeRect.Width(),
+                                                   aRightEyeRect.Height(),
+                                                   aGroup);
   // Do the DOM labeling.
   if (aTarget) {
     SetEventTargetForActor(vrLayerChild, aTarget);
     MOZ_ASSERT(vrLayerChild->GetActorEventTarget());
   }
   return SendPVRLayerConstructor(vrLayerChild, aDisplayID, aLeftEyeRect.x,
-                                 aLeftEyeRect.y, aLeftEyeRect.width,
-                                 aLeftEyeRect.height, aRightEyeRect.x,
-                                 aRightEyeRect.y, aRightEyeRect.width,
-                                 aRightEyeRect.height);
+                                 aLeftEyeRect.y, aLeftEyeRect.Width(),
+                                 aLeftEyeRect.Height(), aRightEyeRect.x,
+                                 aRightEyeRect.y, aRightEyeRect.Width(),
+                                 aRightEyeRect.Height(),
+                                 aGroup);
 }
 
 
@@ -475,28 +473,6 @@ VRManagerChild::CancelFrameRequestCallback(int32_t aHandle)
 {
   // mFrameRequestCallbacks is stored sorted by handle
   mFrameRequestCallbacks.RemoveElementSorted(aHandle);
-}
-
-mozilla::ipc::IPCResult
-VRManagerChild::RecvNotifyVSync()
-{
-  for (auto& display : mDisplays) {
-    display->NotifyVsync();
-  }
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-VRManagerChild::RecvNotifyVRVSync(const uint32_t& aDisplayID)
-{
-  for (auto& display : mDisplays) {
-    if (display->GetDisplayInfo().GetDisplayID() == aDisplayID) {
-      display->NotifyVRVsync();
-    }
-  }
-
-  return IPC_OK();
 }
 
 mozilla::ipc::IPCResult
@@ -568,7 +544,9 @@ VRManagerChild::RunFrameRequestCallbacks()
 void
 VRManagerChild::FireDOMVRDisplayMountedEvent(uint32_t aDisplayID)
 {
-  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(this,
+  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(
+    "gfx::VRManagerChild::FireDOMVRDisplayMountedEventInternal",
+    this,
     &VRManagerChild::FireDOMVRDisplayMountedEventInternal,
     aDisplayID));
 }
@@ -576,7 +554,9 @@ VRManagerChild::FireDOMVRDisplayMountedEvent(uint32_t aDisplayID)
 void
 VRManagerChild::FireDOMVRDisplayUnmountedEvent(uint32_t aDisplayID)
 {
-  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(this,
+  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(
+    "gfx::VRManagerChild::FireDOMVRDisplayUnmountedEventInternal",
+    this,
     &VRManagerChild::FireDOMVRDisplayUnmountedEventInternal,
     aDisplayID));
 }
@@ -584,7 +564,9 @@ VRManagerChild::FireDOMVRDisplayUnmountedEvent(uint32_t aDisplayID)
 void
 VRManagerChild::FireDOMVRDisplayConnectEvent(uint32_t aDisplayID)
 {
-  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(this,
+  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(
+    "gfx::VRManagerChild::FireDOMVRDisplayConnectEventInternal",
+    this,
     &VRManagerChild::FireDOMVRDisplayConnectEventInternal,
     aDisplayID));
 }
@@ -592,7 +574,9 @@ VRManagerChild::FireDOMVRDisplayConnectEvent(uint32_t aDisplayID)
 void
 VRManagerChild::FireDOMVRDisplayDisconnectEvent(uint32_t aDisplayID)
 {
-  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(this,
+  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(
+    "gfx::VRManagerChild::FireDOMVRDisplayDisconnectEventInternal",
+    this,
     &VRManagerChild::FireDOMVRDisplayDisconnectEventInternal,
     aDisplayID));
 }
@@ -600,7 +584,9 @@ VRManagerChild::FireDOMVRDisplayDisconnectEvent(uint32_t aDisplayID)
 void
 VRManagerChild::FireDOMVRDisplayPresentChangeEvent(uint32_t aDisplayID)
 {
-  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(this,
+  nsContentUtils::AddScriptRunner(NewRunnableMethod<uint32_t>(
+    "gfx::VRManagerChild::FireDOMVRDisplayPresentChangeEventInternal",
+    this,
     &VRManagerChild::FireDOMVRDisplayPresentChangeEventInternal,
     aDisplayID));
 }
@@ -714,6 +700,19 @@ VRManagerChild::RecvReplyGamepadVibrateHaptic(const uint32_t& aPromiseID)
 
   p->MaybeResolve(true);
   mGamepadPromiseList.Remove(aPromiseID);
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+VRManagerChild::RecvDispatchSubmitFrameResult(const uint32_t& aDisplayID,
+                                              const VRSubmitFrameResultInfo& aResult)
+{
+   for (auto& display : mDisplays) {
+    if (display->GetDisplayInfo().GetDisplayID() == aDisplayID) {
+      display->UpdateSubmitFrameResult(aResult);
+    }
+  }
+
   return IPC_OK();
 }
 

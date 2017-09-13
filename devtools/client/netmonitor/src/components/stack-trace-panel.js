@@ -9,22 +9,22 @@ const {
   DOM,
   PropTypes,
 } = require("devtools/client/shared/vendor/react");
+const { viewSourceInDebugger } = require("../connector/index");
 
 const { div } = DOM;
 
 // Components
 const StackTrace = createFactory(require("devtools/client/shared/components/stack-trace"));
 
-function StackTracePanel({ request }) {
+function StackTracePanel({ request, sourceMapService }) {
   let { stacktrace } = request.cause;
 
   return (
     div({ className: "panel-container" },
       StackTrace({
         stacktrace,
-        onViewSourceInDebugger: (frame) => {
-          window.NetMonitorController.viewSourceInDebugger(frame.url, frame.line);
-        },
+        onViewSourceInDebugger: ({ url, line }) => viewSourceInDebugger(url, line),
+        sourceMapService,
       }),
     )
   );
@@ -34,6 +34,8 @@ StackTracePanel.displayName = "StackTracePanel";
 
 StackTracePanel.propTypes = {
   request: PropTypes.object.isRequired,
+  // Service to enable the source map feature.
+  sourceMapService: PropTypes.object,
 };
 
 module.exports = StackTracePanel;

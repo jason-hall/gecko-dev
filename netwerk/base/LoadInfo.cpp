@@ -22,6 +22,7 @@
 #include "nsDocShell.h"
 #include "nsGlobalWindow.h"
 #include "NullPrincipal.h"
+#include "nsRedirectHistoryEntry.h"
 
 using namespace mozilla::dom;
 
@@ -57,6 +58,8 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mIsPreflight(false)
   , mForceHSTSPriming(false)
   , mMixedContentWouldBlock(false)
+  , mIsHSTSPriming(false)
+  , mIsHSTSPrimingUpgrade(false)
 {
   MOZ_ASSERT(mLoadingPrincipal);
   MOZ_ASSERT(mTriggeringPrincipal);
@@ -230,6 +233,8 @@ LoadInfo::LoadInfo(nsPIDOMWindowOuter* aOuterWindow,
   , mIsPreflight(false)
   , mForceHSTSPriming(false)
   , mMixedContentWouldBlock(false)
+  , mIsHSTSPriming(false)
+  , mIsHSTSPrimingUpgrade(false)
 {
   // Top-level loads are never third-party
   // Grab the information we can out of the window.
@@ -269,6 +274,7 @@ LoadInfo::LoadInfo(const LoadInfo& rhs)
   , mTriggeringPrincipal(rhs.mTriggeringPrincipal)
   , mPrincipalToInherit(rhs.mPrincipalToInherit)
   , mSandboxedLoadingPrincipal(rhs.mSandboxedLoadingPrincipal)
+  , mResultPrincipalURI(rhs.mResultPrincipalURI)
   , mLoadingContext(rhs.mLoadingContext)
   , mSecurityFlags(rhs.mSecurityFlags)
   , mInternalContentPolicyType(rhs.mInternalContentPolicyType)
@@ -293,6 +299,8 @@ LoadInfo::LoadInfo(const LoadInfo& rhs)
   , mIsPreflight(rhs.mIsPreflight)
   , mForceHSTSPriming(rhs.mForceHSTSPriming)
   , mMixedContentWouldBlock(rhs.mMixedContentWouldBlock)
+  , mIsHSTSPriming(rhs.mIsHSTSPriming)
+  , mIsHSTSPrimingUpgrade(rhs.mIsHSTSPrimingUpgrade)
 {
 }
 
@@ -300,6 +308,7 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
                    nsIPrincipal* aTriggeringPrincipal,
                    nsIPrincipal* aPrincipalToInherit,
                    nsIPrincipal* aSandboxedLoadingPrincipal,
+                   nsIURI* aResultPrincipalURI,
                    nsSecurityFlags aSecurityFlags,
                    nsContentPolicyType aContentPolicyType,
                    LoadTainting aTainting,
@@ -315,16 +324,19 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
                    bool aInitialSecurityCheckDone,
                    bool aIsThirdPartyContext,
                    const OriginAttributes& aOriginAttributes,
-                   nsTArray<nsCOMPtr<nsIPrincipal>>& aRedirectChainIncludingInternalRedirects,
-                   nsTArray<nsCOMPtr<nsIPrincipal>>& aRedirectChain,
+                   RedirectHistoryArray& aRedirectChainIncludingInternalRedirects,
+                   RedirectHistoryArray& aRedirectChain,
                    const nsTArray<nsCString>& aCorsUnsafeHeaders,
                    bool aForcePreflight,
                    bool aIsPreflight,
                    bool aForceHSTSPriming,
-                   bool aMixedContentWouldBlock)
+                   bool aMixedContentWouldBlock,
+                   bool aIsHSTSPriming,
+                   bool aIsHSTSPrimingUpgrade)
   : mLoadingPrincipal(aLoadingPrincipal)
   , mTriggeringPrincipal(aTriggeringPrincipal)
   , mPrincipalToInherit(aPrincipalToInherit)
+  , mResultPrincipalURI(aResultPrincipalURI)
   , mSecurityFlags(aSecurityFlags)
   , mInternalContentPolicyType(aContentPolicyType)
   , mTainting(aTainting)
@@ -345,6 +357,8 @@ LoadInfo::LoadInfo(nsIPrincipal* aLoadingPrincipal,
   , mIsPreflight(aIsPreflight)
   , mForceHSTSPriming (aForceHSTSPriming)
   , mMixedContentWouldBlock(aMixedContentWouldBlock)
+  , mIsHSTSPriming(aIsHSTSPriming)
+  , mIsHSTSPrimingUpgrade(aIsHSTSPrimingUpgrade)
 {
   // Only top level TYPE_DOCUMENT loads can have a null loadingPrincipal
   MOZ_ASSERT(mLoadingPrincipal || aContentPolicyType == nsIContentPolicy::TYPE_DOCUMENT);
@@ -404,6 +418,7 @@ LoadInfo::CloneForNewRequest() const
   copy->mInitialSecurityCheckDone = false;
   copy->mRedirectChainIncludingInternalRedirects.Clear();
   copy->mRedirectChain.Clear();
+  copy->mResultPrincipalURI = nullptr;
   return copy.forget();
 }
 
@@ -795,28 +810,54 @@ LoadInfo::GetInitialSecurityCheckDone(bool* aResult)
 }
 
 NS_IMETHODIMP
-LoadInfo::AppendRedirectedPrincipal(nsIPrincipal* aPrincipal, bool aIsInternalRedirect)
+LoadInfo::AppendRedirectHistoryEntry(nsIRedirectHistoryEntry* aEntry,
+                                     bool aIsInternalRedirect)
 {
-  NS_ENSURE_ARG(aPrincipal);
+  NS_ENSURE_ARG(aEntry);
   MOZ_ASSERT(NS_IsMainThread());
 
-  mRedirectChainIncludingInternalRedirects.AppendElement(aPrincipal);
+  mRedirectChainIncludingInternalRedirects.AppendElement(aEntry);
   if (!aIsInternalRedirect) {
-    mRedirectChain.AppendElement(aPrincipal);
+    mRedirectChain.AppendElement(aEntry);
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::GetRedirects(JSContext* aCx, JS::MutableHandle<JS::Value> aRedirects,
+                       const RedirectHistoryArray& aArray)
+{
+  JS::Rooted<JSObject*> redirects(aCx, JS_NewArrayObject(aCx, aArray.Length()));
+  NS_ENSURE_TRUE(redirects, NS_ERROR_OUT_OF_MEMORY);
+
+  JS::Rooted<JSObject*> global(aCx, JS::CurrentGlobalOrNull(aCx));
+  NS_ENSURE_TRUE(global, NS_ERROR_UNEXPECTED);
+
+  nsCOMPtr<nsIXPConnect> xpc = mozilla::services::GetXPConnect();
+
+  for (size_t idx = 0; idx < aArray.Length(); idx++) {
+    JS::RootedObject jsobj(aCx);
+    nsresult rv = xpc->WrapNative(aCx, global, aArray[idx],
+                                  NS_GET_IID(nsIRedirectHistoryEntry),
+                                  jsobj.address());
+    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_STATE(jsobj);
+
+    bool rc = JS_DefineElement(aCx, redirects, idx, jsobj, JSPROP_ENUMERATE);
+    NS_ENSURE_TRUE(rc, NS_ERROR_UNEXPECTED);
+  }
+
+  aRedirects.setObject(*redirects);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 LoadInfo::GetRedirectChainIncludingInternalRedirects(JSContext* aCx, JS::MutableHandle<JS::Value> aChain)
 {
-  if (!ToJSValue(aCx, mRedirectChainIncludingInternalRedirects, aChain)) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  return NS_OK;
+  return GetRedirects(aCx, aChain, mRedirectChainIncludingInternalRedirects);
 }
 
-const nsTArray<nsCOMPtr<nsIPrincipal>>&
+const RedirectHistoryArray&
 LoadInfo::RedirectChainIncludingInternalRedirects()
 {
   return mRedirectChainIncludingInternalRedirects;
@@ -825,13 +866,10 @@ LoadInfo::RedirectChainIncludingInternalRedirects()
 NS_IMETHODIMP
 LoadInfo::GetRedirectChain(JSContext* aCx, JS::MutableHandle<JS::Value> aChain)
 {
-  if (!ToJSValue(aCx, mRedirectChain, aChain)) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-  return NS_OK;
+  return GetRedirects(aCx, aChain, mRedirectChain);
 }
 
-const nsTArray<nsCOMPtr<nsIPrincipal>>&
+const RedirectHistoryArray&
 LoadInfo::RedirectChain()
 {
   return mRedirectChain;
@@ -910,6 +948,38 @@ LoadInfo::ClearHSTSPriming()
 }
 
 NS_IMETHODIMP
+LoadInfo::SetIsHSTSPriming(bool aIsHSTSPriming)
+{
+  MOZ_ASSERT(aIsHSTSPriming);
+  mIsHSTSPriming = aIsHSTSPriming;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::GetIsHSTSPriming(bool* aIsHSTSPriming)
+{
+  MOZ_ASSERT(aIsHSTSPriming);
+  *aIsHSTSPriming = mIsHSTSPriming;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::SetIsHSTSPrimingUpgrade(bool aIsHSTSPrimingUpgrade)
+{
+  MOZ_ASSERT(aIsHSTSPrimingUpgrade);
+  mIsHSTSPrimingUpgrade = aIsHSTSPrimingUpgrade;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::GetIsHSTSPrimingUpgrade(bool* aIsHSTSPrimingUpgrade)
+{
+  MOZ_ASSERT(aIsHSTSPrimingUpgrade);
+  *aIsHSTSPrimingUpgrade = mIsHSTSPrimingUpgrade;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 LoadInfo::GetTainting(uint32_t* aTaintingOut)
 {
   MOZ_ASSERT(aTaintingOut);
@@ -928,11 +998,32 @@ LoadInfo::MaybeIncreaseTainting(uint32_t aTainting)
   return NS_OK;
 }
 
+void
+LoadInfo::SynthesizeServiceWorkerTainting(LoadTainting aTainting)
+{
+  MOZ_DIAGNOSTIC_ASSERT(aTainting <= LoadTainting::Opaque);
+  mTainting = aTainting;
+}
+
 NS_IMETHODIMP
 LoadInfo::GetIsTopLevelLoad(bool *aResult)
 {
   *aResult = mFrameOuterWindowID ? mFrameOuterWindowID == mOuterWindowID
                                  : mParentOuterWindowID == mOuterWindowID;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::GetResultPrincipalURI(nsIURI **aURI)
+{
+  NS_IF_ADDREF(*aURI = mResultPrincipalURI);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+LoadInfo::SetResultPrincipalURI(nsIURI *aURI)
+{
+  mResultPrincipalURI = aURI;
   return NS_OK;
 }
 

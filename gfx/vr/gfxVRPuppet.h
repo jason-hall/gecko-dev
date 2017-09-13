@@ -10,7 +10,11 @@
 #include "mozilla/RefPtr.h"
 
 #include "gfxVR.h"
+#include "VRDisplayHost.h"
 
+#if defined(XP_MACOSX)
+class MacIOSurface;
+#endif
 namespace mozilla {
 namespace gfx {
 namespace impl {
@@ -20,26 +24,24 @@ class VRDisplayPuppet : public VRDisplayHost
 public:
   void SetDisplayInfo(const VRDisplayInfo& aDisplayInfo);
   virtual void NotifyVSync() override;
-  virtual VRHMDSensorState GetSensorState() override;
   void SetSensorState(const VRHMDSensorState& aSensorState);
   void ZeroSensor() override;
 
 protected:
+  virtual VRHMDSensorState GetSensorState() override;
   virtual void StartPresentation() override;
   virtual void StopPresentation() override;
 #if defined(XP_WIN)
-  virtual void SubmitFrame(mozilla::layers::TextureSourceD3D11* aSource,
+  virtual bool SubmitFrame(mozilla::layers::TextureSourceD3D11* aSource,
                            const IntSize& aSize,
-                           const VRHMDSensorState& aSensorState,
                            const gfx::Rect& aLeftEyeRect,
                            const gfx::Rect& aRightEyeRect) override;
-#else
-  virtual void SubmitFrame(mozilla::layers::TextureSourceOGL* aSource,
+#elif defined(XP_MACOSX)
+  virtual bool SubmitFrame(MacIOSurface* aMacIOSurface,
                            const IntSize& aSize,
-                           const VRHMDSensorState& aSensorState,
                            const gfx::Rect& aLeftEyeRect,
-                           const gfx::Rect& aRightEyeRect);
-#endif // XP_WIN
+                           const gfx::Rect& aRightEyeRect) override;
+#endif
 
 public:
   explicit VRDisplayPuppet();
@@ -48,18 +50,32 @@ protected:
   virtual ~VRDisplayPuppet();
   void Destroy();
 
-  VRHMDSensorState GetSensorState(double timeOffset);
-
   bool mIsPresenting;
 
 private:
+#if defined(XP_WIN)
+  bool UpdateConstantBuffers();
+
+  RefPtr<ID3D11Device> mDevice;
+  RefPtr<ID3D11DeviceContext> mContext;
+  ID3D11VertexShader* mQuadVS;
+  ID3D11PixelShader* mQuadPS;
+  RefPtr<ID3D11SamplerState> mLinearSamplerState;
+  layers::VertexShaderConstants mVSConstants;
+  layers::PixelShaderConstants mPSConstants;
+  RefPtr<ID3D11Buffer> mVSConstantBuffer;
+  RefPtr<ID3D11Buffer> mPSConstantBuffer;
+  RefPtr<ID3D11Buffer> mVertexBuffer;
+  RefPtr<ID3D11InputLayout> mInputLayout;
+#endif
+
   VRHMDSensorState mSensorState;
 };
 
 class VRControllerPuppet : public VRControllerHost
 {
 public:
-  explicit VRControllerPuppet(dom::GamepadHand aHand);
+  explicit VRControllerPuppet(dom::GamepadHand aHand, uint32_t aDisplayID);
   void SetButtonPressState(uint32_t aButton, bool aPressed);
   uint64_t GetButtonPressState();
   void SetButtonTouchState(uint32_t aButton, bool aTouched);
@@ -91,7 +107,7 @@ public:
 
   virtual void Destroy() override;
   virtual void Shutdown() override;
-  virtual void GetHMDs(nsTArray<RefPtr<VRDisplayHost>>& aHMDResult) override;
+  virtual bool GetHMDs(nsTArray<RefPtr<VRDisplayHost>>& aHMDResult) override;
   virtual bool GetIsPresenting() override;
   virtual void HandleInput() override;
   virtual void GetControllers(nsTArray<RefPtr<VRControllerHost>>&

@@ -127,8 +127,10 @@ public:
    *
    * @param aRemoveFromForm set false if you do not want this element removed
    *        from the form.  (Used by nsFormControlList::Clear())
+   * @param aUnbindOrDelete set true if the element is being deleted or unbound
+   *        from tree.
    */
-  virtual void ClearForm(bool aRemoveFromForm) = 0;
+  virtual void ClearForm(bool aRemoveFromForm, bool aUnbindOrDelete) = 0;
 
   /**
    * Get the type of this control as an int (see NS_FORM_* above)
@@ -273,7 +275,7 @@ nsIFormControl::IsSingleLineTextControl(bool aExcludePassword, uint32_t aType)
          aType == NS_FORM_INPUT_TEL ||
          aType == NS_FORM_INPUT_URL ||
          // TODO: those are temporary until bug 773205 is fixed.
-#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
+#if defined(MOZ_WIDGET_ANDROID)
          // On Android/B2G, date/time input appears as a normal text box.
          aType == NS_FORM_INPUT_TIME ||
          aType == NS_FORM_INPUT_DATE ||

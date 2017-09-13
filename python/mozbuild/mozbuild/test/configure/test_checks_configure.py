@@ -483,7 +483,7 @@ class TestChecksConfigure(unittest.TestCase):
 
         def mock_valid_javac(_, args):
             if len(args) == 1 and args[0] == '-version':
-                return 0, '1.7', ''
+                return 0, '1.8', ''
             self.fail("Unexpected arguments to mock_valid_javac: %s" % args)
 
         # A valid set of tools in a standard location.
@@ -520,7 +520,7 @@ class TestChecksConfigure(unittest.TestCase):
              checking for jarsigner... %s
              checking for keytool... %s
              checking for javac... %s
-             checking for javac version... 1.7
+             checking for javac version... 1.8
         ''' % (java, javah, jar, jarsigner, keytool, javac)))
 
         # An alternative valid set of tools referred to by JAVA_HOME.
@@ -563,7 +563,7 @@ class TestChecksConfigure(unittest.TestCase):
              checking for jarsigner... %s
              checking for keytool... %s
              checking for javac... %s
-             checking for javac version... 1.7
+             checking for javac version... 1.8
         ''' % (alt_java, alt_javah, alt_jar, alt_jarsigner,
                alt_keytool, alt_javac)))
 
@@ -592,7 +592,7 @@ class TestChecksConfigure(unittest.TestCase):
              checking for jarsigner... %s
              checking for keytool... %s
              checking for javac... %s
-             checking for javac version... 1.7
+             checking for javac version... 1.8
         ''' % (alt_java, alt_javah, alt_jar, alt_jarsigner,
                alt_keytool, alt_javac)))
 
@@ -622,7 +622,7 @@ class TestChecksConfigure(unittest.TestCase):
              checking for jarsigner... %s
              checking for keytool... %s
              checking for javac... %s
-             checking for javac version... 1.7
+             checking for javac version... 1.8
         ''' % (alt_java, alt_javah, alt_jar, alt_jarsigner,
                alt_keytool, alt_javac)))
 
@@ -655,7 +655,7 @@ class TestChecksConfigure(unittest.TestCase):
              checking for keytool... %s
              checking for javac... %s
              checking for javac version... 
-             ERROR: javac 1.7 or higher is required (found 1.6.9)
+             ERROR: javac 1.8 or higher is required (found 1.6.9)
         ''' % (java, javah, jar, jarsigner, keytool, javac)))
 
         # Any missing tool is fatal when these checks run.
@@ -872,6 +872,31 @@ class TestChecksConfigure(unittest.TestCase):
                 'MOZ_MOZILLA_API_KEY': 'fake-key',
             })
 
+        with MockedOpen({'default': 'default-key\n'}):
+            config, output, status = self.get_result(
+                "simple_keyfile('Mozilla API', default='default')",
+                includes=includes)
+            self.assertEqual(status, 0)
+            self.assertEqual(output, textwrap.dedent('''\
+                checking for the Mozilla API key... yes
+            '''))
+            self.assertEqual(config, {
+                'MOZ_MOZILLA_API_KEY': 'default-key',
+            })
+
+        with MockedOpen({'default': 'default-key\n',
+                         'key': 'fake-key\n'}):
+            config, output, status = self.get_result(
+                "simple_keyfile('Mozilla API', default='key')",
+                includes=includes)
+            self.assertEqual(status, 0)
+            self.assertEqual(output, textwrap.dedent('''\
+                checking for the Mozilla API key... yes
+            '''))
+            self.assertEqual(config, {
+                'MOZ_MOZILLA_API_KEY': 'fake-key',
+            })
+
     def test_id_and_secret_keyfile(self):
         includes = ('util.configure', 'checks.configure', 'keyfiles.configure')
 
@@ -934,6 +959,34 @@ class TestChecksConfigure(unittest.TestCase):
                 ERROR: Bing API key file has an invalid format.
             '''))
             self.assertEqual(config, {})
+
+        with MockedOpen({'default-key': 'default-id default-key\n'}):
+            config, output, status = self.get_result(
+                "id_and_secret_keyfile('Bing API', default='default-key')",
+                includes=includes)
+            self.assertEqual(status, 0)
+            self.assertEqual(output, textwrap.dedent('''\
+                checking for the Bing API key... yes
+            '''))
+            self.assertEqual(config, {
+                'MOZ_BING_API_CLIENTID': 'default-id',
+                'MOZ_BING_API_KEY': 'default-key',
+            })
+
+        with MockedOpen({'default-key': 'default-id default-key\n',
+                         'key': 'fake-id fake-key\n'}):
+            config, output, status = self.get_result(
+                "id_and_secret_keyfile('Bing API', default='default-key')",
+                args=['--with-bing-api-keyfile=key'],
+                includes=includes)
+            self.assertEqual(status, 0)
+            self.assertEqual(output, textwrap.dedent('''\
+                checking for the Bing API key... yes
+            '''))
+            self.assertEqual(config, {
+                'MOZ_BING_API_CLIENTID': 'fake-id',
+                'MOZ_BING_API_KEY': 'fake-key',
+            })
 
 
 if __name__ == '__main__':

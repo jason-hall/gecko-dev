@@ -300,7 +300,7 @@ function test_emitLatchedEvents(eventPrefix, initialDelta, cmd) {
 
   // Now go back in the opposite direction.
   test_utils.sendSimpleGestureEvent(eventPrefix + "Update", 0, 0, 0,
-				    -initialDelta, 0);
+                                    -initialDelta, 0);
   cumulativeDelta += -initialDelta;
   if (isIncreasing) {
     expect.dec++;
@@ -321,7 +321,7 @@ function test_emitLatchedEvents(eventPrefix, initialDelta, cmd) {
 
   // Go back to the original direction. The original command should trigger.
   test_utils.sendSimpleGestureEvent(eventPrefix + "Update", 0, 0, 0,
-				    initialDelta, 0);
+                                    initialDelta, 0);
   cumulativeDelta += initialDelta;
   if (isIncreasing) {
     expect.inc++;
@@ -641,7 +641,7 @@ function test_rotateGesturesOnTab() {
 }
 
 function test_rotateGestures() {
-  test_imageTab = gBrowser.addTab("chrome://branding/content/about-logo.png");
+  test_imageTab = BrowserTestUtils.addTab(gBrowser, "chrome://branding/content/about-logo.png");
   gBrowser.selectedTab = test_imageTab;
 
   gBrowser.selectedBrowser.addEventListener("load", test_rotateGesturesOnTab, true);

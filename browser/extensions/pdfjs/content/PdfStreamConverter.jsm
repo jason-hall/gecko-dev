@@ -12,8 +12,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-/* globals Components, Services, XPCOMUtils, NetUtil, PrivateBrowsingUtils,
-           dump, NetworkManager, PdfJsTelemetry, PdfjsContentUtils */
 
 "use strict";
 
@@ -203,7 +201,7 @@ PdfDataListener.prototype = {
     if (this.errorCode) {
       value(null, this.errorCode);
     }
-  }
+  },
 };
 
 /**
@@ -218,7 +216,7 @@ class ChromeActions {
       firstPageInfo: false,
       streamTypesUsed: [],
       fontTypesUsed: [],
-      startAt: Date.now()
+      startAt: Date.now(),
     };
   }
 
@@ -306,7 +304,7 @@ class ChromeActions {
         onDataAvailable(aRequest, aContext, aDataInputStream, aOffset, aCount) {
           this.extListener.onDataAvailable(aRequest, aContext, aDataInputStream,
                                            aOffset, aCount);
-        }
+        },
       };
 
       channel.asyncOpen2(listener);
@@ -314,7 +312,7 @@ class ChromeActions {
   }
 
   getLocale() {
-    return getStringPref("general.useragent.locale", "en-US");
+    return Services.locale.getRequestedLocale() || "en-US";
   }
 
   getStrings(data) {
@@ -575,7 +573,7 @@ class RangedChromeActions extends ChromeActions {
           return;
         }
         this.headers[aHeader] = aValue;
-      }
+      },
     };
     if (originalRequest.visitRequestHeaders) {
       originalRequest.visitRequestHeaders(httpHeaderVisitor);
@@ -672,7 +670,7 @@ class RangedChromeActions extends ChromeActions {
           pdfjsLoadAction: "rangeProgress",
           loaded: evt.loaded,
         }, "*");
-      }
+      },
     });
   }
 
@@ -765,7 +763,8 @@ class RequestListener {
         response = function sendResponse(aResponse) {
           try {
             var listener = doc.createEvent("CustomEvent");
-            let detail = Cu.cloneInto({ response: aResponse }, doc.defaultView);
+            let detail = Cu.cloneInto({ response: aResponse, },
+                                      doc.defaultView);
             listener.initCustomEvent("pdf.js.response", true, false, detail);
             return message.dispatchEvent(listener);
           } catch (e) {
@@ -794,10 +793,10 @@ class FindEventManager {
   }
 
   bind() {
-    var unload = function(e) {
+    var unload = (evt) => {
       this.unbind();
-      this.contentWindow.removeEventListener(e.type, unload);
-    }.bind(this);
+      this.contentWindow.removeEventListener(evt.type, unload);
+    };
     this.contentWindow.addEventListener("unload", unload);
 
     // We cannot directly attach listeners to for the find events
@@ -998,7 +997,7 @@ PdfStreamConverter.prototype = {
             domWindow.frameElement.className === "previewPluginContentFrame";
           PdfJsTelemetry.onEmbed(isObjectEmbed);
         }
-      }
+      },
     };
 
     // Keep the URL the same so the browser sees it as the same.
@@ -1033,6 +1032,6 @@ PdfStreamConverter.prototype = {
     }
     delete this.dataListener;
     delete this.binaryStream;
-  }
+  },
 };
 

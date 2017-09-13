@@ -2,27 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use fnv::FnvHasher;
-use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
-use tiling::AuxiliaryListsMap;
-use webrender_traits::{AuxiliaryLists, BuiltDisplayList, PipelineId, Epoch, ColorF};
-use webrender_traits::{DisplayItem, DynamicProperties, LayerSize, LayoutTransform};
-use webrender_traits::{PropertyBinding, PropertyBindingId};
+use api::{BuiltDisplayList, ColorF, DynamicProperties, Epoch, LayerSize, LayoutSize};
+use api::{LayoutTransform, PipelineId, PropertyBinding, PropertyBindingId};
+use internal_types::FastHashMap;
 
 /// Stores a map of the animated property bindings for the current display list. These
 /// can be used to animate the transform and/or opacity of a display list without
 /// re-submitting the display list itself.
 pub struct SceneProperties {
-    transform_properties: HashMap<PropertyBindingId, LayoutTransform>,
-    float_properties: HashMap<PropertyBindingId, f32>,
+    transform_properties: FastHashMap<PropertyBindingId, LayoutTransform>,
+    float_properties: FastHashMap<PropertyBindingId, f32>,
 }
 
 impl SceneProperties {
     pub fn new() -> SceneProperties {
         SceneProperties {
-            transform_properties: HashMap::with_hasher(Default::default()),
-            float_properties: HashMap::with_hasher(Default::default()),
+            transform_properties: FastHashMap::default(),
+            float_properties: FastHashMap::default(),
         }
     }
 
@@ -86,15 +82,15 @@ pub struct ScenePipeline {
     pub pipeline_id: PipelineId,
     pub epoch: Epoch,
     pub viewport_size: LayerSize,
+    pub content_size: LayoutSize,
     pub background_color: Option<ColorF>,
 }
 
 /// A complete representation of the layout bundling visible pipelines together.
 pub struct Scene {
     pub root_pipeline_id: Option<PipelineId>,
-    pub pipeline_map: HashMap<PipelineId, ScenePipeline, BuildHasherDefault<FnvHasher>>,
-    pub pipeline_auxiliary_lists: AuxiliaryListsMap,
-    pub display_lists: HashMap<PipelineId, Vec<DisplayItem>, BuildHasherDefault<FnvHasher>>,
+    pub pipeline_map: FastHashMap<PipelineId, ScenePipeline>,
+    pub display_lists: FastHashMap<PipelineId, BuiltDisplayList>,
     pub properties: SceneProperties,
 }
 
@@ -102,9 +98,8 @@ impl Scene {
     pub fn new() -> Scene {
         Scene {
             root_pipeline_id: None,
-            pipeline_map: HashMap::with_hasher(Default::default()),
-            pipeline_auxiliary_lists: HashMap::with_hasher(Default::default()),
-            display_lists: HashMap::with_hasher(Default::default()),
+            pipeline_map: FastHashMap::default(),
+            display_lists: FastHashMap::default(),
             properties: SceneProperties::new(),
         }
     }
@@ -119,17 +114,26 @@ impl Scene {
                             built_display_list: BuiltDisplayList,
                             background_color: Option<ColorF>,
                             viewport_size: LayerSize,
-                            auxiliary_lists: AuxiliaryLists) {
-        self.pipeline_auxiliary_lists.insert(pipeline_id, auxiliary_lists);
-        self.display_lists.insert(pipeline_id, built_display_list.into_display_items());
+                            content_size: LayoutSize) {
+        self.display_lists.insert(pipeline_id, built_display_list);
 
         let new_pipeline = ScenePipeline {
-            pipeline_id: pipeline_id,
-            epoch: epoch,
-            viewport_size: viewport_size,
-            background_color: background_color,
+            pipeline_id,
+            epoch,
+            viewport_size,
+            content_size,
+            background_color,
         };
 
         self.pipeline_map.insert(pipeline_id, new_pipeline);
+    }
+
+    pub fn remove_pipeline(&mut self,
+                           pipeline_id: PipelineId) {
+        if self.root_pipeline_id == Some(pipeline_id) {
+            self.root_pipeline_id = None;
+        }
+        self.display_lists.remove(&pipeline_id);
+        self.pipeline_map.remove(&pipeline_id);
     }
 }

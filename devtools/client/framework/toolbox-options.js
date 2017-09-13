@@ -71,7 +71,7 @@ function OptionsPanel(iframeWindow, toolbox) {
 
   this._addListeners();
 
-  const EventEmitter = require("devtools/shared/event-emitter");
+  const EventEmitter = require("devtools/shared/old-event-emitter");
   EventEmitter.decorate(this);
 }
 
@@ -98,8 +98,8 @@ OptionsPanel.prototype = {
   }),
 
   _addListeners: function () {
-    Services.prefs.addObserver("devtools.cache.disabled", this._prefChanged, false);
-    Services.prefs.addObserver("devtools.theme", this._prefChanged, false);
+    Services.prefs.addObserver("devtools.cache.disabled", this._prefChanged);
+    Services.prefs.addObserver("devtools.theme", this._prefChanged);
     gDevTools.on("theme-registered", this._themeRegistered);
     gDevTools.on("theme-unregistered", this._themeUnregistered);
   },
@@ -322,11 +322,6 @@ OptionsPanel.prototype = {
       label: "Enable new debugger frontend",
       id: "devtools-new-debugger",
       parentId: "debugger-options"
-    }, {
-      pref: "devtools.layoutview.enabled",
-      label: "Enable layout panel",
-      id: "devtools-layout-panel",
-      parentId: "inspector-options"
     }];
 
     let createPreferenceOption = ({pref, label, id}) => {

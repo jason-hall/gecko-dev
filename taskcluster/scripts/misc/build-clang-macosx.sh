@@ -2,14 +2,12 @@
 set -x -e -v
 
 # This script is for building clang for Mac OS X on Linux.
-
 WORKSPACE=$HOME/workspace
 HOME_DIR=$WORKSPACE/build
-UPLOAD_DIR=$WORKSPACE/artifacts
+UPLOAD_DIR=$HOME/artifacts
 
 cd $HOME_DIR/src
 
-TOOLTOOL_MANIFEST=browser/config/tooltool-manifests/macosx64/cross-clang.manifest
 . taskcluster/scripts/misc/tooltool-download.sh
 
 # ld needs libLTO.so from llvm
@@ -26,7 +24,7 @@ set +x
 
 cd build/build-clang
 # |mach python| sets up a virtualenv for us!
-../../mach python ./build-clang.py -c clang-static-analysis-macosx64.json
+../../mach python ./build-clang.py -c clang-macosx64.json
 
 set -x
 

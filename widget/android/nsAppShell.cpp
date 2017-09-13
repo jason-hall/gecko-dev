@@ -148,6 +148,7 @@ public:
     {
         struct NoOpRunnable : Runnable
         {
+            NoOpRunnable() : Runnable("NoOpRunnable") {}
             NS_IMETHOD Run() override { return NS_OK; }
         };
 
@@ -193,9 +194,10 @@ public:
         // We really want to send a notification like profile-before-change,
         // but profile-before-change ends up shutting some things down instead
         // of flushing data
-        nsIPrefService* prefs = Preferences::GetService();
+        Preferences* prefs = static_cast<Preferences *>(Preferences::GetService());
         if (prefs) {
-            prefs->SavePrefFile(nullptr);
+            // Force a main thread blocking save
+            prefs->SavePrefFileBlocking();
         }
     }
 
@@ -239,11 +241,18 @@ public:
 
     static int64_t RunUiThreadCallback()
     {
-        if (!AndroidBridge::Bridge()) {
-            return -1;
+        return RunAndroidUiTasks();
+    }
+
+    static void ForceQuit()
+    {
+        nsCOMPtr<nsIAppStartup> appStartup =
+            do_GetService(NS_APPSTARTUP_CONTRACTID);
+
+        if (appStartup) {
+            appStartup->Quit(nsIAppStartup::eForceQuit);
         }
 
-        return AndroidBridge::Bridge()->RunDelayedUiThreadTasks();
     }
 };
 
@@ -367,11 +376,6 @@ public:
         AndroidAlerts::NotifyListener(
                 aName->ToString(), aTopic->ToCString().get(),
                 aCookie->ToString().get());
-    }
-
-    static void OnFullScreenPluginHidden(jni::Object::Param aView)
-    {
-        nsPluginInstanceOwner::ExitFullScreen(aView.Get());
     }
 };
 
@@ -511,6 +515,7 @@ nsAppShell::Init()
         obsServ->AddObserver(this, "browser-delayed-startup-finished", false);
         obsServ->AddObserver(this, "profile-after-change", false);
         obsServ->AddObserver(this, "tab-child-created", false);
+        obsServ->AddObserver(this, "quit-application", false);
         obsServ->AddObserver(this, "quit-application-granted", false);
         obsServ->AddObserver(this, "xpcom-shutdown", false);
 
@@ -580,29 +585,45 @@ nsAppShell::Observe(nsISupports* aSubject,
         removeObserver = true;
 
     } else if (!strcmp(aTopic, "chrome-document-loaded")) {
-        if (jni::IsAvailable()) {
-            // Our first window has loaded, assume any JS initialization has run.
-            java::GeckoThread::CheckAndSetState(
-                    java::GeckoThread::State::PROFILE_READY(),
-                    java::GeckoThread::State::RUNNING());
-        }
-
-        // Enable the window event dispatcher for the given GeckoView.
+        // Set the global ready state and enable the window event dispatcher
+        // for this particular GeckoView.
         nsCOMPtr<nsIDocument> doc = do_QueryInterface(aSubject);
         MOZ_ASSERT(doc);
         nsCOMPtr<nsIWidget> widget =
             WidgetUtils::DOMWindowToWidget(doc->GetWindow());
-        MOZ_ASSERT(widget);
-        if (widget->WindowType() == nsWindowType::eWindowType_toplevel) {
-            // Make sure to call this only on top level nsWindow.
+
+        // `widget` may be one of several different types in the parent
+        // process, including the Android nsWindow, PuppetWidget, etc. To
+        // ensure that we only accept the Android nsWindow, we check that the
+        // widget is a top-level window and that its NS_NATIVE_WIDGET value is
+        // non-null, which is not the case for non-native widgets like
+        // PuppetWidget.
+        if (widget &&
+            widget->WindowType() == nsWindowType::eWindowType_toplevel &&
+            widget->GetNativeData(NS_NATIVE_WIDGET) == widget) {
+            if (jni::IsAvailable()) {
+                // When our first window has loaded, assume any JS
+                // initialization has run and set Gecko to ready.
+                java::GeckoThread::CheckAndSetState(
+                        java::GeckoThread::State::PROFILE_READY(),
+                        java::GeckoThread::State::RUNNING());
+            }
             const auto window = static_cast<nsWindow*>(widget.get());
             window->EnableEventDispatcher();
         }
+    } else if (!strcmp(aTopic, "quit-application")) {
+        if (jni::IsAvailable()) {
+            const bool restarting =
+                    aData && NS_LITERAL_STRING("restart").Equals(aData);
+            java::GeckoThread::SetState(
+                    restarting ?
+                    java::GeckoThread::State::RESTARTING() :
+                    java::GeckoThread::State::EXITING());
+        }
+        removeObserver = true;
+
     } else if (!strcmp(aTopic, "quit-application-granted")) {
         if (jni::IsAvailable()) {
-            java::GeckoThread::SetState(
-                    java::GeckoThread::State::EXITING());
-
             // We are told explicitly to quit, perhaps due to
             // nsIAppStartup::Quit being called. We should release our hold on
             // nsIAppStartup and let it continue to quit.
@@ -666,8 +687,7 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
 {
     EVLOG("nsAppShell::ProcessNextNativeEvent %d", mayWait);
 
-    PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent",
-        js::ProfileEntry::Category::EVENTS);
+    AUTO_PROFILER_LABEL("nsAppShell::ProcessNextNativeEvent", EVENTS);
 
     mozilla::UniquePtr<Event> curEvent;
 
@@ -685,8 +705,8 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
                 return true;
             }
 
-            PROFILER_LABEL("nsAppShell", "ProcessNextNativeEvent::Wait",
-                js::ProfileEntry::Category::EVENTS);
+            AUTO_PROFILER_LABEL("nsAppShell::ProcessNextNativeEvent:Wait",
+                                EVENTS);
             mozilla::HangMonitor::Suspend();
 
             curEvent = mEventQueue.Pop(/* mayWait */ true);

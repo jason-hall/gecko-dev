@@ -5,11 +5,14 @@ use super::item::Item;
 use super::ty::TypeKind;
 use clang;
 use ir::annotations::Annotations;
+use ir::item::ItemCanonicalName;
 use parse::{ClangItemParser, ParseError};
 
 /// An enum representing custom handling that can be given to a variant.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EnumVariantCustomBehavior {
+    /// This variant will be a module containing constants.
+    ModuleConstify,
     /// This variant will be constified, that is, forced to generate a constant.
     Constify,
     /// This variant will be hidden entirely from the resulting enum.
@@ -54,13 +57,15 @@ impl Enum {
                    ctx: &mut BindgenContext)
                    -> Result<Self, ParseError> {
         use clang_sys::*;
+        debug!("Enum::from_ty {:?}", ty);
+
         if ty.kind() != CXType_Enum {
             return Err(ParseError::Continue);
         }
 
         let declaration = ty.declaration().canonical();
         let repr = declaration.enum_type()
-            .and_then(|et| Item::from_ty(&et, None, None, ctx).ok());
+            .and_then(|et| Item::from_ty(&et, declaration, None, ctx).ok());
         let mut variants = vec![];
 
         // Assume signedness since the default type by the C standard is an int.
@@ -82,7 +87,8 @@ impl Enum {
         };
         let type_name = type_name.as_ref().map(String::as_str);
 
-        declaration.visit(|cursor| {
+        let definition = declaration.definition().unwrap_or(declaration);
+        definition.visit(|cursor| {
             if cursor.kind() == CXCursor_EnumConstantDecl {
                 let value = if is_signed {
                     cursor.enum_val_signed().map(EnumVariantValue::Signed)
@@ -91,7 +97,7 @@ impl Enum {
                 };
                 if let Some(val) = value {
                     let name = cursor.spelling();
-                    let custom_behavior = ctx.type_chooser()
+                    let custom_behavior = ctx.parse_callbacks()
                         .and_then(|t| {
                             t.enum_variant_behavior(type_name, &name, val)
                         })
@@ -117,6 +123,18 @@ impl Enum {
             CXChildVisit_Continue
         });
         Ok(Enum::new(repr, variants))
+    }
+
+    /// Whether the enum should be an constified enum module
+    pub fn is_constified_enum_module(&self, ctx: &BindgenContext, item: &Item) -> bool {
+        let name = item.canonical_name(ctx);
+        let enum_ty = item.expect_type();
+
+        ctx.options().constified_enum_modules.matches(&name) ||
+        (enum_ty.name().is_none() &&
+            self.variants()
+            .iter()
+            .any(|v| ctx.options().constified_enum_modules.matches(&v.name())))
     }
 }
 

@@ -18,6 +18,9 @@
 #include <osvr/ClientKit/ClientKitC.h>
 #include <osvr/ClientKit/DisplayC.h>
 
+#if defined(XP_MACOSX)
+class MacIOSurface;
+#endif
 namespace mozilla {
 namespace gfx {
 namespace impl {
@@ -25,19 +28,23 @@ namespace impl {
 class VRDisplayOSVR : public VRDisplayHost
 {
 public:
-  VRHMDSensorState GetSensorState() override;
   void ZeroSensor() override;
 
 protected:
+  VRHMDSensorState GetSensorState() override;
   virtual void StartPresentation() override;
   virtual void StopPresentation() override;
 
 #if defined(XP_WIN)
-  virtual void SubmitFrame(TextureSourceD3D11* aSource,
-    const IntSize& aSize,
-    const VRHMDSensorState& aSensorState,
-    const gfx::Rect& aLeftEyeRect,
-    const gfx::Rect& aRightEyeRect) override;
+  virtual bool SubmitFrame(mozilla::layers::TextureSourceD3D11* aSource,
+                           const IntSize& aSize,
+                           const gfx::Rect& aLeftEyeRect,
+                           const gfx::Rect& aRightEyeRect) override;
+#elif defined(XP_MACOSX)
+  virtual bool SubmitFrame(MacIOSurface* aMacIOSurface,
+                           const IntSize& aSize,
+                           const gfx::Rect& aLeftEyeRect,
+                           const gfx::Rect& aRightEyeRect) override;
 #endif
 
 public:
@@ -66,7 +73,7 @@ public:
   static already_AddRefed<VRSystemManagerOSVR> Create();
   virtual void Destroy() override;
   virtual void Shutdown() override;
-  virtual void GetHMDs(nsTArray<RefPtr<VRDisplayHost>>& aHMDResult) override;
+  virtual bool GetHMDs(nsTArray<RefPtr<VRDisplayHost>>& aHMDResult) override;
   virtual bool GetIsPresenting() override;
   virtual void HandleInput() override;
   virtual void GetControllers(nsTArray<RefPtr<VRControllerHost>>&

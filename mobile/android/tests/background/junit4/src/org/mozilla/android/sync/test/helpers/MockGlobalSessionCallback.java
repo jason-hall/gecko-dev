@@ -53,7 +53,7 @@ public class MockGlobalSessionCallback implements GlobalSessionCallback {
   }
 
   @Override
-  public void handleError(GlobalSession globalSession, Exception ex) {
+  public void handleError(GlobalSession globalSession, Exception ex, String reason) {
     this.calledError = true;
     this.calledErrorException = ex;
     this.testWaiter().performNotify();

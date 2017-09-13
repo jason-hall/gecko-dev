@@ -12,7 +12,7 @@
 //  * Neither the name of Google, Inc. nor the names of its contributors
 //    may be used to endorse or promote products derived from this
 //    software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
 // "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
 // LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
@@ -67,10 +67,6 @@ static inline pid_t gettid()
 #ifndef getpid
 #define getpid _getpid
 #endif
-#endif
-
-#if defined(GP_OS_android) && !defined(MOZ_WIDGET_GONK)
-#define PROFILE_JAVA
 #endif
 
 extern mozilla::LazyLogModule gProfilerLog;
@@ -130,5 +126,9 @@ namespace mozilla {
 class JSONWriter;
 }
 void AppendSharedLibraries(mozilla::JSONWriter& aWriter);
+
+// Convert the array of strings to a bitfield.
+uint32_t ParseFeaturesFromStringArray(const char** aFeatures,
+                                      uint32_t aFeatureCount);
 
 #endif /* ndef TOOLS_PLATFORM_H_ */

@@ -8,54 +8,13 @@
 
 #include "mozilla/layers/CompositorOGL.h"
 #include "mozilla/layers/TextureHostOGL.h"
+#include "mozilla/gfx/2D.h"
+#include "MacIOSurfaceHelpers.h"
 
 class MacIOSurface;
 
 namespace mozilla {
 namespace layers {
-
-/**
- * A texture source meant for use with MacIOSurfaceTextureHostOGL.
- *
- * It does not own any GL texture, and attaches its shared handle to one of
- * the compositor's temporary textures when binding.
- */
-class MacIOSurfaceTextureSourceOGL : public TextureSource
-                                   , public TextureSourceOGL
-{
-public:
-  MacIOSurfaceTextureSourceOGL(CompositorOGL* aCompositor,
-                               MacIOSurface* aSurface);
-  virtual ~MacIOSurfaceTextureSourceOGL();
-
-  virtual const char* Name() const override { return "MacIOSurfaceTextureSourceOGL"; }
-
-  virtual TextureSourceOGL* AsSourceOGL() override { return this; }
-
-  virtual void BindTexture(GLenum activetex,
-                           gfx::SamplingFilter aSamplingFilter) override;
-
-  virtual bool IsValid() const override { return !!gl(); }
-
-  virtual gfx::IntSize GetSize() const override;
-
-  virtual gfx::SurfaceFormat GetFormat() const override;
-
-  virtual GLenum GetTextureTarget() const override { return LOCAL_GL_TEXTURE_RECTANGLE_ARB; }
-
-  virtual GLenum GetWrapMode() const override { return LOCAL_GL_CLAMP_TO_EDGE; }
-
-  // MacIOSurfaceTextureSourceOGL doesn't own any gl texture
-  virtual void DeallocateDeviceData() override {}
-
-  virtual void SetTextureSourceProvider(TextureSourceProvider* aProvider) override;
-
-  gl::GLContext* gl() const;
-
-protected:
-  RefPtr<CompositorOGL> mCompositor;
-  RefPtr<MacIOSurface> mSurface;
-};
 
 /**
  * A TextureHost for shared MacIOSurface
@@ -87,7 +46,8 @@ public:
 
   virtual already_AddRefed<gfx::DataSourceSurface> GetAsSurface() override
   {
-    return nullptr; // XXX - implement this (for MOZ_DUMP_PAINTING)
+    RefPtr<gfx::SourceSurface> surf = CreateSourceSurfaceFromMacIOSurface(GetMacIOSurface());
+    return surf->GetDataSurface();
   }
 
   gl::GLContext* gl() const;
@@ -100,10 +60,22 @@ public:
 
   virtual MacIOSurfaceTextureHostOGL* AsMacIOSurfaceTextureHost() override { return this; }
 
-  MacIOSurface* GetMacIOSurface()
-  {
-    return mSurface;
-  }
+  virtual MacIOSurface* GetMacIOSurface() override { return mSurface; }
+
+  virtual void CreateRenderTexture(const wr::ExternalImageId& aExternalImageId) override;
+
+  virtual void GetWRImageKeys(nsTArray<wr::ImageKey>& aImageKeys,
+                              const std::function<wr::ImageKey()>& aImageKeyAllocator) override;
+
+  virtual void AddWRImage(wr::ResourceUpdateQueue& aResources,
+                          Range<const wr::ImageKey>& aImageKeys,
+                          const wr::ExternalImageId& aExtID) override;
+
+  virtual void PushExternalImage(wr::DisplayListBuilder& aBuilder,
+                                 const wr::LayoutRect& aBounds,
+                                 const wr::LayoutRect& aClip,
+                                 wr::ImageRendering aFilter,
+                                 Range<const wr::ImageKey>& aImageKeys) override;
 
 protected:
   GLTextureSource* CreateTextureSourceForPlane(size_t aPlane);

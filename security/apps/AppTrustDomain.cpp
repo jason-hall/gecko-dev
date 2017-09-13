@@ -85,8 +85,9 @@ AppTrustDomain::SetTrustedRoot(AppTrustedRoot trustedRoot)
         if (!file) {
           return NS_ERROR_FAILURE;
         }
-        nsresult rv = file->InitWithNativePath(
-          Preferences::GetCString(kDevImportedDER));
+        nsAutoCString path;
+        Preferences::GetCString(kDevImportedDER, path);
+        nsresult rv = file->InitWithNativePath(path);
         if (NS_FAILED(rv)) {
           return rv;
         }
@@ -259,8 +260,10 @@ AppTrustDomain::CheckRevocation(EndEntityOrCA, const CertID&, Time, Duration,
 }
 
 Result
-AppTrustDomain::IsChainValid(const DERArray& certChain, Time time)
+AppTrustDomain::IsChainValid(const DERArray& certChain, Time time,
+                             const CertPolicyId& requiredPolicy)
 {
+  MOZ_ASSERT(requiredPolicy.IsAnyPolicy());
   SECStatus srv = ConstructCERTCertListFromReversedDERArray(certChain,
                                                             mCertChain);
   if (srv != SECSuccess) {

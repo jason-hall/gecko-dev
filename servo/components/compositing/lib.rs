@@ -22,19 +22,20 @@ extern crate servo_url;
 extern crate style_traits;
 extern crate time;
 extern crate webrender;
-extern crate webrender_traits;
+extern crate webrender_api;
 
 pub use compositor_thread::CompositorProxy;
 pub use compositor::IOCompositor;
-use euclid::size::TypedSize2D;
+pub use compositor::ShutdownState;
+use euclid::TypedSize2D;
 use ipc_channel::ipc::IpcSender;
 use msg::constellation_msg::PipelineId;
+use msg::constellation_msg::TopLevelBrowsingContextId;
 use script_traits::{ConstellationControlMsg, LayoutControlMsg};
 use style_traits::CSSPixel;
 
 mod compositor;
 pub mod compositor_thread;
-mod delayed_composition;
 mod touch;
 pub mod windowing;
 
@@ -48,6 +49,7 @@ pub struct SendableFrameTree {
 #[derive(Clone)]
 pub struct CompositionPipeline {
     pub id: PipelineId,
+    pub top_level_browsing_context_id: TopLevelBrowsingContextId,
     pub script_chan: IpcSender<ConstellationControlMsg>,
     pub layout_chan: IpcSender<LayoutControlMsg>,
 }

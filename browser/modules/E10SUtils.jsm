@@ -24,7 +24,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "console",
 
 function getAboutModule(aURL) {
   // Needs to match NS_GetAboutModuleName
-  let moduleName = aURL.path.replace(/[#?].*/, "").toLowerCase();
+  let moduleName = aURL.pathQueryRef.replace(/[#?].*/, "").toLowerCase();
   let contract = "@mozilla.org/network/protocol/about;1?what=" + moduleName;
   try {
     return Cc[contract].getService(Ci.nsIAboutModule);
@@ -46,7 +46,14 @@ const EXTENSION_REMOTE_TYPE = "extension";
 const LARGE_ALLOCATION_REMOTE_TYPE = "webLargeAllocation";
 const DEFAULT_REMOTE_TYPE = WEB_REMOTE_TYPE;
 
-function validatedWebRemoteType(aPreferredRemoteType) {
+function validatedWebRemoteType(aPreferredRemoteType, aTargetUri, aCurrentUri) {
+  // If the domain is whitelisted to allow it to use file:// URIs, then we have
+  // to run it in a file content process, in case it uses file:// sub-resources.
+  const sm = Services.scriptSecurityManager;
+  if (sm.inFileURIWhitelist(aTargetUri)) {
+    return FILE_REMOTE_TYPE;
+  }
+
   if (!aPreferredRemoteType) {
     return WEB_REMOTE_TYPE;
   }
@@ -57,7 +64,19 @@ function validatedWebRemoteType(aPreferredRemoteType) {
 
   if (allowLinkedWebInFileUriProcess &&
       aPreferredRemoteType == FILE_REMOTE_TYPE) {
-    return aPreferredRemoteType;
+    // If aCurrentUri is passed then we should only allow FILE_REMOTE_TYPE
+    // when it is same origin as target.
+    if (aCurrentUri) {
+      try {
+        // checkSameOriginURI throws when not same origin.
+        sm.checkSameOriginURI(aCurrentUri, aTargetUri, false);
+        return FILE_REMOTE_TYPE;
+      } catch (e) {
+        return WEB_REMOTE_TYPE;
+      }
+    }
+
+    return FILE_REMOTE_TYPE;
   }
 
   return WEB_REMOTE_TYPE;
@@ -79,13 +98,9 @@ this.E10SUtils = {
 
   getRemoteTypeForURI(aURL, aMultiProcess,
                       aPreferredRemoteType = DEFAULT_REMOTE_TYPE,
-                      aLargeAllocation = false) {
+                      aCurrentUri) {
     if (!aMultiProcess) {
       return NOT_REMOTE;
-    }
-
-    if (aLargeAllocation) {
-      return LARGE_ALLOCATION_REMOTE_TYPE;
     }
 
     // loadURI in browser.xml treats null as about:blank
@@ -95,7 +110,7 @@ this.E10SUtils = {
 
     let uri;
     try {
-      uri = Services.io.newURI(aURL);
+      uri = Services.uriFixup.createFixupURI(aURL, Ci.nsIURIFixup.FIXUP_FLAG_NONE);
     } catch (e) {
       // If we have an invalid URI, it's still possible that it might get
       // fixed-up into a valid URI later on. However, we don't want to return
@@ -105,11 +120,12 @@ this.E10SUtils = {
     }
 
     return this.getRemoteTypeForURIObject(uri, aMultiProcess,
-                                          aPreferredRemoteType);
+                                          aPreferredRemoteType, aCurrentUri);
   },
 
   getRemoteTypeForURIObject(aURI, aMultiProcess,
-                            aPreferredRemoteType = DEFAULT_REMOTE_TYPE) {
+                            aPreferredRemoteType = DEFAULT_REMOTE_TYPE,
+                            aCurrentUri) {
     if (!aMultiProcess) {
       return NOT_REMOTE;
     }
@@ -182,10 +198,11 @@ this.E10SUtils = {
         if (aURI instanceof Ci.nsINestedURI) {
           let innerURI = aURI.QueryInterface(Ci.nsINestedURI).innerURI;
           return this.getRemoteTypeForURIObject(innerURI, aMultiProcess,
-                                                aPreferredRemoteType);
+                                                aPreferredRemoteType,
+                                                aCurrentUri);
         }
 
-        return validatedWebRemoteType(aPreferredRemoteType);
+        return validatedWebRemoteType(aPreferredRemoteType, aURI, aCurrentUri);
     }
   },
 
@@ -207,6 +224,30 @@ this.E10SUtils = {
         Services.appinfo.remoteType == LARGE_ALLOCATION_REMOTE_TYPE &&
         !aDocShell.awaitingLargeAlloc &&
         aDocShell.isOnlyToplevelInTabGroup) {
+      return false;
+    }
+
+    // Allow history load if loaded in this process before.
+    let webNav = aDocShell.QueryInterface(Ci.nsIWebNavigation);
+    let sessionHistory = webNav.sessionHistory;
+    let requestedIndex = sessionHistory.requestedIndex;
+    if (requestedIndex >= 0) {
+      if (sessionHistory.getEntryAtIndex(requestedIndex, false).loadedInThisProcess) {
+        return true;
+      }
+
+      // If not originally loaded in this process allow it if the URI would
+      // normally be allowed to load in this process by default.
+      let remoteType = Services.appinfo.remoteType;
+      return remoteType ==
+        this.getRemoteTypeForURIObject(aURI, true, remoteType, webNav.currentURI);
+    }
+
+    if (sessionHistory.count == 1 && webNav.currentURI.spec == "about:newtab") {
+      // This is possibly a preloaded browser and we're about to navigate away for
+      // the first time. On the child side there is no way to tell for sure if that
+      // is the case, so let's redirect this request to the parent to decide if a new
+      // process is needed.
       return false;
     }
 

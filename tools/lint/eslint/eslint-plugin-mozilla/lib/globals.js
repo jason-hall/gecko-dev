@@ -12,7 +12,6 @@ const path = require("path");
 const fs = require("fs");
 const helpers = require("./helpers");
 const escope = require("escope");
-const estraverse = require("estraverse");
 
 /**
  * Parses a list of "name:boolean_value" or/and "name" options divided by comma
@@ -46,7 +45,7 @@ function parseBooleanConfig(string, comment) {
 
     items[name] = {
       value: (value === "true"),
-      comment: comment
+      comment
     };
   });
 
@@ -78,40 +77,67 @@ var globalDiscoveryInProgressForFiles = new Set();
 function GlobalsForNode(filePath) {
   this.path = filePath;
   this.dirname = path.dirname(this.path);
-  this.root = helpers.getRootDir(this.path);
 }
 
 GlobalsForNode.prototype = {
-  BlockComment(node, parents) {
-    let value = node.value.trim();
-    let match = /^import-globals-from\s+(.+)$/.exec(value);
-    if (!match) {
-      return [];
+  Program(node) {
+    let globals = [];
+    for (let comment of node.comments) {
+      if (comment.type !== "Block") {
+        continue;
+      }
+      let value = comment.value.trim();
+      value = value.replace(/\n/g, "");
+
+      // We have to discover any globals that ESLint would have defined through
+      // comment directives.
+      let match = /^globals?\s+(.+)/.exec(value);
+      if (match) {
+        let values = parseBooleanConfig(match[1].trim(), node);
+        for (let name of Object.keys(values)) {
+          globals.push({
+            name,
+            writable: values[name].value
+          });
+        }
+        // We matched globals, so we won't match import-globals-from.
+        continue;
+      }
+
+      match = /^import-globals-from\s+(.+)$/.exec(value);
+      if (!match) {
+        continue;
+      }
+
+      let filePath = match[1].trim();
+
+      if (!path.isAbsolute(filePath)) {
+        filePath = path.resolve(this.dirname, filePath);
+      }
+      globals = globals.concat(module.exports.getGlobalsForFile(filePath));
     }
 
-    let filePath = match[1].trim();
-
-    if (!path.isAbsolute(filePath)) {
-      filePath = path.resolve(this.dirname, filePath);
-    }
-
-    return module.exports.getGlobalsForFile(filePath);
+    return globals;
   },
 
   ExpressionStatement(node, parents, globalScope) {
     let isGlobal = helpers.getIsGlobalScope(parents);
-    let globals = helpers.convertExpressionToGlobals(node, isGlobal, this.root);
-    // Map these globals now, as getGlobalsForFile is pre-mapped.
-    globals = globals.map(name => {
-      return { name, writable: true };
-    });
+    let globals = [];
+
+    // Note: We check the expression types here and only call the necessary
+    // functions to aid performance.
+    if (node.expression.type === "AssignmentExpression") {
+      globals = helpers.convertThisAssignmentExpressionToGlobals(node, isGlobal);
+    } else if (node.expression.type === "CallExpression") {
+      globals = helpers.convertCallExpressionToGlobals(node, isGlobal);
+    }
 
     // Here we assume that if importScripts is set in the global scope, then
     // this is a worker. It would be nice if eslint gave us a way of getting
     // the environment directly.
     if (globalScope && globalScope.set.get("importScripts")) {
       let workerDetails = helpers.convertWorkerExpressionToGlobals(node,
-        isGlobal, this.root, this.dirname);
+        isGlobal, this.dirname);
       globals = globals.concat(workerDetails);
     }
 
@@ -125,7 +151,7 @@ module.exports = {
    * import-globals-from directives and also includes globals defined by
    * standard eslint directives.
    *
-   * @param  {String} path
+   * @param  {String} filePath
    *         The absolute path of the file to be parsed.
    * @return {Array}
    *         An array of objects that contain details about the globals:
@@ -134,26 +160,26 @@ module.exports = {
    *         - {Boolean} writable
    *                     If the global is writeable or not.
    */
-  getGlobalsForFile(path) {
-    if (globalCache.has(path)) {
-      return globalCache.get(path);
+  getGlobalsForFile(filePath) {
+    if (globalCache.has(filePath)) {
+      return globalCache.get(filePath);
     }
 
-    if (globalDiscoveryInProgressForFiles.has(path)) {
+    if (globalDiscoveryInProgressForFiles.has(filePath)) {
       // We're already processing this file, so return an empty set for now -
       // the initial processing will pick up on the globals for this file.
       return [];
-    } else {
-      globalDiscoveryInProgressForFiles.add(path);
     }
+    globalDiscoveryInProgressForFiles.add(filePath);
 
-    let content = fs.readFileSync(path, "utf8");
+    let content = fs.readFileSync(filePath, "utf8");
 
     // Parse the content into an AST
     let ast = helpers.getAST(content);
 
     // Discover global declarations
-    let scopeManager = escope.analyze(ast);
+    // The second parameter works around https://github.com/babel/babel-eslint/issues/470
+    let scopeManager = escope.analyze(ast, {});
     let globalScope = scopeManager.acquire(ast);
 
     let globals = Object.keys(globalScope.variables).map(v => ({
@@ -162,35 +188,18 @@ module.exports = {
     }));
 
     // Walk over the AST to find any of our custom globals
-    let handler = new GlobalsForNode(path);
+    let handler = new GlobalsForNode(filePath);
 
     helpers.walkAST(ast, (type, node, parents) => {
-      // We have to discover any globals that ESLint would have defined through
-      // comment directives
-      if (type == "BlockComment") {
-        let value = node.value.trim();
-        value = value.replace(/\n/g, '');
-        let match = /^globals?\s+(.+)/.exec(value);
-        if (match) {
-          let values = parseBooleanConfig(match[1].trim(), node);
-          for (let name of Object.keys(values)) {
-            globals.push({
-              name,
-              writable: values[name].value
-            });
-          }
-        }
-      }
-
       if (type in handler) {
         let newGlobals = handler[type](node, parents, globalScope);
         globals.push.apply(globals, newGlobals);
       }
     });
 
-    globalCache.set(path, globals);
+    globalCache.set(filePath, globals);
 
-    globalDiscoveryInProgressForFiles.delete(path);
+    globalDiscoveryInProgressForFiles.delete(filePath);
     return globals;
   },
 

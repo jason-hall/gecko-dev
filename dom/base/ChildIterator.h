@@ -40,8 +40,8 @@ public:
     : mParent(aParent),
       mChild(nullptr),
       mDefaultChild(nullptr),
-      mIndexInInserted(0),
-      mIsFirst(aStartAtBeginning)
+      mIsFirst(aStartAtBeginning),
+      mIndexInInserted(0)
   {
   }
 
@@ -51,13 +51,15 @@ public:
       mShadowIterator(aOther.mShadowIterator ?
                       new ExplicitChildIterator(*aOther.mShadowIterator) :
                       nullptr),
-      mIndexInInserted(aOther.mIndexInInserted), mIsFirst(aOther.mIsFirst) {}
+      mIsFirst(aOther.mIsFirst),
+      mIndexInInserted(aOther.mIndexInInserted) {}
 
   ExplicitChildIterator(ExplicitChildIterator&& aOther)
     : mParent(aOther.mParent), mChild(aOther.mChild),
       mDefaultChild(aOther.mDefaultChild),
       mShadowIterator(Move(aOther.mShadowIterator)),
-      mIndexInInserted(aOther.mIndexInInserted), mIsFirst(aOther.mIsFirst) {}
+      mIsFirst(aOther.mIsFirst),
+      mIndexInInserted(aOther.mIndexInInserted) {}
 
   nsIContent* GetNextChild();
 
@@ -119,14 +121,14 @@ protected:
   // iterating.
   nsAutoPtr<ExplicitChildIterator> mShadowIterator;
 
+  // A flag to let us know that we haven't started iterating yet.
+  bool mIsFirst;
+
   // If not zero, we're iterating inserted children for an insertion point. This
   // is an index into mChild's inserted children array (mChild must be an
   // nsXBLChildrenElement). The index is one past the "current" child (as
   // opposed to mChild which represents the "current" child).
   uint32_t mIndexInInserted;
-
-  // A flag to let us know that we haven't started iterating yet.
-  bool mIsFirst;
 };
 
 // Iterates over the flattened children of a node, which accounts for anonymous
@@ -231,8 +233,6 @@ public:
 private:
   // Helpers.
   void AppendNativeAnonymousChildren();
-  void AppendNativeAnonymousChildrenFromFrame(nsIFrame* aFrame);
-
   const nsIContent* mOriginalContent;
 
   // mAnonKids is an array of native anonymous children, mAnonKidsIdx is index
@@ -255,17 +255,22 @@ private:
 
 /**
  * StyleChildrenIterator traverses the children of the element from the
- * perspective of the style system, particularly the children we need to traverse
- * during restyle. This is identical to AllChildrenIterator with
- * (eAllChildren | eSkipDocumentLevelNativeAnonymousContent), _except_ that we
- * detect and skip any native anonymous children that are used to implement
- * pseudo-elements (since the style system needs to cascade those using
- * different algorithms).
+ * perspective of the style system, particularly the children we need to
+ * traverse during restyle.
+ *
+ * At present, this is identical to AllChildrenIterator with
+ * (eAllChildren | eSkipDocumentLevelNativeAnonymousContent). We used to have
+ * detect and skip any native anonymous children that are used to implement some
+ * special magic in here that went away, but we keep the separate class so
+ * we can reintroduce special magic back if needed.
  *
  * Note: it assumes that no mutation of the DOM or frame tree takes place during
  * iteration, and will break horribly if that is not true.
+ *
+ * We require this to be memmovable since Rust code can create and move
+ * StyleChildrenIterators.
  */
-class StyleChildrenIterator : private AllChildrenIterator
+class MOZ_NEEDS_MEMMOVABLE_MEMBERS StyleChildrenIterator : private AllChildrenIterator
 {
 public:
   explicit StyleChildrenIterator(const nsIContent* aContent)
@@ -278,10 +283,6 @@ public:
   ~StyleChildrenIterator() { MOZ_COUNT_DTOR(StyleChildrenIterator); }
 
   nsIContent* GetNextChild();
-
-  // Returns true if we cannot find all the children we need to style by
-  // traversing the siblings of the first child.
-  static bool IsNeeded(const Element* aParent);
 };
 
 } // namespace dom

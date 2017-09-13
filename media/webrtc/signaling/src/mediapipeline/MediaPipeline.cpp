@@ -25,10 +25,6 @@
 #include "MediaStreamVideoSink.h"
 #include "VideoUtils.h"
 #include "VideoStreamTrack.h"
-#ifdef WEBRTC_GONK
-#include "GrallocImages.h"
-#include "mozilla/layers/GrallocTextureClient.h"
-#endif
 
 #include "nsError.h"
 #include "AudioSegment.h"
@@ -42,6 +38,7 @@
 #include "transportlayerice.h"
 #include "runnable_utils.h"
 #include "libyuv/convert.h"
+#include "mozilla/dom/RTCStatsReportBinding.h"
 #include "mozilla/SharedThreadPool.h"
 #include "mozilla/PeerIdentity.h"
 #include "mozilla/Preferences.h"
@@ -51,19 +48,22 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/Sprintf.h"
-#include "mozilla/SizePrintfMacros.h"
 
 #include "webrtc/common_types.h"
 #include "webrtc/common_video/libyuv/include/webrtc_libyuv.h"
+#include "webrtc/common_video/include/video_frame_buffer.h"
+#include "webrtc/base/bind.h"
+
+#include "nsThreadUtils.h"
 
 #include "logging.h"
 
 // Max size given stereo is 480*2*2 = 1920 (10ms of 16-bits stereo audio at
 // 48KHz)
-#define AUDIO_SAMPLE_BUFFER_MAX 480*2*2
+#define AUDIO_SAMPLE_BUFFER_MAX_BYTES 480*2*2
 static_assert((WEBRTC_DEFAULT_SAMPLE_RATE/100)*sizeof(uint16_t) * 2
-               <= AUDIO_SAMPLE_BUFFER_MAX,
-               "AUDIO_SAMPLE_BUFFER_MAX is not large enough");
+               <= AUDIO_SAMPLE_BUFFER_MAX_BYTES,
+               "AUDIO_SAMPLE_BUFFER_MAX_BYTES is not large enough");
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -95,7 +95,7 @@ protected:
 };
 
 // I420 buffer size macros
-#define YSIZE(x,y) ((x)*(y))
+#define YSIZE(x,y) (CheckedInt<int>(x)*(y))
 #define CRSIZE(x,y) ((((x)+1) >> 1) * (((y)+1) >> 1))
 #define I420SIZE(x,y) (YSIZE((x),(y)) + 2 * CRSIZE((x),(y)))
 
@@ -201,6 +201,7 @@ public:
 
     nsCOMPtr<nsIRunnable> runnable =
       NewRunnableMethod<StoreRefPtrPassByPtr<Image>, bool>(
+        "VideoFrameConverter::ProcessVideoFrame",
         this, &VideoFrameConverter::ProcessVideoFrame,
         aChunk.mFrame.GetImage(), forceBlack);
     mTaskQueue->Dispatch(runnable.forget());
@@ -233,19 +234,45 @@ protected:
     MOZ_COUNT_DTOR(VideoFrameConverter);
   }
 
-  void VideoFrameConverted(unsigned char* aVideoFrame,
+  static void DeleteBuffer(uint8 *data)
+  {
+    delete[] data;
+  }
+
+  // This takes ownership of the buffer and attached it to the VideoFrame we send
+  // to the listeners
+  void VideoFrameConverted(UniquePtr<uint8[]> aBuffer,
                            unsigned int aVideoFrameLength,
                            unsigned short aWidth,
                            unsigned short aHeight,
                            VideoType aVideoType,
                            uint64_t aCaptureTime)
   {
-    MutexAutoLock lock(mMutex);
-
-    for (RefPtr<VideoConverterListener>& listener : mListeners) {
-      listener->OnVideoFrameConverted(aVideoFrame, aVideoFrameLength,
-                                      aWidth, aHeight, aVideoType, aCaptureTime);
+    // check for parameter sanity
+    if (!aBuffer || aVideoFrameLength == 0 || aWidth == 0 || aHeight == 0) {
+      MOZ_MTLOG(ML_ERROR, __FUNCTION__ << " Invalid Parameters ");
+      MOZ_ASSERT(false);
+      return;
     }
+    MOZ_ASSERT(aVideoType == VideoType::kVideoI420);
+
+    const int stride_y = aWidth;
+    const int stride_uv = (aWidth + 1) / 2;
+
+    const uint8_t* buffer_y = aBuffer.get();
+    const uint8_t* buffer_u = buffer_y + stride_y * aHeight;
+    const uint8_t* buffer_v = buffer_u + stride_uv * ((aHeight + 1) / 2);
+    rtc::scoped_refptr<webrtc::WrappedI420Buffer> video_frame_buffer(
+      new rtc::RefCountedObject<webrtc::WrappedI420Buffer>(
+        aWidth, aHeight,
+        buffer_y, stride_y,
+        buffer_u, stride_uv,
+        buffer_v, stride_uv,
+        rtc::Bind(&DeleteBuffer, aBuffer.release())));
+
+    webrtc::VideoFrame video_frame(video_frame_buffer, aCaptureTime,
+                                   aCaptureTime, webrtc::kVideoRotation_0); // XXX
+    VideoFrameConverted(video_frame);
   }
 
   void VideoFrameConverted(webrtc::VideoFrame& aVideoFrame)
@@ -264,92 +291,32 @@ protected:
 
     if (aForceBlack) {
       IntSize size = aImage->GetSize();
-      uint32_t yPlaneLen = YSIZE(size.width, size.height);
-      uint32_t cbcrPlaneLen = 2 * CRSIZE(size.width, size.height);
-      uint32_t length = yPlaneLen + cbcrPlaneLen;
+      CheckedInt<int> yPlaneLen = YSIZE(size.width, size.height);
+      // doesn't need to be CheckedInt, any overflow will be caught by YSIZE
+      int cbcrPlaneLen = 2 * CRSIZE(size.width, size.height);
+      CheckedInt<int> length = yPlaneLen + cbcrPlaneLen;
+
+      if (!yPlaneLen.isValid() || !length.isValid()) {
+        return;
+      }
 
       // Send a black image.
-      auto pixelData = MakeUniqueFallible<uint8_t[]>(length);
+      auto pixelData = MakeUniqueFallible<uint8_t[]>(length.value());
       if (pixelData) {
         // YCrCb black = 0x10 0x80 0x80
-        memset(pixelData.get(), 0x10, yPlaneLen);
+        memset(pixelData.get(), 0x10, yPlaneLen.value());
         // Fill Cb/Cr planes
-        memset(pixelData.get() + yPlaneLen, 0x80, cbcrPlaneLen);
+        memset(pixelData.get() + yPlaneLen.value(), 0x80, cbcrPlaneLen);
 
         MOZ_MTLOG(ML_DEBUG, "Sending a black video frame");
-        VideoFrameConverted(pixelData.get(), length, size.width, size.height,
+        VideoFrameConverted(Move(pixelData), length.value(),
+                            size.width, size.height,
                             mozilla::kVideoI420, 0);
       }
       return;
     }
 
     ImageFormat format = aImage->GetFormat();
-#ifdef WEBRTC_GONK
-    GrallocImage* nativeImage = aImage->AsGrallocImage();
-    if (nativeImage) {
-      android::sp<android::GraphicBuffer> graphicBuffer = nativeImage->GetGraphicBuffer();
-      int pixelFormat = graphicBuffer->getPixelFormat(); /* PixelFormat is an enum == int */
-      mozilla::VideoType destFormat;
-      switch (pixelFormat) {
-        case HAL_PIXEL_FORMAT_YV12:
-          // all android must support this
-          destFormat = mozilla::kVideoYV12;
-          break;
-        case GrallocImage::HAL_PIXEL_FORMAT_YCbCr_420_SP:
-          destFormat = mozilla::kVideoNV21;
-          break;
-        case GrallocImage::HAL_PIXEL_FORMAT_YCbCr_420_P:
-          destFormat = mozilla::kVideoI420;
-          break;
-        default:
-          // XXX Bug NNNNNNN
-          // use http://dxr.mozilla.org/mozilla-central/source/content/media/omx/I420ColorConverterHelper.cpp
-          // to convert unknown types (OEM-specific) to I420
-          MOZ_MTLOG(ML_ERROR, "Un-handled GRALLOC buffer type:" << pixelFormat);
-          MOZ_CRASH();
-      }
-      void *basePtr;
-      graphicBuffer->lock(android::GraphicBuffer::USAGE_SW_READ_MASK, &basePtr);
-      uint32_t width = graphicBuffer->getWidth();
-      uint32_t height = graphicBuffer->getHeight();
-      // XXX gralloc buffer's width and stride could be different depends on implementations.
-
-      if (destFormat != mozilla::kVideoI420) {
-        unsigned char *video_frame = static_cast<unsigned char*>(basePtr);
-        webrtc::VideoFrame i420_frame;
-        int stride_y = width;
-        int stride_uv = (width + 1) / 2;
-        int target_width = width;
-        int target_height = height;
-        if (i420_frame.CreateEmptyFrame(target_width,
-                                        abs(target_height),
-                                        stride_y,
-                                        stride_uv, stride_uv) < 0) {
-          MOZ_ASSERT(false, "Can't allocate empty i420frame");
-          return;
-        }
-        webrtc::VideoType commonVideoType =
-          webrtc::RawVideoTypeToCommonVideoVideoType(
-            static_cast<webrtc::RawVideoType>((int)destFormat));
-        if (ConvertToI420(commonVideoType, video_frame, 0, 0, width, height,
-                          I420SIZE(width, height), webrtc::kVideoRotation_0,
-                          &i420_frame)) {
-          MOZ_ASSERT(false, "Can't convert video type for sending to I420");
-          return;
-        }
-        i420_frame.set_ntp_time_ms(0);
-        VideoFrameConverted(i420_frame);
-      } else {
-        VideoFrameConverted(static_cast<unsigned char*>(basePtr),
-                            I420SIZE(width, height),
-                            width,
-                            height,
-                            destFormat, 0);
-      }
-      graphicBuffer->unlock();
-      return;
-    } else
-#endif
     if (format == ImageFormat::PLANAR_YCBCR) {
       // Cast away constness b/c some of the accessors are non-const
       PlanarYCbCrImage* yuv = const_cast<PlanarYCbCrImage *>(
@@ -365,15 +332,18 @@ protected:
         uint32_t width = yuv->GetSize().width;
         uint32_t height = yuv->GetSize().height;
 
-        webrtc::VideoFrame i420_frame;
-        int rv = i420_frame.CreateFrame(y, cb, cr, width, height,
-                                        yStride, cbCrStride, cbCrStride,
-                                        webrtc::kVideoRotation_0);
-        if (rv != 0) {
-          NS_ERROR("Creating an I420 frame failed");
-          return;
-        }
+        rtc::Callback0<void> callback_unused;
+        rtc::scoped_refptr<webrtc::WrappedI420Buffer> video_frame_buffer(
+          new rtc::RefCountedObject<webrtc::WrappedI420Buffer>(
+            width, height,
+            y, yStride,
+            cb, cbCrStride,
+            cr, cbCrStride,
+            callback_unused));
 
+        webrtc::VideoFrame i420_frame(video_frame_buffer,
+                                      0, 0, // not setting timestamps
+                                      webrtc::kVideoRotation_0);
         MOZ_MTLOG(ML_DEBUG, "Sending an I420 video frame");
         VideoFrameConverted(i420_frame);
         return;
@@ -395,11 +365,17 @@ protected:
     }
 
     IntSize size = aImage->GetSize();
+    // these don't need to be CheckedInt, any overflow will be caught by YSIZE
     int half_width = (size.width + 1) >> 1;
     int half_height = (size.height + 1) >> 1;
     int c_size = half_width * half_height;
-    int buffer_size = YSIZE(size.width, size.height) + 2 * c_size;
-    auto yuv_scoped = MakeUniqueFallible<uint8[]>(buffer_size);
+    CheckedInt<int> buffer_size = YSIZE(size.width, size.height) + 2 * c_size;
+
+    if (!buffer_size.isValid()) {
+      return;
+    }
+
+    auto yuv_scoped = MakeUniqueFallible<uint8[]>(buffer_size.value());
     if (!yuv_scoped) {
       return;
     }
@@ -414,7 +390,7 @@ protected:
     }
 
     int rv;
-    int cb_offset = YSIZE(size.width, size.height);
+    int cb_offset = YSIZE(size.width, size.height).value();
     int cr_offset = cb_offset + c_size;
     switch (surf->GetFormat()) {
       case SurfaceFormat::B8G8R8A8:
@@ -445,7 +421,7 @@ protected:
     }
     MOZ_MTLOG(ML_DEBUG, "Sending an I420 video frame converted from " <<
                         Stringify(surf->GetFormat()));
-    VideoFrameConverted(yuv, buffer_size, size.width, size.height, mozilla::kVideoI420, 0);
+    VideoFrameConverted(Move(yuv_scoped), buffer_size.value(), size.width, size.height, mozilla::kVideoI420, 0);
   }
 
   Atomic<int32_t, Relaxed> mLength;
@@ -545,12 +521,8 @@ public:
     while (packetizer_->PacketsAvailable()) {
       uint32_t samplesPerPacket = packetizer_->PacketSize() *
                                   packetizer_->Channels();
-      // We know that webrtc.org's code going to copy the samples down the line,
-      // so we can just use a stack buffer here instead of malloc-ing.
-      int16_t packet[AUDIO_SAMPLE_BUFFER_MAX];
-
-      packetizer_->Output(packet);
-      mConduit->SendAudioFrame(packet, samplesPerPacket, rate, 0);
+      packetizer_->Output(packet_);
+      mConduit->SendAudioFrame(packet_, samplesPerPacket, rate, 0);
     }
   }
 
@@ -569,7 +541,8 @@ protected:
     // Conduits must be released on MainThread, and we might have the last reference
     // We don't need to worry about runnables still trying to access the conduit, since
     // the runnables hold a ref to AudioProxyThread.
-    NS_ReleaseOnMainThread(mConduit.forget());
+    NS_ReleaseOnMainThreadSystemGroup(
+      "AudioProxyThread::mConduit", mConduit.forget());
     MOZ_COUNT_DTOR(AudioProxyThread);
   }
 
@@ -577,6 +550,8 @@ protected:
   nsCOMPtr<nsIEventTarget> mThread;
   // Only accessed on mThread
   nsAutoPtr<AudioPacketizer<int16_t, int16_t>> packetizer_;
+  // A buffer to hold a single packet of audio.
+  int16_t packet_[AUDIO_SAMPLE_BUFFER_MAX_BYTES / sizeof(int16_t)];
 };
 
 static char kDTLSExporterLabel[] = "EXTRACTOR-dtls_srtp";
@@ -609,7 +584,7 @@ MediaPipeline::MediaPipeline(const std::string& pc,
     pc_(pc),
     description_(),
     filter_(filter),
-    rtp_parser_(webrtc::RtpHeaderParser::Create()) {
+    rtp_parser_(webrtc::RtpHeaderParser::Create()){
   // To indicate rtcp-mux rtcp_transport should be nullptr.
   // Therefore it's an error to send in the same flow for
   // both rtp and rtcp.
@@ -736,26 +711,53 @@ MediaPipeline::UpdateTransport_s(int level,
 }
 
 void
-MediaPipeline::SelectSsrc_m(size_t ssrc_index)
+MediaPipeline::AddRIDExtension_m(size_t extension_id)
 {
-  if (ssrc_index < ssrcs_received_.size()) {
-    uint32_t ssrc = ssrcs_received_[ssrc_index];
-    RUN_ON_THREAD(sts_thread_,
-                  WrapRunnable(
-                               this,
-                               &MediaPipeline::SelectSsrc_s,
-                               ssrc),
-                  NS_DISPATCH_NORMAL);
-
-    conduit_->SetRemoteSSRC(ssrc);
-  }
+  RUN_ON_THREAD(sts_thread_,
+                WrapRunnable(RefPtr<MediaPipeline>(this),
+                             &MediaPipeline::AddRIDExtension_s,
+                             extension_id),
+                NS_DISPATCH_NORMAL);
 }
 
 void
-MediaPipeline::SelectSsrc_s(uint32_t ssrc)
+MediaPipeline::AddRIDExtension_s(size_t extension_id)
+{
+  rtp_parser_->RegisterRtpHeaderExtension(webrtc::kRtpExtensionRtpStreamId,
+                                          extension_id);
+}
+
+void
+MediaPipeline::AddRIDFilter_m(const std::string& rid)
+{
+  RUN_ON_THREAD(sts_thread_,
+                WrapRunnable(RefPtr<MediaPipeline>(this),
+                             &MediaPipeline::AddRIDFilter_s,
+                             rid),
+                NS_DISPATCH_NORMAL);
+}
+
+void
+MediaPipeline::AddRIDFilter_s(const std::string& rid)
 {
   filter_ = new MediaPipelineFilter;
-  filter_->AddRemoteSSRC(ssrc);
+  filter_->AddRemoteRtpStreamId(rid);
+}
+
+void
+MediaPipeline::GetContributingSourceStats(
+    const nsString& aInboundRtpStreamId,
+    FallibleTArray<dom::RTCRTPContributingSourceStats>& aArr) const
+{
+  // Get the expiry from now
+  DOMHighResTimeStamp expiry = RtpCSRCStats::GetExpiryFromTime(GetNow());
+  for (auto info : csrc_stats_) {
+    if (!info.second.Expired(expiry)) {
+      RTCRTPContributingSourceStats stats;
+      info.second.GetWebidlInstance(stats, aInboundRtpStreamId);
+      aArr.AppendElement(stats, fallible);
+    }
+  }
 }
 
 void MediaPipeline::StateChange(TransportFlow *flow, TransportLayer::State state) {
@@ -1048,13 +1050,46 @@ void MediaPipeline::RtpPacketReceived(TransportLayer *layer,
     return;
   }
 
-  if (std::find(ssrcs_received_.begin(), ssrcs_received_.end(), header.ssrc) ==
-      ssrcs_received_.end()) {
-    ssrcs_received_.push_back(header.ssrc);
-  }
-
   if (filter_ && !filter_->Filter(header)) {
     return;
+  }
+
+  // Make sure to only get the time once, and only if we need it by
+  // using getTimestamp() for access
+  DOMHighResTimeStamp now = 0.0;
+  bool hasTime = false;
+
+  // Remove expired RtpCSRCStats
+  if (!csrc_stats_.empty()) {
+    if (!hasTime) {
+      now = GetNow();
+      hasTime = true;
+    }
+    auto expiry = RtpCSRCStats::GetExpiryFromTime(now);
+    for (auto p = csrc_stats_.begin(); p != csrc_stats_.end();) {
+      if (p->second.Expired(expiry)) {
+        p = csrc_stats_.erase(p);
+        continue;
+      }
+      p++;
+    }
+  }
+
+  // Add new RtpCSRCStats
+  if (header.numCSRCs) {
+    for (auto i = 0; i < header.numCSRCs; i++) {
+      if (!hasTime) {
+        now = GetNow();
+        hasTime = true;
+      }
+      auto csrcInfo = csrc_stats_.find(header.arrOfCSRCs[i]);
+      if (csrcInfo == csrc_stats_.end()) {
+        csrc_stats_.insert(std::make_pair(header.arrOfCSRCs[i],
+            RtpCSRCStats(header.arrOfCSRCs[i],now)));
+      } else {
+        csrcInfo->second.SetTimestamp(now);
+      }
+    }
   }
 
   // Make a copy rather than cast away constness
@@ -1975,7 +2010,7 @@ public:
     // This comparison is done in total time to avoid accumulated roundoff errors.
     while (source_->TicksToTimeRoundDown(WEBRTC_DEFAULT_SAMPLE_RATE,
                                          played_ticks_) < desired_time) {
-      int16_t scratch_buffer[AUDIO_SAMPLE_BUFFER_MAX];
+      int16_t scratch_buffer[AUDIO_SAMPLE_BUFFER_MAX_BYTES / sizeof(int16_t)];
 
       int samples_length;
 
@@ -1998,7 +2033,7 @@ public:
         PodArrayZero(scratch_buffer);
       }
 
-      MOZ_ASSERT(samples_length * sizeof(uint16_t) < AUDIO_SAMPLE_BUFFER_MAX);
+      MOZ_ASSERT(samples_length * sizeof(uint16_t) < AUDIO_SAMPLE_BUFFER_MAX_BYTES);
 
       MOZ_MTLOG(ML_DEBUG, "Audio conduit returned buffer of length "
                 << samples_length);
@@ -2038,7 +2073,7 @@ public:
         if (MOZ_LOG_TEST(AudioLogModule(), LogLevel::Debug)) {
           if (played_ticks_ > last_log_ + WEBRTC_DEFAULT_SAMPLE_RATE) { // ~ 1 second
             MOZ_LOG(AudioLogModule(), LogLevel::Debug,
-                    ("%p: Inserting %" PRIuSIZE " samples into track %d, total = %" PRIu64,
+                    ("%p: Inserting %zu samples into track %d, total = %" PRIu64,
                      (void*) this, frames, track_id_, played_ticks_));
             last_log_ = played_ticks_;
           }
@@ -2087,7 +2122,8 @@ void MediaPipelineReceiveAudio::DetachMedia()
   }
 }
 
-nsresult MediaPipelineReceiveAudio::Init() {
+nsresult MediaPipelineReceiveAudio::Init()
+{
   ASSERT_ON_THREAD(main_thread_);
   MOZ_MTLOG(ML_DEBUG, __FUNCTION__);
 
@@ -2108,13 +2144,11 @@ void MediaPipelineReceiveAudio::SetPrincipalHandle_m(const PrincipalHandle& prin
 class MediaPipelineReceiveVideo::PipelineListener
   : public GenericReceiveListener {
 public:
-  PipelineListener(SourceMediaStream * source, TrackID track_id)
-    : GenericReceiveListener(source, track_id),
-      width_(0),
-      height_(0),
-      image_container_(),
-      image_(),
-      monitor_("Video PipelineListener")
+  PipelineListener(SourceMediaStream* source, TrackID track_id)
+    : GenericReceiveListener(source, track_id)
+    , image_container_()
+    , image_()
+    , mutex_("Video PipelineListener")
   {
     image_container_ =
       LayerManager::CreateImageContainer(ImageContainer::ASYNCHRONOUS);
@@ -2123,7 +2157,7 @@ public:
   // Implement MediaStreamListener
   void NotifyPull(MediaStreamGraph* graph, StreamTime desired_time) override
   {
-    ReentrantMonitorAutoEnter enter(monitor_);
+    MutexAutoLock lock(mutex_);
 
     RefPtr<Image> image = image_;
     StreamTime delta = desired_time - played_ticks_;
@@ -2133,8 +2167,8 @@ public:
     // delta and thus messes up handling of the graph
     if (delta > 0) {
       VideoSegment segment;
-      segment.AppendFrame(image.forget(), delta, IntSize(width_, height_),
-                          principal_handle_);
+      IntSize size = image ? image->GetSize() : IntSize(width_, height_);
+      segment.AppendFrame(image.forget(), delta, size, principal_handle_);
       // Handle track not actually added yet or removed/finished
       if (source_->AppendToTrack(track_id_, &segment)) {
         played_ticks_ = desired_time;
@@ -2149,57 +2183,52 @@ public:
   void FrameSizeChange(unsigned int width,
                        unsigned int height,
                        unsigned int number_of_streams) {
-    ReentrantMonitorAutoEnter enter(monitor_);
+    MutexAutoLock enter(mutex_);
 
     width_ = width;
     height_ = height;
   }
 
-  void RenderVideoFrame(const unsigned char* buffer,
-                        size_t buffer_size,
+  void RenderVideoFrame(const webrtc::VideoFrameBuffer& buffer,
                         uint32_t time_stamp,
-                        int64_t render_time,
-                        const RefPtr<layers::Image>& video_image)
+                        int64_t render_time)
   {
-    RenderVideoFrame(buffer, buffer_size, width_, (width_ + 1) >> 1,
-                     time_stamp, render_time, video_image);
-  }
-
-  void RenderVideoFrame(const unsigned char* buffer,
-                        size_t buffer_size,
-                        uint32_t y_stride,
-                        uint32_t cbcr_stride,
-                        uint32_t time_stamp,
-                        int64_t render_time,
-                        const RefPtr<layers::Image>& video_image)
-  {
-    ReentrantMonitorAutoEnter enter(monitor_);
-
-    if (buffer) {
-      // Create a video frame using |buffer|.
-      RefPtr<PlanarYCbCrImage> yuvImage = image_container_->CreatePlanarYCbCrImage();
-      uint8_t* frame = const_cast<uint8_t*>(static_cast<const uint8_t*> (buffer));
-
-      PlanarYCbCrData yuvData;
-      yuvData.mYChannel = frame;
-      yuvData.mYSize = IntSize(y_stride, height_);
-      yuvData.mYStride = y_stride;
-      yuvData.mCbCrStride = cbcr_stride;
-      yuvData.mCbChannel = frame + height_ * yuvData.mYStride;
-      yuvData.mCrChannel = yuvData.mCbChannel + ((height_ + 1) >> 1) * yuvData.mCbCrStride;
-      yuvData.mCbCrSize = IntSize(yuvData.mCbCrStride, (height_ + 1) >> 1);
-      yuvData.mPicX = 0;
-      yuvData.mPicY = 0;
-      yuvData.mPicSize = IntSize(width_, height_);
-      yuvData.mStereoMode = StereoMode::MONO;
-
-      if (!yuvImage->CopyData(yuvData)) {
-        MOZ_ASSERT(false);
-        return;
-      }
-
-      image_ = yuvImage;
+    if (buffer.native_handle()) {
+      // We assume that only native handles are used with the
+      // WebrtcMediaDataDecoderCodec decoder.
+      RefPtr<Image> image = static_cast<Image*>(buffer.native_handle());
+      MutexAutoLock lock(mutex_);
+      image_ = image;
+      return;
     }
+
+    MOZ_ASSERT(buffer.DataY());
+    // Create a video frame using |buffer|.
+    RefPtr<PlanarYCbCrImage> yuvImage =
+      image_container_->CreatePlanarYCbCrImage();
+
+    PlanarYCbCrData yuvData;
+    yuvData.mYChannel = const_cast<uint8_t*>(buffer.DataY());
+    yuvData.mYSize = IntSize(buffer.width(), buffer.height());
+    yuvData.mYStride = buffer.StrideY();
+    MOZ_ASSERT(buffer.StrideU() == buffer.StrideV());
+    yuvData.mCbCrStride = buffer.StrideU();
+    yuvData.mCbChannel = const_cast<uint8_t*>(buffer.DataU());
+    yuvData.mCrChannel = const_cast<uint8_t*>(buffer.DataV());
+    yuvData.mCbCrSize =
+      IntSize((buffer.width() + 1) >> 1, (buffer.height() + 1) >> 1);
+    yuvData.mPicX = 0;
+    yuvData.mPicY = 0;
+    yuvData.mPicSize = IntSize(buffer.width(), buffer.height());
+    yuvData.mStereoMode = StereoMode::MONO;
+
+    if (!yuvImage->CopyData(yuvData)) {
+      MOZ_ASSERT(false);
+      return;
+    }
+
+    MutexAutoLock lock(mutex_);
+    image_ = yuvImage;
   }
 
 private:
@@ -2207,13 +2236,13 @@ private:
   int height_;
   RefPtr<layers::ImageContainer> image_container_;
   RefPtr<layers::Image> image_;
-  mozilla::ReentrantMonitor monitor_; // Monitor for processing WebRTC frames.
-                                      // Protects image_ against:
-                                      // - Writing from the GIPS thread
-                                      // - Reading from the MSG thread
+  Mutex mutex_; // Mutex for processing WebRTC frames.
+                // Protects image_ against:
+                // - Writing from the GIPS thread
+                // - Reading from the MSG thread
 };
 
-class MediaPipelineReceiveVideo::PipelineRenderer : public VideoRenderer
+class MediaPipelineReceiveVideo::PipelineRenderer : public mozilla::VideoRenderer
 {
 public:
   explicit PipelineRenderer(MediaPipelineReceiveVideo *pipeline) :
@@ -2229,29 +2258,11 @@ public:
     pipeline_->listener_->FrameSizeChange(width, height, number_of_streams);
   }
 
-  void RenderVideoFrame(const unsigned char* buffer,
-                        size_t buffer_size,
+  void RenderVideoFrame(const webrtc::VideoFrameBuffer& buffer,
                         uint32_t time_stamp,
-                        int64_t render_time,
-                        const ImageHandle& handle) override
+                        int64_t render_time) override
   {
-    pipeline_->listener_->RenderVideoFrame(buffer, buffer_size,
-                                           time_stamp, render_time,
-                                           handle.GetImage());
-  }
-
-  void RenderVideoFrame(const unsigned char* buffer,
-                        size_t buffer_size,
-                        uint32_t y_stride,
-                        uint32_t cbcr_stride,
-                        uint32_t time_stamp,
-                        int64_t render_time,
-                        const ImageHandle& handle) override
-  {
-    pipeline_->listener_->RenderVideoFrame(buffer, buffer_size,
-                                           y_stride, cbcr_stride,
-                                           time_stamp, render_time,
-                                           handle.GetImage());
+    pipeline_->listener_->RenderVideoFrame(buffer, time_stamp, render_time);
   }
 
 private:
@@ -2314,6 +2325,37 @@ nsresult MediaPipelineReceiveVideo::Init() {
 void MediaPipelineReceiveVideo::SetPrincipalHandle_m(const PrincipalHandle& principal_handle)
 {
   listener_->SetPrincipalHandle_m(principal_handle);
+}
+
+DOMHighResTimeStamp MediaPipeline::GetNow() {
+  return webrtc::Clock::GetRealTimeClock()->TimeInMilliseconds();
+}
+
+DOMHighResTimeStamp
+MediaPipeline::RtpCSRCStats::GetExpiryFromTime(
+    const DOMHighResTimeStamp aTime) {
+  // DOMHighResTimeStamp is a unit measured in ms
+  return aTime - EXPIRY_TIME_MILLISECONDS;
+}
+
+MediaPipeline::RtpCSRCStats::RtpCSRCStats(const uint32_t aCsrc,
+                                          const DOMHighResTimeStamp aTime)
+  : mCsrc(aCsrc)
+  , mTimestamp(aTime) {}
+
+void
+MediaPipeline::RtpCSRCStats::GetWebidlInstance(
+    dom::RTCRTPContributingSourceStats& aWebidlObj,
+    const nsString &aInboundRtpStreamId) const
+{
+  nsString statId = NS_LITERAL_STRING("csrc_") + aInboundRtpStreamId;
+  statId.AppendLiteral("_");
+  statId.AppendInt(mCsrc);
+  aWebidlObj.mId.Construct(statId);
+  aWebidlObj.mType.Construct(RTCStatsType::Csrc);
+  aWebidlObj.mTimestamp.Construct(mTimestamp);
+  aWebidlObj.mContributorSsrc.Construct(mCsrc);
+  aWebidlObj.mInboundRtpStreamId.Construct(aInboundRtpStreamId);
 }
 
 }  // end namespace

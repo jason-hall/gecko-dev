@@ -11,13 +11,20 @@
 this.EXPORTED_SYMBOLS = ["FormAutofillPreferences"];
 
 const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
-const PREF_AUTOFILL_ENABLED = "browser.formautofill.enabled";
+// Add addresses enabled flag in telemetry environment for recording the number of
+// users who disable/enable the address autofill feature.
 const BUNDLE_URI = "chrome://formautofill/locale/formautofill.properties";
-const MANAGE_PROFILES_URL = "chrome://formautofill/content/manageProfiles.xhtml";
+const MANAGE_ADDRESSES_URL = "chrome://formautofill/content/manageAddresses.xhtml";
+const MANAGE_CREDITCARDS_URL = "chrome://formautofill/content/manageCreditCards.xhtml";
+const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://formautofill/FormAutofillUtils.jsm");
+
+const {ENABLED_AUTOFILL_ADDRESSES_PREF, ENABLED_AUTOFILL_CREDITCARDS_PREF} = FormAutofillUtils;
+// Add credit card enabled flag in telemetry environment for recording the number of
+// users who disable/enable the credit card autofill feature.
 
 this.log = null;
 FormAutofillUtils.defineLazyLogGetter(this, this.EXPORTED_SYMBOLS[0]);
@@ -27,24 +34,6 @@ function FormAutofillPreferences() {
 }
 
 FormAutofillPreferences.prototype = {
-  /**
-   * Check if Form Autofill feature is enabled.
-   *
-   * @returns {boolean}
-   */
-  get isAutofillEnabled() {
-    return Services.prefs.getBoolPref(PREF_AUTOFILL_ENABLED);
-  },
-
-  /**
-   * Check if the current page is Preferences/Privacy.
-   *
-   * @returns {boolean}
-   */
-  get isPrivacyPane() {
-    return this.refs.document.location.href == "about:preferences#privacy";
-  },
-
   /**
    * Create the Form Autofill preference group.
    *
@@ -72,45 +61,50 @@ FormAutofillPreferences.prototype = {
    * @param  {XULDocument} document
    */
   createPreferenceGroup(document) {
-    const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+    let formAutofillGroup = document.createElementNS(XUL_NS, "vbox");
+    let addressAutofill = document.createElementNS(XUL_NS, "hbox");
+    let addressAutofillCheckbox = document.createElementNS(XUL_NS, "checkbox");
+    let savedAddressesBtn = document.createElementNS(XUL_NS, "button");
+    let creditCardAutofill = document.createElementNS(XUL_NS, "hbox");
+    let creditCardAutofillCheckbox = document.createElementNS(XUL_NS, "checkbox");
+    let savedCreditCardsBtn = document.createElementNS(XUL_NS, "button");
 
-    let formAutofillGroup = document.createElementNS(XUL_NS, "groupbox");
-    let caption = document.createElementNS(XUL_NS, "caption");
-    let captionLabel = document.createElementNS(XUL_NS, "label");
-    let hbox = document.createElementNS(XUL_NS, "hbox");
-    let enabledCheckbox = document.createElementNS(XUL_NS, "checkbox");
-    let spacer = document.createElementNS(XUL_NS, "spacer");
-    let savedProfilesBtn = document.createElementNS(XUL_NS, "button");
+    savedAddressesBtn.className = "accessory-button";
+    savedCreditCardsBtn.className = "accessory-button";
 
     this.refs = {
-      document,
       formAutofillGroup,
-      enabledCheckbox,
-      savedProfilesBtn,
+      addressAutofillCheckbox,
+      savedAddressesBtn,
+      creditCardAutofillCheckbox,
+      savedCreditCardsBtn,
     };
 
     formAutofillGroup.id = "formAutofillGroup";
-    formAutofillGroup.hidden = !this.isPrivacyPane;
-    // Use .setAttribute because HTMLElement.dataset is not available on XUL elements
-    formAutofillGroup.setAttribute("data-category", "panePrivacy");
-
-    captionLabel.textContent = this.bundle.GetStringFromName("preferenceGroupTitle");
-    savedProfilesBtn.setAttribute("label", this.bundle.GetStringFromName("savedProfiles"));
-    enabledCheckbox.setAttribute("label", this.bundle.GetStringFromName("enableProfileAutofill"));
+    addressAutofill.id = "addressAutofill";
+    addressAutofillCheckbox.setAttribute("label", this.bundle.GetStringFromName("enableAddressAutofill"));
+    savedAddressesBtn.setAttribute("label", this.bundle.GetStringFromName("savedAddresses"));
+    creditCardAutofill.id = "creditCardAutofill";
+    creditCardAutofillCheckbox.setAttribute("label", this.bundle.GetStringFromName("enableCreditCardAutofill"));
+    savedCreditCardsBtn.setAttribute("label", this.bundle.GetStringFromName("savedCreditCards"));
 
     // Manually set the checked state
-    if (this.isAutofillEnabled) {
-      enabledCheckbox.setAttribute("checked", true);
+    if (FormAutofillUtils.isAutofillAddressesEnabled) {
+      addressAutofillCheckbox.setAttribute("checked", true);
+    }
+    if (FormAutofillUtils.isAutofillCreditCardsEnabled) {
+      creditCardAutofillCheckbox.setAttribute("checked", true);
     }
 
-    spacer.flex = 1;
+    addressAutofillCheckbox.flex = 1;
+    creditCardAutofillCheckbox.flex = 1;
 
-    formAutofillGroup.appendChild(caption);
-    caption.appendChild(captionLabel);
-    formAutofillGroup.appendChild(hbox);
-    hbox.appendChild(enabledCheckbox);
-    hbox.appendChild(spacer);
-    hbox.appendChild(savedProfilesBtn);
+    formAutofillGroup.appendChild(addressAutofill);
+    addressAutofill.appendChild(addressAutofillCheckbox);
+    addressAutofill.appendChild(savedAddressesBtn);
+    formAutofillGroup.appendChild(creditCardAutofill);
+    creditCardAutofill.appendChild(creditCardAutofillCheckbox);
+    creditCardAutofill.appendChild(savedCreditCardsBtn);
   },
 
   /**
@@ -123,11 +117,15 @@ FormAutofillPreferences.prototype = {
       case "command": {
         let target = event.target;
 
-        if (target == this.refs.enabledCheckbox) {
+        if (target == this.refs.addressAutofillCheckbox) {
           // Set preference directly instead of relying on <Preference>
-          Services.prefs.setBoolPref(PREF_AUTOFILL_ENABLED, target.checked);
-        } else if (target == this.refs.savedProfilesBtn) {
-          target.ownerGlobal.gSubDialog.open(MANAGE_PROFILES_URL);
+          Services.prefs.setBoolPref(ENABLED_AUTOFILL_ADDRESSES_PREF, target.checked);
+        } else if (target == this.refs.creditCardAutofillCheckbox) {
+          Services.prefs.setBoolPref(ENABLED_AUTOFILL_CREDITCARDS_PREF, target.checked);
+        } else if (target == this.refs.savedAddressesBtn) {
+          target.ownerGlobal.gSubDialog.open(MANAGE_ADDRESSES_URL);
+        } else if (target == this.refs.savedCreditCardsBtn) {
+          target.ownerGlobal.gSubDialog.open(MANAGE_CREDITCARDS_URL);
         }
         break;
       }

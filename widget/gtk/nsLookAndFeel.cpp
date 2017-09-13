@@ -43,6 +43,10 @@ using mozilla::LookAndFeel;
     ((nscolor) NS_RGBA((int)((c).red*255), (int)((c).green*255), \
                        (int)((c).blue*255), (int)((c).alpha*255)))
 
+#if !GTK_CHECK_VERSION(3,12,0)
+#define GTK_STATE_FLAG_LINK (static_cast<GtkStateFlags>(1 << 9))
+#endif
+
 nsLookAndFeel::nsLookAndFeel()
     : nsXPLookAndFeel(),
 #if (MOZ_WIDGET_GTK == 2)
@@ -52,6 +56,12 @@ nsLookAndFeel::nsLookAndFeel()
       mFieldFontCached(false), mMenuFontCached(false),
       mInitialized(false)
 {
+}
+
+void
+nsLookAndFeel::NativeInit()
+{
+    EnsureInit();
 }
 
 nsLookAndFeel::~nsLookAndFeel()
@@ -928,7 +938,7 @@ GetSystemFontInfo(GtkWidget *aWidget,
 
     if (!pango_font_description_get_size_is_absolute(desc)) {
         // |size| is in pango-points, so convert to pixels.
-        size *= float(gfxPlatformGtk::GetDPI()) / POINTS_PER_INCH_FLOAT;
+        size *= float(gfxPlatformGtk::GetFontScaleDPI()) / POINTS_PER_INCH_FLOAT;
     }
 
     // Scale fonts up on HiDPI displays.
@@ -1074,6 +1084,9 @@ nsLookAndFeel::EnsureInit()
         return;
     mInitialized = true;
 
+    // gtk does non threadsafe refcounting
+    MOZ_ASSERT(NS_IsMainThread());
+
 #if (MOZ_WIDGET_GTK == 2)
     NS_ASSERTION(!mStyle, "already initialized");
     // GtkInvisibles come with a refcount that is not floating
@@ -1174,8 +1187,9 @@ nsLookAndFeel::EnsureInit()
     // Allow content Gtk theme override by pref, it's useful when styled Gtk+
     // widgets break web content.
     if (XRE_IsContentProcess()) {
-        auto contentThemeName =
-            mozilla::Preferences::GetCString("widget.content.gtk-theme-override");
+        nsAutoCString contentThemeName;
+        mozilla::Preferences::GetCString("widget.content.gtk-theme-override",
+                                         contentThemeName);
         if (!contentThemeName.IsEmpty()) {
             g_object_set(settings, "gtk-theme-name", contentThemeName.get(), nullptr);
         }
@@ -1447,14 +1461,26 @@ nsLookAndFeel::EnsureInit()
     }
     sMenuSupportsDrag = supports_menubar_drag;
 
-    colorValuePtr = nullptr;
-    gtk_widget_style_get(linkButton, "link-color", &colorValuePtr, nullptr);
-    if (colorValuePtr) {
-        colorValue = *colorValuePtr; // we can't pass deref pointers to GDK_COLOR_TO_NS_RGB
-        sNativeHyperLinkText = GDK_COLOR_TO_NS_RGB(colorValue);
-        gdk_color_free(colorValuePtr);
-    } else {
-        sNativeHyperLinkText = NS_RGB(0x00,0x00,0xEE);
+#if (MOZ_WIDGET_GTK == 3)
+    if (gtk_check_version(3, 12, 0) == nullptr) {
+        // TODO: It returns wrong color for themes which
+        // sets link color for GtkLabel only as we query
+        // GtkLinkButton style here.
+        style = gtk_widget_get_style_context(linkButton);
+        gtk_style_context_get_color(style, GTK_STATE_FLAG_LINK, &color);
+        sNativeHyperLinkText = GDK_RGBA_TO_NS_RGBA(color);
+    } else
+#endif
+    {
+        colorValuePtr = nullptr;
+        gtk_widget_style_get(linkButton, "link-color", &colorValuePtr, nullptr);
+        if (colorValuePtr) {
+            colorValue = *colorValuePtr; // we can't pass deref pointers to GDK_COLOR_TO_NS_RGB
+            sNativeHyperLinkText = GDK_COLOR_TO_NS_RGB(colorValue);
+            gdk_color_free(colorValuePtr);
+        } else {
+            sNativeHyperLinkText = NS_RGB(0x00,0x00,0xEE);
+        }
     }
 
     // invisible character styles

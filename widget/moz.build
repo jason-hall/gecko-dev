@@ -4,11 +4,38 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+with Files("**"):
+    BUG_COMPONENT = ("Core", "Widget")
+
+with Files("crashtests/*1128214*"):
+    BUG_COMPONENT = ("Core", "Layout")
+
+with Files("crashtests/*303901*"):
+    BUG_COMPONENT = ("Core", "Graphics")
+
+with Files("crashtests/*380359*"):
+    BUG_COMPONENT = ("Core", "Widget")
+
+with Files("reftests/**"):
+    BUG_COMPONENT = ("Core", "Widget: Cocoa")
+
+with Files("reftests/*fallback*"):
+    BUG_COMPONENT = ("Core", "Layout: Form Controls")
+
+with Files("*CompositorWidget*"):
+    BUG_COMPONENT = ("Core", "Graphics")
+
+with Files("*WindowSurface*"):
+    BUG_COMPONENT = ("Core", "Graphics")
+
+with Files("*FontRange*"):
+    BUG_COMPONENT = ("Core", "Widget: Cocoa")
+
 toolkit = CONFIG['MOZ_WIDGET_TOOLKIT']
 
-if toolkit in ('cocoa', 'android', 'gonk', 'uikit'):
+if toolkit in ('cocoa', 'android', 'uikit'):
     DIRS += [toolkit]
-if toolkit in ('android', 'cocoa', 'gonk', 'gtk2', 'gtk3'):
+if toolkit in ('android', 'cocoa', 'gtk2', 'gtk3'):
     EXPORTS += ['nsIPrintDialogService.h']
 
 if toolkit == 'windows':
@@ -231,7 +258,7 @@ if toolkit in ('cocoa', 'windows'):
     ]
 
 if toolkit in {'gtk2', 'gtk3', 'cocoa', 'windows',
-               'android', 'gonk', 'uikit'}:
+               'android', 'uikit'}:
     UNIFIED_SOURCES += [
         'nsBaseFilePicker.cpp',
     ]
@@ -245,8 +272,7 @@ if toolkit == 'gtk3':
         'nsIApplicationChooser.idl',
     ]
 
-if not CONFIG['MOZ_B2G']:
-    DEFINES['MOZ_CROSS_PROCESS_IME'] = True
+DEFINES['MOZ_CROSS_PROCESS_IME'] = True
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
@@ -265,6 +291,7 @@ LOCAL_INCLUDES += [
 
 if toolkit == 'windows':
     IPDL_SOURCES = [
+        'headless/HeadlessWidgetTypes.ipdlh',
         'windows/PCompositorWidget.ipdl',
         'windows/PlatformWidgetTypes.ipdlh',
     ]
@@ -272,9 +299,11 @@ elif 'gtk' in CONFIG['MOZ_WIDGET_TOOLKIT'] and CONFIG['MOZ_X11']:
     IPDL_SOURCES = [
         'gtk/PCompositorWidget.ipdl',
         'gtk/PlatformWidgetTypes.ipdlh',
+        'headless/HeadlessWidgetTypes.ipdlh',
     ]
 else:
     IPDL_SOURCES = [
+        'headless/HeadlessWidgetTypes.ipdlh',
         'PCompositorWidget.ipdl',
         'PlatformWidgetTypes.ipdlh',
     ]

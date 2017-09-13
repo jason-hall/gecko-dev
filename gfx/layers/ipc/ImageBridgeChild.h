@@ -17,9 +17,11 @@
 #include "mozilla/layers/CompositorTypes.h"
 #include "mozilla/layers/PImageBridgeChild.h"
 #include "mozilla/Mutex.h"
+#include "mozilla/webrender/WebRenderTypes.h"
 #include "nsDebug.h"                    // for NS_RUNTIMEABORT
 #include "nsIObserver.h"
 #include "nsRegion.h"                   // for nsIntRegion
+#include "nsRefPtrHashtable.h"
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/ReentrantMonitor.h"   // for ReentrantMonitor, etc
 
@@ -124,11 +126,11 @@ public:
    * We may want to use a specifi thread in the future. In this case, use
    * CreateWithThread instead.
    */
-  static void InitSameProcess();
+  static void InitSameProcess(uint32_t aNamespace);
 
-  static void InitWithGPUProcess(Endpoint<PImageBridgeChild>&& aEndpoint);
-  static bool InitForContent(Endpoint<PImageBridgeChild>&& aEndpoint);
-  static bool ReinitForContent(Endpoint<PImageBridgeChild>&& aEndpoint);
+  static void InitWithGPUProcess(Endpoint<PImageBridgeChild>&& aEndpoint, uint32_t aNamespace);
+  static bool InitForContent(Endpoint<PImageBridgeChild>&& aEndpoint, uint32_t aNamespace);
+  static bool ReinitForContent(Endpoint<PImageBridgeChild>&& aEndpoint, uint32_t aNamespace);
 
   /**
    * Destroys the image bridge by calling DestroyBridge, and destroys the
@@ -169,7 +171,11 @@ public:
   virtual base::ProcessId GetParentPid() const override { return OtherPid(); }
 
   virtual PTextureChild*
-  AllocPTextureChild(const SurfaceDescriptor& aSharedData, const LayersBackend& aLayersBackend, const TextureFlags& aFlags, const uint64_t& aSerial) override;
+  AllocPTextureChild(const SurfaceDescriptor& aSharedData,
+                     const LayersBackend& aLayersBackend,
+                     const TextureFlags& aFlags,
+                     const uint64_t& aSerial,
+                     const wr::MaybeExternalImageId& aExternalImageId) override;
 
   virtual bool
   DeallocPTextureChild(PTextureChild* actor) override;
@@ -198,8 +204,7 @@ public:
   already_AddRefed<CanvasClient> CreateCanvasClient(CanvasClient::CanvasClientType aType,
                                                     TextureFlags aFlag);
   void UpdateAsyncCanvasRenderer(AsyncCanvasRenderer* aClient);
-  void UpdateImageClient(RefPtr<ImageClient> aClient, RefPtr<ImageContainer> aContainer);
-  static void DispatchReleaseTextureClient(TextureClient* aClient);
+  void UpdateImageClient(RefPtr<ImageContainer> aContainer);
 
   /**
    * Flush all Images sent to CompositableHost.
@@ -231,8 +236,6 @@ private:
     RefPtr<ImageClient>* result,
     CompositableType aType,
     ImageContainer* aImageContainer);
-
-  void ReleaseTextureClientNow(TextureClient* aClient);
 
   void UpdateAsyncCanvasRendererNow(AsyncCanvasRenderer* aClient);
   void UpdateAsyncCanvasRendererSync(
@@ -323,10 +326,13 @@ public:
    */
   virtual bool DeallocShmem(mozilla::ipc::Shmem& aShmem) override;
 
-  virtual PTextureChild* CreateTexture(const SurfaceDescriptor& aSharedData,
-                                       LayersBackend aLayersBackend,
-                                       TextureFlags aFlags,
-                                       uint64_t aSerial) override;
+  virtual PTextureChild* CreateTexture(
+    const SurfaceDescriptor& aSharedData,
+    LayersBackend aLayersBackend,
+    TextureFlags aFlags,
+    uint64_t aSerial,
+    wr::MaybeExternalImageId& aExternalImageId,
+    nsIEventTarget* aTarget = nullptr) override;
 
   virtual bool IsSameProcess() const override;
 
@@ -339,8 +345,10 @@ public:
 
   virtual void HandleFatalError(const char* aName, const char* aMsg) const override;
 
+  virtual wr::MaybeExternalImageId GetNextExternalImageId() override;
+
 protected:
-  ImageBridgeChild();
+  explicit ImageBridgeChild(uint32_t aNamespace);
   bool DispatchAllocShmemInternal(size_t aSize,
                                   SharedMemory::SharedMemoryType aType,
                                   Shmem* aShmem,
@@ -365,6 +373,8 @@ protected:
   static void ShutdownSingleton();
 
 private:
+  uint32_t mNamespace;
+
   CompositableTransaction* mTxn;
 
   bool mCanSend;
@@ -380,7 +390,7 @@ private:
    * Hold TextureClients refs until end of their usages on host side.
    * It defer calling of TextureClient recycle callback.
    */
-  nsDataHashtable<nsUint64HashKey, RefPtr<TextureClient> > mTexturesWaitingRecycled;
+  nsRefPtrHashtable<nsUint64HashKey, TextureClient> mTexturesWaitingRecycled;
 
   /**
    * Mapping from async compositable IDs to image containers.

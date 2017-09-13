@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use devtools_traits::{DevtoolScriptControlMsg, WorkerId};
-use dom::bindings::codegen::Bindings::EventHandlerBinding::OnErrorEventHandlerNonNull;
 use dom::bindings::codegen::Bindings::FunctionBinding::Function;
 use dom::bindings::codegen::Bindings::RequestBinding::RequestInit;
 use dom::bindings::codegen::Bindings::WorkerGlobalScopeBinding::WorkerGlobalScopeMethods;
@@ -37,7 +36,7 @@ use script_runtime::{CommonScriptMsg, ScriptChan, ScriptPort};
 use script_thread::RunnableWrapper;
 use script_traits::{TimerEvent, TimerEventId};
 use script_traits::WorkerGlobalScopeInit;
-use servo_url::ServoUrl;
+use servo_url::{MutableOrigin, ServoUrl};
 use std::default::Default;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -55,10 +54,11 @@ pub fn prepare_workerscope_init(global: &GlobalScope,
             to_devtools_sender: global.devtools_chan().cloned(),
             time_profiler_chan: global.time_profiler_chan().clone(),
             from_devtools_sender: devtools_sender,
-            constellation_chan: global.constellation_chan().clone(),
+            script_to_constellation_chan: global.script_to_constellation_chan().clone(),
             scheduler_chan: global.scheduler_chan().clone(),
             worker_id: global.get_next_worker_id(),
             pipeline_id: global.pipeline_id(),
+            origin: global.origin().immutable().clone(),
         };
 
     init
@@ -106,10 +106,11 @@ impl WorkerGlobalScope {
                     init.to_devtools_sender,
                     init.mem_profiler_chan,
                     init.time_profiler_chan,
-                    init.constellation_chan,
+                    init.script_to_constellation_chan,
                     init.scheduler_chan,
                     init.resource_threads,
-                    timer_event_chan),
+                    timer_event_chan,
+                    MutableOrigin::new(init.origin)),
             worker_id: init.worker_id,
             worker_url: worker_url,
             closing: closing,
@@ -209,7 +210,7 @@ impl WorkerGlobalScopeMethods for WorkerGlobalScope {
                 destination: Destination::Script,
                 credentials_mode: CredentialsMode::Include,
                 use_url_credentials: true,
-                origin: self.worker_url.clone(),
+                origin: global_scope.origin().immutable().clone(),
                 pipeline_id: Some(self.upcast::<GlobalScope>().pipeline_id()),
                 referrer_url: None,
                 referrer_policy: None,

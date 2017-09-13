@@ -27,6 +27,8 @@ class KeepAliveToken;
 class LifeCycleEventCallback : public Runnable
 {
 public:
+  LifeCycleEventCallback() : Runnable("dom::workers::LifeCycleEventCallback") {}
+
   // Called on the worker thread.
   virtual void
   SetResult(bool aResult) = 0;
@@ -196,6 +198,7 @@ private:
   nsresult
   SpawnWorkerIfNeeded(WakeUpReason aWhy,
                       nsIRunnable* aLoadFailedRunnable,
+                      bool* aNewWorkerCreated = nullptr,
                       nsILoadGroup* aLoadGroup = nullptr);
 
   ~ServiceWorkerPrivate();

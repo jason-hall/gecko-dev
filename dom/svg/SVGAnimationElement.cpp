@@ -283,11 +283,12 @@ SVGAnimationElement::ParseAttribute(int32_t aNamespaceID,
 
 nsresult
 SVGAnimationElement::AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
-                                  const nsAttrValue* aValue, bool aNotify)
+                                  const nsAttrValue* aValue,
+                                  const nsAttrValue* aOldValue, bool aNotify)
 {
   nsresult rv =
     SVGAnimationElementBase::AfterSetAttr(aNamespaceID, aName, aValue,
-                                          aNotify);
+                                          aOldValue, aNotify);
 
   if (SVGTests::IsConditionalProcessingAttribute(aName)) {
     bool isDisabled = !SVGTests::PassesConditionalProcessingTests();
@@ -444,7 +445,7 @@ SVGAnimationElement::EndElementAt(float offset, ErrorResult& rv)
 }
 
 bool
-SVGAnimationElement::IsEventAttributeName(nsIAtom* aName)
+SVGAnimationElement::IsEventAttributeNameInternal(nsIAtom* aName)
 {
   return nsContentUtils::IsEventAttributeName(aName, EventNameType_SMIL);
 }

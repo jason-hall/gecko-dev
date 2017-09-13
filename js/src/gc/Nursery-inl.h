@@ -56,6 +56,7 @@ ReallocateObjectBuffer(JSContext* cx, JSObject* obj, T* oldBuffer,
                        uint32_t oldCount, uint32_t newCount)
 {
     T* buffer =  static_cast<T*>(realloc(oldBuffer, sizeof(T) * newCount));
+
     if (!buffer)
         ReportOutOfMemory(cx);
     return buffer;

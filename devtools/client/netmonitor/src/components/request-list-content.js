@@ -40,10 +40,12 @@ const RequestListContent = createClass({
     displayedRequests: PropTypes.object.isRequired,
     firstRequestStartedMillis: PropTypes.number.isRequired,
     fromCache: PropTypes.bool,
-    onCauseBadgeClick: PropTypes.func.isRequired,
+    onCauseBadgeMouseDown: PropTypes.func.isRequired,
     onItemMouseDown: PropTypes.func.isRequired,
-    onSecurityIconClick: PropTypes.func.isRequired,
+    onSecurityIconMouseDown: PropTypes.func.isRequired,
     onSelectDelta: PropTypes.func.isRequired,
+    onThumbnailMouseDown: PropTypes.func.isRequired,
+    onWaterfallMouseDown: PropTypes.func.isRequired,
     scale: PropTypes.number,
     selectedRequestId: PropTypes.string,
   },
@@ -154,7 +156,7 @@ const RequestListContent = createClass({
       return false;
     }
 
-    if (requestItem.responseContent && target.closest(".requests-list-icon-and-file")) {
+    if (requestItem.responseContent && target.closest(".requests-list-icon")) {
       return setTooltipImageContent(tooltip, itemEl, requestItem);
     }
 
@@ -224,33 +226,41 @@ const RequestListContent = createClass({
       columns,
       displayedRequests,
       firstRequestStartedMillis,
-      selectedRequestId,
-      onCauseBadgeClick,
+      onCauseBadgeMouseDown,
       onItemMouseDown,
-      onSecurityIconClick,
+      onSecurityIconMouseDown,
+      onThumbnailMouseDown,
+      onWaterfallMouseDown,
+      selectedRequestId,
     } = this.props;
 
     return (
-      div({
-        ref: "contentEl",
-        className: "requests-list-contents",
-        tabIndex: 0,
-        onKeyDown: this.onKeyDown,
-      },
-        displayedRequests.map((item, index) => RequestListItem({
-          firstRequestStartedMillis,
-          fromCache: item.status === "304" || item.fromCache,
-          columns,
-          item,
-          index,
-          isSelected: item.id === selectedRequestId,
-          key: item.id,
-          onContextMenu: this.onContextMenu,
-          onFocusedNodeChange: this.onFocusedNodeChange,
-          onMouseDown: () => onItemMouseDown(item.id),
-          onCauseBadgeClick: () => onCauseBadgeClick(item.cause),
-          onSecurityIconClick: () => onSecurityIconClick(item.securityState),
-        }))
+      div({ className: "requests-list-wrapper"},
+        div({ className: "requests-list-table"},
+          div({
+            ref: "contentEl",
+            className: "requests-list-contents",
+            tabIndex: 0,
+            onKeyDown: this.onKeyDown,
+          },
+            displayedRequests.map((item, index) => RequestListItem({
+              firstRequestStartedMillis,
+              fromCache: item.status === "304" || item.fromCache,
+              columns,
+              item,
+              index,
+              isSelected: item.id === selectedRequestId,
+              key: item.id,
+              onContextMenu: this.onContextMenu,
+              onFocusedNodeChange: this.onFocusedNodeChange,
+              onMouseDown: () => onItemMouseDown(item.id),
+              onCauseBadgeMouseDown: () => onCauseBadgeMouseDown(item.cause),
+              onSecurityIconMouseDown: () => onSecurityIconMouseDown(item.securityState),
+              onThumbnailMouseDown: () => onThumbnailMouseDown(),
+              onWaterfallMouseDown: () => onWaterfallMouseDown(),
+            }))
+          )
+        )
       )
     );
   },
@@ -269,7 +279,7 @@ module.exports = connect(
     /**
      * A handler that opens the stack trace tab when a stack trace is available
      */
-    onCauseBadgeClick: (cause) => {
+    onCauseBadgeMouseDown: (cause) => {
       if (cause.stacktrace && cause.stacktrace.length > 0) {
         dispatch(Actions.selectDetailsPanelTab("stack-trace"));
       }
@@ -279,11 +289,24 @@ module.exports = connect(
      * A handler that opens the security tab in the details view if secure or
      * broken security indicator is clicked.
      */
-    onSecurityIconClick: (securityState) => {
+    onSecurityIconMouseDown: (securityState) => {
       if (securityState && securityState !== "insecure") {
         dispatch(Actions.selectDetailsPanelTab("security"));
       }
     },
     onSelectDelta: (delta) => dispatch(Actions.selectDelta(delta)),
+    /**
+     * A handler that opens the response tab in the details view if
+     * the thumbnail is clicked.
+     */
+    onThumbnailMouseDown: () => {
+      dispatch(Actions.selectDetailsPanelTab("response"));
+    },
+    /**
+     * A handler that opens the timing sidebar panel if the waterfall is clicked.
+     */
+    onWaterfallMouseDown: () => {
+      dispatch(Actions.selectDetailsPanelTab("timings"));
+    },
   }),
 )(RequestListContent);

@@ -5,7 +5,6 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import logging
-import re
 import os
 import requests
 
@@ -14,10 +13,10 @@ from . import files_changed
 from .taskgraph import TaskGraph
 from .util.seta import is_low_value_task
 from .util.taskcluster import find_task_id
+from .util.parameterization import resolve_task_references
 from slugid import nice as slugid
 
 logger = logging.getLogger(__name__)
-TASK_REFERENCE_PATTERN = re.compile('<([^>]+)>')
 
 _optimizations = {}
 
@@ -44,30 +43,6 @@ def optimize_task_graph(target_task_graph, params, do_not_optimize, existing_tas
     return get_subgraph(target_task_graph, named_links_dict, label_to_taskid), label_to_taskid
 
 
-def resolve_task_references(label, task_def, taskid_for_edge_name):
-    def repl(match):
-        key = match.group(1)
-        try:
-            return taskid_for_edge_name[key]
-        except KeyError:
-            # handle escaping '<'
-            if key == '<':
-                return key
-            raise KeyError("task '{}' has no dependency named '{}'".format(label, key))
-
-    def recurse(val):
-        if isinstance(val, list):
-            return [recurse(v) for v in val]
-        elif isinstance(val, dict):
-            if val.keys() == ['task-reference']:
-                return TASK_REFERENCE_PATTERN.sub(repl, val['task-reference'])
-            else:
-                return {k: recurse(v) for k, v in val.iteritems()}
-        else:
-            return val
-    return recurse(task_def)
-
-
 def optimize_task(task, params):
     """
     Optimize a single task by running its optimizations in order until one
@@ -76,11 +51,11 @@ def optimize_task(task, params):
     for opt in task.optimizations:
         opt_type, args = opt[0], opt[1:]
         opt_fn = _optimizations[opt_type]
-        optimized, task_id = opt_fn(task, params, *args)
-        if optimized or task_id:
-            return optimized, task_id
+        opt_result = opt_fn(task, params, *args)
+        if opt_result:
+            return opt_result
 
-    return False, None
+    return False
 
 
 def annotate_task_graph(target_task_graph, params, do_not_optimize,
@@ -118,7 +93,11 @@ def annotate_task_graph(target_task_graph, params, do_not_optimize,
             replacement_task_id = existing_tasks[label]
         # otherwise, examine the task itself (which may be an expensive operation)
         else:
-            optimized, replacement_task_id = optimize_task(task, params)
+            opt_result = optimize_task(task, params)
+
+            # use opt_result to determine values for optimized, replacement_task_id
+            optimized = bool(opt_result)
+            replacement_task_id = opt_result if opt_result and opt_result is not True else None
 
         task.optimized = optimized
         task.task_id = replacement_task_id
@@ -195,11 +174,11 @@ def opt_index_search(task, params, index_path):
             index_path,
             use_proxy=bool(os.environ.get('TASK_ID')))
 
-        return True, task_id
+        return task_id or True
     except requests.exceptions.HTTPError:
         pass
 
-    return False, None
+    return False
 
 
 @optimization('seta')
@@ -221,20 +200,20 @@ def opt_seta(task, params):
                          params.get('pushdate'),
                          bbb_task):
         # Always optimize away low-value tasks
-        return True, None
+        return True
     else:
-        return False, None
+        return False
 
 
-@optimization('files-changed')
+@optimization('skip-unless-changed')
 def opt_files_changed(task, params, file_patterns):
     # pushlog_id == -1 - this is the case when run from a cron.yml job
     if params.get('pushlog_id') == -1:
-        return True, None
+        return True
 
     changed = files_changed.check(params, file_patterns)
     if not changed:
-        logger.debug('no files found matching a pattern in `when.files-changed` for ' +
+        logger.debug('no files found matching a pattern in `skip-unless-changed` for ' +
                      task.label)
-        return True, None
-    return False, None
+        return True
+    return False

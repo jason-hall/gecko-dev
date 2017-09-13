@@ -6,7 +6,7 @@
 const {Ci} = require("chrome");
 const Services = require("Services");
 
-const events = require("sdk/event/core");
+const EventEmitter = require("devtools/shared/event-emitter");
 
 /**
  * Handles adding an observer for the creation of content document globals,
@@ -28,9 +28,9 @@ ContentObserver.prototype = {
    */
   startListening: function () {
     Services.obs.addObserver(
-      this._onContentGlobalCreated, "content-document-global-created", false);
+      this._onContentGlobalCreated, "content-document-global-created");
     Services.obs.addObserver(
-      this._onInnerWindowDestroyed, "inner-window-destroyed", false);
+      this._onInnerWindowDestroyed, "inner-window-destroyed");
   },
 
   /**
@@ -48,7 +48,7 @@ ContentObserver.prototype = {
    */
   _onContentGlobalCreated: function (subject, topic, data) {
     if (subject == this._contentWindow) {
-      events.emit(this, "global-created", subject);
+      EventEmitter.emit(this, "global-created", subject);
     }
   },
 
@@ -57,7 +57,7 @@ ContentObserver.prototype = {
    */
   _onInnerWindowDestroyed: function (subject, topic, data) {
     let id = subject.QueryInterface(Ci.nsISupportsPRUint64).data;
-    events.emit(this, "global-destroyed", id);
+    EventEmitter.emit(this, "global-destroyed", id);
   }
 };
 

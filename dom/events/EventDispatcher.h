@@ -8,6 +8,7 @@
 #ifndef mozilla_EventDispatcher_h_
 #define mozilla_EventDispatcher_h_
 
+#include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/EventForwards.h"
 #include "nsCOMPtr.h"
 #include "nsTArray.h"
@@ -31,7 +32,7 @@ class EventTarget;
  * About event dispatching:
  * When either EventDispatcher::Dispatch or
  * EventDispatcher::DispatchDOMEvent is called an event target chain is
- * created. EventDispatcher creates the chain by calling GetEventTargetParent 
+ * created. EventDispatcher creates the chain by calling GetEventTargetParent
  * on each event target and the creation continues until either the mCanHandle
  * member of the EventChainPreVisitor object is false or the mParentTarget
  * does not point to a new target. The event target chain is created in the
@@ -244,7 +245,7 @@ class EventDispatcher
 public:
   /**
    * aTarget should QI to EventTarget.
-   * If the target of aEvent is set before calling this method, the target of 
+   * If the target of aEvent is set before calling this method, the target of
    * aEvent is used as the target (unless there is event
    * retargeting) and the originalTarget of the DOM Event.
    * aTarget is always used as the starting point for constructing the event
@@ -286,7 +287,9 @@ public:
   static already_AddRefed<dom::Event> CreateEvent(dom::EventTarget* aOwner,
                                                   nsPresContext* aPresContext,
                                                   WidgetEvent* aEvent,
-                                                  const nsAString& aEventType);
+                                                  const nsAString& aEventType,
+                                                  dom::CallerType aCallerType =
+                                                    dom::CallerType::System);
 
   /**
    * Called at shutting down.

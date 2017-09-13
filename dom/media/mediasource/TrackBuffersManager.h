@@ -11,7 +11,6 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/Monitor.h"
 #include "AutoTaskQueue.h"
-#include "mozilla/dom/SourceBufferBinding.h"
 
 #include "MediaContainerType.h"
 #include "MediaData.h"
@@ -21,7 +20,6 @@
 #include "SourceBufferTask.h"
 #include "TimeUnits.h"
 #include "nsAutoPtr.h"
-#include "nsProxyRelease.h"
 #include "nsTArray.h"
 
 namespace mozilla {
@@ -98,7 +96,7 @@ public:
   // Buffer Append Algorithm
   // 3.5.5 Buffer Append Algorithm.
   // http://w3c.github.io/media-source/index.html#sourcebuffer-buffer-append
-  RefPtr<AppendPromise> AppendData(MediaByteBuffer* aData,
+  RefPtr<AppendPromise> AppendData(already_AddRefed<MediaByteBuffer> aData,
                                    const SourceBufferAttributes& aAttributes);
 
   // Queue a task to abort any pending AppendData.
@@ -174,7 +172,7 @@ private:
   friend class MediaSourceDemuxer;
   ~TrackBuffersManager();
   // All following functions run on the taskqueue.
-  RefPtr<AppendPromise> DoAppendData(MediaByteBuffer* aData,
+  RefPtr<AppendPromise> DoAppendData(already_AddRefed<MediaByteBuffer> aData,
                                      const SourceBufferAttributes& aAttributes);
   void ScheduleSegmentParserLoop();
   void SegmentParserLoop();
@@ -237,9 +235,9 @@ private:
   uint64_t mProcessedInput;
   Maybe<media::TimeUnit> mLastParsedEndTime;
 
-  void OnDemuxerInitDone(nsresult);
+  void OnDemuxerInitDone(const MediaResult& aResult);
   void OnDemuxerInitFailed(const MediaResult& aFailure);
-  void OnDemuxerResetDone(nsresult);
+  void OnDemuxerResetDone(const MediaResult& aResult);
   MozPromiseRequestHolder<MediaDataDemuxer::InitPromise> mDemuxerInitRequest;
 
   void OnDemuxFailed(TrackType aTrack, const MediaResult& aError);
@@ -257,6 +255,11 @@ private:
     mAudioTracks.mDemuxRequest.Complete();
     OnDemuxFailed(TrackType::kAudioTrack, aError);
   }
+
+  // Dispatches an "encrypted" event is any sample in array has initData
+  // present.
+  void MaybeDispatchEncryptedEvent(
+    const nsTArray<RefPtr<MediaRawData>>& aSamples);
 
   void DoEvictData(const media::TimeUnit& aPlaybackTime, int64_t aSizeToEvict);
 

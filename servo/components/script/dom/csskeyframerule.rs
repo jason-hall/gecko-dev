@@ -12,9 +12,9 @@ use dom::cssstyledeclaration::{CSSModificationAccess, CSSStyleDeclaration, CSSSt
 use dom::cssstylesheet::CSSStyleSheet;
 use dom::window::Window;
 use dom_struct::dom_struct;
-use std::sync::Arc;
-use style::keyframes::Keyframe;
+use servo_arc::Arc;
 use style::shared_lock::{Locked, ToCssWithGuard};
+use style::stylesheets::keyframes_rule::Keyframe;
 
 #[dom_struct]
 pub struct CSSKeyframeRule {

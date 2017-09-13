@@ -19,7 +19,6 @@
 #include "nsIConsoleService.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMLocation.h"
 #include "nsIDOMWindowCollection.h"
 #include "nsIDOMWindow.h"
 #include "nsIObserverService.h"
@@ -31,6 +30,7 @@
 #include "mozilla/Printf.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
+#include "mozilla/dom/Location.h"
 
 #ifdef ENABLE_INTL_API
 #include "unicode/uloc.h"
@@ -42,26 +42,26 @@ nsChromeRegistry* nsChromeRegistry::gChromeRegistry;
 // mozilla::TextRange and a TextRange in OSX headers.
 using mozilla::StyleSheet;
 using mozilla::dom::IsChromeURI;
+using mozilla::dom::Location;
 
 ////////////////////////////////////////////////////////////////////////////////
 
 void
 nsChromeRegistry::LogMessage(const char* aMsg, ...)
 {
-  nsCOMPtr<nsIConsoleService> console 
+  nsCOMPtr<nsIConsoleService> console
     (do_GetService(NS_CONSOLESERVICE_CONTRACTID));
   if (!console)
     return;
 
   va_list args;
   va_start(args, aMsg);
-  char* formatted = mozilla::Vsmprintf(aMsg, args);
+  mozilla::SmprintfPointer formatted = mozilla::Vsmprintf(aMsg, args);
   va_end(args);
   if (!formatted)
     return;
 
-  console->LogStringMessage(NS_ConvertUTF8toUTF16(formatted).get());
-  mozilla::SmprintfFree(formatted);
+  console->LogStringMessage(NS_ConvertUTF8toUTF16(formatted.get()).get());
 }
 
 void
@@ -70,7 +70,7 @@ nsChromeRegistry::LogMessageWithContext(nsIURI* aURL, uint32_t aLineNumber, uint
 {
   nsresult rv;
 
-  nsCOMPtr<nsIConsoleService> console 
+  nsCOMPtr<nsIConsoleService> console
     (do_GetService(NS_CONSOLESERVICE_CONTRACTID));
 
   nsCOMPtr<nsIScriptError> error
@@ -80,7 +80,7 @@ nsChromeRegistry::LogMessageWithContext(nsIURI* aURL, uint32_t aLineNumber, uint
 
   va_list args;
   va_start(args, aMsg);
-  char* formatted = mozilla::Vsmprintf(aMsg, args);
+  mozilla::SmprintfPointer formatted = mozilla::Vsmprintf(aMsg, args);
   va_end(args);
   if (!formatted)
     return;
@@ -89,11 +89,10 @@ nsChromeRegistry::LogMessageWithContext(nsIURI* aURL, uint32_t aLineNumber, uint
   if (aURL)
     aURL->GetSpec(spec);
 
-  rv = error->Init(NS_ConvertUTF8toUTF16(formatted),
+  rv = error->Init(NS_ConvertUTF8toUTF16(formatted.get()),
                    NS_ConvertUTF8toUTF16(spec),
                    EmptyString(),
                    aLineNumber, 0, flags, "chrome registration");
-  mozilla::SmprintfFree(formatted);
 
   if (NS_FAILED(rv))
     return;
@@ -167,7 +166,7 @@ nsChromeRegistry::GetProviderAndPath(nsIURL* aChromeURL,
 #endif
 
   nsAutoCString path;
-  rv = aChromeURL->GetPath(path);
+  rv = aChromeURL->GetPathQueryRef(path);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (path.Length() < 3) {
@@ -231,7 +230,7 @@ nsChromeRegistry::Canonify(nsIURL* aChromeURL)
     else {
       return NS_ERROR_INVALID_ARG;
     }
-    aChromeURL->SetPath(path);
+    aChromeURL->SetPathQueryRef(path);
   }
   else {
     // prevent directory traversals ("..")
@@ -250,7 +249,7 @@ nsChromeRegistry::Canonify(nsIURL* aChromeURL)
           // chrome: URIs with double-escapes are trying to trick us.
           // watch for %2e, and %25 in case someone triple unescapes
           if (pos[1] == '2' &&
-               ( pos[2] == 'e' || pos[2] == 'E' || 
+               ( pos[2] == 'e' || pos[2] == 'E' ||
                  pos[2] == '5' ))
             return NS_ERROR_DOM_BAD_URI;
           break;
@@ -293,16 +292,6 @@ nsChromeRegistry::ConvertChromeURL(nsIURI* aChromeURI, nsIURI* *aResult)
   rv = GetFlagsFromPackage(package, &flags);
   if (NS_FAILED(rv))
     return rv;
-
-  if (flags & PLATFORM_PACKAGE) {
-#if defined(XP_WIN)
-    path.Insert("win/", 0);
-#elif defined(XP_MACOSX)
-    path.Insert("mac/", 0);
-#else
-    path.Insert("unix/", 0);
-#endif
-  }
 
   if (!baseURI) {
     LogMessage("No chrome package registered for chrome://%s/%s/%s",
@@ -366,7 +355,7 @@ NS_IMETHODIMP nsChromeRegistry::RefreshSkins()
     }
     windowEnumerator->HasMoreElements(&more);
   }
-   
+
   return NS_OK;
 }
 
@@ -482,7 +471,7 @@ nsChromeRegistry::FlushAllCaches()
 
   obsSvc->NotifyObservers((nsIChromeRegistry*) this,
                           NS_CHROME_FLUSH_TOPIC, nullptr);
-}  
+}
 
 // xxxbsmedberg Move me to nsIWindowMediator
 NS_IMETHODIMP
@@ -510,7 +499,7 @@ nsChromeRegistry::ReloadChrome()
         if (NS_SUCCEEDED(rv)) {
           nsCOMPtr<nsPIDOMWindowOuter> domWindow = do_QueryInterface(protoWindow);
           if (domWindow) {
-            nsIDOMLocation* location = domWindow->GetLocation();
+            Location* location = domWindow->GetLocation();
             if (location) {
               rv = location->Reload(false);
               if (NS_FAILED(rv)) return rv;
@@ -667,7 +656,7 @@ nsChromeRegistry::GetDirectionForLocale(const nsACString& aLocale)
     return false;
   }
 
-  nsXPIDLCString dir;
+  nsCString dir;
   prefBranch->GetCharPref(prefString.get(), getter_Copies(dir));
   if (dir.IsEmpty()) {
     int32_t hyphen = prefString.FindChar('-');

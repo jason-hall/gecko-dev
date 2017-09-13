@@ -223,11 +223,6 @@ const gWindowObserver = {
 function runTestDefault() {
   debugDump("entering");
 
-  if (!("@mozilla.org/zipwriter;1" in Cc)) {
-    ok(false, "nsIZipWriter is required to run these tests");
-    return;
-  }
-
   SimpleTest.waitForExplicitFinish();
 
   runTestDefaultWaitForWindowClosed();
@@ -482,12 +477,12 @@ function delayedDefaultCallback() {
  * Gets the continue file used to signal the mock http server to continue
  * downloading for slow download mar file tests without creating it.
  *
- * @return nsILocalFile for the continue file.
+ * @return nsIFile for the continue file.
  */
 function getContinueFile() {
   let continueFile = Cc["@mozilla.org/file/directory_service;1"].
                      getService(Ci.nsIProperties).
-                     get("CurWorkD", Ci.nsILocalFile);
+                     get("CurWorkD", Ci.nsIFile);
   let continuePath = REL_PATH_DATA + "continue";
   let continuePathParts = continuePath.split("/");
   for (let i = 0; i < continuePathParts.length; ++i) {
@@ -734,7 +729,7 @@ function copyTestUpdater() {
   try {
     // Copy the test updater
     let baseAppDir = getAppBaseDir();
-    let testUpdaterDir = Services.dirsvc.get("CurWorkD", Ci.nsILocalFile);
+    let testUpdaterDir = Services.dirsvc.get("CurWorkD", Ci.nsIFile);
     let relPath = REL_PATH_DATA;
     let pathParts = relPath.split("/");
     for (let i = 0; i < pathParts.length; ++i) {
@@ -799,6 +794,10 @@ function setupPrefs() {
   }
   Services.prefs.setBoolPref(PREF_APP_UPDATE_ENABLED, true);
 
+  if (!Services.prefs.getBoolPref(PREF_APP_UPDATE_AUTO), false) {
+    Services.prefs.setBoolPref(PREF_APP_UPDATE_AUTO, true);
+  }
+
   if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_SERVICE_ENABLED)) {
     gAppUpdateServiceEnabled = Services.prefs.getBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED);
   }
@@ -813,6 +812,7 @@ function setupPrefs() {
   Services.prefs.setIntPref(PREF_APP_UPDATE_PROMPTWAITTIME, 0);
   Services.prefs.setBoolPref(PREF_APP_UPDATE_SILENT, false);
   Services.prefs.setBoolPref(PREF_APP_UPDATE_DOORHANGER, false);
+  Services.prefs.setIntPref(PREF_APP_UPDATE_DOWNLOADBACKGROUNDINTERVAL, 0);
 }
 
 /**
@@ -860,6 +860,10 @@ function resetPrefs() {
     Services.prefs.setBoolPref(PREF_APP_UPDATE_ENABLED, gAppUpdateEnabled);
   } else if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_ENABLED)) {
     Services.prefs.clearUserPref(PREF_APP_UPDATE_ENABLED);
+  }
+
+  if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_AUTO)) {
+    Services.prefs.clearUserPref(PREF_APP_UPDATE_AUTO);
   }
 
   if (gAppUpdateServiceEnabled !== undefined) {
@@ -910,9 +914,8 @@ function resetPrefs() {
     Services.prefs.clearUserPref(PREF_APP_UPDATE_DOORHANGER);
   }
 
-  try {
-    Services.prefs.deleteBranch(PREFBRANCH_APP_UPDATE_NEVER);
-  } catch (e) {
+  if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_DOWNLOADBACKGROUNDINTERVAL)) {
+    Services.prefs.clearUserPref(PREF_APP_UPDATE_DOWNLOADBACKGROUNDINTERVAL);
   }
 }
 
@@ -980,7 +983,7 @@ const errorsPrefObserver = {
 
     let maxErrors = aMaxErrorCount ? aMaxErrorCount : 2;
     Services.prefs.setIntPref(aMaxErrorPref, maxErrors);
-    Services.prefs.addObserver(aObservePref, this, false);
+    Services.prefs.addObserver(aObservePref, this);
   },
 
   /**

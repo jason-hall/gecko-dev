@@ -19,7 +19,7 @@ NS_NewMathMLmsqrtFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 NS_IMPL_FRAMEARENA_HELPERS(nsMathMLmsqrtFrame)
 
 nsMathMLmsqrtFrame::nsMathMLmsqrtFrame(nsStyleContext* aContext) :
-  nsMathMLmencloseFrame(aContext)
+  nsMathMLmencloseFrame(aContext, kClassID)
 {
 }
 
@@ -34,7 +34,7 @@ nsMathMLmsqrtFrame::Init(nsIContent*       aContent,
 {
   nsMathMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
   AllocateMathMLChar(NOTATION_RADICAL);
-  mNotationsToDraw |= NOTATION_RADICAL;
+  mNotationsToDraw += NOTATION_RADICAL;
 }
 
 NS_IMETHODIMP

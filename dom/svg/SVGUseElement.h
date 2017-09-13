@@ -57,9 +57,7 @@ public:
   NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
 
   // for nsSVGUseFrame's nsIAnonymousContentCreator implementation.
-  nsIContent* CreateAnonymousContent();
-  nsIContent* GetAnonymousContent() const { return mClone; }
-  void DestroyAnonymousContent();
+  already_AddRefed<nsIContent> CreateAnonymousContent();
 
   // nsSVGElement specializations:
   virtual gfxMatrix PrependLocalTransformsTo(
@@ -68,7 +66,8 @@ public:
   virtual bool HasValidDimensions() const override;
 
   // nsIContent interface
-  virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const override;
+  virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
+                         bool aPreallocateChildren) const override;
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const override;
 
   // WebIDL
@@ -96,6 +95,8 @@ protected:
   private:
     SVGUseElement* mContainer;
   };
+
+  nsSVGUseFrame* GetFrame() const;
 
   virtual LengthAttributesInfo GetLengthInfo() override;
   virtual StringAttributesInfo GetStringInfo() override;

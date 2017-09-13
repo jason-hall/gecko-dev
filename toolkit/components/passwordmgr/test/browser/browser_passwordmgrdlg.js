@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-add_task(function* test() {
-  yield new Promise(resolve => {
+add_task(async function test() {
+  await new Promise(resolve => {
 
     let pwmgr = Cc["@mozilla.org/login-manager;1"].
                 getService(Ci.nsILoginManager);
@@ -85,9 +85,9 @@ add_task(function* test() {
 
             // only watch for a confirmation dialog every other time being called
             if (showMode) {
-                Services.ww.registerNotification(function(aSubject, aTopic, aData) {
+                Services.ww.registerNotification(function notification(aSubject, aTopic, aData) {
                     if (aTopic == "domwindowclosed")
-                        Services.ww.unregisterNotification(arguments.callee);
+                        Services.ww.unregisterNotification(notification);
                     else if (aTopic == "domwindowopened") {
                         let targetWin = aSubject.QueryInterface(Ci.nsIDOMEventTarget);
                         SimpleTest.waitForFocus(function() {
@@ -97,12 +97,12 @@ add_task(function* test() {
                 });
             }
 
-            Services.obs.addObserver(function(aSubject, aTopic, aData) {
+            Services.obs.addObserver(function observer(aSubject, aTopic, aData) {
                 if (aTopic == "passwordmgr-password-toggle-complete") {
-                    Services.obs.removeObserver(arguments.callee, aTopic);
+                    Services.obs.removeObserver(observer, aTopic);
                     func();
                 }
-            }, "passwordmgr-password-toggle-complete", false);
+            }, "passwordmgr-password-toggle-complete");
 
             EventUtils.synthesizeMouse(toggleButton, 1, 1, {}, win);
         }
@@ -177,9 +177,9 @@ add_task(function* test() {
 
         function lastStep() {
             // cleanup
-            Services.ww.registerNotification(function(aSubject, aTopic, aData) {
+            Services.ww.registerNotification(function notification(aSubject, aTopic, aData) {
                 // unregister ourself
-                Services.ww.unregisterNotification(arguments.callee);
+                Services.ww.unregisterNotification(notification);
 
                 pwmgr.removeAllLogins();
                 finish();

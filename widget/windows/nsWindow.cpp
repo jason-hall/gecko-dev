@@ -80,7 +80,6 @@
 
 #include "mozilla/Logging.h"
 #include "prtime.h"
-#include "prmem.h"
 #include "prenv.h"
 
 #include "mozilla/WidgetTraceEvent.h"
@@ -106,7 +105,6 @@
 #include "nsGkAtoms.h"
 #include "nsCRT.h"
 #include "nsAppDirectoryServiceDefs.h"
-#include "nsXPIDLString.h"
 #include "nsWidgetsCID.h"
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
@@ -163,6 +161,7 @@
 #include <winuser.h>
 #include "nsAccessibilityService.h"
 #include "mozilla/a11y/DocAccessible.h"
+#include "mozilla/a11y/LazyInstantiator.h"
 #include "mozilla/a11y/Platform.h"
 #if !defined(WINABLEAPI)
 #include <winable.h>
@@ -591,9 +590,10 @@ StaticAutoPtr<TIPMessageHandler> TIPMessageHandler::sInstance;
  *
  **************************************************************/
 
-nsWindow::nsWindow()
+nsWindow::nsWindow(bool aIsChildWindow)
   : nsWindowBase()
   , mResizeState(NOT_RESIZING)
+  , mIsChildWindow(aIsChildWindow)
 {
   mIconSmall            = nullptr;
   mIconBig              = nullptr;
@@ -644,6 +644,8 @@ nsWindow::nsWindow()
 
   mTaskbarPreview = nullptr;
 
+  mCompositorWidgetDelegate = nullptr;
+
   // Global initialization
   if (!sInstanceCount) {
     // Global app registration id for Win7 and up. See
@@ -659,8 +661,6 @@ nsWindow::nsWindow()
     }
     NS_ASSERTION(sIsOleInitialized, "***** OLE is not initialized!\n");
     MouseScrollHandler::Initialize();
-    // Init titlebar button info for custom frames.
-    nsUXThemeData::InitTitlebarInfo();
     // Init theme data
     nsUXThemeData::UpdateNativeThemeInfo();
     RedirectedKeyDownMessageManager::Forget();
@@ -792,7 +792,8 @@ nsWindow::Create(nsIWidget* aParent,
     }
 
     if (!IsWin8OrLater() &&
-        HasBogusPopupsDropShadowOnMultiMonitor()) {
+        HasBogusPopupsDropShadowOnMultiMonitor() &&
+        ShouldUseOffMainThreadCompositing()) {
       extendedStyle |= WS_EX_COMPOSITED;
     }
 
@@ -854,9 +855,7 @@ nsWindow::Create(nsIWidget* aParent,
   }
 
   if (mOpeningAnimationSuppressed) {
-    DWORD dwAttribute = TRUE;
-    DwmSetWindowAttribute(mWnd, DWMWA_TRANSITIONS_FORCEDISABLED,
-                          &dwAttribute, sizeof dwAttribute);
+    SuppressAnimation(true);
   }
 
   if (!IsPlugin() &&
@@ -1144,6 +1143,13 @@ DWORD nsWindow::WindowStyle()
     }
   }
 
+  if (mIsChildWindow) {
+    style |= WS_CLIPCHILDREN;
+    if (!(style & WS_POPUP)) {
+      style |= WS_CHILD; // WS_POPUP and WS_CHILD are mutually exclusive.
+    }
+  }
+
   VERIFY_WINDOW_STYLE(style);
   return style;
 }
@@ -1242,13 +1248,14 @@ void nsWindow::SubclassWindow(BOOL bState)
 void
 nsWindow::SetParent(nsIWidget *aNewParent)
 {
-  mParent = aNewParent;
-
   nsCOMPtr<nsIWidget> kungFuDeathGrip(this);
   nsIWidget* parent = GetParent();
   if (parent) {
     parent->RemoveChild(this);
   }
+
+  mParent = aNewParent;
+
   if (aNewParent) {
     ReparentNativeWidget(aNewParent);
     aNewParent->AddChild(this);
@@ -1295,18 +1302,12 @@ static int32_t RoundDown(double aDouble)
 
 float nsWindow::GetDPI()
 {
-  HDC dc = ::GetDC(mWnd);
-  if (!dc)
-    return 96.0f;
-
-  double heightInches = ::GetDeviceCaps(dc, VERTSIZE)/MM_PER_INCH_FLOAT;
-  int heightPx = ::GetDeviceCaps(dc, VERTRES);
-  ::ReleaseDC(mWnd, dc);
-  if (heightInches < 0.25) {
-    // Something's broken
-    return 96.0f;
+  float dpi = 96.0f;
+  nsCOMPtr<nsIScreen> screen = GetWidgetScreen();
+  if (screen) {
+    screen->GetDpi(&dpi);
   }
-  return float(heightPx/heightInches);
+  return dpi;
 }
 
 double nsWindow::GetDefaultScaleInternal()
@@ -1643,9 +1644,7 @@ nsWindow::Show(bool bState)
 #endif
 
   if (mOpeningAnimationSuppressed) {
-    DWORD dwAttribute = FALSE;
-    DwmSetWindowAttribute(mWnd, DWMWA_TRANSITIONS_FORCEDISABLED,
-                          &dwAttribute, sizeof dwAttribute);
+    SuppressAnimation(false);
   }
 }
 
@@ -1715,14 +1714,15 @@ void nsWindow::SetThemeRegion()
 
 void nsWindow::RegisterTouchWindow() {
   mTouchWindow = true;
-  mGesture.RegisterTouchWindow(mWnd);
+  ::RegisterTouchWindow(mWnd, TWF_WANTPALM);
   ::EnumChildWindows(mWnd, nsWindow::RegisterTouchForDescendants, 0);
 }
 
 BOOL CALLBACK nsWindow::RegisterTouchForDescendants(HWND aWnd, LPARAM aMsg) {
   nsWindow* win = WinUtils::GetNSWindowPtr(aWnd);
-  if (win)
-    win->mGesture.RegisterTouchWindow(aWnd);
+  if (win) {
+    ::RegisterTouchWindow(aWnd, TWF_WANTPALM);
+  }
   return TRUE;
 }
 
@@ -2125,6 +2125,14 @@ nsWindow::SetSizeMode(nsSizeMode aMode)
     if (mode == SW_MAXIMIZE || mode == SW_SHOW)
       DispatchFocusToTopLevelWindow(true);
   }
+}
+
+void
+nsWindow::SuppressAnimation(bool aSuppress)
+{
+  DWORD dwAttribute = aSuppress ? TRUE : FALSE;
+  DwmSetWindowAttribute(mWnd, DWMWA_TRANSITIONS_FORCEDISABLED,
+                        &dwAttribute, sizeof dwAttribute);
 }
 
 // Constrain a potential move to fit onscreen
@@ -3053,6 +3061,7 @@ void nsWindow::SetTransparencyMode(nsTransparencyMode aMode)
   }
 
   if (nsWindowType::eWindowType_toplevel == window->mWindowType &&
+      mTransparencyMode != aMode &&
       !nsUXThemeData::CheckForCompositor()) {
       NS_WARNING("Cannot set transparency mode on top-level windows.");
       return;
@@ -3093,7 +3102,7 @@ void nsWindow::UpdateOpaqueRegion(const LayoutDeviceIntRegion& aOpaqueRegion)
       // The minimum glass height must be the caption buttons height,
       // otherwise the buttons are drawn incorrectly.
       largest.y = std::max<uint32_t>(largest.y,
-                         nsUXThemeData::sCommandButtons[CMDBUTTONIDX_BUTTONBOX].cy);
+                         nsUXThemeData::GetCommandButtonBoxMetrics().cy);
     }
     margins.cyTopHeight = largest.y;
   }
@@ -3765,7 +3774,6 @@ nsWindow::EnableDragDrop(bool aEnable)
 {
   NS_ASSERTION(mWnd, "nsWindow::EnableDragDrop() called after Destroy()");
 
-  nsresult rv = NS_ERROR_FAILURE;
   if (aEnable) {
     if (!mNativeDragTarget) {
       mNativeDragTarget = new nsNativeDragTarget(this);
@@ -3942,7 +3950,7 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
 
     // Ensure we have a widget proxy even if we're not using the compositor,
     // since all our transparent window handling lives there.
-    CompositorWidgetInitData initData(
+    WinCompositorWidgetInitData initData(
       reinterpret_cast<uintptr_t>(mWnd),
       reinterpret_cast<uintptr_t>(static_cast<nsIWidget*>(this)),
       mTransparencyMode);
@@ -3956,6 +3964,27 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
   NS_ASSERTION(mLayerManager, "Couldn't provide a valid layer manager.");
 
   return mLayerManager;
+}
+
+/**************************************************************
+ *
+ * SECTION: nsBaseWidget::SetCompositorWidgetDelegate
+ *
+ * Called to connect the nsWindow to the delegate providing
+ * platform compositing API access.
+ *
+ **************************************************************/
+
+void
+nsWindow::SetCompositorWidgetDelegate(CompositorWidgetDelegate* delegate)
+{
+    if (delegate) {
+        mCompositorWidgetDelegate = delegate->AsPlatformSpecificDelegate();
+        MOZ_ASSERT(mCompositorWidgetDelegate,
+                   "nsWindow::SetCompositorWidgetDelegate called with a non-PlatformCompositorWidgetDelegate");
+    } else {
+        mCompositorWidgetDelegate = nullptr;
+    }
 }
 
 /**************************************************************
@@ -4262,6 +4291,13 @@ nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
                              int16_t aButton, uint16_t aInputSource,
                              WinPointerInfo* aPointerInfo)
 {
+  enum
+  {
+    eUnset,
+    ePrecise,
+    eTouch
+  };
+  static int sTouchInputActiveState = eUnset;
   bool result = false;
 
   UserActivity();
@@ -4288,6 +4324,15 @@ nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
       Telemetry::Accumulate(Telemetry::FX_TOUCH_USED, 1);
     }
 
+    // Fire an observer when the user initially touches a touch screen. Front end
+    // uses this to modify UX.
+    if (sTouchInputActiveState != eTouch) {
+      sTouchInputActiveState = eTouch;
+      nsCOMPtr<nsIObserverService> obsServ =
+        mozilla::services::GetObserverService();
+      obsServ->NotifyObservers(nullptr, "touch-input-detected", nullptr);
+    }
+
     if (mTouchWindow) {
       // If mTouchWindow is true, then we must have APZ enabled and be
       // feeding it raw touch events. In that case we don't need to
@@ -4300,6 +4345,14 @@ nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
       } else {
         return result;
       }
+    }
+  } else {
+    // Fire an observer when the user initially uses a mouse or pen.
+    if (sTouchInputActiveState != ePrecise) {
+      sTouchInputActiveState = ePrecise;
+      nsCOMPtr<nsIObserverService> obsServ =
+        mozilla::services::GetObserverService();
+      obsServ->NotifyObservers(nullptr, "precise-input-detected", nullptr);
     }
   }
 
@@ -5016,6 +5069,24 @@ nsWindow::ExternalHandlerProcessMessage(UINT aMessage,
   return false;
 }
 
+/**
+ * the _exit() call is not a safe way to terminate your own process on
+ * Windows, because _exit runs DLL detach callbacks which run static
+ * destructors for xul.dll.
+ *
+ * This method terminates the current process without those issues.
+ */
+static void
+ExitThisProcessSafely()
+{
+  HANDLE process = GetCurrentProcess();
+  if (TerminateProcess(GetCurrentProcess(), 0)) {
+    // TerminateProcess is asynchronous, so we wait on our own process handle
+    WaitForSingleObject(process, INFINITE);
+  }
+  MOZ_CRASH("Just in case extremis crash in ExitThisProcessSafely.");
+}
+
 // The main windows message processing method.
 bool
 nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
@@ -5100,8 +5171,7 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         obsServ->NotifyObservers(nullptr, "profile-before-change", context);
         obsServ->NotifyObservers(nullptr, "profile-before-change-qm", context);
         obsServ->NotifyObservers(nullptr, "profile-before-change-telemetry", context);
-        // Then a controlled but very quick exit.
-        _exit(0);
+        ExitThisProcessSafely();
       }
       sCanQuit = TRI_UNKNOWN;
       result = true;
@@ -5115,7 +5185,6 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
     {
       // Update non-client margin offsets 
       UpdateNonClientMargins();
-      nsUXThemeData::InitTitlebarInfo();
       nsUXThemeData::UpdateNativeThemeInfo();
 
       NotifyThemeChanged();
@@ -5164,12 +5233,24 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
 
     case WM_SETTINGCHANGE:
     {
-      if (IsWin10OrLater() && mWindowType == eWindowType_invisible && lParam) {
+      if (wParam == SPI_SETKEYBOARDDELAY) {
+        // CaretBlinkTime is cached in nsLookAndFeel
+        NotifyThemeChanged();
+        break;
+      }
+      if (lParam) {
         auto lParamString = reinterpret_cast<const wchar_t*>(lParam);
-        if (!wcscmp(lParamString, L"UserInteractionMode")) {
-          nsCOMPtr<nsIWindowsUIUtils> uiUtils(do_GetService("@mozilla.org/windows-ui-utils;1"));
-          if (uiUtils) {
-            uiUtils->UpdateTabletModeState();
+        if (!wcscmp(lParamString, L"ImmersiveColorSet")) {
+          // WM_SYSCOLORCHANGE is not dispatched for accent color changes
+          OnSysColorChanged();
+          break;
+        }
+        if (IsWin10OrLater() && mWindowType == eWindowType_invisible) {
+          if (!wcscmp(lParamString, L"UserInteractionMode")) {
+            nsCOMPtr<nsIWindowsUIUtils> uiUtils(do_GetService("@mozilla.org/windows-ui-utils;1"));
+            if (uiUtils) {
+              uiUtils->UpdateTabletModeState();
+            }
           }
         }
       }
@@ -5210,6 +5291,10 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
           NSToIntRound((mHorResizeMargin - mNonClientOffset.right) * scale);
         clientRect->bottom -=
           NSToIntRound((mVertResizeMargin - mNonClientOffset.bottom) * scale);
+        // Make client rect's width and height more than 0 to
+        // avoid problems of webrender and angle.
+        clientRect->right = std::max(clientRect->right, clientRect->left + 1);
+        clientRect->bottom = std::max(clientRect->bottom, clientRect->top + 1);
 
         result = true;
         *aRetValue = 0;
@@ -5292,7 +5377,8 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       if (wParam == TRUE &&
           !gfxEnv::DisableForcePresent() &&
           gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
-        NS_DispatchToMainThread(NewRunnableMethod(this, &nsWindow::ForcePresent));
+        NS_DispatchToMainThread(NewRunnableMethod("nsWindow::ForcePresent",
+                                                  this, &nsWindow::ForcePresent));
       }
 
       // let the dwm handle nc painting on glass
@@ -5365,6 +5451,7 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
 
     case WM_DESTROY:
       // clean up.
+      DestroyLayerManager();
       OnDestroy();
       result = true;
       break;
@@ -5903,15 +5990,11 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       // for details).
       int32_t objId = static_cast<DWORD>(lParam);
       if (objId == OBJID_CLIENT) { // oleacc.dll will be loaded dynamically
-        a11y::Accessible* rootAccessible = GetAccessible(); // Held by a11y cache
-        if (rootAccessible) {
-          IAccessible *msaaAccessible = nullptr;
-          rootAccessible->GetNativeInterface((void**)&msaaAccessible); // does an addref
-          if (msaaAccessible) {
-            *aRetValue = LresultFromObject(IID_IAccessible, wParam, msaaAccessible); // does an addref
-            msaaAccessible->Release(); // release extra addref
-            result = true;  // We handled the WM_GETOBJECT message
-          }
+        RefPtr<IAccessible> root(a11y::LazyInstantiator::GetRootAccessible(mWnd));
+        if (root) {
+          *aRetValue = LresultFromObject(IID_IAccessible, wParam, root);
+          a11y::LazyInstantiator::EnableBlindAggregation(mWnd);
+          result = true;
         }
       }
     }
@@ -6739,7 +6822,8 @@ nsIntPoint nsWindow::GetTouchCoordinates(WPARAM wParam, LPARAM lParam)
     return ret;
   }
   PTOUCHINPUT pInputs = new TOUCHINPUT[cInputs];
-  if (mGesture.GetTouchInputInfo((HTOUCHINPUT)lParam, cInputs, pInputs)) {
+  if (GetTouchInputInfo((HTOUCHINPUT)lParam, cInputs, pInputs,
+                        sizeof(TOUCHINPUT))) {
     ret.x = TOUCH_COORD_TO_PIXEL(pInputs[0].x);
     ret.y = TOUCH_COORD_TO_PIXEL(pInputs[0].y);
   }
@@ -6754,7 +6838,8 @@ bool nsWindow::OnTouch(WPARAM wParam, LPARAM lParam)
   uint32_t cInputs = LOWORD(wParam);
   PTOUCHINPUT pInputs = new TOUCHINPUT[cInputs];
 
-  if (mGesture.GetTouchInputInfo((HTOUCHINPUT)lParam, cInputs, pInputs)) {
+  if (GetTouchInputInfo((HTOUCHINPUT)lParam, cInputs, pInputs,
+                        sizeof(TOUCHINPUT))) {
     MultiTouchInput touchInput, touchEndInput;
 
     // Walk across the touch point array processing each contact point.
@@ -6838,7 +6923,7 @@ bool nsWindow::OnTouch(WPARAM wParam, LPARAM lParam)
   }
 
   delete [] pInputs;
-  mGesture.CloseTouchInputHandle((HTOUCHINPUT)lParam);
+  CloseTouchInputHandle((HTOUCHINPUT)lParam);
   return true;
 }
 
@@ -6882,7 +6967,7 @@ bool nsWindow::OnGesture(WPARAM wParam, LPARAM lParam)
       mGesture.PanFeedbackFinalize(mWnd, endFeedback);
     }
 
-    mGesture.CloseGestureInfoHandle((HGESTUREINFO)lParam);
+    CloseGestureInfoHandle((HGESTUREINFO)lParam);
 
     return true;
   }
@@ -6908,7 +6993,7 @@ bool nsWindow::OnGesture(WPARAM wParam, LPARAM lParam)
   }
 
   // Only close this if we process and return true.
-  mGesture.CloseGestureInfoHandle((HGESTUREINFO)lParam);
+  CloseGestureInfoHandle((HGESTUREINFO)lParam);
 
   return true; // Handled
 }
@@ -7141,10 +7226,7 @@ nsWindow::IsPopup()
 bool
 nsWindow::ShouldUseOffMainThreadCompositing()
 {
-  // We don't currently support using an accelerated layer manager with
-  // transparent windows so don't even try. I'm also not sure if we even
-  // want to support this case. See bug 593471
-  if (mTransparencyMode == eTransparencyTransparent) {
+  if (IsSmallPopup()) {
     return false;
   }
 
@@ -7223,9 +7305,7 @@ nsWindow::OnDPIChanged(int32_t x, int32_t y, int32_t width, int32_t height)
   if (DefaultScaleOverride() > 0.0) {
     return;
   }
-  double oldScale = mDefaultScale;
   mDefaultScale = -1.0; // force recomputation of scale factor
-  double newScale = GetDefaultScaleInternal();
 
   if (mResizeState != RESIZING && mSizeMode == nsSizeMode_Normal) {
     // Limit the position (if not in the middle of a drag-move) & size,
@@ -7625,7 +7705,7 @@ VOID CALLBACK nsWindow::HookTimerForPopups(HWND hwnd, UINT uMsg, UINT idEvent, D
 {
   if (sHookTimerId != 0) {
     // if the window is nullptr then we need to use the ID to kill the timer
-    BOOL status = ::KillTimer(nullptr, sHookTimerId);
+    DebugOnly<BOOL> status = ::KillTimer(nullptr, sHookTimerId);
     NS_ASSERTION(status, "Hook Timer was not killed.");
     sHookTimerId = 0;
   }
@@ -8075,8 +8155,8 @@ nsWindow::GetMainWindowClass()
 {
   static const wchar_t* sMainWindowClass = nullptr;
   if (!sMainWindowClass) {
-    nsAdoptingString className =
-      Preferences::GetString("ui.window_class_override");
+    nsAutoString className;
+    Preferences::GetString("ui.window_class_override", className);
     if (!className.IsEmpty()) {
       sMainWindowClass = wcsdup(className.get());
     } else {
@@ -8319,30 +8399,17 @@ bool nsWindow::OnPointerEvents(UINT msg, WPARAM aWParam, LPARAM aLParam)
   return true;
 }
 
-/**************************************************************
- **************************************************************
- **
- ** BLOCK: ChildWindow impl.
- **
- ** Child window overrides.
- **
- **************************************************************
- **************************************************************/
-
-// return the style for a child nsWindow
-DWORD ChildWindow::WindowStyle()
-{
-  DWORD style = WS_CLIPCHILDREN | nsWindow::WindowStyle();
-  if (!(style & WS_POPUP))
-    style |= WS_CHILD; // WS_POPUP and WS_CHILD are mutually exclusive.
-  VERIFY_WINDOW_STYLE(style);
-  return style;
-}
-
 void
 nsWindow::GetCompositorWidgetInitData(mozilla::widget::CompositorWidgetInitData* aInitData)
 {
-  aInitData->hWnd() = reinterpret_cast<uintptr_t>(mWnd);
-  aInitData->widgetKey() = reinterpret_cast<uintptr_t>(static_cast<nsIWidget*>(this));
-  aInitData->transparencyMode() = mTransparencyMode;
+  *aInitData = WinCompositorWidgetInitData(
+      reinterpret_cast<uintptr_t>(mWnd),
+      reinterpret_cast<uintptr_t>(static_cast<nsIWidget*>(this)),
+      mTransparencyMode);
+}
+
+bool
+nsWindow::SynchronouslyRepaintOnResize()
+{
+  return !gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled();
 }

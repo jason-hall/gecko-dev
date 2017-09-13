@@ -1,6 +1,5 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
-/* global redirectDomain */
 "use strict";
 
 var {Constructor: CC} = Components;
@@ -14,22 +13,20 @@ XPCOMUtils.defineLazyPreferenceGetter(this, "redirectDomain",
 
 let CryptoHash = CC("@mozilla.org/security/hash;1", "nsICryptoHash", "initWithString");
 
-/* globals URL, XMLHttpRequest */
-
 Cu.importGlobalProperties(["URL", "XMLHttpRequest", "TextEncoder"]);
 
 var {
   promiseDocumentLoaded,
 } = ExtensionUtils;
 
-function computeHash(str) {
+const computeHash = str => {
   let byteArr = new TextEncoder().encode(str);
   let hash = new CryptoHash("sha1");
   hash.update(byteArr, byteArr.length);
   return CommonUtils.bytesAsHex(hash.finish(false));
-}
+};
 
-function checkRedirected(url, redirectURI) {
+const checkRedirected = (url, redirectURI) => {
   return new Promise((resolve, reject) => {
     let xhr = new XMLHttpRequest();
     xhr.open("HEAD", url);
@@ -60,14 +57,14 @@ function checkRedirected(url, redirectURI) {
     };
     xhr.send();
   });
-}
+};
 
-function openOAuthWindow(details, redirectURI) {
+const openOAuthWindow = (details, redirectURI) => {
   let args = Cc["@mozilla.org/array;1"].createInstance(Ci.nsIMutableArray);
   let supportsStringPrefURL = Cc["@mozilla.org/supports-string;1"]
                                 .createInstance(Ci.nsISupportsString);
   supportsStringPrefURL.data = details.url;
-  args.appendElement(supportsStringPrefURL, /* weak =*/ false);
+  args.appendElement(supportsStringPrefURL);
 
   let window = Services.ww.openWindow(null,
                                       Services.prefs.getCharPref("browser.chromeURL"),
@@ -104,7 +101,7 @@ function openOAuthWindow(details, redirectURI) {
       window.addEventListener("unload", unloadlistener);
     });
   });
-}
+};
 
 this.identity = class extends ExtensionAPI {
   getAPI(context) {

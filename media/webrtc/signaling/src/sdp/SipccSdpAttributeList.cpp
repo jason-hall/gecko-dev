@@ -271,7 +271,7 @@ SipccSdpAttributeList::LoadFingerprint(sdp_t* sdp, uint16_t level,
 
     std::vector<uint8_t> fingerprint =
         SdpFingerprintAttributeList::ParseFingerprint(fingerprintToken);
-    if (fingerprint.size() == 0) {
+    if (fingerprint.empty()) {
       errorHolder.AddParseError(lineNumber, "Malformed fingerprint token");
       return false;
     }
@@ -1384,6 +1384,17 @@ SipccSdpAttributeList::GetSctpPort() const
   }
 
   const SdpAttribute* attr = GetAttribute(SdpAttribute::kSctpPortAttribute);
+  return static_cast<const SdpNumberAttribute*>(attr)->mValue;
+}
+
+uint32_t
+SipccSdpAttributeList::GetMaxMessageSize() const
+{
+  if (!HasAttribute(SdpAttribute::kMaxMessageSizeAttribute)) {
+    MOZ_CRASH();
+  }
+
+  const SdpAttribute* attr = GetAttribute(SdpAttribute::kMaxMessageSizeAttribute);
   return static_cast<const SdpNumberAttribute*>(attr)->mValue;
 }
 

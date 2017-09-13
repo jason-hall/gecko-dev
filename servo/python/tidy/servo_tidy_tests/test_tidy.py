@@ -95,6 +95,7 @@ class CheckTidiness(unittest.TestCase):
 
     def test_rust(self):
         errors = tidy.collect_errors_for_files(iterFile('rust_tidy.rs'), [], [tidy.check_rust], print_text=False)
+        self.assertEqual('extra space after use', errors.next()[2])
         self.assertEqual('extra space after {', errors.next()[2])
         self.assertEqual('extra space before }', errors.next()[2])
         self.assertEqual('use statement spans multiple lines', errors.next()[2])
@@ -106,6 +107,7 @@ class CheckTidiness(unittest.TestCase):
         self.assertTrue('mod declaration is not in alphabetical order' in errors.next()[2])
         self.assertEqual('mod declaration spans multiple lines', errors.next()[2])
         self.assertTrue('extern crate declaration is not in alphabetical order' in errors.next()[2])
+        self.assertTrue('derivable traits list is not in alphabetical order' in errors.next()[2])
         self.assertEqual('found an empty line following a {', errors.next()[2])
         self.assertEqual('missing space before ->', errors.next()[2])
         self.assertEqual('missing space after ->', errors.next()[2])
@@ -131,6 +133,9 @@ class CheckTidiness(unittest.TestCase):
         self.assertEqual('extra space after (', errors.next()[2])
         self.assertEqual('extra space after test_fun', errors.next()[2])
         self.assertEqual('no = in the beginning of line', errors.next()[2])
+        self.assertEqual('space before { is not a multiple of 4', errors.next()[2])
+        self.assertEqual('space before } is not a multiple of 4', errors.next()[2])
+        self.assertEqual('extra space after if', errors.next()[2])
         self.assertNoMoreErrors(errors)
 
         feature_errors = tidy.collect_errors_for_files(iterFile('lib.rs'), [], [tidy.check_rust], print_text=False)
@@ -152,6 +157,7 @@ class CheckTidiness(unittest.TestCase):
     def test_spec_link(self):
         tidy.SPEC_BASE_PATH = base_path
         errors = tidy.collect_errors_for_files(iterFile('speclink.rs'), [], [tidy.check_spec], print_text=False)
+        self.assertEqual('method declared in webidl is missing a comment with a specification link', errors.next()[2])
         self.assertEqual('method declared in webidl is missing a comment with a specification link', errors.next()[2])
         self.assertNoMoreErrors(errors)
 

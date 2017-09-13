@@ -13,10 +13,8 @@ use dom::bindings::callback::ExceptionHandling;
 use dom::bindings::cell::DOMRefCell;
 use dom::bindings::codegen::Bindings::DOMRectBinding::DOMRectMethods;
 use dom::bindings::codegen::Bindings::DocumentBinding;
-use dom::bindings::codegen::Bindings::DocumentBinding::{DocumentMethods, DocumentReadyState};
+use dom::bindings::codegen::Bindings::DocumentBinding::{DocumentMethods, DocumentReadyState, ElementCreationOptions};
 use dom::bindings::codegen::Bindings::ElementBinding::ElementMethods;
-use dom::bindings::codegen::Bindings::EventHandlerBinding::EventHandlerNonNull;
-use dom::bindings::codegen::Bindings::EventHandlerBinding::OnErrorEventHandlerNonNull;
 use dom::bindings::codegen::Bindings::HTMLIFrameElementBinding::HTMLIFrameElementBinding::HTMLIFrameElementMethods;
 use dom::bindings::codegen::Bindings::NodeBinding::NodeMethods;
 use dom::bindings::codegen::Bindings::NodeFilterBinding::NodeFilter;
@@ -34,14 +32,16 @@ use dom::bindings::reflector::{DomObject, reflect_dom_object};
 use dom::bindings::str::{DOMString, USVString};
 use dom::bindings::xmlname::{namespace_from_domstring, validate_and_extract, xml_name_type};
 use dom::bindings::xmlname::XMLName::InvalidXMLName;
-use dom::browsingcontext::BrowsingContext;
 use dom::closeevent::CloseEvent;
 use dom::comment::Comment;
+use dom::cssstylesheet::CSSStyleSheet;
+use dom::customelementregistry::CustomElementDefinition;
 use dom::customevent::CustomEvent;
 use dom::documentfragment::DocumentFragment;
 use dom::documenttype::DocumentType;
 use dom::domimplementation::DOMImplementation;
 use dom::element::{Element, ElementCreator, ElementPerformFullscreenEnter, ElementPerformFullscreenExit};
+use dom::element::CustomElementCreationMode;
 use dom::errorevent::ErrorEvent;
 use dom::event::{Event, EventBubbles, EventCancelable, EventDefault, EventStatus};
 use dom::eventtarget::EventTarget;
@@ -62,6 +62,7 @@ use dom::htmlheadelement::HTMLHeadElement;
 use dom::htmlhtmlelement::HTMLHtmlElement;
 use dom::htmliframeelement::HTMLIFrameElement;
 use dom::htmlimageelement::HTMLImageElement;
+use dom::htmlmetaelement::HTMLMetaElement;
 use dom::htmlscriptelement::{HTMLScriptElement, ScriptResult};
 use dom::htmltitleelement::HTMLTitleElement;
 use dom::keyboardevent::KeyboardEvent;
@@ -89,19 +90,19 @@ use dom::treewalker::TreeWalker;
 use dom::uievent::UIEvent;
 use dom::webglcontextevent::WebGLContextEvent;
 use dom::window::{ReflowReason, Window};
+use dom::windowproxy::WindowProxy;
 use dom_struct::dom_struct;
 use encoding::EncodingRef;
 use encoding::all::UTF_8;
-use euclid::point::Point2D;
-use gfx_traits::ScrollRootId;
-use html5ever_atoms::{LocalName, QualName};
+use euclid::{Point2D, Vector2D};
+use html5ever::{LocalName, Namespace, QualName};
 use hyper::header::{Header, SetCookie};
 use hyper_serde::Serde;
 use ipc_channel::ipc::{self, IpcSender};
 use js::jsapi::{JSContext, JSObject, JSRuntime};
 use js::jsapi::JS_GetRuntime;
 use msg::constellation_msg::{ALT, CONTROL, SHIFT, SUPER};
-use msg::constellation_msg::{FrameId, Key, KeyModifiers, KeyState};
+use msg::constellation_msg::{BrowsingContextId, Key, KeyModifiers, KeyState, TopLevelBrowsingContextId};
 use net_traits::{FetchResponseMsg, IpcSend, ReferrerPolicy};
 use net_traits::CookieSource::NonHTTP;
 use net_traits::CoreResourceMsg::{GetCookiesForUrl, SetCookiesForUrl};
@@ -114,9 +115,10 @@ use script_runtime::{CommonScriptMsg, ScriptThreadEventCategory};
 use script_thread::{MainThreadScriptMsg, Runnable, ScriptThread};
 use script_traits::{AnimationState, CompositorEvent, DocumentActivity};
 use script_traits::{MouseButton, MouseEventType, MozBrowserEvent};
-use script_traits::{MsDuration, ScriptMsg as ConstellationMsg, TouchpadPressurePhase};
+use script_traits::{MsDuration, ScriptMsg, TouchpadPressurePhase};
 use script_traits::{TouchEventType, TouchId};
 use script_traits::UntrustedNodeAddress;
+use servo_arc::Arc;
 use servo_atoms::Atom;
 use servo_config::prefs::PREFS;
 use servo_url::{ImmutableOrigin, MutableOrigin, ServoUrl};
@@ -129,20 +131,22 @@ use std::default::Default;
 use std::iter::once;
 use std::mem;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use style::attr::AttrValue;
 use style::context::{QuirksMode, ReflowGoal};
-use style::restyle_hints::{RestyleHint, RESTYLE_SELF, RESTYLE_STYLE_ATTRIBUTE};
+use style::invalidation::element::restyle_hints::{RestyleHint, RESTYLE_SELF, RESTYLE_STYLE_ATTRIBUTE};
+use style::media_queries::{Device, MediaList, MediaType};
 use style::selector_parser::{RestyleDamage, Snapshot};
-use style::shared_lock::SharedRwLock as StyleSharedRwLock;
+use style::shared_lock::{SharedRwLock as StyleSharedRwLock, SharedRwLockReadGuard};
 use style::str::{HTML_SPACE_CHARACTERS, split_html_space_chars, str_join};
-use style::stylesheets::Stylesheet;
+use style::stylesheet_set::StylesheetSet;
+use style::stylesheets::{Stylesheet, StylesheetContents, OriginSet};
 use task_source::TaskSource;
 use time;
 use timers::OneshotTimerCallback;
 use url::Host;
 use url::percent_encoding::percent_decode;
+use webrender_api::ClipId;
 
 /// The number of times we are allowed to see spurious `requestAnimationFrame()` calls before
 /// falling back to fake ones.
@@ -162,14 +166,6 @@ pub enum TouchEventResult {
 pub enum IsHTMLDocument {
     HTMLDocument,
     NonHTMLDocument,
-}
-
-#[derive(JSTraceable, HeapSizeOf)]
-#[must_root]
-pub struct StylesheetInDocument {
-    pub node: JS<Node>,
-    #[ignore_heap_size_of = "Arc"]
-    pub stylesheet: Arc<Stylesheet>,
 }
 
 #[derive(Debug, HeapSizeOf)]
@@ -195,6 +191,34 @@ impl PendingRestyle {
     }
 }
 
+#[derive(Clone, HeapSizeOf, JSTraceable)]
+#[must_root]
+struct StyleSheetInDocument {
+    #[ignore_heap_size_of = "Arc"]
+    sheet: Arc<Stylesheet>,
+    owner: JS<Element>,
+}
+
+impl PartialEq for StyleSheetInDocument {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.sheet, &other.sheet)
+    }
+}
+
+impl ::style::stylesheets::StylesheetInDocument for StyleSheetInDocument {
+    fn contents(&self, guard: &SharedRwLockReadGuard) -> &StylesheetContents {
+        self.sheet.contents(guard)
+    }
+
+    fn media<'a>(&'a self, guard: &'a SharedRwLockReadGuard) -> Option<&'a MediaList> {
+        self.sheet.media(guard)
+    }
+
+    fn enabled(&self) -> bool {
+        self.sheet.enabled()
+    }
+}
+
 /// https://dom.spec.whatwg.org/#document
 #[dom_struct]
 pub struct Document {
@@ -209,6 +233,7 @@ pub struct Document {
     is_html_document: bool,
     activity: Cell<DocumentActivity>,
     url: DOMRefCell<ServoUrl>,
+    #[ignore_heap_size_of = "defined in selectors"]
     quirks_mode: Cell<QuirksMode>,
     /// Caches for the getElement methods
     id_map: DOMRefCell<HashMap<Atom, Vec<JS<Element>>>>,
@@ -226,9 +251,7 @@ pub struct Document {
     /// Can be acquired once for accessing many objects.
     style_shared_lock: StyleSharedRwLock,
     /// List of stylesheets associated with nodes in this document. |None| if the list needs to be refreshed.
-    stylesheets: DOMRefCell<Option<Vec<StylesheetInDocument>>>,
-    /// Whether the list of stylesheets has changed since the last reflow was triggered.
-    stylesheets_changed_since_reflow: Cell<bool>,
+    stylesheets: DOMRefCell<StylesheetSet<StyleSheetInDocument>>,
     stylesheet_list: MutNullableJS<StyleSheetList>,
     ready_state: Cell<DocumentReadyState>,
     /// Whether the DOMContentLoaded event has already been dispatched.
@@ -328,7 +351,7 @@ pub struct Document {
     form_id_listener_map: DOMRefCell<HashMap<Atom, HashSet<JS<Element>>>>,
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct ImagesFilter;
 impl CollectionFilter for ImagesFilter {
     fn filter(&self, elem: &Element, _root: &Node) -> bool {
@@ -336,7 +359,7 @@ impl CollectionFilter for ImagesFilter {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct EmbedsFilter;
 impl CollectionFilter for EmbedsFilter {
     fn filter(&self, elem: &Element, _root: &Node) -> bool {
@@ -344,7 +367,7 @@ impl CollectionFilter for EmbedsFilter {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct LinksFilter;
 impl CollectionFilter for LinksFilter {
     fn filter(&self, elem: &Element, _root: &Node) -> bool {
@@ -353,7 +376,7 @@ impl CollectionFilter for LinksFilter {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct FormsFilter;
 impl CollectionFilter for FormsFilter {
     fn filter(&self, elem: &Element, _root: &Node) -> bool {
@@ -361,7 +384,7 @@ impl CollectionFilter for FormsFilter {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct ScriptsFilter;
 impl CollectionFilter for ScriptsFilter {
     fn filter(&self, elem: &Element, _root: &Node) -> bool {
@@ -369,7 +392,7 @@ impl CollectionFilter for ScriptsFilter {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct AnchorsFilter;
 impl CollectionFilter for AnchorsFilter {
     fn filter(&self, elem: &Element, _root: &Node) -> bool {
@@ -377,7 +400,7 @@ impl CollectionFilter for AnchorsFilter {
     }
 }
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct AppletsFilter;
 impl CollectionFilter for AppletsFilter {
     fn filter(&self, elem: &Element, _root: &Node) -> bool {
@@ -401,9 +424,9 @@ impl Document {
 
     /// https://html.spec.whatwg.org/multipage/#concept-document-bc
     #[inline]
-    pub fn browsing_context(&self) -> Option<Root<BrowsingContext>> {
+    pub fn browsing_context(&self) -> Option<Root<WindowProxy>> {
         if self.has_browsing_context {
-            self.window.maybe_browsing_context()
+            self.window.undiscarded_window_proxy()
         } else {
             None
         }
@@ -492,14 +515,12 @@ impl Document {
         // FIXME: This should check the dirty bit on the document,
         // not the document element. Needs some layout changes to make
         // that workable.
-        match self.GetDocumentElement() {
-            Some(root) => {
-                root.upcast::<Node>().has_dirty_descendants() ||
-                !self.pending_restyles.borrow().is_empty() ||
-                self.needs_paint()
-            }
-            None => false,
-        }
+        self.stylesheets.borrow().has_changed() ||
+        self.GetDocumentElement().map_or(false, |root| {
+            root.upcast::<Node>().has_dirty_descendants() ||
+            !self.pending_restyles.borrow().is_empty() ||
+            self.needs_paint()
+        })
     }
 
     /// Returns the first `base` element in the DOM that has an `href` attribute.
@@ -541,7 +562,7 @@ impl Document {
         self.quirks_mode.set(mode);
 
         if mode == QuirksMode::Quirks {
-            self.window.layout_chan().send(Msg::SetQuirksMode).unwrap();
+            self.window.layout_chan().send(Msg::SetQuirksMode(mode)).unwrap();
         }
     }
 
@@ -629,7 +650,7 @@ impl Document {
         // reset_form_owner_for_listeners -> reset_form_owner -> GetElementById
         {
             let mut id_map = self.id_map.borrow_mut();
-            let mut elements = id_map.entry(id.clone()).or_insert(Vec::new());
+            let elements = id_map.entry(id.clone()).or_insert(Vec::new());
             elements.insert_pre_order(element, root.r().upcast::<Node>());
         }
         self.reset_form_owner_for_listeners(&id);
@@ -638,7 +659,7 @@ impl Document {
     pub fn register_form_id_listener<T: ?Sized + FormControl>(&self, id: DOMString, listener: &T) {
         let mut map = self.form_id_listener_map.borrow_mut();
         let listener = listener.to_element();
-        let mut set = map.entry(Atom::from(id)).or_insert(HashSet::new());
+        let set = map.entry(Atom::from(id)).or_insert(HashSet::new());
         set.insert(JS::from_ref(listener));
     }
 
@@ -699,9 +720,12 @@ impl Document {
 
         if let Some((x, y)) = point {
             // Step 3
+            let global_scope = self.window.upcast::<GlobalScope>();
+            let webrender_pipeline_id = global_scope.pipeline_id().to_webrender();
+            self.window.update_viewport_for_scroll(x, y);
             self.window.perform_a_scroll(x,
                                          y,
-                                         ScrollRootId::root(),
+                                         ClipId::root_scroll_node(webrender_pipeline_id),
                                          ScrollBehavior::Instant,
                                          target.r());
         }
@@ -788,9 +812,7 @@ impl Document {
             // Update the focus state for all elements in the focus chain.
             // https://html.spec.whatwg.org/multipage/#focus-chain
             if focus_type == FocusType::Element {
-                let global_scope = self.window.upcast::<GlobalScope>();
-                let event = ConstellationMsg::Focus(global_scope.pipeline_id());
-                global_scope.constellation_chan().send(event).unwrap();
+                self.send_to_constellation(ScriptMsg::Focus);
             }
         }
     }
@@ -801,19 +823,14 @@ impl Document {
             // https://developer.mozilla.org/en-US/docs/Web/Events/mozbrowsertitlechange
             self.trigger_mozbrowser_event(MozBrowserEvent::TitleChange(String::from(self.Title())));
 
-            self.send_title_to_compositor();
+            self.send_title_to_constellation();
         }
     }
 
-    /// Sends this document's title to the compositor.
-    pub fn send_title_to_compositor(&self) {
-        let window = self.window();
-        let global_scope = window.upcast::<GlobalScope>();
-        global_scope
-              .constellation_chan()
-              .send(ConstellationMsg::SetTitle(global_scope.pipeline_id(),
-                                               Some(String::from(self.Title()))))
-              .unwrap();
+    /// Sends this document's title to the constellation.
+    pub fn send_title_to_constellation(&self) {
+        let title = Some(String::from(self.Title()));
+        self.send_to_constellation(ScriptMsg::SetTitle(title));
     }
 
     pub fn dirty_all_nodes(&self) {
@@ -823,6 +840,7 @@ impl Document {
         }
     }
 
+    #[allow(unsafe_code)]
     pub fn handle_mouse_event(&self,
                               js_runtime: *mut JSRuntime,
                               button: MouseButton,
@@ -838,7 +856,9 @@ impl Document {
         let node = match self.window.hit_test_query(client_point, false) {
             Some(node_address) => {
                 debug!("node address is {:?}", node_address);
-                node::from_untrusted_node_address(js_runtime, node_address)
+                unsafe {
+                    node::from_untrusted_node_address(js_runtime, node_address)
+                }
             },
             None => return,
         };
@@ -858,12 +878,12 @@ impl Document {
         if let Some(iframe) = el.downcast::<HTMLIFrameElement>() {
             if let Some(pipeline_id) = iframe.pipeline_id() {
                 let rect = iframe.upcast::<Element>().GetBoundingClientRect();
-                let child_origin = Point2D::new(rect.X() as f32, rect.Y() as f32);
+                let child_origin = Vector2D::new(rect.X() as f32, rect.Y() as f32);
                 let child_point = client_point - child_origin;
 
                 let event = CompositorEvent::MouseButtonEvent(mouse_event_type, button, child_point);
-                let event = ConstellationMsg::ForwardEvent(pipeline_id, event);
-                self.window.upcast::<GlobalScope>().constellation_chan().send(event).unwrap();
+                let event = ScriptMsg::ForwardEvent(pipeline_id, event);
+                self.send_to_constellation(event);
             }
             return;
         }
@@ -950,7 +970,7 @@ impl Document {
             let line = click_pos - last_pos;
             let dist = (line.dot(line) as f64).sqrt();
 
-            if  now.duration_since(last_time) < DBL_CLICK_TIMEOUT &&
+            if now.duration_since(last_time) < DBL_CLICK_TIMEOUT &&
                 dist < DBL_CLICK_DIST_THRESHOLD as f64 {
                 // A double click has occurred if this click is within a certain time and dist. of previous click.
                 let click_count = 2;
@@ -985,13 +1005,16 @@ impl Document {
         *self.last_click_info.borrow_mut() = Some((now, click_pos));
     }
 
+    #[allow(unsafe_code)]
     pub fn handle_touchpad_pressure_event(&self,
                                           js_runtime: *mut JSRuntime,
                                           client_point: Point2D<f32>,
                                           pressure: f32,
                                           phase_now: TouchpadPressurePhase) {
         let node = match self.window.hit_test_query(client_point, false) {
-            Some(node_address) => node::from_untrusted_node_address(js_runtime, node_address),
+            Some(node_address) => unsafe {
+                node::from_untrusted_node_address(js_runtime, node_address)
+            },
             None => return
         };
 
@@ -1010,14 +1033,14 @@ impl Document {
         if let Some(iframe) = el.downcast::<HTMLIFrameElement>() {
             if let Some(pipeline_id) = iframe.pipeline_id() {
                 let rect = iframe.upcast::<Element>().GetBoundingClientRect();
-                let child_origin = Point2D::new(rect.X() as f32, rect.Y() as f32);
+                let child_origin = Vector2D::new(rect.X() as f32, rect.Y() as f32);
                 let child_point = client_point - child_origin;
 
                 let event = CompositorEvent::TouchpadPressureEvent(child_point,
                                                                    pressure,
                                                                    phase_now);
-                let event = ConstellationMsg::ForwardEvent(pipeline_id, event);
-                self.window.upcast::<GlobalScope>().constellation_chan().send(event).unwrap();
+                let event = ScriptMsg::ForwardEvent(pipeline_id, event);
+                self.send_to_constellation(event);
             }
             return;
         }
@@ -1086,6 +1109,7 @@ impl Document {
         event.fire(target);
     }
 
+    #[allow(unsafe_code)]
     pub fn handle_mouse_move_event(&self,
                                    js_runtime: *mut JSRuntime,
                                    client_point: Option<Point2D<f32>>,
@@ -1101,7 +1125,7 @@ impl Document {
         };
 
         let maybe_new_target = self.window.hit_test_query(client_point, true).and_then(|address| {
-            let node = node::from_untrusted_node_address(js_runtime, address);
+            let node = unsafe { node::from_untrusted_node_address(js_runtime, address) };
             node.inclusive_ancestors()
                 .filter_map(Root::downcast::<Element>)
                 .next()
@@ -1113,12 +1137,12 @@ impl Document {
             if let Some(iframe) = new_target.downcast::<HTMLIFrameElement>() {
                 if let Some(pipeline_id) = iframe.pipeline_id() {
                     let rect = iframe.upcast::<Element>().GetBoundingClientRect();
-                    let child_origin = Point2D::new(rect.X() as f32, rect.Y() as f32);
+                    let child_origin = Vector2D::new(rect.X() as f32, rect.Y() as f32);
                     let child_point = client_point - child_origin;
 
                     let event = CompositorEvent::MouseMoveEvent(Some(child_point));
-                    let event = ConstellationMsg::ForwardEvent(pipeline_id, event);
-                    self.window.upcast::<GlobalScope>().constellation_chan().send(event).unwrap();
+                    let event = ScriptMsg::ForwardEvent(pipeline_id, event);
+                    self.send_to_constellation(event);
                 }
                 return;
             }
@@ -1183,6 +1207,7 @@ impl Document {
                            ReflowReason::MouseEvent);
     }
 
+    #[allow(unsafe_code)]
     pub fn handle_touch_event(&self,
                               js_runtime: *mut JSRuntime,
                               event_type: TouchEventType,
@@ -1199,7 +1224,9 @@ impl Document {
         };
 
         let node = match self.window.hit_test_query(point, false) {
-            Some(node_address) => node::from_untrusted_node_address(js_runtime, node_address),
+            Some(node_address) => unsafe {
+                node::from_untrusted_node_address(js_runtime, node_address)
+            },
             None => return TouchEventResult::Processed(false),
         };
         let el = match node.downcast::<Element>() {
@@ -1217,12 +1244,12 @@ impl Document {
         if let Some(iframe) = el.downcast::<HTMLIFrameElement>() {
             if let Some(pipeline_id) = iframe.pipeline_id() {
                 let rect = iframe.upcast::<Element>().GetBoundingClientRect();
-                let child_origin = Point2D::new(rect.X() as f32, rect.Y() as f32);
+                let child_origin = Vector2D::new(rect.X() as f32, rect.Y() as f32);
                 let child_point = point - child_origin;
 
                 let event = CompositorEvent::TouchEvent(event_type, touch_id, child_point);
-                let event = ConstellationMsg::ForwardEvent(pipeline_id, event);
-                self.window.upcast::<GlobalScope>().constellation_chan().send(event).unwrap();
+                let event = ScriptMsg::ForwardEvent(pipeline_id, event);
+                self.send_to_constellation(event);
             }
             return TouchEventResult::Forwarded;
         }
@@ -1313,8 +1340,7 @@ impl Document {
                               ch: Option<char>,
                               key: Key,
                               state: KeyState,
-                              modifiers: KeyModifiers,
-                              constellation: &IpcSender<ConstellationMsg>) {
+                              modifiers: KeyModifiers) {
         let focused = self.get_focused_element();
         let body = self.GetBody();
 
@@ -1390,7 +1416,8 @@ impl Document {
         }
 
         if cancel_state == EventDefault::Allowed {
-            constellation.send(ConstellationMsg::SendKeyEvent(ch, key, state, modifiers)).unwrap();
+            let msg = ScriptMsg::SendKeyEvent(ch, key, state, modifiers);
+            self.send_to_constellation(msg);
 
             // This behavior is unspecced
             // We are supposed to dispatch synthetic click activation for Space and/or Return,
@@ -1440,7 +1467,7 @@ impl Document {
             for node in nodes {
                 match node {
                     NodeOrString::Node(node) => {
-                        try!(fragment.AppendChild(&node));
+                        fragment.AppendChild(&node)?;
                     },
                     NodeOrString::String(string) => {
                         let node = Root::upcast::<Node>(self.CreateTextNode(string));
@@ -1491,28 +1518,21 @@ impl Document {
     }
 
     pub fn invalidate_stylesheets(&self) {
-        self.stylesheets_changed_since_reflow.set(true);
-        *self.stylesheets.borrow_mut() = None;
+        self.stylesheets.borrow_mut().force_dirty(OriginSet::all());
+
         // Mark the document element dirty so a reflow will be performed.
+        //
+        // FIXME(emilio): Use the StylesheetSet invalidation stuff.
         if let Some(element) = self.GetDocumentElement() {
             element.upcast::<Node>().dirty(NodeDamage::NodeStyleDamaged);
         }
     }
 
-    pub fn get_and_reset_stylesheets_changed_since_reflow(&self) -> bool {
-        let changed = self.stylesheets_changed_since_reflow.get();
-        self.stylesheets_changed_since_reflow.set(false);
-        changed
-    }
-
     pub fn trigger_mozbrowser_event(&self, event: MozBrowserEvent) {
         if PREFS.is_mozbrowser_enabled() {
             if let Some((parent_pipeline_id, _)) = self.window.parent_info() {
-                let global_scope = self.window.upcast::<GlobalScope>();
-                let event = ConstellationMsg::MozBrowserEvent(parent_pipeline_id,
-                                                              global_scope.pipeline_id(),
-                                                              event);
-                global_scope.constellation_chan().send(event).unwrap();
+                let event = ScriptMsg::MozBrowserEvent(parent_pipeline_id, event);
+                self.send_to_constellation(event);
             }
         }
     }
@@ -1524,28 +1544,26 @@ impl Document {
         self.animation_frame_ident.set(ident);
         self.animation_frame_list.borrow_mut().push((ident, Some(callback)));
 
-        // No need to send a `ChangeRunningAnimationsState` if we're running animation callbacks:
-        // we're guaranteed to already be in the "animation callbacks present" state.
-        //
-        // This reduces CPU usage by avoiding needless thread wakeups in the common case of
-        // repeated rAF.
-        //
         // TODO: Should tick animation only when document is visible
-        if !self.running_animation_callbacks.get() {
-            if !self.is_faking_animation_frames() {
-                let global_scope = self.window.upcast::<GlobalScope>();
-                let event = ConstellationMsg::ChangeRunningAnimationsState(
-                    global_scope.pipeline_id(),
-                    AnimationState::AnimationCallbacksPresent);
-                global_scope.constellation_chan().send(event).unwrap();
-            } else {
-                let callback = FakeRequestAnimationFrameCallback {
-                    document: Trusted::new(self),
-                };
-                self.global()
-                    .schedule_callback(OneshotTimerCallback::FakeRequestAnimationFrame(callback),
-                                       MsDuration::new(FAKE_REQUEST_ANIMATION_FRAME_DELAY));
-            }
+
+        // If we are running 'fake' animation frames, we unconditionally
+        // set up a one-shot timer for script to execute the rAF callbacks.
+        if self.is_faking_animation_frames() {
+            let callback = FakeRequestAnimationFrameCallback {
+                document: Trusted::new(self),
+            };
+            self.global()
+                .schedule_callback(OneshotTimerCallback::FakeRequestAnimationFrame(callback),
+                                   MsDuration::new(FAKE_REQUEST_ANIMATION_FRAME_DELAY));
+        } else if !self.running_animation_callbacks.get() {
+            // No need to send a `ChangeRunningAnimationsState` if we're running animation callbacks:
+            // we're guaranteed to already be in the "animation callbacks present" state.
+            //
+            // This reduces CPU usage by avoiding needless thread wakeups in the common case of
+            // repeated rAF.
+
+            let event = ScriptMsg::ChangeRunningAnimationsState(AnimationState::AnimationCallbacksPresent);
+            self.send_to_constellation(event);
         }
 
         ident
@@ -1554,7 +1572,7 @@ impl Document {
     /// https://html.spec.whatwg.org/multipage/#dom-window-cancelanimationframe
     pub fn cancel_animation_frame(&self, ident: u32) {
         let mut list = self.animation_frame_list.borrow_mut();
-        if let Some(mut pair) = list.iter_mut().find(|pair| pair.0 == ident) {
+        if let Some(pair) = list.iter_mut().find(|pair| pair.0 == ident) {
             pair.1 = None;
         }
     }
@@ -1582,6 +1600,22 @@ impl Document {
                                            ReflowQueryType::NoQuery,
                                            ReflowReason::RequestAnimationFrame);
 
+        if spurious && !was_faking_animation_frames {
+            // If the rAF callbacks did not mutate the DOM, then the
+            // reflow call above means that layout will not be invoked,
+            // and therefore no new frame will be sent to the compositor.
+            // If this happens, the compositor will not tick the animation
+            // and the next rAF will never be called! When this happens
+            // for several frames, then the spurious rAF detection below
+            // will kick in and use a timer to tick the callbacks. However,
+            // for the interim frames where we are deciding whether this rAF
+            // is considered spurious, we need to ensure that the layout
+            // and compositor *do* tick the animation.
+            self.window.force_reflow(ReflowGoal::ForDisplay,
+                                     ReflowQueryType::NoQuery,
+                                     ReflowReason::RequestAnimationFrame);
+        }
+
         // Only send the animation change state message after running any callbacks.
         // This means that if the animation callback adds a new callback for
         // the next frame (which is the common case), we won't send a NoAnimationCallbacksPresent
@@ -1595,11 +1629,8 @@ impl Document {
                 (!was_faking_animation_frames && self.is_faking_animation_frames()) {
             mem::swap(&mut *self.animation_frame_list.borrow_mut(),
                       &mut *animation_frame_list);
-            let global_scope = self.window.upcast::<GlobalScope>();
-            let event = ConstellationMsg::ChangeRunningAnimationsState(
-                global_scope.pipeline_id(),
-                AnimationState::NoAnimationCallbacksPresent);
-            global_scope.constellation_chan().send(event).unwrap();
+            let event = ScriptMsg::ChangeRunningAnimationsState(AnimationState::NoAnimationCallbacksPresent);
+            self.send_to_constellation(event);
         }
 
         // Update the counter of spurious animation frames.
@@ -1862,10 +1893,7 @@ impl Document {
     }
 
     pub fn notify_constellation_load(&self) {
-        let global_scope = self.window.upcast::<GlobalScope>();
-        let pipeline_id = global_scope.pipeline_id();
-        let load_event = ConstellationMsg::LoadComplete(pipeline_id);
-        global_scope.constellation_chan().send(load_event).unwrap();
+        self.send_to_constellation(ScriptMsg::LoadComplete);
     }
 
     pub fn set_current_parser(&self, script: Option<&ServoParser>) {
@@ -1884,9 +1912,23 @@ impl Document {
     }
 
     /// Find an iframe element in the document.
-    pub fn find_iframe(&self, frame_id: FrameId) -> Option<Root<HTMLIFrameElement>> {
+    pub fn find_iframe(&self, browsing_context_id: BrowsingContextId) -> Option<Root<HTMLIFrameElement>> {
         self.iter_iframes()
-            .find(|node| node.frame_id() == frame_id)
+            .find(|node| node.browsing_context_id() == Some(browsing_context_id))
+    }
+
+    /// Find a mozbrowser iframe element in the document.
+    pub fn find_mozbrowser_iframe(&self,
+                                  top_level_browsing_context_id: TopLevelBrowsingContextId)
+                                  -> Option<Root<HTMLIFrameElement>>
+    {
+        match self.find_iframe(BrowsingContextId::from(top_level_browsing_context_id)) {
+            None => None,
+            Some(iframe) => {
+                assert!(iframe.Mozbrowser());
+                Some(iframe)
+            },
+        }
     }
 
     pub fn get_dom_loading(&self) -> u64 {
@@ -1942,21 +1984,48 @@ impl Document {
     }
 
     pub fn nodes_from_point(&self, client_point: &Point2D<f32>) -> Vec<UntrustedNodeAddress> {
-        let page_point =
-            Point2D::new(client_point.x + self.window.PageXOffset() as f32,
-                         client_point.y + self.window.PageYOffset() as f32);
-
         if !self.window.reflow(ReflowGoal::ForScriptQuery,
-                               ReflowQueryType::NodesFromPoint(page_point, *client_point),
+                               ReflowQueryType::NodesFromPoint(*client_point),
                                ReflowReason::Query) {
             return vec!();
         };
 
         self.window.layout().nodes_from_point_response()
     }
+
+    /// https://html.spec.whatwg.org/multipage/#look-up-a-custom-element-definition
+    pub fn lookup_custom_element_definition(&self,
+                                            namespace: &Namespace,
+                                            local_name: &LocalName,
+                                            is: Option<&LocalName>)
+                                            -> Option<Rc<CustomElementDefinition>> {
+        if !PREFS.get("dom.customelements.enabled").as_boolean().unwrap_or(false) {
+            return None;
+        }
+
+        // Step 1
+        if *namespace != ns!(html) {
+            return None;
+        }
+
+        // Step 2
+        if !self.has_browsing_context {
+            return None;
+        }
+
+        // Step 3
+        let registry = self.window.CustomElements();
+
+        registry.lookup_definition(local_name, is)
+    }
+
+    fn send_to_constellation(&self, msg: ScriptMsg) {
+        let global_scope = self.window.upcast::<GlobalScope>();
+        global_scope.script_to_constellation_chan().send(msg).unwrap();
+    }
 }
 
-#[derive(PartialEq, HeapSizeOf)]
+#[derive(HeapSizeOf, PartialEq)]
 pub enum DocumentSource {
     FromParser,
     NotFromParser,
@@ -2070,7 +2139,7 @@ fn url_has_network_scheme(url: &ServoUrl) -> bool {
     }
 }
 
-#[derive(Copy, Clone, HeapSizeOf, JSTraceable, PartialEq, Eq)]
+#[derive(Clone, Copy, Eq, HeapSizeOf, JSTraceable, PartialEq)]
 pub enum HasBrowsingContext {
     No,
     Yes,
@@ -2147,8 +2216,7 @@ impl Document {
                 PER_PROCESS_AUTHOR_SHARED_LOCK.clone()
                 //StyleSharedRwLock::new()
             },
-            stylesheets: DOMRefCell::new(None),
-            stylesheets_changed_since_reflow: Cell::new(false),
+            stylesheets: DOMRefCell::new(StylesheetSet::new()),
             stylesheet_list: MutNullableJS::new(None),
             ready_state: Cell::new(ready_state),
             domcontentloaded_dispatched: Cell::new(domcontentloaded_dispatched),
@@ -2259,40 +2327,116 @@ impl Document {
         self.GetDocumentElement().and_then(Root::downcast)
     }
 
-    // Ensure that the stylesheets vector is populated
-    fn ensure_stylesheets(&self) {
-        let mut stylesheets = self.stylesheets.borrow_mut();
-        if stylesheets.is_none() {
-            *stylesheets = Some(self.upcast::<Node>()
-                .traverse_preorder()
-                .filter_map(|node| {
-                    node.get_stylesheet()
-                        .map(|stylesheet| StylesheetInDocument {
-                        node: JS::from_ref(&*node),
-                        stylesheet: stylesheet,
-                    })
-                })
-                .collect());
-        };
-    }
-
     /// Return a reference to the per-document shared lock used in stylesheets.
     pub fn style_shared_lock(&self) -> &StyleSharedRwLock {
         &self.style_shared_lock
     }
 
-    /// Returns the list of stylesheets associated with nodes in the document.
-    pub fn stylesheets(&self) -> Vec<Arc<Stylesheet>> {
-        self.ensure_stylesheets();
-        self.stylesheets.borrow().as_ref().unwrap().iter()
-                        .map(|s| s.stylesheet.clone())
-                        .collect()
+    /// Flushes the stylesheet list, and returns whether any stylesheet changed.
+    pub fn flush_stylesheets_for_reflow(&self) -> bool {
+        // NOTE(emilio): The invalidation machinery is used on the replicated
+        // list on the layout thread.
+        //
+        // FIXME(emilio): This really should differentiate between CSSOM changes
+        // and normal stylesheets additions / removals, because in the last case
+        // the layout thread already has that information and we could avoid
+        // dirtying the whole thing.
+        let mut stylesheets = self.stylesheets.borrow_mut();
+        let have_changed = stylesheets.has_changed();
+        stylesheets.flush_without_invalidation();
+        have_changed
     }
 
-    pub fn with_style_sheets_in_document<F, T>(&self, mut f: F) -> T
-            where F: FnMut(&[StylesheetInDocument]) -> T {
-        self.ensure_stylesheets();
-        f(&self.stylesheets.borrow().as_ref().unwrap())
+    /// Returns a `Device` suitable for media query evaluation.
+    ///
+    /// FIXME(emilio): This really needs to be somehow more in sync with layout.
+    /// Feels like a hack.
+    ///
+    /// Also, shouldn't return an option, I'm quite sure.
+    pub fn device(&self) -> Option<Device> {
+        let window_size = match self.window().window_size() {
+            Some(ws) => ws,
+            None => return None,
+        };
+
+        let viewport_size = window_size.initial_viewport;
+        let device_pixel_ratio = window_size.device_pixel_ratio;
+        Some(Device::new(MediaType::screen(), viewport_size, device_pixel_ratio))
+    }
+
+    /// Remove a stylesheet owned by `owner` from the list of document sheets.
+    #[allow(unrooted_must_root)] // Owner needs to be rooted already necessarily.
+    pub fn remove_stylesheet(&self, owner: &Element, s: &Arc<Stylesheet>) {
+        self.window()
+            .layout_chan()
+            .send(Msg::RemoveStylesheet(s.clone()))
+            .unwrap();
+
+        let guard = s.shared_lock.read();
+
+        // FIXME(emilio): Would be nice to remove the clone, etc.
+        self.stylesheets.borrow_mut().remove_stylesheet(
+            None,
+            StyleSheetInDocument {
+                sheet: s.clone(),
+                owner: JS::from_ref(owner),
+            },
+            &guard,
+        );
+    }
+
+    /// Add a stylesheet owned by `owner` to the list of document sheets, in the
+    /// correct tree position.
+    #[allow(unrooted_must_root)] // Owner needs to be rooted already necessarily.
+    pub fn add_stylesheet(&self, owner: &Element, sheet: Arc<Stylesheet>) {
+        // FIXME(emilio): It'd be nice to unify more code between the elements
+        // that own stylesheets, but StylesheetOwner is more about loading
+        // them...
+        debug_assert!(owner.as_stylesheet_owner().is_some() ||
+                      owner.is::<HTMLMetaElement>(), "Wat");
+
+        let mut stylesheets = self.stylesheets.borrow_mut();
+        let insertion_point = stylesheets.iter().find(|sheet_in_doc| {
+            owner.upcast::<Node>().is_before(sheet_in_doc.owner.upcast())
+        }).cloned();
+
+        self.window()
+            .layout_chan()
+            .send(Msg::AddStylesheet(
+                sheet.clone(),
+                insertion_point.as_ref().map(|s| s.sheet.clone())
+            ))
+            .unwrap();
+
+        let sheet = StyleSheetInDocument {
+            sheet,
+            owner: JS::from_ref(owner),
+        };
+
+        let lock = self.style_shared_lock();
+        let guard = lock.read();
+
+        match insertion_point {
+            Some(ip) => {
+                stylesheets.insert_stylesheet_before(None, sheet, ip, &guard);
+            }
+            None => {
+                stylesheets.append_stylesheet(None, sheet, &guard);
+            }
+        }
+    }
+
+    /// Returns the number of document stylesheets.
+    pub fn stylesheet_count(&self) -> usize {
+        self.stylesheets.borrow().len()
+    }
+
+    pub fn stylesheet_at(&self, index: usize) -> Option<Root<CSSStyleSheet>> {
+        let stylesheets = self.stylesheets.borrow();
+
+        stylesheets.get(index).and_then(|s| {
+            s.owner.upcast::<Node>().get_cssom_stylesheet()
+        })
     }
 
     /// https://html.spec.whatwg.org/multipage/#appropriate-template-contents-owner-document
@@ -2335,7 +2479,7 @@ impl Document {
         if entry.snapshot.is_none() {
             entry.snapshot = Some(Snapshot::new(el.html_element_in_html_document()));
         }
-        let mut snapshot = entry.snapshot.as_mut().unwrap();
+        let snapshot = entry.snapshot.as_mut().unwrap();
         if snapshot.state.is_none() {
             snapshot.state = Some(el.state());
         }
@@ -2352,17 +2496,24 @@ impl Document {
             entry.snapshot = Some(Snapshot::new(el.html_element_in_html_document()));
         }
         if attr.local_name() == &local_name!("style") {
-            entry.hint |= RESTYLE_STYLE_ATTRIBUTE;
+            entry.hint.insert(RESTYLE_STYLE_ATTRIBUTE);
         }
 
         // FIXME(emilio): This should become something like
         // element.is_attribute_mapped(attr.local_name()).
         if attr.local_name() == &local_name!("width") ||
            attr.local_name() == &local_name!("height") {
-            entry.hint |= RESTYLE_SELF;
-       }
+            entry.hint.insert(RESTYLE_SELF);
+        }
 
-        let mut snapshot = entry.snapshot.as_mut().unwrap();
+        let snapshot = entry.snapshot.as_mut().unwrap();
+        if attr.local_name() == &local_name!("id") {
+            snapshot.id_changed = true;
+        } else if attr.local_name() == &local_name!("class") {
+            snapshot.class_changed = true;
+        } else {
+            snapshot.other_attributes_changed = true;
+        }
         if snapshot.attrs.is_none() {
             let attrs = el.attrs()
                           .iter()
@@ -2448,8 +2599,8 @@ impl Document {
         let window = self.window();
         // Step 6
         if !error {
-            let event = ConstellationMsg::SetFullscreenState(true);
-            window.upcast::<GlobalScope>().constellation_chan().send(event).unwrap();
+            let event = ScriptMsg::SetFullscreenState(true);
+            self.send_to_constellation(event);
         }
 
         // Step 7
@@ -2481,8 +2632,8 @@ impl Document {
 
         let window = self.window();
         // Step 8
-        let event = ConstellationMsg::SetFullscreenState(false);
-        window.upcast::<GlobalScope>().constellation_chan().send(event).unwrap();
+        let event = ScriptMsg::SetFullscreenState(false);
+        self.send_to_constellation(event);
 
         // Step 9
         let trusted_element = Trusted::new(element.r());
@@ -2730,7 +2881,7 @@ impl DocumentMethods for Document {
                               -> Root<HTMLCollection> {
         let ns = namespace_from_domstring(maybe_ns);
         let local = LocalName::from(tag_name);
-        let qname = QualName::new(ns, local);
+        let qname = QualName::new(None, ns, local);
         match self.tagns_map.borrow_mut().entry(qname.clone()) {
             Occupied(entry) => Root::from_ref(entry.get()),
             Vacant(entry) => {
@@ -2764,7 +2915,10 @@ impl DocumentMethods for Document {
     }
 
     // https://dom.spec.whatwg.org/#dom-document-createelement
-    fn CreateElement(&self, mut local_name: DOMString) -> Fallible<Root<Element>> {
+    fn CreateElement(&self,
+                     mut local_name: DOMString,
+                     options: &ElementCreationOptions)
+                     -> Fallible<Root<Element>> {
         if xml_name_type(&local_name) == InvalidXMLName {
             debug!("Not a valid element name");
             return Err(Error::InvalidCharacter);
@@ -2772,19 +2926,29 @@ impl DocumentMethods for Document {
         if self.is_html_document {
             local_name.make_ascii_lowercase();
         }
-        let name = QualName::new(ns!(html), LocalName::from(local_name));
-        Ok(Element::create(name, None, self, ElementCreator::ScriptCreated))
+
+        let ns = if self.is_html_document || self.content_type == "application/xhtml+xml" {
+            ns!(html)
+        } else {
+            ns!()
+        };
+
+        let name = QualName::new(None, ns, LocalName::from(local_name));
+        let is = options.is.as_ref().map(|is| LocalName::from(&**is));
+        Ok(Element::create(name, is, self, ElementCreator::ScriptCreated, CustomElementCreationMode::Synchronous))
     }
 
     // https://dom.spec.whatwg.org/#dom-document-createelementns
     fn CreateElementNS(&self,
                        namespace: Option<DOMString>,
-                       qualified_name: DOMString)
+                       qualified_name: DOMString,
+                       options: &ElementCreationOptions)
                        -> Fallible<Root<Element>> {
-        let (namespace, prefix, local_name) = try!(validate_and_extract(namespace,
-                                                                        &qualified_name));
-        let name = QualName::new(namespace, local_name);
-        Ok(Element::create(name, prefix, self, ElementCreator::ScriptCreated))
+        let (namespace, prefix, local_name) = validate_and_extract(namespace,
+                                                                        &qualified_name)?;
+        let name = QualName::new(prefix, namespace, local_name);
+        let is = options.is.as_ref().map(|is| LocalName::from(&**is));
+        Ok(Element::create(name, is, self, ElementCreator::ScriptCreated, CustomElementCreationMode::Synchronous))
     }
 
     // https://dom.spec.whatwg.org/#dom-document-createattribute
@@ -2807,8 +2971,8 @@ impl DocumentMethods for Document {
                          namespace: Option<DOMString>,
                          qualified_name: DOMString)
                          -> Fallible<Root<Attr>> {
-        let (namespace, prefix, local_name) = try!(validate_and_extract(namespace,
-                                                                        &qualified_name));
+        let (namespace, prefix, local_name) = validate_and_extract(namespace,
+                                                                        &qualified_name)?;
         let value = AttrValue::String("".to_owned());
         let qualified_name = LocalName::from(qualified_name);
         Ok(Attr::new(&self.window,
@@ -3037,8 +3201,12 @@ impl DocumentMethods for Document {
             match elem {
                 Some(elem) => Root::upcast::<Node>(elem),
                 None => {
-                    let name = QualName::new(ns!(svg), local_name!("title"));
-                    let elem = Element::create(name, None, self, ElementCreator::ScriptCreated);
+                    let name = QualName::new(None, ns!(svg), local_name!("title"));
+                    let elem = Element::create(name,
+                                               None,
+                                               self,
+                                               ElementCreator::ScriptCreated,
+                                               CustomElementCreationMode::Synchronous);
                     let parent = root.upcast::<Node>();
                     let child = elem.upcast::<Node>();
                     parent.InsertBefore(child, parent.GetFirstChild().r())
@@ -3054,11 +3222,12 @@ impl DocumentMethods for Document {
                 None => {
                     match self.GetHead() {
                         Some(head) => {
-                            let name = QualName::new(ns!(html), local_name!("title"));
+                            let name = QualName::new(None, ns!(html), local_name!("title"));
                             let elem = Element::create(name,
                                                        None,
                                                        self,
-                                                       ElementCreator::ScriptCreated);
+                                                       ElementCreator::ScriptCreated,
+                                                       CustomElementCreationMode::Synchronous);
                             head.upcast::<Node>()
                                 .AppendChild(elem.upcast())
                                 .unwrap()
@@ -3342,7 +3511,7 @@ impl DocumentMethods for Document {
     #[allow(unsafe_code)]
     // https://html.spec.whatwg.org/multipage/#dom-tree-accessors:dom-document-nameditem-filter
     unsafe fn NamedGetter(&self, _cx: *mut JSContext, name: DOMString) -> Option<NonZero<*mut JSObject>> {
-        #[derive(JSTraceable, HeapSizeOf)]
+        #[derive(HeapSizeOf, JSTraceable)]
         struct NamedElementFilter {
             name: Atom,
         }
@@ -3409,7 +3578,7 @@ impl DocumentMethods for Document {
                 if elements.peek().is_none() {
                     // TODO: Step 2.
                     // Step 3.
-                    return Some(NonZero::new(first.reflector().get_jsobject().get()));
+                    return Some(NonZero::new_unchecked(first.reflector().get_jsobject().get()));
                 }
             } else {
                 return None;
@@ -3420,7 +3589,7 @@ impl DocumentMethods for Document {
             name: name,
         };
         let collection = HTMLCollection::create(self.window(), root, box filter);
-        Some(NonZero::new(collection.reflector().get_jsobject().get()))
+        Some(NonZero::new_unchecked(collection.reflector().get_jsobject().get()))
     }
 
     // https://html.spec.whatwg.org/multipage/#dom-tree-accessors:supported-property-names
@@ -3471,7 +3640,9 @@ impl DocumentMethods for Document {
             Some(untrusted_node_address) => {
                 let js_runtime = unsafe { JS_GetRuntime(window.get_cx()) };
 
-                let node = node::from_untrusted_node_address(js_runtime, untrusted_node_address);
+                let node = unsafe {
+                    node::from_untrusted_node_address(js_runtime, untrusted_node_address)
+                };
                 let parent_node = node.GetParentNode().unwrap();
                 let element_ref = node.downcast::<Element>().unwrap_or_else(|| {
                     parent_node.downcast::<Element>().unwrap()
@@ -3506,7 +3677,9 @@ impl DocumentMethods for Document {
         // Step 1 and Step 3
         let mut elements: Vec<Root<Element>> = self.nodes_from_point(point).iter()
             .flat_map(|&untrusted_node_address| {
-                let node = node::from_untrusted_node_address(js_runtime, untrusted_node_address);
+                let node = unsafe {
+                    node::from_untrusted_node_address(js_runtime, untrusted_node_address)
+                };
                 Root::downcast::<Element>(node)
         }).collect();
 
@@ -3566,6 +3739,8 @@ impl DocumentMethods for Document {
         // Step 10.
         // TODO: prompt to unload.
 
+        window_from_node(self).set_navigation_start();
+
         // Step 11.
         // TODO: unload.
 
@@ -3597,8 +3772,7 @@ impl DocumentMethods for Document {
         self.scripts.set(None);
         self.anchors.set(None);
         self.applets.set(None);
-        *self.stylesheets.borrow_mut() = None;
-        self.stylesheets_changed_since_reflow.set(true);
+        *self.stylesheets.borrow_mut() = StylesheetSet::new();
         self.animation_frame_ident.set(0);
         self.animation_frame_list.borrow_mut().clear();
         self.pending_restyles.borrow_mut().clear();
@@ -3780,8 +3954,7 @@ fn update_with_current_time_ms(marker: &Cell<u64>) {
 
 /// https://w3c.github.io/webappsec-referrer-policy/#determine-policy-for-token
 pub fn determine_policy_for_token(token: &str) -> Option<ReferrerPolicy> {
-    let lower = token.to_lowercase();
-    return match lower.as_ref() {
+    match_ignore_ascii_case! { token,
         "never" | "no-referrer" => Some(ReferrerPolicy::NoReferrer),
         "default" | "no-referrer-when-downgrade" => Some(ReferrerPolicy::NoReferrerWhenDowngrade),
         "origin" => Some(ReferrerPolicy::Origin),
@@ -3842,8 +4015,6 @@ impl DocumentProgressHandler {
 }
 
 impl Runnable for DocumentProgressHandler {
-    fn name(&self) -> &'static str { "DocumentProgressHandler" }
-
     fn handler(self: Box<DocumentProgressHandler>) {
         let document = self.addr.root();
         let window = document.window();
@@ -3858,7 +4029,7 @@ impl Runnable for DocumentProgressHandler {
 }
 
 /// Specifies the type of focus event that is sent to a pipeline
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum FocusType {
     Element,    // The first focus message - focus the element itself
     Parent,     // Focusing a parent element (an iframe)
@@ -3876,7 +4047,7 @@ pub enum FocusEventType {
 /// If the page is observed to be using `requestAnimationFrame()` for non-animation purposes (i.e.
 /// without mutating the DOM), then we fall back to simple timeouts to save energy over video
 /// refresh.
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 pub struct FakeRequestAnimationFrameCallback {
     /// The document.
     #[ignore_heap_size_of = "non-owning"]
@@ -3933,7 +4104,7 @@ impl PendingInOrderScriptVec {
 
     fn loaded(&self, element: &HTMLScriptElement, result: ScriptResult) {
         let mut scripts = self.scripts.borrow_mut();
-        let mut entry = scripts.iter_mut().find(|entry| &*entry.element == element).unwrap();
+        let entry = scripts.iter_mut().find(|entry| &*entry.element == element).unwrap();
         entry.loaded(result);
     }
 

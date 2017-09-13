@@ -37,12 +37,6 @@ ChooseValidatorCompileOptions(const ShBuiltInResources& resources,
                                SH_OBJECT_CODE |
                                SH_INIT_GL_POSITION;
 
-    // Sampler arrays indexed with non-constant expressions are forbidden in
-    // GLSL 1.30 and later.
-    // ESSL 3 requires constant-integral-expressions for this as well.
-    // Just do it universally.
-    options |= SH_UNROLL_FOR_LOOP_WITH_SAMPLER_ARRAY_INDEX;
-
 #ifndef XP_MACOSX
     // We want to do this everywhere, but to do this on Mac, we need
     // to do it only on Mac OSX > 10.6 as this causes the shader
@@ -50,8 +44,8 @@ ChooseValidatorCompileOptions(const ShBuiltInResources& resources,
     options |= SH_CLAMP_INDIRECT_ARRAY_BOUNDS;
 #endif
 
-#ifdef XP_MACOSX
     if (gl->WorkAroundDriverBugs()) {
+#ifdef XP_MACOSX
         // Work around https://bugs.webkit.org/show_bug.cgi?id=124684,
         // https://chromium.googlesource.com/angle/angle/+/5e70cf9d0b1bb
         options |= SH_UNFOLD_SHORT_CIRCUIT;
@@ -59,8 +53,19 @@ ChooseValidatorCompileOptions(const ShBuiltInResources& resources,
         // Work around that Mac drivers handle struct scopes incorrectly.
         options |= SH_REGENERATE_STRUCT_NAMES;
         options |= SH_INIT_OUTPUT_VARIABLES;
-    }
+
+        // Work around that Intel drivers on Mac OSX handle for-loop incorrectly.
+        if (gl->Vendor() == gl::GLVendor::Intel) {
+            options |= SH_ADD_AND_TRUE_TO_LOOP_CONDITION;
+        }
 #endif
+
+        if (!gl->IsANGLE() && gl->Vendor() == gl::GLVendor::Intel) {
+            // Failures on at least Windows+Intel+OGL on:
+            // conformance/glsl/constructors/glsl-construct-mat2.html
+            options |= SH_SCALARIZE_VEC_AND_MAT_CONSTRUCTOR_ARGS;
+        }
+    }
 
     if (gfxPrefs::WebGLAllANGLEOptions()) {
         options = -1;
@@ -114,7 +119,7 @@ ShaderOutput(gl::GLContext* gl)
         case 440: return SH_GLSL_440_CORE_OUTPUT;
         case 450: return SH_GLSL_450_CORE_OUTPUT;
         default:
-            MOZ_CRASH("GFX: Unexpected GLSL version.");
+            MOZ_ASSERT(false, "GFX: Unexpected GLSL version.");
         }
     }
 
@@ -140,8 +145,8 @@ WebGLContext::CreateShaderValidator(GLenum shaderType) const
     resources.MaxVertexUniformVectors = mGLMaxVertexUniformVectors;
     resources.MaxVaryingVectors = mGLMaxVaryingVectors;
     resources.MaxVertexTextureImageUnits = mGLMaxVertexTextureImageUnits;
-    resources.MaxCombinedTextureImageUnits = mGLMaxTextureUnits;
-    resources.MaxTextureImageUnits = mGLMaxTextureImageUnits;
+    resources.MaxCombinedTextureImageUnits = mGLMaxCombinedTextureImageUnits;
+    resources.MaxTextureImageUnits = mGLMaxFragmentTextureImageUnits;
     resources.MaxFragmentUniformVectors = mGLMaxFragmentUniformVectors;
 
     const bool hasMRTs = (IsWebGL2() ||

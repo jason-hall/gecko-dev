@@ -22,26 +22,12 @@
 #include "nsTArray.h"
 #include "nsTHashtable.h"
 
-struct nsArenaMemoryStats;
+class nsWindowSizes;
 
 class nsPresArena {
 public:
   nsPresArena();
   ~nsPresArena();
-
-  /**
-   * Pool allocation with recycler lists indexed by object size, aSize.
-   */
-  void* AllocateBySize(size_t aSize)
-  {
-    return Allocate(uint32_t(aSize) |
-                    uint32_t(mozilla::eArenaObjectID_NON_OBJECT_MARKER), aSize);
-  }
-  void FreeBySize(size_t aSize, void* aPtr)
-  {
-    Free(uint32_t(aSize) |
-         uint32_t(mozilla::eArenaObjectID_NON_OBJECT_MARKER), aPtr);
-  }
 
   /**
    * Pool allocation with recycler lists indexed by frame-type ID.
@@ -109,11 +95,10 @@ public:
   void ClearArenaRefPtrs(mozilla::ArenaObjectID aObjectID);
 
   /**
-   * Increment aArenaStats with sizes of interesting objects allocated in this
-   * arena and its mOther field with the size of everything else.
+   * Increment nsWindowSizes with sizes of interesting objects allocated in this
+   * arena.
    */
-  void AddSizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                              nsArenaMemoryStats* aArenaStats);
+  void AddSizeOfExcludingThis(nsWindowSizes& aWindowSizes) const;
 
 private:
   void* Allocate(uint32_t aCode, size_t aSize);
@@ -123,39 +108,23 @@ private:
       void* aPtr,
       mozilla::ArenaObjectID aObjectID);
 
-  // All keys to this hash table fit in 32 bits (see below) so we do not
-  // bother actually hashing them.
-  class FreeList : public PLDHashEntryHdr
+  class FreeList
   {
   public:
-    typedef uint32_t KeyType;
     nsTArray<void *> mEntries;
     size_t mEntrySize;
     size_t mEntriesEverAllocated;
 
-    typedef const void* KeyTypePointer;
-    KeyTypePointer mKey;
-
-    explicit FreeList(KeyTypePointer aKey)
-    : mEntrySize(0), mEntriesEverAllocated(0), mKey(aKey) {}
-    // Default copy constructor and destructor are ok.
-
-    bool KeyEquals(KeyTypePointer const aKey) const
-    { return mKey == aKey; }
-
-    static KeyTypePointer KeyToPointer(KeyType aKey)
-    { return NS_INT32_TO_PTR(aKey); }
-
-    static PLDHashNumber HashKey(KeyTypePointer aKey)
-    { return NS_PTR_TO_INT32(aKey); }
+    FreeList()
+      : mEntrySize(0)
+      , mEntriesEverAllocated(0)
+    {}
 
     size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
     { return mEntries.ShallowSizeOfExcludingThis(aMallocSizeOf); }
-
-    enum { ALLOW_MEMMOVE = false };
   };
 
-  nsTHashtable<FreeList> mFreeLists;
+  FreeList mFreeLists[mozilla::eArenaObjectID_COUNT];
   mozilla::ArenaAllocator<8192, 8> mPool;
   nsDataHashtable<nsPtrHashKey<void>, mozilla::ArenaObjectID> mArenaRefPtrs;
 };

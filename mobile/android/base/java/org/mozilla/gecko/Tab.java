@@ -31,7 +31,6 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
-import android.os.Build;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.text.TextUtils;
@@ -43,7 +42,6 @@ public class Tab {
 
     private static Pattern sColorPattern;
     private final int mId;
-    private TabType mType;
     private final BrowserDB mDB;
     private long mLastUsed;
     private String mUrl;
@@ -71,7 +69,6 @@ public class Tab {
     private int mFaviconLoadId;
     private String mContentType;
     private boolean mHasTouchListeners;
-    private final ArrayList<View> mPluginViews;
     private int mState;
     private Bitmap mThumbnailBitmap;
     private boolean mDesktopMode;
@@ -119,11 +116,10 @@ public class Tab {
         NONE         // Non error pages
     }
 
-    public Tab(Context context, int id, String url, boolean external, int parentId, String title, TabType type) {
+    public Tab(Context context, int id, String url, boolean external, int parentId, String title) {
         mAppContext = context.getApplicationContext();
         mDB = BrowserDB.from(context);
         mId = id;
-        mType = type;
         mUrl = url;
         mBaseDomain = "";
         mUserRequested = "";
@@ -132,7 +128,6 @@ public class Tab {
         mTitle = title == null ? "" : title;
         mSiteIdentity = new SiteIdentity();
         mContentType = "";
-        mPluginViews = new ArrayList<View>();
         mState = shouldShowProgress(url) ? STATE_LOADING : STATE_SUCCESS;
         mLoadProgress = LOAD_PROGRESS_INIT;
         mIconRequestBuilder = Icons.with(mAppContext).pageUrl(mUrl);
@@ -242,13 +237,9 @@ public class Tab {
 
     public Bitmap getThumbnailBitmap(int width, int height) {
         if (mThumbnailBitmap != null) {
-            // Bug 787318 - Honeycomb has a bug with bitmap caching, we can't
-            // reuse the bitmap there.
-            boolean honeycomb = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB
-                              && Build.VERSION.SDK_INT <= Build.VERSION_CODES.HONEYCOMB_MR2);
             boolean sizeChange = mThumbnailBitmap.getWidth() != width
                               || mThumbnailBitmap.getHeight() != height;
-            if (honeycomb || sizeChange) {
+            if (sizeChange) {
                 mThumbnailBitmap = null;
             }
         }
@@ -743,18 +734,6 @@ public class Tab {
         }
     }
 
-    public void addPluginView(View view) {
-        mPluginViews.add(view);
-    }
-
-    public void removePluginView(View view) {
-        mPluginViews.remove(view);
-    }
-
-    public View[] getPluginViews() {
-        return mPluginViews.toArray(new View[mPluginViews.size()]);
-    }
-
     public void setDesktopMode(boolean enabled) {
         mDesktopMode = enabled;
     }
@@ -765,16 +744,6 @@ public class Tab {
 
     public boolean isPrivate() {
         return false;
-    }
-
-    public TabType getType() {
-        return mType;
-    }
-
-    public enum TabType {
-        BROWSING,
-        CUSTOMTAB,
-        WEBAPP
     }
 
     /**

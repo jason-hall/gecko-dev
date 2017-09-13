@@ -44,6 +44,7 @@
 #include "builtin/MapObject.h"
 #include "js/Date.h"
 #include "js/GCHashTable.h"
+#include "vm/RegExpObject.h"
 #include "vm/SavedFrame.h"
 #include "vm/SharedArrayObject.h"
 #include "vm/TypedArrayObject.h"
@@ -223,6 +224,10 @@ struct BufferIterator {
     T peek() const {
         MOZ_ASSERT(mIter.HasRoomFor(sizeof(T)));
         return *reinterpret_cast<T*>(mIter.Data());
+    }
+
+    bool canPeek() const {
+        return mIter.HasRoomFor(sizeof(T));
     }
 
     BufferList& mBuffer;
@@ -638,6 +643,7 @@ DiscardTransferables(mozilla::BufferList<AllocPolicy>& buffer,
         return; // Empty buffer
 
     uint32_t tag, data;
+    MOZ_RELEASE_ASSERT(point.canPeek());
     SCInput::getPair(point.peek(), &tag, &data);
     point.next();
 
@@ -645,6 +651,7 @@ DiscardTransferables(mozilla::BufferList<AllocPolicy>& buffer,
         if (point.done())
             return;
 
+        MOZ_RELEASE_ASSERT(point.canPeek());
         SCInput::getPair(point.peek(), &tag, &data);
         point.next();
     }
@@ -664,20 +671,20 @@ DiscardTransferables(mozilla::BufferList<AllocPolicy>& buffer,
     uint64_t numTransferables = NativeEndian::swapFromLittleEndian(point.peek());
     point.next();
     while (numTransferables--) {
-        if (point.done())
+        if (!point.canPeek())
             return;
 
         uint32_t ownership;
         SCInput::getPair(point.peek(), &tag, &ownership);
         point.next();
         MOZ_ASSERT(tag >= SCTAG_TRANSFER_MAP_PENDING_ENTRY);
-        if (point.done())
+        if (!point.canPeek())
             return;
 
         void* content;
         SCInput::getPtr(point.peek(), &content);
         point.next();
-        if (point.done())
+        if (!point.canPeek())
             return;
 
         uint64_t extraData = NativeEndian::swapFromLittleEndian(point.peek());
@@ -726,7 +733,7 @@ SCInput::SCInput(JSContext* cx, JSStructuredCloneData& data)
 bool
 SCInput::read(uint64_t* p)
 {
-    if (point.done()) {
+    if (!point.canPeek()) {
         *p = 0;  /* initialize to shut GCC up */
         return reportTruncated();
     }
@@ -738,7 +745,7 @@ SCInput::read(uint64_t* p)
 bool
 SCInput::readNativeEndian(uint64_t* p)
 {
-    if (point.done()) {
+    if (!point.canPeek()) {
         *p = 0;  /* initialize to shut GCC up */
         return reportTruncated();
     }
@@ -762,7 +769,7 @@ SCInput::readPair(uint32_t* tagp, uint32_t* datap)
 bool
 SCInput::get(uint64_t* p)
 {
-    if (point.done())
+    if (!point.canPeek())
         return reportTruncated();
     *p = NativeEndian::swapFromLittleEndian(point.peek());
     return true;
@@ -1227,6 +1234,11 @@ JSStructuredCloneWriter::writeSharedArrayBuffer(HandleObject obj)
         return false;
     }
 
+    // We must not transfer buffer pointers cross-process.  The cloneDataPolicy
+    // should guard against this; check that it does.
+
+    MOZ_RELEASE_ASSERT(scope <= JS::StructuredCloneScope::SameProcessDifferentThread);
+
     Rooted<SharedArrayBufferObject*> sharedArrayBuffer(context(), &CheckedUnwrap(obj)->as<SharedArrayBufferObject>());
     SharedArrayRawBuffer* rawbuf = sharedArrayBuffer->rawBufferObject();
 
@@ -1483,8 +1495,8 @@ JSStructuredCloneWriter::startWrite(HandleValue v)
             return false;
 
         if (cls == ESClass::RegExp) {
-            RootedRegExpShared re(context());
-            if (!RegExpToShared(context(), obj, &re))
+            RegExpShared* re = RegExpToShared(context(), obj);
+            if (!re)
                 return false;
             return out.writePair(SCTAG_REGEXP_OBJECT, re->getFlags()) &&
                    writeString(SCTAG_STRING, re->getSource());
@@ -1585,10 +1597,13 @@ JSStructuredCloneWriter::transferOwnership()
     // grabbing out pointers from the transferables and stuffing them into the
     // transfer map.
     auto point = out.iter();
+    MOZ_RELEASE_ASSERT(point.canPeek());
     MOZ_ASSERT(uint32_t(NativeEndian::swapFromLittleEndian(point.peek()) >> 32) == SCTAG_HEADER);
     point++;
+    MOZ_RELEASE_ASSERT(point.canPeek());
     MOZ_ASSERT(uint32_t(NativeEndian::swapFromLittleEndian(point.peek()) >> 32) == SCTAG_TRANSFER_MAP_HEADER);
     point++;
+    MOZ_RELEASE_ASSERT(point.canPeek());
     MOZ_ASSERT(NativeEndian::swapFromLittleEndian(point.peek()) == transferableObjects.count());
     point++;
 
@@ -1963,6 +1978,11 @@ JSStructuredCloneReader::readSharedArrayBuffer(uint32_t nbytes, MutableHandleVal
         return false;
     }
 
+    // We must not transfer buffer pointers cross-process.  The cloneDataPolicy
+    // in the sender should guard against this; check that it does.
+
+    MOZ_RELEASE_ASSERT(storedScope <= JS::StructuredCloneScope::SameProcessDifferentThread);
+
     // The new object will have a new reference to the rawbuf.
 
     if (!rawbuf->addReference()) {
@@ -2115,8 +2135,8 @@ JSStructuredCloneReader::startRead(MutableHandleValue vp)
         if (!atom)
             return false;
 
-        RegExpObject* reobj = RegExpObject::create(context(), atom, flags, nullptr,
-                                                   context()->tempLifoAlloc());
+        RegExpObject* reobj = RegExpObject::create(context(), atom, flags, nullptr, nullptr,
+                                                   context()->tempLifoAlloc(), GenericObject);
         if (!reobj)
             return false;
         vp.setObject(*reobj);

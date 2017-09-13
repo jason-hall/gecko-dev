@@ -10,13 +10,8 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/gfx/PGPUChild.h"
 #include "mozilla/gfx/gfxVarReceiver.h"
-#include "ProfilerControllingProcess.h"
 
 namespace mozilla {
-
-#ifdef MOZ_GECKO_PROFILER
-class CrossProcessProfilerController;
-#endif
 
 namespace ipc {
 class CrashReporterHost;
@@ -31,7 +26,6 @@ class GPUProcessHost;
 class GPUChild final
   : public PGPUChild
   , public gfxVarReceiver
-  , public ProfilerControllingProcess
 {
   typedef mozilla::dom::MemoryReportRequestHost MemoryReportRequestHost;
 
@@ -56,19 +50,17 @@ public:
   mozilla::ipc::IPCResult RecvUpdateChildScalars(InfallibleTArray<ScalarAction>&& aScalarActions) override;
   mozilla::ipc::IPCResult RecvUpdateChildKeyedScalars(InfallibleTArray<KeyedScalarAction>&& aScalarActions) override;
   mozilla::ipc::IPCResult RecvRecordChildEvents(nsTArray<ChildEventData>&& events) override;
+  mozilla::ipc::IPCResult RecvRecordDiscardedData(const DiscardedData& aDiscardedData) override;
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
   mozilla::ipc::IPCResult RecvGraphicsError(const nsCString& aError) override;
   mozilla::ipc::IPCResult RecvNotifyUiObservers(const nsCString& aTopic) override;
   mozilla::ipc::IPCResult RecvNotifyDeviceReset(const GPUDeviceData& aData) override;
-  mozilla::ipc::IPCResult RecvProfile(const nsCString& aProfile) override;
   mozilla::ipc::IPCResult RecvAddMemoryReport(const MemoryReport& aReport) override;
   mozilla::ipc::IPCResult RecvFinishMemoryReport(const uint32_t& aGeneration) override;
-
-  void SendStartProfiler(const ProfilerInitParams& aParams) override;
-  void SendStopProfiler() override;
-  void SendPauseProfiler(const bool& aPause) override;
-  void SendGatherProfile() override;
+  mozilla::ipc::IPCResult RecvUpdateFeature(const Feature& aFeature, const FeatureFailure& aChange) override;
+  mozilla::ipc::IPCResult RecvUsedFallback(const Fallback& aFallback, const nsCString& aMessage) override;
+  mozilla::ipc::IPCResult RecvBHRThreadHang(const HangDetails& aDetails) override;
 
   bool SendRequestMemoryReport(const uint32_t& aGeneration,
                                const bool& aAnonymize,
@@ -82,9 +74,6 @@ private:
   UniquePtr<ipc::CrashReporterHost> mCrashReporter;
   UniquePtr<MemoryReportRequestHost> mMemoryReportRequest;
   bool mGPUReady;
-#ifdef MOZ_GECKO_PROFILER
-  UniquePtr<CrossProcessProfilerController> mProfilerController;
-#endif
 };
 
 } // namespace gfx

@@ -58,12 +58,24 @@ module.exports = createClass({
         file = file.parent;
       }
 
-      AddonManager.installTemporaryAddon(file)
-        .catch(e => {
-          console.error(e);
-          this.setState({ installError: e.message });
-        });
+      this.installAddon(file);
     });
+  },
+
+  retryInstall() {
+    this.setState({ installError: null });
+    this.installAddon(this.state.lastInstallErrorFile);
+  },
+
+  installAddon(file) {
+    AddonManager.installTemporaryAddon(file)
+      .then(() => {
+        this.setState({ lastInstallErrorFile: null });
+      })
+      .catch(e => {
+        console.error(e);
+        this.setState({ installError: e.message, lastInstallErrorFile: file });
+      });
   },
 
   render() {
@@ -84,16 +96,18 @@ module.exports = createClass({
             htmlFor: "enable-addon-debugging",
             title: Strings.GetStringFromName("addonDebugging.tooltip")
           }, Strings.GetStringFromName("addonDebugging.label")),
-          "(",
           dom.a({ href: MORE_INFO_URL, target: "_blank" },
-            Strings.GetStringFromName("moreInfo")),
-          ")"
+            Strings.GetStringFromName("addonDebugging.learnMore")
+          ),
         ),
         dom.button({
           id: "load-addon-from-file",
           onClick: this.loadAddonFromFile,
         }, Strings.GetStringFromName("loadTemporaryAddon"))
       ),
-      AddonsInstallError({ error: this.state.installError }));
+      AddonsInstallError({
+        error: this.state.installError,
+        retryInstall: this.retryInstall,
+      }));
   }
 });

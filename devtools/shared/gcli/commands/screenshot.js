@@ -47,58 +47,66 @@ const filenameParam = {
 };
 
 /**
- * Both commands have the same set of standard optional parameters
+ * Both commands have almost the same set of standard optional parameters, except for the
+ * type of the --selector option, which can be a node only on the server.
  */
-const standardParams = {
-  group: l10n.lookup("screenshotGroupOptions"),
-  params: [
-    {
-      name: "clipboard",
-      type: "boolean",
-      description: l10n.lookup("screenshotClipboardDesc"),
-      manual: l10n.lookup("screenshotClipboardManual")
-    },
-    {
-      name: "imgur",
-      type: "boolean",
-      description: l10n.lookup("screenshotImgurDesc"),
-      manual: l10n.lookup("screenshotImgurManual")
-    },
-    {
-      name: "delay",
-      type: { name: "number", min: 0 },
-      defaultValue: 0,
-      description: l10n.lookup("screenshotDelayDesc"),
-      manual: l10n.lookup("screenshotDelayManual")
-    },
-    {
-      name: "dpr",
-      type: { name: "number", min: 0, allowFloat: true },
-      defaultValue: 0,
-      description: l10n.lookup("screenshotDPRDesc"),
-      manual: l10n.lookup("screenshotDPRManual")
-    },
-    {
-      name: "fullpage",
-      type: "boolean",
-      description: l10n.lookup("screenshotFullPageDesc"),
-      manual: l10n.lookup("screenshotFullPageManual")
-    },
-    {
-      name: "selector",
-      type: "node",
-      defaultValue: null,
-      description: l10n.lookup("inspectNodeDesc"),
-      manual: l10n.lookup("inspectNodeManual")
-    },
-    {
-      name: "file",
-      type: "boolean",
-      description: l10n.lookup("screenshotFileDesc"),
-      manual: l10n.lookup("screenshotFileManual"),
-    },
-  ]
+const getScreenshotCommandParams = function (isClient) {
+  return {
+    group: l10n.lookup("screenshotGroupOptions"),
+    params: [
+      {
+        name: "clipboard",
+        type: "boolean",
+        description: l10n.lookup("screenshotClipboardDesc"),
+        manual: l10n.lookup("screenshotClipboardManual")
+      },
+      {
+        name: "imgur",
+        type: "boolean",
+        description: l10n.lookup("screenshotImgurDesc"),
+        manual: l10n.lookup("screenshotImgurManual")
+      },
+      {
+        name: "delay",
+        type: { name: "number", min: 0 },
+        defaultValue: 0,
+        description: l10n.lookup("screenshotDelayDesc"),
+        manual: l10n.lookup("screenshotDelayManual")
+      },
+      {
+        name: "dpr",
+        type: { name: "number", min: 0, allowFloat: true },
+        defaultValue: 0,
+        description: l10n.lookup("screenshotDPRDesc"),
+        manual: l10n.lookup("screenshotDPRManual")
+      },
+      {
+        name: "fullpage",
+        type: "boolean",
+        description: l10n.lookup("screenshotFullPageDesc"),
+        manual: l10n.lookup("screenshotFullPageManual")
+      },
+      {
+        name: "selector",
+        // On the client side, don't try to parse the selector as a node as it will
+        // trigger an unsafe CPOW.
+        type: isClient ? "string" : "node",
+        defaultValue: null,
+        description: l10n.lookup("inspectNodeDesc"),
+        manual: l10n.lookup("inspectNodeManual")
+      },
+      {
+        name: "file",
+        type: "boolean",
+        description: l10n.lookup("screenshotFileDesc"),
+        manual: l10n.lookup("screenshotFileManual"),
+      },
+    ]
+  };
 };
+
+const clientScreenshotParams = getScreenshotCommandParams(true);
+const serverScreenshotParams = getScreenshotCommandParams(false);
 
 exports.items = [
   {
@@ -158,7 +166,7 @@ exports.items = [
             let mainWindow = context.environment.chromeWindow;
             mainWindow.openUILinkIn(imageSummary.href, "tab");
           } else if (imageSummary.filename) {
-            const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsILocalFile);
+            const file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
             file.initWithPath(imageSummary.filename);
             file.reveal();
           }
@@ -180,7 +188,7 @@ exports.items = [
     tooltipText: l10n.lookup("screenshotTooltipPage"),
     params: [
       filenameParam,
-      standardParams,
+      clientScreenshotParams,
     ],
     exec: function (args, context) {
       // Re-execute the command on the server
@@ -199,7 +207,10 @@ exports.items = [
     name: "screenshot_server",
     hidden: true,
     returnType: "imageSummary",
-    params: [ filenameParam, standardParams ],
+    params: [
+      filenameParam,
+      serverScreenshotParams,
+    ],
     exec: function (args, context) {
       return captureScreenshot(args, context.environment.document);
     },
@@ -372,12 +383,11 @@ function saveToClipboard(context, reply) {
     const imgTools = Cc["@mozilla.org/image/tools;1"]
                         .getService(Ci.imgITools);
 
-    const container = {};
-    imgTools.decodeImageData(input, channel.contentType, container);
+    const container = imgTools.decodeImage(input, channel.contentType);
 
     const wrapped = Cc["@mozilla.org/supports-interface-pointer;1"]
                       .createInstance(Ci.nsISupportsInterfacePointer);
-    wrapped.data = container.value;
+    wrapped.data = container;
 
     const trans = Cc["@mozilla.org/widget/transferable;1"]
                     .createInstance(Ci.nsITransferable);

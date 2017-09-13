@@ -8,6 +8,7 @@ package org.mozilla.gecko;
 import org.mozilla.gecko.annotation.RobocopTarget;
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.mozglue.GeckoLoader;
+import org.mozilla.gecko.util.GeckoBundle;
 import org.mozilla.gecko.util.FileUtils;
 import org.mozilla.gecko.util.ThreadUtils;
 
@@ -47,8 +48,10 @@ public class GeckoThread extends Thread {
         @WrapForJNI PROFILE_READY(5),
         // After initializing frontend JS
         @WrapForJNI RUNNING(6),
-        // After leaving Gecko event loop
+        // After granting request to shutdown
         @WrapForJNI EXITING(3),
+        // After granting request to restart
+        @WrapForJNI RESTARTING(3),
         // After exiting GeckoThread (corresponding to "Gecko:Exited" event)
         @WrapForJNI EXITED(0);
 
@@ -106,6 +109,8 @@ public class GeckoThread extends Thread {
     private static final ClassLoader clsLoader = GeckoThread.class.getClassLoader();
     @WrapForJNI
     private static MessageQueue msgQueue;
+    @WrapForJNI
+    private static int uiThreadId;
 
     private boolean mInitialized;
     private String[] mArgs;
@@ -132,6 +137,7 @@ public class GeckoThread extends Thread {
                                       final String extraArgs, final boolean debugging,
                                       final int crashFd, final int ipcFd) {
         ThreadUtils.assertOnUiThread();
+        uiThreadId = android.os.Process.myTid();
 
         if (mInitialized) {
             return false;
@@ -192,7 +198,8 @@ public class GeckoThread extends Thread {
     }
 
     public static boolean initMainProcessWithProfile(final String profileName,
-                                                     final File profileDir) {
+                                                     final File profileDir,
+                                                     final String args) {
         if (profileName == null) {
             throw new IllegalArgumentException("Null profile name");
         }
@@ -212,7 +219,7 @@ public class GeckoThread extends Thread {
 
         // We haven't initialized yet; okay to initialize now.
         return initMainProcess(GeckoProfile.get(context, profileName, profileDir),
-                               /* args */ null, /* debugging */ false);
+                               args, /* debugging */ false);
     }
 
     public static boolean launch() {
@@ -255,15 +262,8 @@ public class GeckoThread extends Thread {
             res.updateConfiguration(config, null);
         }
 
-        String[] pluginDirs = null;
-        try {
-            pluginDirs = GeckoAppShell.getPluginDirectories();
-        } catch (Exception e) {
-            Log.w(LOGTAG, "Caught exception getting plugin dirs.", e);
-        }
-
         final String resourcePath = context.getPackageResourcePath();
-        GeckoLoader.setupGeckoEnvironment(context, pluginDirs, context.getFilesDir().getPath());
+        GeckoLoader.setupGeckoEnvironment(context, context.getFilesDir().getPath());
 
         try {
             loadGeckoLibs(context, resourcePath);
@@ -316,20 +316,10 @@ public class GeckoThread extends Thread {
             }
         }
 
-        // In un-official builds, we want to load Javascript resources fresh
-        // with each build.  In official builds, the startup cache is purged by
-        // the buildid mechanism, but most un-official builds don't bump the
-        // buildid, so we purge here instead.
-        final GeckoAppShell.GeckoInterface gi = GeckoAppShell.getGeckoInterface();
-        if (gi == null || !gi.isOfficial()) {
-            Log.w(LOGTAG, "STARTUP PERFORMANCE WARNING: un-official build: purging the " +
-                          "startup (JavaScript) caches.");
-            args.add("-purgecaches");
-        }
-
         return args.toArray(new String[args.size()]);
     }
 
+    @RobocopTarget
     public static GeckoProfile getActiveProfile() {
         return INSTANCE.getProfile();
     }
@@ -374,14 +364,6 @@ public class GeckoThread extends Thread {
 
         initGeckoEnvironment();
 
-        // This can only happen after the call to initGeckoEnvironment
-        // above, because otherwise the JNI code hasn't been loaded yet.
-        ThreadUtils.postToUiThread(new Runnable() {
-            @Override public void run() {
-                registerUiThread();
-            }
-        });
-
         // Wait until initialization before calling Gecko entry point.
         synchronized (this) {
             while (!mInitialized) {
@@ -401,10 +383,9 @@ public class GeckoThread extends Thread {
             }
         }
 
-        Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - runGecko");
+        Log.w(LOGTAG, "zerdatime " + SystemClock.elapsedRealtime() + " - runGecko");
 
-        final GeckoAppShell.GeckoInterface gi = GeckoAppShell.getGeckoInterface();
-        if (gi == null || !gi.isOfficial()) {
+        if (mDebugging) {
             Log.i(LOGTAG, "RunGecko - args = " + TextUtils.join(" ", args));
         }
 
@@ -412,9 +393,12 @@ public class GeckoThread extends Thread {
         GeckoLoader.nativeRun(args, mCrashFileDescriptor, mIPCFileDescriptor);
 
         // And... we're done.
+        final boolean restarting = isState(State.RESTARTING);
         setState(State.EXITED);
 
-        EventDispatcher.getInstance().dispatch("Gecko:Exited", null);
+        final GeckoBundle data = new GeckoBundle(1);
+        data.putBoolean("restart", restarting);
+        EventDispatcher.getInstance().dispatch("Gecko:Exited", data);
 
         // Remove pumpMessageLoop() idle handler
         Looper.myQueue().removeIdleHandler(idleHandler);
@@ -544,11 +528,11 @@ public class GeckoThread extends Thread {
         }
     }
 
-    // Implemented in mozglue/android/APKOpen.cpp.
-    /* package */ static native void registerUiThread();
-
     @WrapForJNI(calledFrom = "ui")
     /* package */ static native long runUiThreadCallback();
+
+    @WrapForJNI(dispatchTo = "gecko")
+    public static native void forceQuit();
 
     @WrapForJNI
     private static void requestUiThreadCallback(long delay) {

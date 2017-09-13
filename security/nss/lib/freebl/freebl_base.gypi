@@ -33,6 +33,7 @@
     'ecl/ecp_jm.c',
     'ecl/ecp_mont.c',
     'fipsfreebl.c',
+    'blinit.c',
     'freeblver.c',
     'gcm.c',
     'hmacct.c',
@@ -97,15 +98,11 @@
       ],
     }],
     [ 'OS=="win"', {
-      'sources': [
-        #TODO: building with mingw should not need this.
-        'ecl/uint128.c',
-      ],
       'libraries': [
         'advapi32.lib',
       ],
       'conditions': [
-        [ 'target_arch=="x64"', {
+        [ 'cc_use_gnu_ld!=1 and target_arch=="x64"', {
           'sources': [
             'arcfour-amd64-masm.asm',
             'mpi/mpi_amd64.c',
@@ -114,7 +111,8 @@
             'intel-aes-x64-masm.asm',
             'intel-gcm-x64-masm.asm',
           ],
-        }, {
+        }],
+	      [ 'cc_use_gnu_ld!=1 and target_arch!="x64"', {
           # not x64
           'sources': [
             'mpi/mpi_x86_asm.c',
@@ -134,6 +132,7 @@
       'sources': [
         # All intel architectures get the 64 bit version
         'ecl/curve25519_64.c',
+        'verified/hacl_curve25519_64.c',
       ],
     }, {
       'sources': [
@@ -141,7 +140,6 @@
         'ecl/curve25519_32.c',
       ],
     }],
-    #TODO uint128.c
     [ 'disable_chachapoly==0', {
       'conditions': [
         [ 'OS!="win" and target_arch=="x64"', {

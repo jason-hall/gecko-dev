@@ -26,9 +26,6 @@ namespace safebrowsing {
  */
 class Classifier {
 public:
-  typedef nsClassHashtable<nsCStringHashKey, nsCString> ProviderDictType;
-
-public:
   Classifier();
   ~Classifier();
 
@@ -63,7 +60,6 @@ public:
    */
   nsresult Check(const nsACString& aSpec,
                  const nsACString& tables,
-                 uint32_t aFreshnessGuarantee,
                  LookupResultArray& aResults);
 
   /**
@@ -75,7 +71,7 @@ public:
    */
   using AsyncUpdateCallback = std::function<void(nsresult)>;
   nsresult AsyncApplyUpdates(nsTArray<TableUpdate*>* aUpdates,
-                             AsyncUpdateCallback aCallback);
+                             const AsyncUpdateCallback& aCallback);
 
   /**
    * Wait until the ongoing async update is finished and callback
@@ -89,8 +85,6 @@ public:
    */
   nsresult ApplyFullHashes(nsTArray<TableUpdate*>* aUpdates);
 
-  void SetLastUpdateTime(const nsACString& aTableName, uint64_t updateTime);
-  int64_t GetLastUpdateTime(const nsACString& aTableName);
   nsresult CacheCompletions(const CacheResultArray& aResults);
   uint32_t GetHashKey(void) { return mHashKey; }
   /*
@@ -130,6 +124,9 @@ public:
   LookupCache *GetLookupCache(const nsACString& aTable,
                               bool aForUpdate = false);
 
+  void GetCacheInfo(const nsACString& aTable,
+                    nsIUrlClassifierCacheInfo** aCache);
+
 private:
   void DropStores();
   void DeleteTables(nsIFile* aDirectory, const nsTArray<nsCString>& aTables);
@@ -142,6 +139,8 @@ private:
   nsresult RegenActiveTables();
 
   void MergeNewLookupCaches(); // Merge mNewLookupCaches into mLookupCaches.
+
+  void CopyAndInvalidateFullHashCache();
 
   // Remove any intermediary for update, including in-memory
   // and on-disk data.
@@ -212,8 +211,6 @@ private:
   nsTArray<LookupCache*> mLookupCaches; // For query only.
   nsTArray<nsCString> mActiveTablesCache;
   uint32_t mHashKey;
-  // Stores the last time a given table was updated (seconds).
-  TableFreshnessMap mTableFreshness;
 
   // In-memory cache for the result of TableRequest. See
   // nsIUrlClassifierDBService.getTables for the format.

@@ -22,12 +22,9 @@ HTMLPreElement::~HTMLPreElement()
 {
 }
 
-NS_IMPL_ISUPPORTS_INHERITED(HTMLPreElement, nsGenericHTMLElement,
-                            nsIDOMHTMLPreElement)
+NS_IMPL_ISUPPORTS_INHERITED0(HTMLPreElement, nsGenericHTMLElement)
 
 NS_IMPL_ELEMENT_CLONE(HTMLPreElement)
-
-NS_IMPL_INT_ATTR(HTMLPreElement, Width, width)
 
 bool
 HTMLPreElement::ParseAttribute(int32_t aNamespaceID,
@@ -53,7 +50,7 @@ HTMLPreElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
     if (!aData->PropertyIsSet(eCSSProperty_white_space)) {
       // wrap: empty
       if (aAttributes->GetAttr(nsGkAtoms::wrap))
-        aData->SetKeywordValue(eCSSProperty_white_space, NS_STYLE_WHITESPACE_PRE_WRAP);
+        aData->SetKeywordValue(eCSSProperty_white_space, StyleWhiteSpace::PreWrap);
     }
   }
 
@@ -71,7 +68,7 @@ HTMLPreElement::IsAttributeMapped(const nsIAtom* aAttribute) const
     { &nsGkAtoms::wrap },
     { nullptr },
   };
-  
+
   static const MappedAttributeEntry* const map[] = {
     attributes,
     sCommonAttributeMap,

@@ -96,16 +96,17 @@ ServoPageRuleDeclaration::GetCSSParsingEnvironment(
   GetCSSParsingEnvironmentForRule(Rule(), aCSSParseEnv);
 }
 
-URLExtraData*
-ServoPageRuleDeclaration::GetURLData() const
+nsDOMCSSDeclaration::ServoCSSParsingEnvironment
+ServoPageRuleDeclaration::GetServoCSSParsingEnvironment() const
 {
-  return GetURLDataForRule(Rule());
+  return GetServoCSSParsingEnvironmentForRule(Rule());
 }
 
 // -- ServoPageRule --------------------------------------------------
 
-ServoPageRule::ServoPageRule(RefPtr<RawServoPageRule> aRawRule)
-  : CSSPageRule(0, 0)
+ServoPageRule::ServoPageRule(RefPtr<RawServoPageRule> aRawRule,
+                             uint32_t aLine, uint32_t aColumn)
+  : CSSPageRule(aLine, aColumn)
   , mRawRule(Move(aRawRule))
   , mDecls(Servo_PageRule_GetStyle(mRawRule).Consume())
 {
@@ -119,7 +120,7 @@ NS_IMPL_ADDREF_INHERITED(ServoPageRule, CSSPageRule)
 NS_IMPL_RELEASE_INHERITED(ServoPageRule, CSSPageRule)
 
 // QueryInterface implementation for PageRule
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(ServoPageRule)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ServoPageRule)
 NS_INTERFACE_MAP_END_INHERITING(CSSPageRule)
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(ServoPageRule)

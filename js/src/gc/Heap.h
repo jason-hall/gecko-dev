@@ -223,14 +223,15 @@ struct Cell
     MOZ_ALWAYS_INLINE bool isTenured() const { return !IsInsideNursery(this); }
     MOZ_ALWAYS_INLINE const TenuredCell& asTenured() const;
     MOZ_ALWAYS_INLINE TenuredCell& asTenured();
+	
+	inline JS::Zone* zoneFromAnyThread() const;
+	inline JS::Zone* zone() const;
 
     inline JSRuntime* runtimeFromActiveCooperatingThread() const;
-    inline JS::Zone* zone() const;
 
     // Note: Unrestricted access to the runtime of a GC thing from an arbitrary
     // thread can easily lead to races. Use this method very carefully.
     inline JSRuntime* runtimeFromAnyThread() const;
-    inline JS::Zone* zoneFromAnyThread() const;
 
     // May be overridden by GC thing kinds that have a compartment pointer.
     inline JSCompartment* maybeCompartment() const { return nullptr; }
@@ -265,10 +266,13 @@ class TenuredCell : public Cell
     static MOZ_ALWAYS_INLINE const TenuredCell* fromPointer(const void* ptr);
 
     // Mark bit management.
-    MOZ_ALWAYS_INLINE bool isMarked(uint32_t color = BLACK) const;
+    MOZ_ALWAYS_INLINE bool isMarkedAny() const;
+    MOZ_ALWAYS_INLINE bool isMarkedBlack() const;
+    MOZ_ALWAYS_INLINE bool isMarkedGray() const;
+
     // The return value indicates if the cell went from unmarked to marked.
-    MOZ_ALWAYS_INLINE bool markIfUnmarked(uint32_t color = BLACK) const;
-    MOZ_ALWAYS_INLINE void unmark(uint32_t color) const;
+    MOZ_ALWAYS_INLINE bool markIfUnmarked(MarkColor color = MarkColor::Black) const;
+    MOZ_ALWAYS_INLINE void markBlack() const;
     MOZ_ALWAYS_INLINE void copyMarkBitsFrom(const TenuredCell* src);
 
     inline JS::TraceKind getTraceKind() const;
@@ -287,8 +291,17 @@ class TenuredCell : public Cell
 #endif
 };
 
-/* Cells are aligned to CellShift, so the largest tagged null pointer is: */
-const uintptr_t LargestTaggedNullCellPointer = (1 << CellShift) - 1;
+/* Cells are aligned to CellAlignShift, so the largest tagged null pointer is: */
+const uintptr_t LargestTaggedNullCellPointer = (1 << CellAlignShift) - 1;
+
+/*
+ * The minimum cell size ends up as twice the cell alignment because the mark
+ * bitmap contains one bit per CellBytesPerMarkBit bytes (which is equal to
+ * CellAlignBytes) and we need two mark bits per cell.
+ */
+const size_t MarkBitsPerCell = 2;
+const size_t MinCellSize = CellBytesPerMarkBit * MarkBitsPerCell;
+
 
 class FreeSpan
 {
@@ -306,7 +319,6 @@ class FreeSpan
 // OMRTODO: Move to object model
 class OmrGcHelper {
 public:
-
     static JS_FRIEND_DATA(const uint32_t) thingSizes[];
 
     static size_t thingSize(AllocKind kind) {
@@ -339,10 +351,11 @@ Cell::runtimeFromActiveCooperatingThread() const
 }
 
 inline JSRuntime*
-Cell::runtimeFromAnyThread() const
+Cell::runtimeFromActiveCooperatingThread() const
 {
     return reinterpret_cast<JS::shadow::Zone*>(zone())->runtimeFromAnyThread();
 }
+
 inline JS::Zone*
 Cell::zoneFromAnyThread() const
 {
@@ -427,19 +440,33 @@ TenuredCell::fromPointer(const void* ptr)
 }
 
 bool
-TenuredCell::isMarked(uint32_t color /* = BLACK */) const
+TenuredCell::isMarkedAny() const
+{
+    MOZ_ASSERT(arena()->allocated());
+    return chunk()->bitmap.isMarkedAny(this);
+}
+
+bool
+TenuredCell::isMarkedBlack() const
 {
 	return IsMarkedCell(this);
 }
 
 bool
-TenuredCell::markIfUnmarked(uint32_t color /* = BLACK */) const
+TenuredCell::isMarkedGray() const
+{
+    MOZ_ASSERT(arena()->allocated());
+    return chunk()->bitmap.isMarkedGray(this);
+}
+
+bool
+TenuredCell::markIfUnmarked(MarkColor color /* = Black */) const
 {
 	return true;
 }
 
 void
-TenuredCell::unmark(uint32_t color) const
+TenuredCell::markBlack() const
 {
 	MOZ_ASSERT(false);
 }
@@ -502,8 +529,8 @@ namespace debug {
 
 // Utility functions meant to be called from an interactive debugger.
 enum class MarkInfo : int {
-    BLACK = js::gc::BLACK,
-    GRAY = js::gc::GRAY,
+    BLACK = 0,
+    GRAY = 1,
     UNMARKED = -1,
     NURSERY = -2,
 };
@@ -537,10 +564,10 @@ GetMarkInfo(js::gc::Cell* cell);
 MOZ_NEVER_INLINE uintptr_t*
 GetMarkWordAddress(js::gc::Cell* cell);
 
-// Return the mask for the given cell and color, or 0 if the cell is in the
+// Return the mask for the given cell and color bit, or 0 if the cell is in the
 // nursery.
 MOZ_NEVER_INLINE uintptr_t
-GetMarkMask(js::gc::Cell* cell, uint32_t color);
+GetMarkMask(js::gc::Cell* cell, uint32_t colorBit);
 
 } /* namespace debug */
 } /* namespace js */

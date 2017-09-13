@@ -22,15 +22,17 @@ namespace jit {
     _(GuardIsInt32Index)                  \
     _(GuardType)                          \
     _(GuardClass)                         \
+    _(GuardIsNativeFunction)              \
     _(GuardIsProxy)                       \
-    _(GuardIsCrossCompartmentWrapper)     \
     _(GuardNotDOMProxy)                   \
+    _(GuardSpecificInt32Immediate)        \
     _(GuardMagicValue)                    \
     _(GuardNoUnboxedExpando)              \
     _(GuardAndLoadUnboxedExpando)         \
     _(GuardNoDetachedTypedObjects)        \
     _(GuardNoDenseElements)               \
     _(GuardAndGetIndexFromString)         \
+    _(GuardIndexIsNonNegative)            \
     _(LoadProto)                          \
     _(LoadEnclosingEnvironment)           \
     _(LoadWrapperTarget)                  \
@@ -51,7 +53,16 @@ namespace jit {
     _(LoadDenseElementHoleExistsResult)   \
     _(LoadUnboxedArrayElementResult)      \
     _(LoadTypedElementResult)             \
+    _(LoadObjectResult)                   \
+    _(LoadTypeOfObjectResult)             \
+    _(CompareStringResult)                \
+    _(CompareObjectResult)                \
+    _(CompareSymbolResult)                \
+    _(ArrayJoinResult)                    \
+    _(CallPrintString)                    \
+    _(Breakpoint)                         \
     _(MegamorphicLoadSlotByValueResult)   \
+    _(MegamorphicHasOwnResult)            \
     _(WrapResult)
 
 // Represents a Value on the Baseline frame's expression stack. Slot 0 is the
@@ -252,6 +263,10 @@ class MOZ_RAII CacheRegisterAllocator
     // The current location of each operand.
     Vector<OperandLocation, 8, SystemAllocPolicy> operandLocations_;
 
+    // Free lists for value- and payload-slots on stack
+    Vector<uint32_t, 2, SystemAllocPolicy> freeValueSlots_;
+    Vector<uint32_t, 2, SystemAllocPolicy> freePayloadSlots_;
+
     // The registers allocated while emitting the current CacheIR op.
     // This prevents us from allocating a register and then immediately
     // clobbering it for something else, while we're still holding on to it.
@@ -280,7 +295,7 @@ class MOZ_RAII CacheRegisterAllocator
     CacheRegisterAllocator(const CacheRegisterAllocator&) = delete;
     CacheRegisterAllocator& operator=(const CacheRegisterAllocator&) = delete;
 
-    void freeDeadOperandRegisters();
+    void freeDeadOperandLocations(MacroAssembler& masm);
 
     void spillOperandToStack(MacroAssembler& masm, OperandLocation* loc);
     void spillOperandToStackOrRegister(MacroAssembler& masm, OperandLocation* loc);
@@ -583,6 +598,8 @@ class MOZ_RAII CacheIRCompiler
     void emitStoreTypedObjectReferenceProp(ValueOperand val, ReferenceTypeDescr::Type type,
                                            const Address& dest, Register scratch);
 
+    void emitRegisterEnumerator(Register enumeratorsList, Register iter, Register scratch);
+
   private:
     void emitPostBarrierShared(Register obj, const ConstantOrRegister& val, Register scratch,
                                Register maybeIndex);
@@ -603,6 +620,8 @@ class MOZ_RAII CacheIRCompiler
         MOZ_ASSERT(index != InvalidReg);
         emitPostBarrierShared(obj, val, scratch, index);
     }
+
+    bool emitComparePointerResultShared(bool symbol);
 
 #define DEFINE_SHARED_OP(op) MOZ_MUST_USE bool emit##op();
     CACHE_IR_SHARED_OPS(DEFINE_SHARED_OP)

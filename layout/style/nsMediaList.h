@@ -16,11 +16,11 @@
 #include "nsTArray.h"
 #include "nsIAtom.h"
 #include "nsCSSValue.h"
+#include "nsStringFwd.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/MediaList.h"
 
 class nsPresContext;
-class nsAString;
 struct nsMediaFeature;
 
 namespace mozilla {
@@ -217,7 +217,7 @@ public:
   void SetHasOnly()                     { mHasOnly = true; }
   void SetTypeOmitted()                 { mTypeOmitted = true; }
   void SetHadUnknownExpression()        { mHadUnknownExpression = true; }
-  void SetType(nsIAtom* aMediaType)     { 
+  void SetType(nsIAtom* aMediaType)     {
                                           NS_ASSERTION(aMediaType,
                                                        "expected non-null");
                                           mMediaType = aMediaType;
@@ -236,7 +236,7 @@ public:
   // Does this query apply to the presentation?
   // If |aKey| is non-null, add cache information to it.
   bool Matches(nsPresContext* aPresContext,
-                 nsMediaQueryResultCacheKey* aKey) const;
+               nsMediaQueryResultCacheKey* aKey) const;
 
 private:
   bool mNegated;
@@ -255,10 +255,18 @@ public:
   void GetText(nsAString& aMediaText) final;
   void SetText(const nsAString& aMediaText) final;
 
+  bool Matches(nsPresContext* aPresContext) const final {
+    return Matches(aPresContext, nullptr);
+  }
+
   // Does this query apply to the presentation?
   // If |aKey| is non-null, add cache information to it.
   bool Matches(nsPresContext* aPresContext,
-                 nsMediaQueryResultCacheKey* aKey);
+               nsMediaQueryResultCacheKey* aKey) const;
+
+#ifdef DEBUG
+  bool IsServo() const final { return false; }
+#endif
 
   void AppendQuery(nsAutoPtr<nsMediaQuery>& aQuery) {
     // Takes ownership of aQuery

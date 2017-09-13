@@ -19,6 +19,7 @@
 #include "nsISimpleEnumerator.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIScriptSecurityManager.h"
+#include "nsISupportsPrimitives.h"
 #include "nsITimer.h"
 #include "nsIURI.h"
 #include "nsPIDOMWindow.h"
@@ -39,7 +40,6 @@
 #include "mozilla/ipc/BackgroundUtils.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/Mutex.h"
-#include "mozilla/LazyIdleThread.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
@@ -370,6 +370,24 @@ private:
   ~DirectoryLockImpl();
 };
 
+class QuotaObject::StoragePressureRunnable final
+  : public Runnable
+{
+  const uint64_t mUsage;
+
+public:
+  explicit StoragePressureRunnable(uint64_t aUsage)
+    : Runnable("dom::quota::QuotaObject::StoragePressureRunnable")
+    , mUsage(aUsage)
+  { }
+
+private:
+  ~StoragePressureRunnable()
+  { }
+
+  NS_DECL_NSIRUNNABLE
+};
+
 class QuotaManager::CreateRunnable final
   : public BackgroundThreadObject
   , public Runnable
@@ -392,7 +410,8 @@ class QuotaManager::CreateRunnable final
 
 public:
   CreateRunnable()
-    : mResultCode(NS_OK)
+    : Runnable("dom::quota::QuotaManager::CreateRunnable")
+    , mResultCode(NS_OK)
     , mState(State::Initial)
   {
     AssertIsOnBackgroundThread();
@@ -437,7 +456,8 @@ class QuotaManager::ShutdownRunnable final
 
 public:
   explicit ShutdownRunnable(bool& aDone)
-    : mDone(aDone)
+    : Runnable("dom::quota::QuotaManager::ShutdownRunnable")
+    , mDone(aDone)
   {
     MOZ_ASSERT(NS_IsMainThread());
   }
@@ -771,8 +791,9 @@ public:
 
 protected:
   explicit OriginOperationBase(
-                          nsIEventTarget* aOwningThread = NS_GetCurrentThread())
+        nsIEventTarget* aOwningThread = GetCurrentThreadEventTarget())
     : BackgroundThreadObject(aOwningThread)
+    , Runnable("dom::quota::OriginOperationBase")
     , mResultCode(NS_OK)
     , mState(State_Initial)
     , mActorDestroyed(false)
@@ -787,11 +808,13 @@ protected:
     MOZ_ASSERT(mActorDestroyed);
   }
 
+#ifdef DEBUG
   State
   GetState() const
   {
     return mState;
   }
+#endif
 
   void
   SetState(State aState)
@@ -1434,7 +1457,7 @@ IsTempMetadata(const nsAString& aFileName)
 } // namespace
 
 BackgroundThreadObject::BackgroundThreadObject()
-  : mOwningThread(NS_GetCurrentThread())
+  : mOwningThread(GetCurrentThreadEventTarget())
 {
   AssertIsOnOwningThread();
 }
@@ -1542,9 +1565,9 @@ protected:
   const bool mPersistent;
 
 public:
-  StorageDirectoryHelper(nsIFile* aDirectory,
-                         bool aPersistent)
-    : mMutex("StorageDirectoryHelper::mMutex")
+  StorageDirectoryHelper(nsIFile* aDirectory, bool aPersistent)
+    : Runnable("dom::quota::StorageDirectoryHelper")
+    , mMutex("StorageDirectoryHelper::mMutex")
     , mCondVar(mMutex, "StorageDirectoryHelper::mCondVar")
     , mMainThreadResultCode(NS_OK)
     , mWaiting(true)
@@ -2716,7 +2739,7 @@ CreateRunnable::GetNextState(nsCOMPtr<nsIEventTarget>& aThread) -> State
       aThread = mOwningThread;
       return State::CreatingManager;
     case State::CreatingManager:
-      aThread = do_GetMainThread();
+      aThread = GetMainThreadEventTarget();
       return State::RegisteringObserver;
     case State::RegisteringObserver:
       aThread = mOwningThread;
@@ -2813,6 +2836,18 @@ ShutdownObserver::Observe(nsISupports* aSubject,
   MOZ_ASSERT(!strcmp(aTopic, PROFILE_BEFORE_CHANGE_QM_OBSERVER_ID));
   MOZ_ASSERT(gInstance);
 
+  nsCOMPtr<nsIObserverService> observerService =
+    mozilla::services::GetObserverService();
+  if (NS_WARN_IF(!observerService)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  // Unregister ourselves from the observer service first to make sure the
+  // nested event loop below will not cause re-entrancy issues.
+  Unused <<
+    observerService->RemoveObserver(this,
+                                    PROFILE_BEFORE_CHANGE_QM_OBSERVER_ID);
+
   QuotaManagerService* qms = QuotaManagerService::Get();
   MOZ_ASSERT(qms);
 
@@ -2828,12 +2863,7 @@ ShutdownObserver::Observe(nsISupports* aSubject,
   MOZ_ALWAYS_SUCCEEDS(
     mBackgroundThread->Dispatch(shutdownRunnable, NS_DISPATCH_NORMAL));
 
-  nsIThread* currentThread = NS_GetCurrentThread();
-  MOZ_ASSERT(currentThread);
-
-  while (!done) {
-    MOZ_ALWAYS_TRUE(NS_ProcessNextEvent(currentThread));
-  }
+  MOZ_ALWAYS_TRUE(SpinEventLoopUntil([&]() { return done; }));
 
   return NS_OK;
 }
@@ -2841,6 +2871,30 @@ ShutdownObserver::Observe(nsISupports* aSubject,
 /*******************************************************************************
  * Quota object
  ******************************************************************************/
+
+NS_IMETHODIMP
+QuotaObject::
+StoragePressureRunnable::Run()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  nsCOMPtr<nsIObserverService> obsSvc = mozilla::services::GetObserverService();
+  if (NS_WARN_IF(!obsSvc)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsISupportsPRUint64> wrapper =
+    do_CreateInstance(NS_SUPPORTS_PRUINT64_CONTRACTID);
+  if (NS_WARN_IF(!wrapper)) {
+    return NS_ERROR_FAILURE;
+  }
+
+  wrapper->SetData(mUsage);
+
+  obsSvc->NotifyObservers(wrapper, "QuotaManager::StoragePressure", u"");
+
+  return NS_OK;
+}
 
 void
 QuotaObject::AddRef()
@@ -2982,8 +3036,14 @@ QuotaObject::MaybeUpdateSize(int64_t aSize, bool aTruncate)
       quotaManager->LockedCollectOriginsForEviction(delta, locks);
 
     if (!sizeToBeFreed) {
-      // XXX prompt for asking to delete persistent origins if there is any
-      // persistent origin.
+      MutexAutoUnlock autoUnlock(quotaManager->mQuotaMutex);
+
+      // Notify pressure event.
+      RefPtr<StoragePressureRunnable> storagePressureRunnable =
+        new StoragePressureRunnable(quotaManager->mTemporaryStorageUsage);
+
+      MOZ_ALWAYS_SUCCEEDS(NS_DispatchToMainThread(storagePressureRunnable));
+
       return false;
     }
 
@@ -3011,7 +3071,8 @@ QuotaObject::MaybeUpdateSize(int64_t aSize, bool aTruncate)
       MOZ_ASSERT(!lock->GetGroup().IsEmpty());
       MOZ_ASSERT(lock->GetOriginScope().IsOrigin());
       MOZ_ASSERT(!lock->GetOriginScope().GetOrigin().IsEmpty());
-      MOZ_ASSERT(lock->GetOriginScope().GetOrigin() != mOriginInfo->mOrigin,
+      MOZ_ASSERT(!(lock->GetOriginScope().GetOrigin() == mOriginInfo->mOrigin &&
+                   lock->GetPersistenceType().Value() == groupInfo->mPersistenceType),
                  "Deleted itself!");
 
       quotaManager->LockedRemoveQuotaForOrigin(
@@ -3531,11 +3592,10 @@ QuotaManager::Init(const nsAString& aBasePath)
     return rv;
   }
 
-  // Make a lazy thread for any IO we need (like clearing or enumerating the
-  // contents of storage directories).
-  mIOThread = new LazyIdleThread(DEFAULT_THREAD_TIMEOUT_MS,
-                                 NS_LITERAL_CSTRING("Storage I/O"),
-                                 LazyIdleThread::ManualShutdown);
+  rv = NS_NewNamedThread("QuotaManager IO", getter_AddRefs(mIOThread));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
 
   // Make a timer here to avoid potential failures later. We don't actually
   // initialize the timer until shutdown.
@@ -3573,10 +3633,11 @@ QuotaManager::Shutdown()
 
   // Kick off the shutdown timer.
   MOZ_ALWAYS_SUCCEEDS(
-    mShutdownTimer->InitWithFuncCallback(&ShutdownTimerCallback,
-                                         this,
-                                         DEFAULT_SHUTDOWN_TIMER_MS,
-                                         nsITimer::TYPE_ONE_SHOT));
+    mShutdownTimer->InitWithNamedFuncCallback(&ShutdownTimerCallback,
+                                              this,
+                                              DEFAULT_SHUTDOWN_TIMER_MS,
+                                              nsITimer::TYPE_ONE_SHOT,
+                                              "QuotaManager::ShutdownTimerCallback"));
 
   // Each client will spin the event loop while we wait on all the threads
   // to close. Our timer may fire during that loop.
@@ -3594,7 +3655,9 @@ QuotaManager::Shutdown()
   // QuotaManager on the IO thread. This should probably use
   // NewNonOwningRunnableMethod ...
   RefPtr<Runnable> runnable =
-    NewRunnableMethod(this, &QuotaManager::ReleaseIOThreadObjects);
+    NewRunnableMethod("dom::quota::QuotaManager::ReleaseIOThreadObjects",
+                      this,
+                      &QuotaManager::ReleaseIOThreadObjects);
   MOZ_ASSERT(runnable);
 
   // Give clients a chance to cleanup IO thread only objects.
@@ -5125,9 +5188,13 @@ QuotaManager::EnsureOriginIsInitializedInternal(
       return rv;
     }
 
-    rv = InitializeOrigin(aPersistenceType, aGroup, aOrigin, timestamp,
-                          /* aPersisted */ false, directory);
-    NS_ENSURE_SUCCESS(rv, rv);
+    // Don't need to traverse the directory, since it's empty.
+    InitQuotaForOrigin(aPersistenceType,
+                       aGroup,
+                       aOrigin,
+                       /* aUsageBytes */ 0,
+                       timestamp,
+                       /* aPersisted */ false);
   }
 
   directory.forget(aDirectory);
@@ -5830,11 +5897,12 @@ GroupInfoPair::GetGroupInfoForPersistenceType(PersistenceType aPersistenceType)
 
 CollectOriginsHelper::CollectOriginsHelper(mozilla::Mutex& aMutex,
                                            uint64_t aMinSizeToBeFreed)
-: mMinSizeToBeFreed(aMinSizeToBeFreed),
-  mMutex(aMutex),
-  mCondVar(aMutex, "CollectOriginsHelper::mCondVar"),
-  mSizeToBeFreed(0),
-  mWaiting(true)
+  : Runnable("dom::quota::CollectOriginsHelper")
+  , mMinSizeToBeFreed(aMinSizeToBeFreed)
+  , mMutex(aMutex)
+  , mCondVar(aMutex, "CollectOriginsHelper::mCondVar")
+  , mSizeToBeFreed(0)
+  , mWaiting(true)
 {
   MOZ_ASSERT(!NS_IsMainThread(), "Wrong thread!");
   mMutex.AssertCurrentThreadOwns();
@@ -6112,8 +6180,7 @@ FinalizeOriginEvictionOp::DoDirectoryWork(QuotaManager* aQuotaManager)
 {
   AssertIsOnIOThread();
 
-  PROFILER_LABEL("Quota", "FinalizeOriginEvictionOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("FinalizeOriginEvictionOp::DoDirectoryWork", OTHER);
 
   for (RefPtr<DirectoryLockImpl>& lock : mLocks) {
     aQuotaManager->OriginClearCompleted(lock->GetPersistenceType().Value(),
@@ -6203,8 +6270,7 @@ SaveOriginAccessTimeOp::DoDirectoryWork(QuotaManager* aQuotaManager)
   MOZ_ASSERT(!mPersistenceType.IsNull());
   MOZ_ASSERT(mOriginScope.IsOrigin());
 
-  PROFILER_LABEL("Quota", "SaveOriginAccessTimeOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("SaveOriginAccessTimeOp::DoDirectoryWork", OTHER);
 
   nsCOMPtr<nsIFile> file;
   nsresult rv =
@@ -6453,7 +6519,9 @@ Quota::RecvStartIdleMaintenance()
   QuotaManager* quotaManager = QuotaManager::Get();
   if (!quotaManager) {
     nsCOMPtr<nsIRunnable> callback =
-      NewRunnableMethod(this, &Quota::StartIdleMaintenance);
+      NewRunnableMethod("dom::quota::Quota::StartIdleMaintenance",
+                        this,
+                        &Quota::StartIdleMaintenance);
 
     QuotaManager::GetOrCreate(callback);
     return IPC_OK();
@@ -6813,8 +6881,7 @@ GetUsageOp::DoDirectoryWork(QuotaManager* aQuotaManager)
 {
   AssertIsOnIOThread();
 
-  PROFILER_LABEL("Quota", "GetUsageOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("GetUsageOp::DoDirectoryWork", OTHER);
 
   nsresult rv;
 
@@ -6901,8 +6968,7 @@ GetOriginUsageOp::DoDirectoryWork(QuotaManager* aQuotaManager)
   AssertIsOnIOThread();
   MOZ_ASSERT(mUsageInfo.TotalUsage() == 0);
 
-  PROFILER_LABEL("Quota", "GetOriginUsageOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("GetOriginUsageOp::DoDirectoryWork", OTHER);
 
   nsresult rv;
 
@@ -7009,8 +7075,7 @@ InitOp::DoDirectoryWork(QuotaManager* aQuotaManager)
 {
   AssertIsOnIOThread();
 
-  PROFILER_LABEL("Quota", "InitOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("InitOp::DoDirectoryWork", OTHER);
 
   aQuotaManager->AssertStorageIsInitialized();
 
@@ -7088,8 +7153,7 @@ InitOriginOp::DoDirectoryWork(QuotaManager* aQuotaManager)
   AssertIsOnIOThread();
   MOZ_ASSERT(!mPersistenceType.IsNull());
 
-  PROFILER_LABEL("Quota", "InitOriginOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("InitOriginOp::DoDirectoryWork", OTHER);
 
   nsCOMPtr<nsIFile> directory;
   bool created;
@@ -7178,8 +7242,7 @@ ResetOrClearOp::DoDirectoryWork(QuotaManager* aQuotaManager)
 {
   AssertIsOnIOThread();
 
-  PROFILER_LABEL("Quota", "ResetOrClearOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("ResetOrClearOp::DoDirectoryWork", OTHER);
 
   if (mClear) {
     DeleteFiles(aQuotaManager);
@@ -7324,8 +7387,7 @@ ClearRequestBase::DoDirectoryWork(QuotaManager* aQuotaManager)
 {
   AssertIsOnIOThread();
 
-  PROFILER_LABEL("Quota", "OriginClearOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("ClearRequestBase::DoDirectoryWork", OTHER);
 
   if (mPersistenceType.IsNull()) {
     for (const PersistenceType type : kAllPersistenceTypes) {
@@ -7515,8 +7577,7 @@ PersistedOp::DoDirectoryWork(QuotaManager* aQuotaManager)
   MOZ_ASSERT(mPersistenceType.Value() == PERSISTENCE_TYPE_DEFAULT);
   MOZ_ASSERT(mOriginScope.IsOrigin());
 
-  PROFILER_LABEL("Quota", "PersistedOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("PersistedOp::DoDirectoryWork", OTHER);
 
   Nullable<bool> persisted =
     aQuotaManager->OriginPersisted(mGroup, mOriginScope.GetOrigin());
@@ -7589,10 +7650,10 @@ PersistOp::DoDirectoryWork(QuotaManager* aQuotaManager)
   MOZ_ASSERT(mPersistenceType.Value() == PERSISTENCE_TYPE_DEFAULT);
   MOZ_ASSERT(mOriginScope.IsOrigin());
 
-  PROFILER_LABEL("Quota", "PersistOp::DoDirectoryWork",
-                 js::ProfileEntry::Category::OTHER);
+  AUTO_PROFILER_LABEL("PersistOp::DoDirectoryWork", OTHER);
 
-  // Update directory metadata on disk first.
+  // Update directory metadata on disk first. Then, create/update the originInfo
+  // if needed.
   nsCOMPtr<nsIFile> directory;
   nsresult rv = aQuotaManager->GetDirectoryForOrigin(mPersistenceType.Value(),
                                                      mOriginScope.GetOrigin(),
@@ -7608,14 +7669,26 @@ PersistOp::DoDirectoryWork(QuotaManager* aQuotaManager)
   }
 
   if (created) {
+    int64_t timestamp;
     rv = CreateDirectoryMetadataFiles(directory,
                                       /* aPersisted */ true,
                                       mSuffix,
                                       mGroup,
                                       mOriginScope.GetOrigin(),
-                                      /* aTimestamp */ nullptr);
+                                      &timestamp);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;
+    }
+
+    // Directory metadata has been successfully created.
+    // Create OriginInfo too if temporary storage was already initialized.
+    if (aQuotaManager->IsTemporaryStorageInitialized()) {
+      aQuotaManager->InitQuotaForOrigin(mPersistenceType.Value(),
+                                        mGroup,
+                                        mOriginScope.GetOrigin(),
+                                        /* aUsageBytes */ 0,
+                                        timestamp,
+                                        /* aPersisted */ true);
     }
   } else {
     // Get the persisted flag (restore the metadata file if necessary).
@@ -7661,11 +7734,13 @@ PersistOp::DoDirectoryWork(QuotaManager* aQuotaManager)
         return rv;
       }
     }
-  }
 
-  // Directory metadata has been successfully created/updated, try to update
-  // OriginInfo too (it's ok if OriginInfo doesn't exist yet).
-  aQuotaManager->PersistOrigin(mGroup, mOriginScope.GetOrigin());
+    // Directory metadata has been successfully updated.
+    // Update OriginInfo too if temporary storage was already initialized.
+    if (aQuotaManager->IsTemporaryStorageInitialized()) {
+      aQuotaManager->PersistOrigin(mGroup, mOriginScope.GetOrigin());
+    }
+  }
 
   return NS_OK;
 }
@@ -7876,12 +7951,6 @@ StorageDirectoryHelper::RunOnMainThread()
   MOZ_ASSERT(!mOriginProps.IsEmpty());
 
   nsresult rv;
-
-  nsCOMPtr<nsIScriptSecurityManager> secMan =
-    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
 
   for (uint32_t count = mOriginProps.Length(), index = 0;
        index < count;

@@ -9,6 +9,11 @@
 "use strict";
 
 const gMozillaSpecificProperties = {
+  "-moz-appearance": {
+    // https://drafts.csswg.org/css-align/#propdef-align-content
+    from: "button",
+    to: "none"
+  },
   "-moz-border-bottom-colors": {
     from: "rgb(255, 0, 0) rgb(255, 0, 0) rgb(255, 0, 0) rgb(255, 0, 0)",
     to: "rgb(0, 255, 0) rgb(0, 255, 0) rgb(0, 255, 0) rgb(0, 255, 0)"
@@ -58,7 +63,7 @@ const gMozillaSpecificProperties = {
   "-moz-force-broken-image-icon": {
     // https://developer.mozilla.org/en/docs/Web/CSS/-moz-force-broken-image-icon
     from: "1",
-    to: "5"
+    to: "0"
   },
   "image-rendering": {
     // https://drafts.csswg.org/css-images-3/#propdef-image-rendering

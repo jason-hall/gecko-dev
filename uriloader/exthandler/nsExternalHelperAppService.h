@@ -16,6 +16,7 @@
 
 #include "nsIMIMEInfo.h"
 #include "nsIMIMEService.h"
+#include "nsINamed.h"
 #include "nsIStreamListener.h"
 #include "nsIFile.h"
 #include "nsIFileStreams.h"
@@ -107,6 +108,15 @@ public:
 
   virtual nsresult OSProtocolHandlerExists(const char *aScheme,
                                                        bool *aExists) = 0;
+
+  /**
+   * Given an extension, get a MIME type string. If not overridden by
+   * the OS-specific nsOSHelperAppService, will call into GetMIMEInfoFromOS
+   * with an empty mimetype.
+   * @return true if we successfully found a mimetype.
+   */
+  virtual bool GetMIMETypeFromOSForExtension(const nsACString& aExtension,
+                                             nsACString& aMIMEType);
 
 protected:
   virtual ~nsExternalHelperAppService();
@@ -202,7 +212,8 @@ private:
 class nsExternalAppHandler final : public nsIStreamListener,
                                    public nsIHelperAppLauncher,
                                    public nsITimerCallback,
-                                   public nsIBackgroundFileSaverObserver
+                                   public nsIBackgroundFileSaverObserver,
+                                   public nsINamed
 {
 public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -212,6 +223,7 @@ public:
   NS_DECL_NSICANCELABLE
   NS_DECL_NSITIMERCALLBACK
   NS_DECL_NSIBACKGROUNDFILESAVEROBSERVER
+  NS_DECL_NSINAMED
 
   /**
    * @param aMIMEInfo       MIMEInfo object, representing the type of the
@@ -228,7 +240,7 @@ public:
    * @param aReason         A constant from nsIHelperAppLauncherDialog indicating
    *                        why the request is handled by a helper app.
    */
-  nsExternalAppHandler(nsIMIMEInfo * aMIMEInfo, const nsCSubstring& aFileExtension,
+  nsExternalAppHandler(nsIMIMEInfo * aMIMEInfo, const nsACString& aFileExtension,
                        nsIInterfaceRequestor * aContentContext,
                        nsIInterfaceRequestor * aWindowContext,
                        nsExternalHelperAppService * aExtProtSvc,
@@ -408,8 +420,8 @@ protected:
    * This is called by SaveToDisk to decide what's the final
    * file destination chosen by the user or by auto-download settings.
    */
-  void RequestSaveDestination(const nsAFlatString &aDefaultFile,
-                              const nsAFlatString &aDefaultFileExt);
+  void RequestSaveDestination(const nsString& aDefaultFile,
+                              const nsString& aDefaultFileExt);
 
   /**
    * When SaveToDisk is called, it possibly delegates to RequestSaveDestination
@@ -455,7 +467,7 @@ protected:
   /**
    * Utility function to send proper error notification to web progress listener
    */
-  void SendStatusChange(ErrorType type, nsresult aStatus, nsIRequest *aRequest, const nsAFlatString &path);
+  void SendStatusChange(ErrorType type, nsresult aStatus, nsIRequest *aRequest, const nsString& path);
 
   /**
    * Closes the window context if it does not have a refresh header

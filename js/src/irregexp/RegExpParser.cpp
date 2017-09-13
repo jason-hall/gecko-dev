@@ -30,10 +30,19 @@
 
 #include "irregexp/RegExpParser.h"
 
+#include "mozilla/ArrayUtils.h"
+#include "mozilla/Move.h"
+
 #include "frontend/TokenStream.h"
+#include "irregexp/RegExpCharacters.h"
+#include "vm/ErrorReporting.h"
+#include "vm/StringBuffer.h"
 
 using namespace js;
 using namespace js::irregexp;
+
+using mozilla::Move;
+using mozilla::PointerRangeSize;
 
 // ----------------------------------------------------------------------------
 // RegExpBuilder
@@ -120,6 +129,12 @@ void
 RegExpBuilder::AddAssertion(RegExpTree* assert)
 {
     FlushText();
+    if (terms_.length() > 0 && terms_.last()->IsAssertion()) {
+        // Omit repeated assertions of the same type.
+        RegExpAssertion* last = terms_.last()->AsAssertion();
+        RegExpAssertion* next = assert->AsAssertion();
+        if (last->assertion_type() == next->assertion_type()) return;
+    }
     terms_.Add(alloc, assert);
 #ifdef DEBUG
     last_added_ = ADD_ASSERT;
@@ -226,7 +241,8 @@ RegExpParser<CharT>::RegExpParser(frontend::TokenStream& ts, LifoAlloc* alloc,
   : ts(ts),
     alloc(alloc),
     captures_(nullptr),
-    next_pos_(chars),
+    start_(chars),
+    next_pos_(start_),
     end_(end),
     current_(kEndMarker),
     capture_count_(0),
@@ -242,11 +258,64 @@ RegExpParser<CharT>::RegExpParser(frontend::TokenStream& ts, LifoAlloc* alloc,
 }
 
 template <typename CharT>
+void
+RegExpParser<CharT>::SyntaxError(unsigned errorNumber, ...)
+{
+    ErrorMetadata err;
+
+    ts.fillExcludingContext(&err, ts.currentToken().pos.begin);
+
+    // For most error reporting, the line of context derives from the token
+    // stream.  So when location information doesn't come from the token
+    // stream, we can't give a line of context.  But here the "line of context"
+    // can be (and is) derived from the pattern text, so we can provide it no
+    // matter if the location is derived from the caller.
+    size_t offset = PointerRangeSize(start_, next_pos_ - 1);
+    size_t end = PointerRangeSize(start_, end_);
+
+    const CharT* windowStart = (offset > ErrorMetadata::lineOfContextRadius)
+                               ? start_ + (offset - ErrorMetadata::lineOfContextRadius)
+                               : start_;
+
+    const CharT* windowEnd = (end - offset > ErrorMetadata::lineOfContextRadius)
+                             ? start_ + offset + ErrorMetadata::lineOfContextRadius
+                             : end_;
+
+    size_t windowLength = PointerRangeSize(windowStart, windowEnd);
+    MOZ_ASSERT(windowLength <= ErrorMetadata::lineOfContextRadius * 2);
+
+    // Create the windowed string, not including the potential line
+    // terminator.
+    StringBuffer windowBuf(ts.context());
+    if (!windowBuf.append(windowStart, windowEnd))
+        return;
+
+    // The line of context must be null-terminated, and StringBuffer doesn't
+    // make that happen unless we force it to.
+    if (!windowBuf.append('\0'))
+        return;
+
+    err.lineOfContext.reset(windowBuf.stealChars());
+    if (!err.lineOfContext)
+        return;
+
+    err.lineLength = windowLength;
+    err.tokenOffset = offset - (windowStart - start_);
+
+    va_list args;
+    va_start(args, errorNumber);
+
+    ReportCompileError(ts.context(), Move(err), nullptr, JSREPORT_ERROR, errorNumber, args);
+
+    va_end(args);
+}
+
+template <typename CharT>
 RegExpTree*
 RegExpParser<CharT>::ReportError(unsigned errorNumber, const char* param /* = nullptr */)
 {
     gc::AutoSuppressGC suppressGC(ts.context());
-    ts.reportError(errorNumber, param);
+    SyntaxError(errorNumber, param);
     return nullptr;
 }
 
@@ -1356,11 +1425,9 @@ UnicodeEverythingAtom(LifoAlloc* alloc)
     // everything except \x0a, \x0d, \u2028 and \u2029
 
     CharacterRangeVector* ranges = alloc->newInfallible<CharacterRangeVector>(*alloc);
-    ranges->append(CharacterRange::Range(0x0, 0x09));
-    ranges->append(CharacterRange::Range(0x0b, 0x0c));
-    ranges->append(CharacterRange::Range(0x0e, 0x2027));
-    ranges->append(CharacterRange::Range(0x202A, unicode::LeadSurrogateMin - 1));
-    ranges->append(CharacterRange::Range(unicode::TrailSurrogateMax + 1, unicode::UTF16Max));
+    AddClassNegated(kLineTerminatorAndSurrogateRanges,
+                    kLineTerminatorAndSurrogateRangeCount,
+                    ranges);
     builder->AddAtom(alloc->newInfallible<RegExpCharacterClass>(ranges, false));
 
     builder->NewAlternative();
@@ -1903,4 +1970,11 @@ irregexp::ParsePatternSyntax(frontend::TokenStream& ts, LifoAlloc& alloc, JSAtom
     return str->hasLatin1Chars()
            ? ::ParsePatternSyntax(ts, alloc, str->latin1Chars(nogc), str->length(), unicode)
            : ::ParsePatternSyntax(ts, alloc, str->twoByteChars(nogc), str->length(), unicode);
+}
+
+bool
+irregexp::ParsePatternSyntax(frontend::TokenStream& ts, LifoAlloc& alloc,
+                             const mozilla::Range<const char16_t> chars, bool unicode)
+{
+    return ::ParsePatternSyntax(ts, alloc, chars.begin().get(), chars.length(), unicode);
 }

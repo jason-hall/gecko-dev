@@ -146,18 +146,11 @@ var SessionHistoryInternal = {
    * @return object
    */
   serializeEntry(shEntry) {
-    let entry = { url: shEntry.URI.spec };
+    let entry = { url: shEntry.URI.spec, title: shEntry.title };
 
-    // Save some bytes and don't include the title property
-    // if that's identical to the current entry's URL.
-    if (shEntry.title && shEntry.title != entry.url) {
-      entry.title = shEntry.title;
-    }
     if (shEntry.isSubFrame) {
       entry.subframe = true;
     }
-
-    entry.charset = shEntry.URI.originCharset;
 
     let cacheKey = shEntry.cacheKey;
     if (cacheKey && cacheKey instanceof Ci.nsISupportsPRUint32 &&
@@ -180,8 +173,29 @@ var SessionHistoryInternal = {
       entry.originalURI = shEntry.originalURI.spec;
     }
 
+    if (shEntry.resultPrincipalURI) {
+      entry.resultPrincipalURI = shEntry.resultPrincipalURI.spec;
+
+      // For downgrade compatibility we store the loadReplace property as it
+      // would be stored before result principal URI introduction so that
+      // the old code can still create URL based principals for channels
+      // correctly.  When resultPrincipalURI is non-null and not equal to
+      // channel's orignalURI in the new code, it's equal to setting
+      // LOAD_REPLACE in the old code.  Note that we only do 'the best we can'
+      // here to derivate the 'old' loadReplace flag value.
+      entry.loadReplace = entry.resultPrincipalURI != entry.originalURI;
+    } else {
+      // We want to store the property to let the backward compatibility code,
+      // when reading the stored session, work. When this property is undefined
+      // that code will derive the result principal URI from the load replace
+      // flag.
+      entry.resultPrincipalURI = null;
+    }
+
     if (shEntry.loadReplace) {
-      entry.loadReplace = shEntry.loadReplace;
+      // Storing under a new property name, since it has changed its meaning
+      // with the result principal URI introduction.
+      entry.loadReplace2 = shEntry.loadReplace;
     }
 
     if (shEntry.srcdocData)
@@ -359,7 +373,7 @@ var SessionHistoryInternal = {
     var shEntry = Cc["@mozilla.org/browser/session-history-entry;1"].
                   createInstance(Ci.nsISHEntry);
 
-    shEntry.setURI(Utils.makeURI(entry.url, entry.charset));
+    shEntry.setURI(Utils.makeURI(entry.url));
     shEntry.setTitle(entry.title || entry.url);
     if (entry.subframe)
       shEntry.setIsSubFrame(entry.subframe || false);
@@ -373,8 +387,17 @@ var SessionHistoryInternal = {
     if (entry.originalURI) {
       shEntry.originalURI = Utils.makeURI(entry.originalURI);
     }
-    if (entry.loadReplace) {
-      shEntry.loadReplace = entry.loadReplace;
+    if (typeof entry.resultPrincipalURI === "undefined" && entry.loadReplace) {
+      // This is backward compatibility code for stored sessions saved prior to
+      // introduction of the resultPrincipalURI property.  The equivalent of this
+      // property non-null value used to be the URL while the LOAD_REPLACE flag
+      // was set.
+      shEntry.resultPrincipalURI = shEntry.URI;
+    } else if (entry.resultPrincipalURI) {
+      shEntry.resultPrincipalURI = Utils.makeURI(entry.resultPrincipalURI);
+    }
+    if (entry.loadReplace2) {
+      shEntry.loadReplace = entry.loadReplace2;
     }
     if (entry.isSrcdocEntry)
       shEntry.srcdocData = entry.srcdocData;

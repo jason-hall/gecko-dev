@@ -41,13 +41,13 @@ function onLoadPermission(uri, principal) {
     gPermURI = uri;
     gPermPrincipal = principal;
     var hostText = document.getElementById("hostText");
-    hostText.value = gPermURI.prePath;
+    hostText.value = gPermURI.displayPrePath;
 
     for (var i of gPermissions)
       initRow(i);
     var os = Components.classes["@mozilla.org/observer-service;1"]
                        .getService(Components.interfaces.nsIObserverService);
-    os.addObserver(permissionObserver, "perm-changed", false);
+    os.addObserver(permissionObserver, "perm-changed");
     onUnloadRegistry.push(onUnloadPermission);
     permTab.hidden = false;
   } else

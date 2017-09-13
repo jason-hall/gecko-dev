@@ -806,7 +806,10 @@ nsAutoString
 AccessibleCaretManager::StringifiedSelection() const
 {
   nsAutoString str;
-  GetSelection()->Stringify(str);
+  Selection* selection = GetSelection();
+  if (selection) {
+    selection->Stringify(str);
+  }
   return str;
 }
 
@@ -1029,8 +1032,10 @@ AccessibleCaretManager::FlushLayout() const
 
 nsIFrame*
 AccessibleCaretManager::GetFrameForFirstRangeStartOrLastRangeEnd(
-  nsDirection aDirection, int32_t* aOutOffset, nsINode** aOutNode,
-  int32_t* aOutNodeOffset) const
+  nsDirection aDirection,
+  int32_t* aOutOffset,
+  nsIContent** aOutContent,
+  int32_t* aOutContentOffset) const
 {
   if (!mPresShell) {
     return nullptr;
@@ -1050,14 +1055,14 @@ AccessibleCaretManager::GetFrameForFirstRangeStartOrLastRangeEnd(
 
   if (findInFirstRangeStart) {
     range = selection->GetRangeAt(0);
-    startNode = range->GetStartParent();
-    endNode = range->GetEndParent();
+    startNode = range->GetStartContainer();
+    endNode = range->GetEndContainer();
     nodeOffset = range->StartOffset();
     hint = CARET_ASSOCIATE_AFTER;
   } else {
     range = selection->GetRangeAt(selection->RangeCount() - 1);
-    startNode = range->GetEndParent();
-    endNode = range->GetStartParent();
+    startNode = range->GetEndContainer();
+    endNode = range->GetStartContainer();
     nodeOffset = range->EndOffset();
     hint = CARET_ASSOCIATE_BEFORE;
   }
@@ -1096,11 +1101,11 @@ AccessibleCaretManager::GetFrameForFirstRangeStartOrLastRangeEnd(
   }
 
   if (startFrame) {
-    if (aOutNode) {
-      *aOutNode = startNode.get();
+    if (aOutContent) {
+      startContent.forget(aOutContent);
     }
-    if (aOutNodeOffset) {
-      *aOutNodeOffset = nodeOffset;
+    if (aOutContentOffset) {
+      *aOutContentOffset = nodeOffset;
     }
   }
 
@@ -1119,16 +1124,17 @@ AccessibleCaretManager::RestrictCaretDraggingOffsets(
 
   nsDirection dir = mActiveCaret == mFirstCaret.get() ? eDirPrevious : eDirNext;
   int32_t offset = 0;
-  nsINode* node = nullptr;
+  nsCOMPtr<nsIContent> content;
   int32_t contentOffset = 0;
   nsIFrame* frame =
-    GetFrameForFirstRangeStartOrLastRangeEnd(dir, &offset, &node, &contentOffset);
+    GetFrameForFirstRangeStartOrLastRangeEnd(dir, &offset,
+                                             getter_AddRefs(content),
+                                             &contentOffset);
 
   if (!frame) {
     return false;
   }
 
-  nsCOMPtr<nsIContent> content = do_QueryInterface(node);
 
   // Compare the active caret's new position (aOffsets) to the inactive caret's
   // position.
@@ -1265,7 +1271,7 @@ AccessibleCaretManager::DragCaretInternal(const nsPoint& aPoint)
   selection->GetPrimaryFrameForAnchorNode(&anchorFrame);
 
   nsIFrame* scrollable =
-    nsLayoutUtils::GetClosestFrameOfType(anchorFrame, nsGkAtoms::scrollFrame);
+    nsLayoutUtils::GetClosestFrameOfType(anchorFrame, LayoutFrameType::Scroll);
   AutoWeakFrame weakScrollable = scrollable;
   fs->HandleClick(offsets.content, offsets.StartOffset(), offsets.EndOffset(),
                   GetCaretMode() == CaretMode::Selection, false,

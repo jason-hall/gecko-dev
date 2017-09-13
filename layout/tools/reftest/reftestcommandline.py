@@ -144,6 +144,10 @@ class ReftestArgumentsParser(argparse.ArgumentParser):
                           default=None,
                           help=argparse.SUPPRESS)
 
+        self.add_argument("--marionette-startup-timeout",
+                          default=None,
+                          help=argparse.SUPPRESS)
+
         self.add_argument("--setenv",
                           action="append",
                           type=str,
@@ -225,10 +229,27 @@ class ReftestArgumentsParser(argparse.ArgumentParser):
                           default=False,
                           help="Delete pending crash reports before running tests.")
 
+        self.add_argument("--max-retries",
+                          type=int,
+                          dest="maxRetries",
+                          default=4,
+                          help="The maximum number of attempts to try and recover from a "
+                               "crash before aborting the test run [default 4].")
+
         self.add_argument("tests",
                           metavar="TEST_PATH",
                           nargs="*",
                           help="Path to test file, manifest file, or directory containing tests")
+
+        self.add_argument("--work-path",
+                          action="store",
+                          dest="workPath",
+                          help="Path to the base dir of all source files.")
+
+        self.add_argument("--obj-path",
+                          action="store",
+                          dest="objPath",
+                          help="Path to the base dir of all object files.")
 
         mozlog.commandline.add_logging_group(self)
 

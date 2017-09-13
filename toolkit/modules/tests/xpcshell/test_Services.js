@@ -33,7 +33,6 @@ function run_test() {
   checkService("cache2", Ci.nsICacheStorageService);
   checkService("clipboard", Ci.nsIClipboard);
   checkService("console", Ci.nsIConsoleService);
-  checkService("contentPrefs", Ci.nsIContentPrefService);
   checkService("cookies", Ci.nsICookieManager2);
   checkService("dirsvc", Ci.nsIDirectoryService);
   checkService("dirsvc", Ci.nsIProperties);
@@ -45,6 +44,7 @@ function run_test() {
   checkService("focus", Ci.nsIFocusManager);
   checkService("io", Ci.nsIIOService);
   checkService("io", Ci.nsIIOService2);
+  checkService("intl", Ci.mozIMozIntl);
   checkService("locale", Ci.mozILocaleService);
   checkService("logins", Ci.nsILoginManager);
   checkService("obs", Ci.nsIObserverService);

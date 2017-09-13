@@ -7,6 +7,7 @@
 #define MOZILLA_GFX_WEBRENDERTEXTUREHOST_H
 
 #include "mozilla/layers/TextureHost.h"
+#include "mozilla/webrender/WebRenderTypes.h"
 
 namespace mozilla {
 namespace layers {
@@ -24,7 +25,8 @@ class WebRenderTextureHost : public TextureHost
 public:
   WebRenderTextureHost(const SurfaceDescriptor& aDesc,
                        TextureFlags aFlags,
-                       TextureHost* aTexture);
+                       TextureHost* aTexture,
+                       wr::ExternalImageId& aExternalImageId);
   virtual ~WebRenderTextureHost();
 
   virtual void DeallocateDeviceData() override {}
@@ -57,21 +59,28 @@ public:
 
   virtual WebRenderTextureHost* AsWebRenderTextureHost() override { return this; }
 
-  uint64_t GetExternalImageKey() { return mExternalImageId; }
+  wr::ExternalImageId GetExternalImageKey() { return mExternalImageId; }
 
   int32_t GetRGBStride();
 
-  bool IsWrappingNativeHandle() { return mIsWrappingNativeHandle; }
+  virtual void GetWRImageKeys(nsTArray<wr::ImageKey>& aImageKeys,
+                              const std::function<wr::ImageKey()>& aImageKeyAllocator) override;
+
+  virtual void AddWRImage(wr::ResourceUpdateQueue& aResources,
+                          Range<const wr::ImageKey>& aImageKeys,
+                          const wr::ExternalImageId& aExtID) override;
+
+  virtual void PushExternalImage(wr::DisplayListBuilder& aBuilder,
+                                 const wr::LayoutRect& aBounds,
+                                 const wr::LayoutRect& aClip,
+                                 wr::ImageRendering aFilter,
+                                 Range<const wr::ImageKey>& aImageKeys) override;
 
 protected:
   void CreateRenderTextureHost(const SurfaceDescriptor& aDesc, TextureHost* aTexture);
 
   RefPtr<TextureHost> mWrappedTextureHost;
-  uint64_t mExternalImageId;
-
-  bool mIsWrappingNativeHandle;
-
-  static uint64_t sSerialCounter;
+  wr::ExternalImageId mExternalImageId;
 };
 
 } // namespace layers

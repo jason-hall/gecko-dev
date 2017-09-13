@@ -35,6 +35,10 @@ impl Gl for GlesFns {
         }
     }
 
+    fn tex_buffer(&self, _target: GLenum, _internal_format: GLenum, _buffer: GLuint) {
+        panic!("not supported")
+    }
+
     fn buffer_sub_data_untyped(&self, target: GLenum, offset: isize, size: GLsizeiptr, data: *const GLvoid) {
         unsafe {
             self.ffi_gl_.BufferSubData(target,
@@ -482,6 +486,21 @@ impl Gl for GlesFns {
         }
     }
 
+    fn tex_sub_image_2d_pbo(&self,
+                            target: GLenum,
+                            level: GLint,
+                            xoffset: GLint,
+                            yoffset: GLint,
+                            width: GLsizei,
+                            height: GLsizei,
+                            format: GLenum,
+                            ty: GLenum,
+                            offset: usize) {
+        unsafe {
+            self.ffi_gl_.TexSubImage2D(target, level, xoffset, yoffset, width, height, format, ty, offset as *const c_void);
+        }
+    }
+
     fn tex_sub_image_3d(&self,
                         target: GLenum,
                         level: GLint,
@@ -506,6 +525,33 @@ impl Gl for GlesFns {
                                        format,
                                        ty,
                                        data.as_ptr() as *const c_void);
+        }
+    }
+
+    fn tex_sub_image_3d_pbo(&self,
+                            target: GLenum,
+                            level: GLint,
+                            xoffset: GLint,
+                            yoffset: GLint,
+                            zoffset: GLint,
+                            width: GLsizei,
+                            height: GLsizei,
+                            depth: GLsizei,
+                            format: GLenum,
+                            ty: GLenum,
+                            offset: usize) {
+        unsafe {
+            self.ffi_gl_.TexSubImage3D(target,
+                                       level,
+                                       xoffset,
+                                       yoffset,
+                                       zoffset,
+                                       width,
+                                       height,
+                                       depth,
+                                       format,
+                                       ty,
+                                       offset as *const c_void);
         }
     }
 
@@ -1091,6 +1137,14 @@ impl Gl for GlesFns {
         }
     }
 
+    fn get_vertex_attrib_pointer_v(&self, index: GLuint, pname: GLenum) -> GLsizeiptr {
+        let mut result = 0 as *mut GLvoid;
+        unsafe {
+            self.ffi_gl_.GetVertexAttribPointerv(index, pname, &mut result)
+        }
+        result as GLsizeiptr
+    }
+
     fn get_buffer_parameter_iv(&self, target: GLuint, pname: GLenum) -> GLint {
         unsafe {
             let mut result: GLint = 0 as GLint;
@@ -1129,6 +1183,21 @@ impl Gl for GlesFns {
             self.ffi_gl_.GetShaderiv(shader, pname, &mut result);
             return result;
         }
+    }
+
+    fn get_shader_precision_format(&self,
+                                   shader_type: GLuint,
+                                   precision_type: GLuint)
+                                   -> (GLint, GLint, GLint) {
+        let mut range = [0 as GLint, 0];
+        let mut precision = 0 as GLint;
+        unsafe {
+            self.ffi_gl_.GetShaderPrecisionFormat(shader_type,
+                                                  precision_type,
+                                                  range.as_mut_ptr(),
+                                                  &mut precision);
+        }
+        (range[0], range[1], precision)
     }
 
     fn compile_shader(&self, shader: GLuint) {
@@ -1265,13 +1334,6 @@ impl Gl for GlesFns {
         }
     }
 
-    #[allow(unused_variables)]
-    #[cfg(not(target_os="android"))]
-    fn egl_image_target_texture2d_oes(&self, target: GLenum, image: GLeglImageOES) {
-        panic!("not supported")
-    }
-
-    #[cfg(target_os="android")]
     fn egl_image_target_texture2d_oes(&self, target: GLenum, image: GLeglImageOES) {
         unsafe {
             self.ffi_gl_.EGLImageTargetTexture2DOES(target, image);
@@ -1294,6 +1356,30 @@ impl Gl for GlesFns {
 
     #[allow(unused_variables)]
     fn pop_group_marker_ext(&self) {
+    }
+
+    fn fence_sync(&self, condition: GLenum, flags: GLbitfield) -> GLsync {
+        unsafe {
+           self.ffi_gl_.FenceSync(condition, flags) as *const _
+        }
+    }
+
+    fn client_wait_sync(&self, sync: GLsync, flags: GLbitfield, timeout: GLuint64) {
+        unsafe {
+            self.ffi_gl_.ClientWaitSync(sync as *const _, flags, timeout);
+        }
+    }
+
+    fn wait_sync(&self, sync: GLsync, flags: GLbitfield, timeout: GLuint64) {
+        unsafe {
+            self.ffi_gl_.WaitSync(sync as *const _, flags, timeout);
+        }
+    }
+
+    fn delete_sync(&self, sync: GLsync) {
+        unsafe {
+            self.ffi_gl_.DeleteSync(sync as *const _);
+        }
     }
 }
 

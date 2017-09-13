@@ -7,18 +7,20 @@
 
 // This function calculates the maximum available window dimensions and returns
 // them as an object.
-function* calcMaximumAvailSize(aChromeWidth, aChromeHeight) {
+async function calcMaximumAvailSize(aChromeWidth, aChromeHeight) {
   let chromeUIWidth;
   let chromeUIHeight;
   let testPath = "http://example.net/browser/browser/" +
-                 "components/resistFingerprinting/test/browser/"
+                 "components/resistfingerprinting/test/browser/"
 
   // If the chrome UI dimensions is not given, we will calculate it.
   if (!aChromeWidth || !aChromeHeight) {
-    let tab = yield BrowserTestUtils.openNewForegroundTab(
-      gBrowser, testPath + "file_dummy.html");
+    let win = await BrowserTestUtils.openNewBrowserWindow();
 
-    let contentSize = yield ContentTask.spawn(tab.linkedBrowser, null, function* () {
+    let tab = await BrowserTestUtils.openNewForegroundTab(
+      win.gBrowser, testPath + "file_dummy.html");
+
+    let contentSize = await ContentTask.spawn(tab.linkedBrowser, null, async function() {
       let result = {
         width: content.innerWidth,
         height: content.innerHeight
@@ -29,10 +31,11 @@ function* calcMaximumAvailSize(aChromeWidth, aChromeHeight) {
 
     // Calculate the maximum available window size which is depending on the
     // available screen space.
-    chromeUIWidth = window.outerWidth - contentSize.width;
-    chromeUIHeight = window.outerHeight - contentSize.height;
+    chromeUIWidth = win.outerWidth - contentSize.width;
+    chromeUIHeight = win.outerHeight - contentSize.height;
 
-    yield BrowserTestUtils.removeTab(tab);
+    await BrowserTestUtils.removeTab(tab);
+    await BrowserTestUtils.closeWindow(win);
   } else {
     chromeUIWidth = aChromeWidth;
     chromeUIHeight = aChromeHeight;
@@ -63,17 +66,17 @@ function* calcMaximumAvailSize(aChromeWidth, aChromeHeight) {
   return {maxAvailWidth, maxAvailHeight};
 }
 
-function* calcPopUpWindowChromeUISize() {
+async function calcPopUpWindowChromeUISize() {
   let testPath = "http://example.net/browser/browser/" +
                  "components/resistFingerprinting/test/browser/"
   // open a popup window to acquire the chrome UI size of it.
-  let tab = yield BrowserTestUtils.openNewForegroundTab(
+  let tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser, testPath + "file_dummy.html");
 
-  let result = yield ContentTask.spawn(tab.linkedBrowser, null, function* () {
+  let result = await ContentTask.spawn(tab.linkedBrowser, null, async function() {
     let win;
 
-    yield new Promise(resolve => {
+    await new Promise(resolve => {
       win = content.open("about:blank", "", "width=1000,height=1000");
       win.onload = () => resolve();
     });
@@ -88,12 +91,12 @@ function* calcPopUpWindowChromeUISize() {
     return res;
   });
 
-  yield BrowserTestUtils.removeTab(tab);
+  await BrowserTestUtils.removeTab(tab);
 
   return result;
 }
 
-function* testWindowOpen(aBrowser, aSettingWidth, aSettingHeight,
+async function testWindowOpen(aBrowser, aSettingWidth, aSettingHeight,
                          aTargetWidth, aTargetHeight, aTestOuter,
                          aMaxAvailWidth, aMaxAvailHeight, aPopupChromeUIWidth,
                          aPopupChromeUIHeight) {
@@ -123,10 +126,10 @@ function* testWindowOpen(aBrowser, aSettingWidth, aSettingHeight,
     targetHeight: aTargetHeight,
   };
 
-  yield ContentTask.spawn(aBrowser, testParams,
-    function* (input) {
+  await ContentTask.spawn(aBrowser, testParams,
+    async function(input) {
       // Call window.open() with window features.
-      yield new Promise(resolve => {
+      await new Promise(resolve => {
         let win = content.open("http://example.net/", "", input.winFeatures);
 
         win.onload = () => {
@@ -147,7 +150,7 @@ function* testWindowOpen(aBrowser, aSettingWidth, aSettingHeight,
   );
 }
 
-function* testWindowSizeSetting(aBrowser, aSettingWidth, aSettingHeight,
+async function testWindowSizeSetting(aBrowser, aSettingWidth, aSettingHeight,
                                 aTargetWidth, aTargetHeight, aInitWidth,
                                 aInitHeight, aTestOuter, aMaxAvailWidth,
                                 aMaxAvailHeight, aPopupChromeUIWidth,
@@ -172,12 +175,12 @@ function* testWindowSizeSetting(aBrowser, aSettingWidth, aSettingHeight,
     testOuter: aTestOuter
   };
 
-  yield ContentTask.spawn(aBrowser, testParams,
-    function* (input) {
+  await ContentTask.spawn(aBrowser, testParams,
+    async function(input) {
 
       let win;
       // Open a new window and wait until it loads.
-      yield new Promise(resolve => {
+      await new Promise(resolve => {
         // Given a initial window size which should be different from target
         // size. We need this to trigger 'onresize' event.
         let initWinFeatures = "width=" + input.initWidth + ",height=" + input.initHeight;
@@ -186,7 +189,7 @@ function* testWindowSizeSetting(aBrowser, aSettingWidth, aSettingHeight,
       });
 
       // Test inner/outerWidth.
-      yield new Promise(resolve => {
+      await new Promise(resolve => {
         win.onresize = () => {
           is(win.screen.width, input.targetWidth,
             "The screen.width has a correct rounded value");
@@ -204,7 +207,7 @@ function* testWindowSizeSetting(aBrowser, aSettingWidth, aSettingHeight,
       });
 
       // Test inner/outerHeight.
-      yield new Promise(resolve => {
+      await new Promise(resolve => {
         win.onresize = () => {
           is(win.screen.height, input.targetHeight,
             "The screen.height has a correct rounded value");

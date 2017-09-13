@@ -12,6 +12,7 @@
 #include "mozilla/dom/workers/bindings/WorkerHolder.h"
 
 #include "nsIObserver.h"
+#include "nsISupports.h"
 
 #include "nsCycleCollectionParticipant.h"
 #include "nsHashKeys.h"
@@ -64,19 +65,14 @@ public:
   nsresult Init();
   void RecordDNDSupported();
   void RecordPermissions();
-  nsresult RecordSender(nsIPrincipal* aPrincipal);
 
 private:
   virtual ~NotificationTelemetryService();
-
-  nsresult AddPermissionChangeObserver();
-  nsresult RemovePermissionChangeObserver();
 
   bool GetNotificationPermission(nsISupports* aSupports,
                                  uint32_t* aCapability);
 
   bool mDNDRecorded;
-  nsTHashtable<nsStringHashKey> mOrigins;
 };
 
 /*

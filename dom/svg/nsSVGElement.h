@@ -20,11 +20,13 @@
 #include "nsError.h"
 #include "mozilla/dom/DOMRect.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/gfx/MatrixFwd.h"
 #include "nsISupportsImpl.h"
 #include "nsStyledElement.h"
 #include "nsSVGClass.h"
 #include "nsIDOMSVGElement.h"
 #include "SVGContentUtils.h"
+#include "gfxMatrix.h"
 
 class nsSVGAngle;
 class nsSVGBoolean;
@@ -60,13 +62,8 @@ class nsSVGAnimatedTransformList;
 class SVGStringList;
 class DOMSVGStringList;
 
-namespace gfx {
-class Matrix;
-} // namespace gfx
-
 } // namespace mozilla
 
-class gfxMatrix;
 struct nsSVGEnumMapping;
 
 typedef nsStyledElement nsSVGElementBase;
@@ -83,7 +80,8 @@ protected:
 
 public:
 
-  virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const MOZ_MUST_OVERRIDE override;
+  virtual nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
+                         bool aPreallocateChildren) const MOZ_MUST_OVERRIDE override;
 
   typedef mozilla::SVGNumberList SVGNumberList;
   typedef mozilla::SVGAnimatedNumberList SVGAnimatedNumberList;
@@ -118,7 +116,7 @@ public:
    * We override the default to unschedule computation of Servo declaration blocks
    * when adopted across documents.
    */
-  virtual void NodeInfoChanged(nsIDocument* aOldDoc) final;
+  virtual void NodeInfoChanged(nsIDocument* aOldDoc) override;
 
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker) override;
   void WalkAnimatedContentStyleRules(nsRuleWalker* aRuleWalker);
@@ -351,7 +349,9 @@ protected:
   }
 #endif // DEBUG
   virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsIAtom* aName,
-                                const nsAttrValue* aValue, bool aNotify) override;
+                                const nsAttrValue* aValue,
+                                const nsAttrValue* aOldValue,
+                                bool aNotify) override;
   virtual bool ParseAttribute(int32_t aNamespaceID, nsIAtom* aAttribute,
                                 const nsAString& aValue, nsAttrValue& aResult) override;
   static nsresult ReportAttributeParseFailure(nsIDocument* aDocument,

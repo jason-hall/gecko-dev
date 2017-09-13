@@ -21,7 +21,6 @@
 #include "nsDataHashtable.h"
 #include "nsHashKeys.h"
 #include "nsRect.h"
-#include "PluginDataResolver.h"
 
 #include "mozilla/Unused.h"
 #include "mozilla/EventForwards.h"
@@ -43,11 +42,9 @@ class PluginModuleParent;
 class D3D11SurfaceHolder;
 
 class PluginInstanceParent : public PPluginInstanceParent
-                           , public PluginDataResolver
 {
     friend class PluginModuleParent;
     friend class BrowserStreamParent;
-    friend class PluginStreamParent;
     friend class StreamNotifyParent;
 
 #if defined(XP_WIN)
@@ -92,13 +89,6 @@ public:
     virtual bool
     DeallocPBrowserStreamParent(PBrowserStreamParent* stream) override;
 
-    virtual PPluginStreamParent*
-    AllocPPluginStreamParent(const nsCString& mimeType,
-                             const nsCString& target,
-                             NPError* result) override;
-    virtual bool
-    DeallocPPluginStreamParent(PPluginStreamParent* stream) override;
-
     virtual mozilla::ipc::IPCResult
     AnswerNPN_GetValue_NPNVnetscapeWindow(NativeWindowHandle* value,
                                           NPError* result) override;
@@ -115,7 +105,7 @@ public:
 
     virtual mozilla::ipc::IPCResult
     AnswerNPN_GetValue_DrawingModelSupport(const NPNVariable& model, bool* value) override;
-  
+
     virtual mozilla::ipc::IPCResult
     AnswerNPN_GetValue_NPNVdocumentOrigin(nsCString* value, NPError* result) override;
 
@@ -228,16 +218,6 @@ public:
                              const nsCString& value, NPError* result) override;
 
     virtual mozilla::ipc::IPCResult
-    AnswerNPN_GetAuthenticationInfo(const nsCString& protocol,
-                                    const nsCString& host,
-                                    const int32_t& port,
-                                    const nsCString& scheme,
-                                    const nsCString& realm,
-                                    nsCString* username,
-                                    nsCString* password,
-                                    NPError* result) override;
-
-    virtual mozilla::ipc::IPCResult
     AnswerNPN_ConvertPoint(const double& sourceX,
                            const bool&   ignoreDestX,
                            const double& sourceY,
@@ -250,9 +230,6 @@ public:
 
     virtual mozilla::ipc::IPCResult
     RecvRedrawPlugin() override;
-
-    virtual mozilla::ipc::IPCResult
-    RecvAsyncNPP_NewResult(const NPError& aResult) override;
 
     virtual mozilla::ipc::IPCResult
     RecvSetNetscapeWindowAsParent(const NativeWindowHandle& childWindow) override;
@@ -301,12 +278,6 @@ public:
       return mNPP;
     }
 
-    bool
-    UseSurrogate() const
-    {
-        return mUseSurrogate;
-    }
-
     void
     GetSrcAttribute(nsACString& aOutput) const
     {
@@ -337,12 +308,7 @@ public:
 
     bool IsUsingDirectDrawing();
 
-    virtual PluginAsyncSurrogate* GetAsyncSurrogate() override;
-
-    virtual PluginInstanceParent* GetInstance() override { return this; }
-
-    static PluginInstanceParent* Cast(NPP instance,
-                                      PluginAsyncSurrogate** aSurrogate = nullptr);
+    static PluginInstanceParent* Cast(NPP instance);
 
     // for IME hook
     virtual mozilla::ipc::IPCResult
@@ -392,8 +358,6 @@ private:
 
 private:
     PluginModuleParent* mParent;
-    RefPtr<PluginAsyncSurrogate> mSurrogate;
-    bool mUseSurrogate;
     NPP mNPP;
     const NPNetscapeFuncs* mNPNIface;
     nsCString mSrcAttribute;
@@ -441,7 +405,7 @@ private:
 #endif // defined(XP_WIN)
 #if defined(MOZ_WIDGET_COCOA)
 private:
-    Shmem                  mShSurface; 
+    Shmem                  mShSurface;
     uint16_t               mShWidth;
     uint16_t               mShHeight;
     CGColorSpaceRef        mShColorSpace;

@@ -77,7 +77,7 @@ enum JSType {
 
 /* Dense index into cached prototypes and class atoms for standard objects. */
 enum JSProtoKey {
-#define PROTOKEY_AND_INITIALIZER(name,code,init,clasp) JSProto_##name = code,
+#define PROTOKEY_AND_INITIALIZER(name,init,clasp) JSProto_##name,
     JS_FOR_EACH_PROTOTYPE(PROTOKEY_AND_INITIALIZER)
 #undef PROTOKEY_AND_INITIALIZER
     JSProto_LIMIT
@@ -118,6 +118,10 @@ typedef void
 (* JSTraceDataOp)(JSTracer* trc, void* data);
 
 namespace js {
+namespace gc {
+class AutoTraceSession;
+class StoreBuffer;
+} // namespace gc
 
 class CooperatingContext;
 
@@ -198,11 +202,11 @@ class MOZ_STACK_CLASS JS_PUBLIC_API(AutoEnterCycleCollection)
 {
 #ifdef DEBUG
   public:
-    explicit AutoEnterCycleCollection(JSContext* cx);
+    explicit AutoEnterCycleCollection(JSRuntime* rt);
     ~AutoEnterCycleCollection();
 #else
   public:
-    explicit AutoEnterCycleCollection(JSContext* cx) {}
+    explicit AutoEnterCycleCollection(JSRuntime* rt) {}
     ~AutoEnterCycleCollection() {}
 #endif
 };

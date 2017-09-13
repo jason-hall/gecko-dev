@@ -209,9 +209,8 @@ public:
    */
   nsIStringBundle* GetBundle();
   nsICollation* GetCollation();
-  void GetStringFromName(const char16_t* aName, nsACString& aResult);
-  void GetAgeInDaysString(int32_t aInt, const char16_t *aName,
-                          nsACString& aResult);
+  void GetStringFromName(const char* aName, nsACString& aResult);
+  void GetAgeInDaysString(int32_t aInt, const char* aName, nsACString& aResult);
   static void GetMonthName(const PRExplodedTime& aTime, nsACString& aResult);
   static void GetMonthYear(const PRExplodedTime& aTime, nsACString& aResult);
 
@@ -258,8 +257,8 @@ public:
                             const nsACString& aBookmarkGuid,
                             const nsACString& aURI,
                             const nsACString& aTitle,
-                            uint32_t aAccessCount, PRTime aTime,
-                            const nsACString& aFavicon,
+                            uint32_t aAccessCount,
+                            PRTime aTime,
                             nsNavHistoryResultNode** aNode);
 
   nsresult VisitIdToResultNode(int64_t visitId,

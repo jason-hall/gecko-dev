@@ -206,6 +206,11 @@ struct BaseRect {
   {
     SetRect(aPt.x, aPt.y, aSize.width, aSize.height);
   }
+  void GetRect(T* aX, T* aY, T* aWidth, T* aHeight)
+  {
+    *aX = x; *aY = y; *aWidth = width; *aHeight = height;
+  }
+
   void MoveTo(T aX, T aY) { x = aX; y = aY; }
   void MoveTo(const Point& aPoint) { x = aPoint.x; y = aPoint.y; }
   void MoveBy(T aDx, T aDy) { x += aDx; y += aDy; }
@@ -352,12 +357,16 @@ struct BaseRect {
   T Area() const { return width * height; }
 
   // Helper methods for computing the extents
-  T X() const { return x; }
-  T Y() const { return y; }
-  T Width() const { return width; }
-  T Height() const { return height; }
-  T XMost() const { return x + width; }
-  T YMost() const { return y + height; }
+  MOZ_ALWAYS_INLINE T X() const { return x; }
+  MOZ_ALWAYS_INLINE T Y() const { return y; }
+  MOZ_ALWAYS_INLINE T Width() const { return width; }
+  MOZ_ALWAYS_INLINE T Height() const { return height; }
+  MOZ_ALWAYS_INLINE T XMost() const { return x + width; }
+  MOZ_ALWAYS_INLINE T YMost() const { return y + height; }
+
+  // Set width and height. SizeTo() sets them together.
+  MOZ_ALWAYS_INLINE void SetWidth(T aWidth) { width = aWidth; }
+  MOZ_ALWAYS_INLINE void SetHeight(T aHeight) { height = aHeight; }
 
   // Get the coordinate of the edge on the given side.
   T Edge(mozilla::Side aSide) const
@@ -389,6 +398,10 @@ struct BaseRect {
   void SetBottomEdge(T aYMost) { 
     MOZ_ASSERT(aYMost >= y);
     height = aYMost - y; 
+  }
+  void Swap() {
+    std::swap(x, y);
+    std::swap(width, height);
   }
 
   // Round the rectangle edges to integer coordinates, such that the rounded
@@ -567,6 +580,17 @@ struct BaseRect {
     );
   };
 
+  // Returns a point representing the distance, along each dimension, of the
+  // given point from this rectangle. The distance along a dimension is defined
+  // as zero if the point is within the bounds of the rectangle in that
+  // dimension; otherwise, it's the distance to the closer endpoint of the
+  // rectangle in that dimension.
+  Point DistanceTo(const Point& aPoint) const
+  {
+    return {DistanceFromInterval(aPoint.x, x, XMost()),
+            DistanceFromInterval(aPoint.y, y, YMost())};
+  }
+
   friend std::ostream& operator<<(std::ostream& stream,
       const BaseRect<T, Sub, Point, SizeT, MarginT>& aRect) {
     return stream << '(' << aRect.x << ',' << aRect.y << ','
@@ -578,6 +602,19 @@ private:
   // Use IsEqualEdges or IsEqualInterior explicitly.
   bool operator==(const Sub& aRect) const { return false; }
   bool operator!=(const Sub& aRect) const { return false; }
+
+  // Helper function for DistanceTo() that computes the distance of a
+  // coordinate along one dimension from an interval in that dimension.
+  static T DistanceFromInterval(T aCoord, T aIntervalStart, T aIntervalEnd)
+  {
+    if (aCoord < aIntervalStart) {
+      return aIntervalStart - aCoord;
+    }
+    if (aCoord > aIntervalEnd) {
+      return aCoord - aIntervalEnd;
+    }
+    return 0;
+  }
 };
 
 } // namespace gfx

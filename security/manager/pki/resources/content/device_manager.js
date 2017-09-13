@@ -3,8 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const nsIFilePicker = Components.interfaces.nsIFilePicker;
-const nsFilePicker = "@mozilla.org/filepicker;1";
 const nsIPKCS11Slot = Components.interfaces.nsIPKCS11Slot;
 const nsIPKCS11Module = Components.interfaces.nsIPKCS11Module;
 const nsPKCS11ModuleDB = "@mozilla.org/security/pkcs11moduledb;1";
@@ -14,8 +12,6 @@ const nsPK11TokenDB = "@mozilla.org/security/pk11tokendb;1";
 const nsIPK11TokenDB = Components.interfaces.nsIPK11TokenDB;
 const nsIDialogParamBlock = Components.interfaces.nsIDialogParamBlock;
 const nsDialogParamBlock = "@mozilla.org/embedcomp/dialogparam;1";
-const nsIPKCS11 = Components.interfaces.nsIPKCS11;
-const nsPKCS11ContractID = "@mozilla.org/security/pkcs11;1";
 
 var { Services } = Components.utils.import("resource://gre/modules/Services.jsm", {});
 
@@ -38,14 +34,10 @@ function DeregisterSmartCardObservers() {
 function LoadModules() {
   bundle = document.getElementById("pippki_bundle");
   secmoddb = Components.classes[nsPKCS11ModuleDB].getService(nsIPKCS11ModuleDB);
-  Services.obs.addObserver(smartCardObserver, "smartcard-insert", false);
-  Services.obs.addObserver(smartCardObserver, "smartcard-remove", false);
+  Services.obs.addObserver(smartCardObserver, "smartcard-insert");
+  Services.obs.addObserver(smartCardObserver, "smartcard-remove");
 
   RefreshDeviceList();
-}
-
-function getPKCS11() {
-  return Components.classes[nsPKCS11ContractID].getService(nsIPKCS11);
 }
 
 function getNSSString(name) {
@@ -358,7 +350,7 @@ function deleteSelected() {
   if (selected_module &&
       doConfirm(getNSSString("DelModuleWarning"))) {
     try {
-      getPKCS11().deleteModule(selected_module.name);
+      secmoddb.deleteModule(selected_module.name);
     } catch (e) {
       doPrompt(getNSSString("DelModuleError"));
       return false;
@@ -396,37 +388,6 @@ function changePassword() {
                     params);
   showSlotInfo();
   enableButtons();
-}
-
-// browse fs for PKCS#11 device
-function doBrowseFiles() {
-  var srbundle = document.getElementById("pippki_bundle");
-  var fp = Components.classes[nsFilePicker].createInstance(nsIFilePicker);
-  fp.init(window,
-          srbundle.getString("loadPK11TokenDialog"),
-          nsIFilePicker.modeOpen);
-  fp.appendFilters(nsIFilePicker.filterAll);
-  if (fp.show() == nsIFilePicker.returnOK) {
-    var pathbox = document.getElementById("device_path");
-    pathbox.setAttribute("value", fp.file.path);
-  }
-}
-
-function doLoadDevice() {
-  var name_box = document.getElementById("device_name");
-  var path_box = document.getElementById("device_path");
-  try {
-    getPKCS11().addModule(name_box.value, path_box.value, 0, 0);
-  } catch (e) {
-    if (e.result == Components.results.NS_ERROR_ILLEGAL_VALUE) {
-      doPrompt(getNSSString("AddModuleDup"));
-    } else {
-      doPrompt(getNSSString("AddModuleFailure"));
-    }
-
-    return false;
-  }
-  return true;
 }
 
 // -------------------------------------   Old code

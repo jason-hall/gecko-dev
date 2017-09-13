@@ -22,8 +22,11 @@ class CSSStyleSheet;
 class ServoStyleSet;
 namespace dom {
 class Element;
+class ShadowRoot;
 } // namespace dom
 } // namespace mozilla
+class nsBindingManager;
+class nsCSSCounterStyleRule;
 struct nsFontFaceRuleContainer;
 class nsIAtom;
 class nsIContent;
@@ -31,6 +34,7 @@ class nsIDocument;
 class nsStyleContext;
 class nsStyleSet;
 class nsPresContext;
+class gfxFontFeatureValueSet;
 struct TreeMatchContext;
 
 namespace mozilla {
@@ -107,7 +111,7 @@ public:
     // nsStyleSet or ServoStyleSet.  See corresponding comments in
     // nsStyleSet.h for descriptions of these methods.
 
-    inline void Init(nsPresContext* aPresContext);
+    inline void Init(nsPresContext* aPresContext, nsBindingManager* aBindingManager);
     inline void BeginShutdown();
     inline void Shutdown();
     inline bool GetAuthorStyleDisabled() const;
@@ -122,7 +126,7 @@ public:
     ResolveStyleFor(dom::Element* aElement,
                     nsStyleContext* aParentContext,
                     LazyComputeBehavior aMayCompute,
-                    TreeMatchContext& aTreeMatchContext);
+                    TreeMatchContext* aTreeMatchContext);
     inline already_AddRefed<nsStyleContext>
     ResolveStyleForText(nsIContent* aTextNode,
                         nsStyleContext* aParentContext);
@@ -137,8 +141,7 @@ public:
                               dom::Element* aPseudoElement);
     inline already_AddRefed<nsStyleContext>
     ResolveInheritingAnonymousBoxStyle(nsIAtom* aPseudoTag,
-                                       nsStyleContext* aParentContext,
-                                       uint32_t aFlags = 0);
+                                       nsStyleContext* aParentContext);
     inline already_AddRefed<nsStyleContext>
     ResolveNonInheritingAnonymousBoxStyle(nsIAtom* aPseudoTag);
     inline nsresult AppendStyleSheet(SheetType aType, StyleSheet* aSheet);
@@ -151,8 +154,14 @@ public:
                                     StyleSheet* aReferenceSheet);
     inline int32_t SheetCount(SheetType aType) const;
     inline StyleSheet* StyleSheetAt(SheetType aType, int32_t aIndex) const;
+    inline void AppendAllXBLStyleSheets(nsTArray<StyleSheet*>& aArray) const;
     inline nsresult RemoveDocStyleSheet(StyleSheet* aSheet);
     inline nsresult AddDocStyleSheet(StyleSheet* aSheet, nsIDocument* aDocument);
+    inline void RecordStyleSheetChange(StyleSheet* aSheet, StyleSheet::ChangeType);
+    inline void RecordShadowStyleChange(mozilla::dom::ShadowRoot* aShadowRoot);
+    inline bool StyleSheetsHaveChanged() const;
+    inline void InvalidateStyleForCSSRuleChanges();
+    inline nsRestyleHint MediumFeaturesChanged(bool aViewportChanged);
     inline already_AddRefed<nsStyleContext>
     ProbePseudoElementStyle(dom::Element* aParentElement,
                             mozilla::CSSPseudoElementType aType,
@@ -161,8 +170,7 @@ public:
     ProbePseudoElementStyle(dom::Element* aParentElement,
                             mozilla::CSSPseudoElementType aType,
                             nsStyleContext* aParentContext,
-                            TreeMatchContext& aTreeMatchContext,
-                            dom::Element* aPseudoElement = nullptr);
+                            TreeMatchContext* aTreeMatchContext);
     inline nsRestyleHint HasStateDependentStyle(dom::Element* aElement,
                                                 EventStates aStateMask);
     inline nsRestyleHint HasStateDependentStyle(
@@ -175,6 +183,11 @@ public:
     inline void RootStyleContextRemoved();
 
     inline bool AppendFontFaceRules(nsTArray<nsFontFaceRuleContainer>& aArray);
+    inline nsCSSCounterStyleRule* CounterStyleRuleForName(nsIAtom* aName);
+    inline already_AddRefed<gfxFontFeatureValueSet> BuildFontFeatureValueSet();
+
+    inline bool EnsureUniqueInnerOnCSSSheets();
+    inline void SetNeedsRestyleAfterEnsureUniqueInner();
 
   private:
     // Stores a pointer to an nsStyleSet or a ServoStyleSet.  The least
@@ -214,6 +227,11 @@ public:
   // Make StyleSetHandle usable in boolean contexts.
   explicit operator bool() const { return !!mPtr.mValue; }
   bool operator!() const { return !mPtr.mValue; }
+  bool operator==(const StyleSetHandle& aOth) const
+  {
+    return mPtr.mValue == aOth.mPtr.mValue;
+  }
+  bool operator!=(const StyleSetHandle& aOth) const { return !(*this == aOth); }
 
   // Make StyleSetHandle behave like a smart pointer.
   Ptr* operator->() { return &mPtr; }

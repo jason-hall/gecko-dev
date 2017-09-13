@@ -34,7 +34,7 @@
 #include "nsWeakReference.h"
 
 #ifdef MOZ_WIDGET_ANDROID
-#include "AndroidBridge.h"
+#include "FennecJNIWrappers.h"
 #endif
 
 using namespace mozilla;
@@ -111,10 +111,10 @@ class GetRunnable final : public Runnable
   RefPtr<PromiseWorkerProxy> mPromiseProxy;
   nsString mClientId;
 public:
-  GetRunnable(PromiseWorkerProxy* aPromiseProxy,
-              const nsAString& aClientId)
-    : mPromiseProxy(aPromiseProxy),
-      mClientId(aClientId)
+  GetRunnable(PromiseWorkerProxy* aPromiseProxy, const nsAString& aClientId)
+    : mozilla::Runnable("GetRunnable")
+    , mPromiseProxy(aPromiseProxy)
+    , mClientId(aClientId)
   {
   }
 
@@ -201,10 +201,11 @@ public:
                    const nsCString& aScope,
                    uint64_t aServiceWorkerID,
                    bool aIncludeUncontrolled)
-    : mPromiseProxy(aPromiseProxy),
-      mScope(aScope),
-      mServiceWorkerID(aServiceWorkerID),
-      mIncludeUncontrolled(aIncludeUncontrolled)
+    : mozilla::Runnable("MatchAllRunnable")
+    , mPromiseProxy(aPromiseProxy)
+    , mScope(aScope)
+    , mServiceWorkerID(aServiceWorkerID)
+    , mIncludeUncontrolled(aIncludeUncontrolled)
   {
     MOZ_ASSERT(mPromiseProxy);
   }
@@ -279,7 +280,8 @@ class ClaimRunnable final : public Runnable
 
 public:
   ClaimRunnable(PromiseWorkerProxy* aPromiseProxy, const nsCString& aScope)
-    : mPromiseProxy(aPromiseProxy)
+    : mozilla::Runnable("ClaimRunnable")
+    , mPromiseProxy(aPromiseProxy)
     , mScope(aScope)
     // Safe to call GetWorkerPrivate() since we are being called on the worker
     // thread via script (so no clean up has occured yet).
@@ -508,7 +510,8 @@ public:
   OpenWindowRunnable(PromiseWorkerProxy* aPromiseProxy,
                      const nsAString& aUrl,
                      const nsAString& aScope)
-    : mPromiseProxy(aPromiseProxy)
+    : mozilla::Runnable("OpenWindowRunnable")
+    , mPromiseProxy(aPromiseProxy)
     , mUrl(aUrl)
     , mScope(aScope)
   {
@@ -554,7 +557,9 @@ public:
 #ifdef MOZ_WIDGET_ANDROID
     // This fires an intent that will start launching Fennec and foreground it,
     // if necessary.
-    java::GeckoAppShell::LaunchOrBringToFront();
+    if (jni::IsFennec()) {
+      java::GeckoApp::LaunchOrBringToFront();
+    }
 #endif
 
     nsCOMPtr<nsPIDOMWindowOuter> window;
@@ -596,7 +601,7 @@ public:
       return NS_OK;
     }
 #ifdef MOZ_WIDGET_ANDROID
-    else if (rv == NS_ERROR_NOT_AVAILABLE) {
+    else if (rv == NS_ERROR_NOT_AVAILABLE && jni::IsFennec()) {
       // We couldn't get a browser window, so Fennec must not be running.
       // Send an Intent to launch Fennec and wait for "BrowserChrome:Ready"
       // to try opening a window again.
@@ -749,10 +754,14 @@ private:
       return NS_ERROR_FAILURE;
     }
 
+    nsCOMPtr<nsIPrincipal> triggeringPrincipal = workerPrivate->GetPrincipal();
+    MOZ_DIAGNOSTIC_ASSERT(triggeringPrincipal);
+
     nsCOMPtr<mozIDOMWindowProxy> win;
     rv = bwin->OpenURI(uri, nullptr,
                        nsIBrowserDOMWindow::OPEN_DEFAULTWINDOW,
                        nsIBrowserDOMWindow::OPEN_NEW,
+                       triggeringPrincipal,
                        getter_AddRefs(win));
     if (NS_WARN_IF(NS_FAILED(rv))) {
       return rv;

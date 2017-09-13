@@ -12,43 +12,33 @@ var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/Task.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "E10SUtils",
-  "resource:///modules/E10SUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
-  "resource://gre/modules/BrowserUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ContentLinkHandler",
-  "resource:///modules/ContentLinkHandler.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "ContentWebRTC",
-  "resource:///modules/ContentWebRTC.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "SpellCheckHelper",
-  "resource://gre/modules/InlineSpellChecker.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "InlineSpellCheckerContent",
-  "resource://gre/modules/InlineSpellCheckerContent.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "LoginManagerContent",
-  "resource://gre/modules/LoginManagerContent.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "LoginFormFactory",
-  "resource://gre/modules/LoginManagerContent.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "InsecurePasswordUtils",
-  "resource://gre/modules/InsecurePasswordUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PluginContent",
-  "resource:///modules/PluginContent.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "FormSubmitObserver",
-  "resource:///modules/FormSubmitObserver.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PageMetadata",
-  "resource://gre/modules/PageMetadata.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PlacesUIUtils",
-  "resource:///modules/PlacesUIUtils.jsm");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  E10SUtils: "resource:///modules/E10SUtils.jsm",
+  BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
+  ContentLinkHandler: "resource:///modules/ContentLinkHandler.jsm",
+  ContentWebRTC: "resource:///modules/ContentWebRTC.jsm",
+  SpellCheckHelper: "resource://gre/modules/InlineSpellChecker.jsm",
+  InlineSpellCheckerContent: "resource://gre/modules/InlineSpellCheckerContent.jsm",
+  LoginManagerContent: "resource://gre/modules/LoginManagerContent.jsm",
+  LoginFormFactory: "resource://gre/modules/LoginManagerContent.jsm",
+  InsecurePasswordUtils: "resource://gre/modules/InsecurePasswordUtils.jsm",
+  PluginContent: "resource:///modules/PluginContent.jsm",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  FormSubmitObserver: "resource:///modules/FormSubmitObserver.jsm",
+  PageMetadata: "resource://gre/modules/PageMetadata.jsm",
+  PlacesUIUtils: "resource:///modules/PlacesUIUtils.jsm",
+  Utils: "resource://gre/modules/sessionstore/Utils.jsm",
+  WebNavigationFrames: "resource://gre/modules/WebNavigationFrames.jsm",
+  Feeds: "resource:///modules/Feeds.jsm",
+  findCssSelector: "resource://gre/modules/css-selector.js",
+});
+
 XPCOMUtils.defineLazyGetter(this, "PageMenuChild", function() {
   let tmp = {};
   Cu.import("resource://gre/modules/PageMenu.jsm", tmp);
   return new tmp.PageMenuChild();
 });
-XPCOMUtils.defineLazyModuleGetter(this, "Feeds",
-  "resource:///modules/Feeds.jsm");
 
 Cu.importGlobalProperties(["URL"]);
 
@@ -111,7 +101,7 @@ var handleContentContextMenu = function(event) {
     addonInfo,
   };
   subject.wrappedJSObject = subject;
-  Services.obs.notifyObservers(subject, "content-contextmenu", null);
+  Services.obs.notifyObservers(subject, "content-contextmenu");
 
   let doc = event.target.ownerDocument;
   let docLocation = doc.mozDocumentURIIfNotForErrorPages;
@@ -120,23 +110,17 @@ var handleContentContextMenu = function(event) {
   let baseURI = doc.baseURI;
   let referrer = doc.referrer;
   let referrerPolicy = doc.referrerPolicy;
-  let frameOuterWindowID = doc.defaultView.QueryInterface(Ci.nsIInterfaceRequestor)
-                                          .getInterface(Ci.nsIDOMWindowUtils)
-                                          .outerWindowID;
+  let frameOuterWindowID = WebNavigationFrames.getFrameId(doc.defaultView);
   let loginFillInfo = LoginManagerContent.getFieldContext(event.target);
 
   // The same-origin check will be done in nsContextMenu.openLinkInTab.
   let parentAllowsMixedContent = !!docShell.mixedContentChannel;
 
   // get referrer attribute from clicked link and parse it
-  // if per element referrer is enabled, the element referrer overrules
-  // the document wide referrer
-  if (Services.prefs.getBoolPref("network.http.enablePerElementReferrer")) {
-    let referrerAttrValue = Services.netUtils.parseAttributePolicyString(event.target.
-                            getAttribute("referrerpolicy"));
-    if (referrerAttrValue !== Ci.nsIHttpChannel.REFERRER_POLICY_UNSET) {
-      referrerPolicy = referrerAttrValue;
-    }
+  let referrerAttrValue = Services.netUtils.parseAttributePolicyString(event.target.
+                          getAttribute("referrerpolicy"));
+  if (referrerAttrValue !== Ci.nsIHttpChannel.REFERRER_POLICY_UNSET) {
+    referrerPolicy = referrerAttrValue;
   }
 
   let disableSetDesktopBg = null;
@@ -168,6 +152,7 @@ var handleContentContextMenu = function(event) {
 
   let loadContext = docShell.QueryInterface(Ci.nsILoadContext);
   let userContextId = loadContext.originAttributes.userContextId;
+  let popupNodeSelectors = getNodeSelectors(event.target);
 
   if (Services.appinfo.processType == Services.appinfo.PROCESS_TYPE_CONTENT) {
     let editFlags = SpellCheckHelper.isEditable(event.target, content);
@@ -187,21 +172,27 @@ var handleContentContextMenu = function(event) {
 
     let customMenuItems = PageMenuChild.build(event.target);
     let principal = doc.nodePrincipal;
+
     sendRpcMessage("contextmenu",
                    { editFlags, spellInfo, customMenuItems, addonInfo,
                      principal, docLocation, charSet, baseURI, referrer,
                      referrerPolicy, contentType, contentDisposition,
                      frameOuterWindowID, selectionInfo, disableSetDesktopBg,
-                     loginFillInfo, parentAllowsMixedContent, userContextId },
-                   { event, popupNode: event.target });
+                     loginFillInfo, parentAllowsMixedContent, userContextId,
+                     popupNodeSelectors,
+                   }, {
+                     event,
+                     popupNode: event.target,
+                   });
   } else {
     // Break out to the parent window and pass the add-on info along
     let browser = docShell.chromeEventHandler;
     let mainWin = browser.ownerGlobal;
-    mainWin.gContextMenuContentData = {
+    mainWin.setContextMenuContentData({
       isRemote: false,
       event,
       popupNode: event.target,
+      popupNodeSelectors,
       browser,
       addonInfo,
       documentURIObject: doc.documentURIObject,
@@ -216,7 +207,7 @@ var handleContentContextMenu = function(event) {
       loginFillInfo,
       parentAllowsMixedContent,
       userContextId,
-    };
+    });
   }
 }
 
@@ -245,10 +236,29 @@ const PREF_BLOCKLIST_CLOCK_SKEW_SECONDS = "services.blocklist.clock_skew_seconds
 
 const PREF_SSL_IMPACT_ROOTS = ["security.tls.version.", "security.ssl3."];
 
-const PREF_SSL_IMPACT = PREF_SSL_IMPACT_ROOTS.reduce((prefs, root) => {
-  return prefs.concat(Services.prefs.getChildList(root));
-}, []);
 
+/**
+ * Retrieve the array of CSS selectors corresponding to the provided node. The first item
+ * of the array is the selector of the node in its owner document. Additional items are
+ * used if the node is inside a frame, each representing the CSS selector for finding the
+ * frame element in its parent document.
+ *
+ * This format is expected by DevTools in order to handle the Inspect Node context menu
+ * item.
+ *
+ * @param  {Node}
+ *         The node for which the CSS selectors should be computed
+ * @return {Array} array of css selectors (strings).
+ */
+function getNodeSelectors(node) {
+  let selectors = [];
+  while (node) {
+    selectors.push(findCssSelector(node));
+    node = node.ownerGlobal.frameElement;
+  }
+
+  return selectors;
+}
 
 function getSerializedSecurityInfo(docShell) {
   let serhelper = Cc["@mozilla.org/network/serialization-helper;1"]
@@ -287,11 +297,67 @@ function getSiteBlockedErrorDetails(docShell) {
   return blockedInfo;
 }
 
-addMessageListener("DeceptiveBlockedDetails", (message) => {
-  sendAsyncMessage("DeceptiveBlockedDetails:Result", {
-    blockedInfo: getSiteBlockedErrorDetails(docShell),
-  });
-});
+var AboutBlockedSiteListener = {
+  init(chromeGlobal) {
+    addMessageListener("DeceptiveBlockedDetails", this);
+    chromeGlobal.addEventListener("AboutBlockedLoaded", this, false, true);
+  },
+
+  get isBlockedSite() {
+    return content.document.documentURI.startsWith("about:blocked");
+  },
+
+  receiveMessage(msg) {
+    if (!this.isBlockedSite) {
+      return;
+    }
+
+    if (msg.name == "DeceptiveBlockedDetails") {
+      sendAsyncMessage("DeceptiveBlockedDetails:Result", {
+        blockedInfo: getSiteBlockedErrorDetails(docShell),
+      });
+    }
+  },
+
+  handleEvent(aEvent) {
+    if (!this.isBlockedSite) {
+      return;
+    }
+
+    if (aEvent.type != "AboutBlockedLoaded") {
+      return;
+    }
+
+    let provider = "";
+    if (docShell.failedChannel) {
+      let classifiedChannel = docShell.failedChannel.
+                              QueryInterface(Ci.nsIClassifiedChannel);
+      if (classifiedChannel) {
+        provider = classifiedChannel.matchedProvider;
+      }
+    }
+
+    let advisoryUrl = Services.prefs.getCharPref(
+      "browser.safebrowsing.provider." + provider + ".advisoryURL", "");
+    if (!advisoryUrl) {
+      let el = content.document.getElementById("advisoryDesc");
+      el.remove();
+      return;
+    }
+
+    let advisoryLinkText = Services.prefs.getCharPref(
+      "browser.safebrowsing.provider." + provider + ".advisoryName", "");
+    if (!advisoryLinkText) {
+      let el = content.document.getElementById("advisoryDesc");
+      el.remove();
+      return;
+    }
+
+    let anchorEl = content.document.getElementById("advisory_provider");
+    anchorEl.setAttribute("href", advisoryUrl);
+    anchorEl.textContent = advisoryLinkText;
+  },
+}
 
 var AboutNetAndCertErrorListener = {
   init(chromeGlobal) {
@@ -355,7 +421,9 @@ var AboutNetAndCertErrorListener = {
 
         // If the difference is more than a day.
         if (Math.abs(difference) > 60 * 60 * 24) {
-          let formatter = new Intl.DateTimeFormat();
+          let formatter = Services.intl.createDateTimeFormat(undefined, {
+            dateStyle: "short"
+          });
           let systemDate = formatter.format(new Date());
           // negative difference means local time is behind server time
           let actualDate = formatter.format(new Date(Date.now() - difference * 1000));
@@ -385,7 +453,9 @@ var AboutNetAndCertErrorListener = {
           let systemDate = new Date();
 
           if (buildDate > systemDate) {
-            let formatter = new Intl.DateTimeFormat();
+            let formatter = Services.intl.createDateTimeFormat(undefined, {
+              dateStyle: "short"
+            });
 
             content.document.getElementById("wrongSystemTimeWithoutReference_URL")
               .textContent = content.document.location.hostname;
@@ -429,7 +499,10 @@ var AboutNetAndCertErrorListener = {
   },
 
   changedCertPrefs() {
-    for (let prefName of PREF_SSL_IMPACT) {
+    let prefSSLImpact = PREF_SSL_IMPACT_ROOTS.reduce((prefs, root) => {
+       return prefs.concat(Services.prefs.getChildList(root));
+    }, []);
+    for (let prefName of prefSSLImpact) {
       if (Services.prefs.prefHasUserValue(prefName)) {
         return true;
       }
@@ -485,7 +558,7 @@ var AboutNetAndCertErrorListener = {
 }
 
 AboutNetAndCertErrorListener.init(this);
-
+AboutBlockedSiteListener.init(this);
 
 var ClickEventHandler = {
   init: function init() {
@@ -523,8 +596,7 @@ var ClickEventHandler = {
     // if per element referrer is enabled, the element referrer overrules
     // the document wide referrer
     let referrerPolicy = ownerDoc.referrerPolicy;
-    if (Services.prefs.getBoolPref("network.http.enablePerElementReferrer") &&
-        node) {
+    if (node) {
       let referrerAttrValue = Services.netUtils.parseAttributePolicyString(node.
                               getAttribute("referrerpolicy"));
       if (referrerAttrValue !== Ci.nsIHttpChannel.REFERRER_POLICY_UNSET) {
@@ -532,9 +604,7 @@ var ClickEventHandler = {
       }
     }
 
-    let frameOuterWindowID = ownerDoc.defaultView.QueryInterface(Ci.nsIInterfaceRequestor)
-                                     .getInterface(Ci.nsIDOMWindowUtils)
-                                     .outerWindowID;
+    let frameOuterWindowID = WebNavigationFrames.getFrameId(ownerDoc.defaultView);
 
     let json = { button: event.button, shiftKey: event.shiftKey,
                  ctrlKey: event.ctrlKey, metaKey: event.metaKey,
@@ -574,7 +644,7 @@ var ClickEventHandler = {
       if (docShell.mixedContentChannel) {
         const sm = Services.scriptSecurityManager;
         try {
-          let targetURI = BrowserUtils.makeURI(href);
+          let targetURI = Services.io.newURI(href);
           sm.checkSameOriginURI(docshell.mixedContentChannel.URI, targetURI, false);
           json.allowMixedContent = true;
         } catch (e) {}
@@ -610,6 +680,8 @@ var ClickEventHandler = {
       reason = "malware";
     } else if (/e=unwantedBlocked/.test(ownerDoc.documentURI)) {
       reason = "unwanted";
+    } else if (/e=harmfulBlocked/.test(ownerDoc.documentURI)) {
+      reason = "harmful";
     }
 
     let docShell = ownerDoc.defaultView.QueryInterface(Ci.nsIInterfaceRequestor)
@@ -690,7 +762,7 @@ var ClickEventHandler = {
     // In case of XLink, we don't return the node we got href from since
     // callers expect <a>-like elements.
     // Note: makeURI() will throw if aUri is not a valid URI.
-    return [href ? BrowserUtils.makeURI(href, null, baseURI).spec : null, null,
+    return [href ? Services.io.newURI(href, null, baseURI).spec : null, null,
             node && node.ownerDocument.nodePrincipal];
   }
 };
@@ -753,37 +825,6 @@ var PageMetadataMessenger = {
   }
 }
 PageMetadataMessenger.init();
-
-addEventListener("ActivateSocialFeature", function(aEvent) {
-  let document = content.document;
-  let dwu = content.QueryInterface(Ci.nsIInterfaceRequestor)
-                   .getInterface(Ci.nsIDOMWindowUtils);
-  if (!dwu.isHandlingUserInput) {
-    Cu.reportError("attempt to activate provider without user input from " + document.nodePrincipal.origin);
-    return;
-  }
-
-  let node = aEvent.target;
-  let ownerDocument = node.ownerDocument;
-  let data = node.getAttribute("data-service");
-  if (data) {
-    try {
-      data = JSON.parse(data);
-    } catch (e) {
-      Cu.reportError("Social Service manifest parse error: " + e);
-      return;
-    }
-  } else {
-    Cu.reportError("Social Service manifest not available");
-    return;
-  }
-
-  sendAsyncMessage("Social:Activation", {
-    url: ownerDocument.location.href,
-    origin: ownerDocument.nodePrincipal.origin,
-    manifest: data
-  });
-}, true, true);
 
 addMessageListener("ContextMenu:SaveVideoFrameAsImage", (message) => {
   let video = message.objects.target;
@@ -865,12 +906,10 @@ addMessageListener("ContextMenu:SearchFieldBookmarkData", (message) => {
 
   let charset = node.ownerDocument.characterSet;
 
-  let formBaseURI = BrowserUtils.makeURI(node.form.baseURI,
-                                         charset);
+  let formBaseURI = Services.io.newURI(node.form.baseURI, charset);
 
-  let formURI = BrowserUtils.makeURI(node.form.getAttribute("action"),
-                                     charset,
-                                     formBaseURI);
+  let formURI = Services.io.newURI(node.form.getAttribute("action"), charset,
+                                   formBaseURI);
 
   let spec = formURI.spec;
 
@@ -1025,8 +1064,10 @@ addMessageListener("ContextMenu:SetAsDesktopBackground", (message) => {
       let ctx = canvas.getContext("2d");
       ctx.drawImage(target, 0, 0);
       let dataUrl = canvas.toDataURL();
+      let url = (new URL(target.ownerDocument.location.href)).pathname;
+      let imageName = url.substr(url.lastIndexOf("/") + 1);
       sendAsyncMessage("ContextMenu:SetAsDesktopBackground:Result",
-                       { dataUrl });
+                       { dataUrl, imageName });
     } catch (e) {
       Cu.reportError(e);
       disable = true;
@@ -1051,7 +1092,7 @@ var PageInfoListener = {
     let frameOuterWindowID = message.data.frameOuterWindowID;
 
     // If inside frame then get the frame's window and document.
-    if (frameOuterWindowID) {
+    if (frameOuterWindowID != undefined) {
       window = Services.wm.getOuterWindowWithId(frameOuterWindowID);
       document = window.document;
     } else {
@@ -1106,7 +1147,7 @@ var PageInfoListener = {
 
     let hostName = null;
     try {
-      hostName = window.location.host;
+      hostName = Services.io.newURI(window.location.href).displayHost;
     } catch (exception) { }
 
     windowInfo.hostName = hostName;
@@ -1117,7 +1158,15 @@ var PageInfoListener = {
     let docInfo = {};
     docInfo.title = document.title;
     docInfo.location = document.location.toString();
+    try {
+      docInfo.location = Services.io.newURI(document.location.toString()).displaySpec;
+    } catch (exception) { }
     docInfo.referrer = document.referrer;
+    try {
+      if (document.referrer) {
+        docInfo.referrer = Services.io.newURI(document.referrer).displaySpec;
+      }
+    } catch (exception) { }
     docInfo.compatMode = document.compatMode;
     docInfo.contentType = document.contentType;
     docInfo.characterSet = document.characterSet;
@@ -1126,7 +1175,6 @@ var PageInfoListener = {
 
     let documentURIObject = {};
     documentURIObject.spec = document.documentURIObject.spec;
-    documentURIObject.originCharset = document.documentURIObject.originCharset;
     docInfo.documentURIObject = documentURIObject;
 
     docInfo.isContentWindowPrivate = PrivateBrowsingUtils.isContentWindowPrivate(content);
@@ -1167,7 +1215,7 @@ var PageInfoListener = {
   // Only called once to get the media tab's media elements from the content page.
   getMediaInfo(document, window, strings) {
     let frameList = this.goThroughFrames(document, window);
-    Task.spawn(() => this.processFrames(document, frameList, strings));
+    this.processFrames(document, frameList, strings);
   },
 
   goThroughFrames(document, window) {
@@ -1183,7 +1231,7 @@ var PageInfoListener = {
     return frameList;
   },
 
-  *processFrames(document, frameList, strings) {
+  async processFrames(document, frameList, strings) {
     let nodeCount = 0;
     for (let doc of frameList) {
       let iterator = doc.createTreeWalker(doc, content.NodeFilter.SHOW_ELEMENT);
@@ -1199,7 +1247,7 @@ var PageInfoListener = {
 
         if (++nodeCount % 500 == 0) {
           // setTimeout every 500 elements so we don't keep blocking the content process.
-          yield new Promise(resolve => setTimeout(resolve, 10));
+          await new Promise(resolve => setTimeout(resolve, 10));
         }
       }
     }
@@ -1460,8 +1508,8 @@ let OfflineApps = {
       return null;
 
     try {
-      var contentURI = BrowserUtils.makeURI(aWindow.location.href, null, null);
-      return BrowserUtils.makeURI(attr, aWindow.document.characterSet, contentURI);
+      return Services.io.newURI(attr, aWindow.document.characterSet,
+                                Services.io.newURI(aWindow.location.href));
     } catch (e) {
       return null;
     }

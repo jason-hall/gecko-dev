@@ -7,13 +7,14 @@
 const {
   ACTIVITY_TYPE,
   OPEN_NETWORK_DETAILS,
+  DISABLE_BROWSER_CACHE,
   OPEN_STATISTICS,
   RESET_COLUMNS,
   SELECT_DETAILS_PANEL_TAB,
   TOGGLE_COLUMN,
   WATERFALL_RESIZE,
 } = require("../constants");
-const { NetMonitorController } = require("../netmonitor-controller");
+const { triggerActivity } = require("../connector/index");
 
 /**
  * Change network details panel.
@@ -28,13 +29,25 @@ function openNetworkDetails(open) {
 }
 
 /**
+ * Change browser cache state.
+ *
+ * @param {boolean} disabled - expected browser cache in disable state
+ */
+function disableBrowserCache(disabled) {
+  return {
+    type: DISABLE_BROWSER_CACHE,
+    disabled,
+  };
+}
+
+/**
  * Change performance statistics panel open state.
  *
  * @param {boolean} visible - expected performance statistics panel open state
  */
 function openStatistics(open) {
   if (open) {
-    NetMonitorController.triggerActivity(ACTIVITY_TYPE.RELOAD.WITH_CACHE_ENABLED);
+    triggerActivity(ACTIVITY_TYPE.RELOAD.WITH_CACHE_ENABLED);
   }
   return {
     type: OPEN_STATISTICS,
@@ -95,6 +108,14 @@ function toggleNetworkDetails() {
 }
 
 /**
+ * Toggle browser cache status.
+ */
+function toggleBrowserCache() {
+  return (dispatch, getState) =>
+    dispatch(disableBrowserCache(!getState().ui.browserCacheDisabled));
+}
+
+/**
  * Toggle performance statistics panel.
  */
 function toggleStatistics() {
@@ -104,11 +125,13 @@ function toggleStatistics() {
 
 module.exports = {
   openNetworkDetails,
+  disableBrowserCache,
   openStatistics,
   resetColumns,
   resizeWaterfall,
   selectDetailsPanelTab,
   toggleColumn,
   toggleNetworkDetails,
+  toggleBrowserCache,
   toggleStatistics,
 };

@@ -8,23 +8,24 @@
 
 #include "AudioSampleFormat.h"
 #include "ImageTypes.h"
-#include "nsSize.h"
-#include "mozilla/gfx/Rect.h"
-#include "nsRect.h"
-#include "nsIMemoryReporter.h"
 #include "SharedBuffer.h"
-#include "mozilla/RefPtr.h"
-#include "mozilla/UniquePtr.h"
-#include "mozilla/UniquePtrExtensions.h"
-#include "nsTArray.h"
+#include "TimeUnits.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/RefPtr.h"
+#include "mozilla/Span.h"
+#include "mozilla/UniquePtr.h"
+#include "mozilla/UniquePtrExtensions.h"
+#include "mozilla/gfx/Rect.h"
+#include "nsString.h"
+#include "nsTArray.h"
 
 namespace mozilla {
 
 namespace layers {
 class Image;
 class ImageContainer;
+class KnowsCompositor;
 } // namespace layers
 
 class MediaByteBuffer;
@@ -288,8 +289,8 @@ public:
 
   MediaData(Type aType,
             int64_t aOffset,
-            int64_t aTimestamp,
-            int64_t aDuration,
+            const media::TimeUnit& aTimestamp,
+            const media::TimeUnit& aDuration,
             uint32_t aFrames)
     : mType(aType)
     , mOffset(aOffset)
@@ -307,27 +308,30 @@ public:
   // Approximate byte offset where this data was demuxed from its media.
   int64_t mOffset;
 
-  // Start time of sample, in microseconds.
-  int64_t mTime;
+  // Start time of sample.
+  media::TimeUnit mTime;
 
   // Codec specific internal time code. For Ogg based codecs this is the
   // granulepos.
-  int64_t mTimecode;
+  media::TimeUnit mTimecode;
 
   // Duration of sample, in microseconds.
-  int64_t mDuration;
+  media::TimeUnit mDuration;
 
   // Amount of frames for contained data.
   const uint32_t mFrames;
 
   bool mKeyframe;
 
-  int64_t GetEndTime() const { return mTime + mDuration; }
+  media::TimeUnit GetEndTime() const
+  {
+    return mTime + mDuration;
+  }
 
   bool AdjustForStartTime(int64_t aStartTime)
   {
-    mTime = mTime - aStartTime;
-    return mTime >= 0;
+    mTime = mTime - media::TimeUnit::FromMicroseconds(aStartTime);
+    return !mTime.IsNegative();
   }
 
   template <typename ReturnType>
@@ -348,9 +352,6 @@ protected:
   MediaData(Type aType, uint32_t aFrames)
     : mType(aType)
     , mOffset(0)
-    , mTime(0)
-    , mTimecode(0)
-    , mDuration(0)
     , mFrames(aFrames)
     , mKeyframe(false)
   {
@@ -365,7 +366,9 @@ protected:
 class NullData : public MediaData
 {
 public:
-  NullData(int64_t aOffset, int64_t aTime, int64_t aDuration)
+  NullData(int64_t aOffset,
+           const media::TimeUnit& aTime,
+           const media::TimeUnit& aDuration)
     : MediaData(NULL_DATA, aOffset, aTime, aDuration, 0)
   {
   }
@@ -379,8 +382,8 @@ class AudioData : public MediaData
 public:
 
   AudioData(int64_t aOffset,
-            int64_t aTime,
-            int64_t aDuration,
+            const media::TimeUnit& aTime,
+            const media::TimeUnit& aDuration,
             uint32_t aFrames,
             AlignedAudioBuffer&& aData,
             uint32_t aChannels,
@@ -401,8 +404,8 @@ public:
   // After such call, the original aOther is unusable.
   static already_AddRefed<AudioData>
   TransferAndUpdateTimestampAndDuration(AudioData* aOther,
-                                        int64_t aTimestamp,
-                                        int64_t aDuration);
+                                        const media::TimeUnit& aTimestamp,
+                                        const media::TimeUnit& aDuration);
 
   size_t SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const;
 
@@ -488,43 +491,44 @@ public:
     const VideoInfo& aInfo,
     ImageContainer* aContainer,
     int64_t aOffset,
-    int64_t aTime,
-    int64_t aDuration,
+    const media::TimeUnit& aTime,
+    const media::TimeUnit& aDuration,
     const YCbCrBuffer& aBuffer,
     bool aKeyframe,
-    int64_t aTimecode,
-    const IntRect& aPicture);
+    const media::TimeUnit& aTimecode,
+    const IntRect& aPicture,
+    layers::KnowsCompositor* aAllocator = nullptr);
 
   static already_AddRefed<VideoData> CreateAndCopyData(
     const VideoInfo& aInfo,
     ImageContainer* aContainer,
     int64_t aOffset,
-    int64_t aTime,
-    int64_t aDuration,
+    const media::TimeUnit& aTime,
+    const media::TimeUnit& aDuration,
     const YCbCrBuffer& aBuffer,
     const YCbCrBuffer::Plane& aAlphaPlane,
     bool aKeyframe,
-    int64_t aTimecode,
+    const media::TimeUnit& aTimecode,
     const IntRect& aPicture);
 
   static already_AddRefed<VideoData> CreateAndCopyIntoTextureClient(
     const VideoInfo& aInfo,
     int64_t aOffset,
-    int64_t aTime,
-    int64_t aDuration,
+    const media::TimeUnit& aTime,
+    const media::TimeUnit& aDuration,
     layers::TextureClient* aBuffer,
     bool aKeyframe,
-    int64_t aTimecode,
+    const media::TimeUnit& aTimecode,
     const IntRect& aPicture);
 
   static already_AddRefed<VideoData> CreateFromImage(
     const IntSize& aDisplay,
     int64_t aOffset,
-    int64_t aTime,
-    int64_t aDuration,
+    const media::TimeUnit& aTime,
+    const media::TimeUnit& aDuration,
     const RefPtr<Image>& aImage,
     bool aKeyframe,
-    int64_t aTimecode);
+    const media::TimeUnit& aTimecode);
 
   // Initialize PlanarYCbCrImage. Only When aCopyData is true,
   // video data is copied to PlanarYCbCrImage.
@@ -547,10 +551,10 @@ public:
   int32_t mFrameID;
 
   VideoData(int64_t aOffset,
-            int64_t aTime,
-            int64_t aDuration,
+            const media::TimeUnit& aTime,
+            const media::TimeUnit& aDuration,
             bool aKeyframe,
-            int64_t aTimecode,
+            const media::TimeUnit& aTimecode,
             IntSize aDisplay,
             uint32_t aFrameID);
 
@@ -558,14 +562,25 @@ public:
   void MarkSentToCompositor();
   bool IsSentToCompositor() { return mSentToCompositor; }
 
-  void UpdateDuration(int64_t aDuration);
-  void UpdateTimestamp(int64_t aTimestamp);
+  void UpdateDuration(const media::TimeUnit& aDuration);
+  void UpdateTimestamp(const media::TimeUnit& aTimestamp);
+
+  void SetNextKeyFrameTime(const media::TimeUnit& aTime)
+  {
+    mNextKeyFrameTime = aTime;
+  }
+
+  const media::TimeUnit& NextKeyFrameTime() const
+  {
+    return mNextKeyFrameTime;
+  }
 
 protected:
   ~VideoData();
 
   bool mSentToCompositor;
   UniquePtr<Listener> mListener;
+  media::TimeUnit mNextKeyFrameTime;
 };
 
 class CryptoTrack
@@ -585,6 +600,8 @@ public:
   nsTArray<uint32_t> mEncryptedSizes;
   nsTArray<uint8_t> mIV;
   nsTArray<nsCString> mSessionIds;
+  nsTArray<nsTArray<uint8_t>> mInitDatas;
+  nsString mInitDataType;
 };
 
 // MediaRawData is a MediaData container used to store demuxed, still compressed
@@ -659,6 +676,8 @@ public:
            + mBuffer.ComputedSizeOfExcludingThis()
            + mAlphaBuffer.ComputedSizeOfExcludingThis();
   }
+  // Access the buffer as a Span.
+  operator Span<const uint8_t>() { return MakeSpan(Data(), Size()); }
 
   const CryptoSample& mCrypto;
   RefPtr<MediaByteBuffer> mExtraData;

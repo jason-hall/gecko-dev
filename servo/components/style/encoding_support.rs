@@ -6,10 +6,12 @@
 
 extern crate encoding;
 
+use context::QuirksMode;
 use cssparser::{stylesheet_encoding, EncodingSupport};
 use error_reporting::ParseErrorReporter;
 use media_queries::MediaList;
 use self::encoding::{EncodingRef, DecoderTrap};
+use servo_arc::Arc;
 use shared_lock::SharedRwLock;
 use std::str;
 use stylesheets::{Stylesheet, StylesheetLoader, Origin, UrlExtraData};
@@ -47,42 +49,50 @@ impl Stylesheet {
     ///
     /// Takes care of decoding the network bytes and forwards the resulting
     /// string to `Stylesheet::from_str`.
-    pub fn from_bytes(bytes: &[u8],
-                      url_data: UrlExtraData,
-                      protocol_encoding_label: Option<&str>,
-                      environment_encoding: Option<EncodingRef>,
-                      origin: Origin,
-                      media: MediaList,
-                      shared_lock: SharedRwLock,
-                      stylesheet_loader: Option<&StylesheetLoader>,
-                      error_reporter: &ParseErrorReporter)
-                      -> Stylesheet {
+    pub fn from_bytes<R>(bytes: &[u8],
+                         url_data: UrlExtraData,
+                         protocol_encoding_label: Option<&str>,
+                         environment_encoding: Option<EncodingRef>,
+                         origin: Origin,
+                         media: MediaList,
+                         shared_lock: SharedRwLock,
+                         stylesheet_loader: Option<&StylesheetLoader>,
+                         error_reporter: &R,
+                         quirks_mode: QuirksMode)
+                         -> Stylesheet
+        where R: ParseErrorReporter
+    {
         let (string, _) = decode_stylesheet_bytes(
             bytes, protocol_encoding_label, environment_encoding);
         Stylesheet::from_str(&string,
                              url_data,
                              origin,
-                             media,
+                             Arc::new(shared_lock.wrap(media)),
                              shared_lock,
                              stylesheet_loader,
-                             error_reporter)
+                             error_reporter,
+                             quirks_mode,
+                             0)
     }
 
     /// Updates an empty stylesheet with a set of bytes that reached over the
     /// network.
-    pub fn update_from_bytes(existing: &Stylesheet,
-                             bytes: &[u8],
-                             protocol_encoding_label: Option<&str>,
-                             environment_encoding: Option<EncodingRef>,
-                             url_data: &UrlExtraData,
-                             stylesheet_loader: Option<&StylesheetLoader>,
-                             error_reporter: &ParseErrorReporter) {
+    pub fn update_from_bytes<R>(existing: &Stylesheet,
+                                bytes: &[u8],
+                                protocol_encoding_label: Option<&str>,
+                                environment_encoding: Option<EncodingRef>,
+                                url_data: UrlExtraData,
+                                stylesheet_loader: Option<&StylesheetLoader>,
+                                error_reporter: &R)
+        where R: ParseErrorReporter
+    {
         let (string, _) = decode_stylesheet_bytes(
             bytes, protocol_encoding_label, environment_encoding);
         Self::update_from_str(existing,
                               &string,
                               url_data,
                               stylesheet_loader,
-                              error_reporter)
+                              error_reporter,
+                              0)
     }
 }

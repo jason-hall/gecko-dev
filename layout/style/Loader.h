@@ -31,7 +31,6 @@ class nsICSSLoaderObserver;
 class nsIConsoleReportCollector;
 class nsIContent;
 class nsIDocument;
-class nsMediaList;
 class nsIStyleSheetLinkingElement;
 
 namespace mozilla {
@@ -156,7 +155,7 @@ public:
    * @param aURL the url to match
    * @param aResult [out] the style sheet which can be reused
    */
-  bool FindReusableStyleSheet(nsIURI* aURL, RefPtr<CSSStyleSheet>& aResult);
+  bool FindReusableStyleSheet(nsIURI* aURL, RefPtr<StyleSheet>& aResult);
 
   /**
    * Indicate that a certain style sheet is available for reuse if its
@@ -165,7 +164,7 @@ public:
    *
    * @param aSheet the sheet which can be reused
    */
-  void AddReusableSheet(CSSStyleSheet* aSheet) {
+  void AddReusableSheet(StyleSheet* aSheet) {
     mReusableSheets.AppendElement(aSheet);
   }
 
@@ -174,7 +173,7 @@ private:
   LoaderReusableStyleSheets& operator=(const LoaderReusableStyleSheets&) = delete;
 
   // The sheets that can be reused.
-  nsTArray<RefPtr<CSSStyleSheet>> mReusableSheets;
+  nsTArray<RefPtr<StyleSheet>> mReusableSheets;
 };
 
 /***********************************************************************
@@ -230,6 +229,7 @@ public:
    * @param aLineNumber the line number at which the stylesheet data started.
    * @param aTitle the title of the sheet.
    * @param aMedia the media string for the sheet.
+   * @param aReferrerPolicy the referrer policy for loading the sheet.
    * @param aObserver the observer to notify when the load completes.
    *        May be null.
    * @param [out] aCompleted whether parsing of the sheet completed.
@@ -241,6 +241,7 @@ public:
                            uint32_t aLineNumber,
                            const nsAString& aTitle,
                            const nsAString& aMedia,
+                           ReferrerPolicy aReferrerPolicy,
                            mozilla::dom::Element* aScopeElement,
                            nsICSSLoaderObserver* aObserver,
                            bool* aCompleted,
@@ -293,16 +294,13 @@ public:
    * @param aGeckoParentRule the @import rule importing this child, when using
    *                         Gecko's style system. This is used to properly
    *                         order the child sheet list of aParentSheet.
-   * @param aServoChildSheet the child stylesheet of the @import rule, when
-   *                         using Servo's style system.
    * @param aSavedSheets any saved style sheets which could be reused
    *              for this load
    */
   nsresult LoadChildSheet(StyleSheet* aParentSheet,
                           nsIURI* aURL,
-                          nsMediaList* aMedia,
+                          dom::MediaList* aMedia,
                           ImportRule* aGeckoParentRule,
-                          const RawServoStyleSheet* aServoChildSheet,
                           LoaderReusableStyleSheets* aSavedSheets);
 
   /**
@@ -377,11 +375,6 @@ public:
    * @param aOriginPrincipal the principal to use for security checks.  This
    *                         can be null to indicate that these checks should
    *                         be skipped.
-   * @param aCharset the encoding to use for converting the sheet data
-   *        from bytes to Unicode.  May be empty to indicate that the
-   *        charset of the CSSLoader's document should be used.  This
-   *        is only used if neither the network transport nor the
-   *        sheet itself indicate an encoding.
    * @param aObserver the observer to notify when the load completes.
    *                  Must not be null.
    * @param [out] aSheet the sheet to load. Note that the sheet may well
@@ -389,7 +382,6 @@ public:
    */
   nsresult LoadSheet(nsIURI* aURL,
                      nsIPrincipal* aOriginPrincipal,
-                     const nsCString& aCharset,
                      nsICSSLoaderObserver* aObserver,
                      RefPtr<StyleSheet>* aSheet);
 
@@ -400,7 +392,7 @@ public:
   nsresult LoadSheet(nsIURI* aURL,
                      bool aIsPreload,
                      nsIPrincipal* aOriginPrincipal,
-                     const nsCString& aCharset,
+                     const Encoding* aPreloadEncoding,
                      nsICSSLoaderObserver* aObserver,
                      CORSMode aCORSMode = CORS_NONE,
                      ReferrerPolicy aReferrerPolicy = mozilla::net::RP_Unset,
@@ -479,6 +471,7 @@ public:
 
 private:
   friend class SheetLoadData;
+  friend class StreamLoader;
 
   nsresult CheckContentPolicy(nsIPrincipal* aSourcePrincipal,
                               nsIURI* aTargetURI,
@@ -503,13 +496,14 @@ private:
                        bool *aIsAlternate,
                        RefPtr<StyleSheet>* aSheet);
 
-  // Pass in either a media string or the nsMediaList from the
-  // CSSParser.  Don't pass both.
+  // Pass in either a media string or the MediaList from the CSSParser.  Don't
+  // pass both.
+  //
   // This method will set the sheet's enabled state based on aIsAlternate
   void PrepareSheet(StyleSheet* aSheet,
                     const nsAString& aTitle,
                     const nsAString& aMediaString,
-                    nsMediaList* aMediaList,
+                    dom::MediaList* aMediaList,
                     dom::Element* aScopeElement,
                     bool aIsAlternate);
 
@@ -519,20 +513,20 @@ private:
 
   nsresult InsertChildSheet(StyleSheet* aSheet,
                             StyleSheet* aParentSheet,
-                            ImportRule* aGeckoParentRule,
-                            const RawServoStyleSheet* aServoChildSheet);
+                            ImportRule* aGeckoParentRule);
 
-  nsresult InternalLoadNonDocumentSheet(nsIURI* aURL,
-                                        bool aIsPreload,
-                                        SheetParsingMode aParsingMode,
-                                        bool aUseSystemPrincipal,
-                                        nsIPrincipal* aOriginPrincipal,
-                                        const nsCString& aCharset,
-                                        RefPtr<StyleSheet>* aSheet,
-                                        nsICSSLoaderObserver* aObserver,
-                                        CORSMode aCORSMode = CORS_NONE,
-                                        ReferrerPolicy aReferrerPolicy = mozilla::net::RP_Unset,
-                                        const nsAString& aIntegrity = EmptyString());
+  nsresult InternalLoadNonDocumentSheet(
+    nsIURI* aURL,
+    bool aIsPreload,
+    SheetParsingMode aParsingMode,
+    bool aUseSystemPrincipal,
+    nsIPrincipal* aOriginPrincipal,
+    const Encoding* aPreloadEncoding,
+    RefPtr<StyleSheet>* aSheet,
+    nsICSSLoaderObserver* aObserver,
+    CORSMode aCORSMode = CORS_NONE,
+    ReferrerPolicy aReferrerPolicy = mozilla::net::RP_Unset,
+    const nsAString& aIntegrity = EmptyString());
 
   // Post a load event for aObserver to be notified about aSheet.  The
   // notification will be sent with status NS_OK unless the load event is
@@ -559,11 +553,13 @@ private:
                      StyleSheetState aSheetState,
                      bool aIsPreLoad);
 
-  // Parse the stylesheet in aLoadData.  The sheet data comes from aInput.
-  // Set aCompleted to true if the parse finished, false otherwise (e.g. if the
+  // Parse the stylesheet in aLoadData. The sheet data comes from aUTF16 if
+  // UTF-16 and from aUTF8 if UTF-8.
+  // Sets aCompleted to true if the parse finished, false otherwise (e.g. if the
   // sheet had an @import).  If aCompleted is true when this returns, then
   // ParseSheet also called SheetComplete on aLoadData.
-  nsresult ParseSheet(const nsAString& aInput,
+  nsresult ParseSheet(const nsAString& aUTF16,
+                      Span<const uint8_t> aUTF8,
                       SheetLoadData* aLoadData,
                       bool& aCompleted);
 

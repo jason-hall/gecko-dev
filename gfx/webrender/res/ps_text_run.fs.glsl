@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 void main(void) {
-    vec2 tc = clamp(vUv, vUvBorder.xy, vUvBorder.zw);
+    vec3 tc = vec3(clamp(vUv.xy, vUvBorder.xy, vUvBorder.zw), vUv.z);
 #ifdef WR_FEATURE_SUBPIXEL_AA
     //note: the blend mode is not compatible with clipping
     oFragColor = texture(sColor0, tc);
@@ -11,7 +11,7 @@ void main(void) {
     float alpha = texture(sColor0, tc).a;
 #ifdef WR_FEATURE_TRANSFORM
     float a = 0.0;
-    init_transform_fs(vLocalPos, vLocalRect, a);
+    init_transform_fs(vLocalPos, a);
     alpha *= a;
 #endif
     vec4 color = vColor;

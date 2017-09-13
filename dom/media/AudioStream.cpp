@@ -120,6 +120,11 @@ AudioStream::AudioStream(DataSource& aSource)
   , mState(INITIALIZED)
   , mDataSource(aSource)
 {
+#if defined(XP_WIN)
+  if (XRE_IsContentProcess()) {
+    audio::AudioNotificationReceiver::Register(this);
+  }
+#endif
 }
 
 AudioStream::~AudioStream()
@@ -133,6 +138,11 @@ AudioStream::~AudioStream()
   if (mTimeStretcher) {
     soundtouch::destroySoundTouchObj(mTimeStretcher);
   }
+#if defined(XP_WIN)
+  if (XRE_IsContentProcess()) {
+    audio::AudioNotificationReceiver::Unregister(this);
+  }
+#endif
 }
 
 size_t
@@ -318,8 +328,7 @@ int AudioStream::InvokeCubeb(Function aFunction, Args&&... aArgs)
 }
 
 nsresult
-AudioStream::Init(uint32_t aNumChannels, uint32_t aChannelMap, uint32_t aRate,
-                  const dom::AudioChannel aAudioChannel)
+AudioStream::Init(uint32_t aNumChannels, uint32_t aChannelMap, uint32_t aRate)
 {
   auto startTime = TimeStamp::Now();
 
@@ -333,19 +342,8 @@ AudioStream::Init(uint32_t aNumChannels, uint32_t aChannelMap, uint32_t aRate,
   params.rate = aRate;
   params.channels = mOutChannels;
   params.layout = CubebUtils::ConvertChannelMapToCubebLayout(aChannelMap);
-#if defined(__ANDROID__)
-#if defined(MOZ_B2G)
-  params.stream_type = CubebUtils::ConvertChannelToCubebType(aAudioChannel);
-#else
-  params.stream_type = CUBEB_STREAM_TYPE_MUSIC;
-#endif
-
-  if (params.stream_type == CUBEB_STREAM_TYPE_MAX) {
-    return NS_ERROR_INVALID_ARG;
-  }
-#endif
-
   params.format = ToCubebFormat<AUDIO_OUTPUT_FORMAT>::value;
+
   mAudioClock.Init(aRate);
 
   cubeb* cubebContext = CubebUtils::GetCubebContext();
@@ -474,6 +472,23 @@ AudioStream::Shutdown()
   mState = SHUTDOWN;
 }
 
+#if defined(XP_WIN)
+void
+AudioStream::ResetDefaultDevice()
+{
+  MonitorAutoLock mon(mMonitor);
+  if (mState != STARTED && mState != STOPPED) {
+    return;
+  }
+
+  MOZ_ASSERT(mCubebStream);
+  auto r = InvokeCubeb(cubeb_stream_reset_default_device);
+  if (!(r == CUBEB_OK || r == CUBEB_ERROR_NOT_SUPPORTED)) {
+    mState = ERRORED;
+  }
+}
+#endif
+
 int64_t
 AudioStream::GetPosition()
 {
@@ -580,8 +595,19 @@ AudioStream::GetTimeStretched(AudioBufferWriter& aWriter)
     } else {
       // Write silence if invalid format.
       AutoTArray<AudioDataValue, 1000> buf;
-      buf.SetLength(mOutChannels * c->Frames());
-      memset(buf.Elements(), 0, buf.Length() * sizeof(AudioDataValue));
+      auto size = CheckedUint32(mOutChannels) * c->Frames();
+      if (!size.isValid()) {
+        // The overflow should not happen in normal case.
+        LOGW("Invalid member data: %d channels, %d frames", mOutChannels, c->Frames());
+        return;
+      }
+      buf.SetLength(size.value());
+      size = size * sizeof(AudioDataValue);
+      if (!size.isValid()) {
+        LOGW("The required memory size is too large.");
+        return;
+      }
+      memset(buf.Elements(), 0, size.value());
       mTimeStretcher->putSamples(buf.Elements(), c->Frames());
     }
   }

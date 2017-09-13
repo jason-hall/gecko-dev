@@ -10,19 +10,15 @@ import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
-import android.os.Bundle;
 import android.support.design.widget.Snackbar;
 import android.support.v4.content.ContextCompat;
-import android.util.Log;
 import android.view.View;
 import android.widget.ListView;
 
-import org.json.JSONException;
-import org.json.JSONObject;
 import org.mozilla.gecko.AboutPages;
+import org.mozilla.gecko.AppConstants;
 import org.mozilla.gecko.BrowserApp;
-import org.mozilla.gecko.EditBookmarkDialog;
-import org.mozilla.gecko.GeckoAppShell;
+import org.mozilla.gecko.GeckoApplication;
 import org.mozilla.gecko.GeckoSharedPrefs;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.SnackbarBuilder;
@@ -37,8 +33,6 @@ import org.mozilla.gecko.prompts.PromptListItem;
 import org.mozilla.gecko.util.DrawableUtil;
 import org.mozilla.gecko.util.GeckoBundle;
 import org.mozilla.gecko.util.ThreadUtils;
-
-import java.lang.ref.WeakReference;
 
 /**
  * Delegate to watch for bookmark state changes.
@@ -177,7 +171,7 @@ public class BookmarkStateChangeDelegate extends BrowserAppDelegateWithReference
                     Telemetry.sendUIEvent(TelemetryContract.Event.ACTION,
                             TelemetryContract.Method.DIALOG, extrasId);
 
-                    new EditBookmarkDialog(browserApp).show(tab.getURL());
+                    browserApp.showEditBookmarkDialog(tab.getURL());
 
                 } else if (itemId == 1) {
                     final String extrasId = res.getResourceEntryName(R.string.contextmenu_add_to_launcher);
@@ -191,7 +185,7 @@ public class BookmarkStateChangeDelegate extends BrowserAppDelegateWithReference
                         ThreadUtils.postToBackgroundThread(new Runnable() {
                             @Override
                             public void run() {
-                                GeckoAppShell.createShortcut(title, url);
+                                GeckoApplication.createShortcut(title, url);
                             }
                         });
                     }
@@ -199,11 +193,18 @@ public class BookmarkStateChangeDelegate extends BrowserAppDelegateWithReference
             }
         });
 
-        final PromptListItem[] items = new PromptListItem[2];
-        items[0] = new PromptListItem(res.getString(R.string.contextmenu_edit_bookmark));
-        items[1] = new PromptListItem(res.getString(R.string.contextmenu_add_to_launcher));
+        if (AppConstants.Versions.feature26Plus) {
+            final PromptListItem[] items = new PromptListItem[1];
+            items[0] = new PromptListItem(res.getString(R.string.contextmenu_edit_bookmark));
+            ps.show("", "", items, ListView.CHOICE_MODE_NONE);
+        } else {
+            final PromptListItem[] items = new PromptListItem[2];
+            items[0] = new PromptListItem(res.getString(R.string.contextmenu_edit_bookmark));
+            items[1] = new PromptListItem(res.getString(R.string.contextmenu_add_to_launcher));
+            ps.show("", "", items, ListView.CHOICE_MODE_NONE);
+        }
 
-        ps.show("", "", items, ListView.CHOICE_MODE_NONE);
+
     }
 
     private void showReaderModeBookmarkAddedSnackbar() {

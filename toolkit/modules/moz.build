@@ -49,9 +49,6 @@ with Files('tests/xpcshell/test_UpdateUtils*.js'):
 with Files('tests/xpcshell/test_client_id.js'):
     BUG_COMPONENT = ('Toolkit', 'Telemetry')
 
-with Files('tests/xpcshell/test_session_recorder.js'):
-    BUG_COMPONENT = ('Toolkit', 'Telemetry')
-
 with Files('AsyncPrefs.jsm'):
     BUG_COMPONENT = ('Core', 'Security: Process Sandboxing')
 
@@ -97,9 +94,6 @@ with Files('LightweightThemeConsumer.jsm'):
 with Files('LoadContextInfo.jsm'):
     BUG_COMPONENT = ('Core', 'Networking: Cache')
 
-with Files('Locale.jsm'):
-    BUG_COMPONENT = ('Core', 'Internationalization')
-
 with Files('Memory.jsm'):
     BUG_COMPONENT = ('Core', 'DOM: Content Processes')
 
@@ -127,7 +121,7 @@ with Files('PrivateBrowsingUtils.jsm'):
 with Files('Promise*.jsm'):
     BUG_COMPONENT = ('Toolkit', 'Async Tooling')
 
-with Files('RemoteController.jsm'):
+with Files('RemoteController.js'):
     BUG_COMPONENT = ('Core', 'Widget')
 
 with Files('RemoteFinder.jsm'):
@@ -141,9 +135,6 @@ with Files('RemoteWebProgress.jsm'):
 
 with Files('ResponsivenessMonitor.jsm'):
     BUG_COMPONENT = ('Firefox', 'Migration')
-
-with Files('SessionRecorder.jsm'):
-    BUG_COMPONENT = ('Toolkit', 'Telemetry')
 
 with Files('ShortcutUtils.jsm'):
     BUG_COMPONENT = ('Firefox', 'Toolbars and Customization')
@@ -179,6 +170,7 @@ EXTRA_JS_MODULES += [
     'addons/WebRequestCommon.jsm',
     'addons/WebRequestContent.js',
     'addons/WebRequestUpload.jsm',
+    'AppMenuNotifications.jsm',
     'AsyncPrefs.jsm',
     'Battery.jsm',
     'BinarySearch.jsm',
@@ -189,18 +181,22 @@ EXTRA_JS_MODULES += [
     'ClientID.jsm',
     'Color.jsm',
     'Console.jsm',
+    'css-selector.js',
     'DateTimePickerHelper.jsm',
     'debug.js',
     'DeferredTask.jsm',
     'Deprecated.jsm',
+    'EventEmitter.jsm',
     'FileUtils.jsm',
     'Finder.jsm',
     'FinderHighlighter.jsm',
     'FinderIterator.jsm',
     'FormLikeFactory.jsm',
     'Geometry.jsm',
+    'GMPExtractorWorker.js',
     'GMPInstallManager.jsm',
     'GMPUtils.jsm',
+    'HiddenFrame.jsm',
     'Http.jsm',
     'IndexedDB.jsm',
     'InlineSpellChecker.jsm',
@@ -208,7 +204,6 @@ EXTRA_JS_MODULES += [
     'Integration.jsm',
     'JSONFile.jsm',
     'LoadContextInfo.jsm',
-    'Locale.jsm',
     'Log.jsm',
     'Memory.jsm',
     'NewTabUtils.jsm',
@@ -225,8 +220,7 @@ EXTRA_JS_MODULES += [
     'Promise.jsm',
     'PromiseMessage.jsm',
     'PromiseUtils.jsm',
-    'PropertyListUtils.jsm',
-    'RemoteController.jsm',
+    'RemoteController.js',
     'RemoteFinder.jsm',
     'RemotePageManager.jsm',
     'RemoteSecurityUI.jsm',
@@ -239,12 +233,9 @@ EXTRA_JS_MODULES += [
     'SelectParentHelper.jsm',
     'ServiceRequest.jsm',
     'Services.jsm',
-    'SessionRecorder.jsm',
     'sessionstore/FormData.jsm',
     'sessionstore/ScrollPosition.jsm',
-    'sessionstore/XPathGenerator.jsm',
     'ShortcutUtils.jsm',
-    'Sntp.jsm',
     'Sqlite.jsm',
     'Task.jsm',
     'Timer.jsm',
@@ -254,6 +245,12 @@ EXTRA_JS_MODULES += [
     'WindowDraggingUtils.jsm',
     'ZipUtils.jsm',
 ]
+
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
+    EXTRA_JS_MODULES += [
+        'PropertyListUtils.jsm',
+    ]
+
 EXTRA_JS_MODULES.third_party.jsesc += ['third_party/jsesc/jsesc.js']
 EXTRA_JS_MODULES.sessionstore += [
     'sessionstore/PrivacyLevel.jsm',
@@ -296,7 +293,11 @@ for var in ('ANDROID_PACKAGE_NAME',
             'MOZ_APP_NAME',
             'MOZ_APP_VERSION',
             'MOZ_APP_VERSION_DISPLAY',
+            'MOZ_BING_API_CLIENTID',
+            'MOZ_BING_API_KEY',
+            'MOZ_GOOGLE_API_KEY',
             'MOZ_MACBUNDLE_NAME',
+            'MOZ_MOZILLA_API_KEY',
             'MOZ_WIDGET_TOOLKIT',
             'DLL_PREFIX',
             'DLL_SUFFIX',
@@ -306,9 +307,11 @@ for var in ('ANDROID_PACKAGE_NAME',
 for var in ('MOZ_TOOLKIT_SEARCH',
             'MOZ_SYSTEM_NSS',
             'MOZ_UPDATER',
-            'MOZ_SWITCHBOARD',
-            'MOZ_SERVICES_CLOUDSYNC'):
+            'MOZ_ANDROID_MOZILLA_ONLINE',
+            'MOZ_SWITCHBOARD'):
     if CONFIG[var]:
         DEFINES[var] = True
+
+JAR_MANIFESTS += ['jar.mn']
 
 DEFINES['TOPOBJDIR'] = TOPOBJDIR

@@ -17,7 +17,6 @@ const {
 } = require("devtools/shared/specs/worker");
 
 loader.lazyRequireGetter(this, "ChromeUtils");
-loader.lazyRequireGetter(this, "events", "sdk/event/core");
 
 XPCOMUtils.defineLazyServiceGetter(
   this, "swm",
@@ -267,7 +266,7 @@ protocol.ActorClassWithSpec(serviceWorkerRegistrationSpec, {
     this._waitingWorker = new ServiceWorkerActor(conn, waitingWorker);
     this._activeWorker = new ServiceWorkerActor(conn, activeWorker);
 
-    Services.obs.addObserver(this, PushService.subscriptionModifiedTopic, false);
+    Services.obs.addObserver(this, PushService.subscriptionModifiedTopic);
   },
 
   onChange() {
@@ -280,7 +279,7 @@ protocol.ActorClassWithSpec(serviceWorkerRegistrationSpec, {
     this._waitingWorker = new ServiceWorkerActor(this._conn, waitingWorker);
     this._activeWorker = new ServiceWorkerActor(this._conn, activeWorker);
 
-    events.emit(this, "registration-changed");
+    this.emit("registration-changed");
   },
 
   form(detail) {
@@ -344,7 +343,7 @@ protocol.ActorClassWithSpec(serviceWorkerRegistrationSpec, {
           this._pushSubscriptionActor.destroy();
           this._pushSubscriptionActor = null;
         }
-        events.emit(this, "push-subscription-modified");
+        this.emit("push-subscription-modified");
         break;
     }
   },
@@ -355,6 +354,19 @@ protocol.ActorClassWithSpec(serviceWorkerRegistrationSpec, {
         "resource://devtools/server/service-worker-child.js", true);
       _serviceWorkerProcessScriptLoaded = true;
     }
+
+    // XXX: Send the permissions down to the content process before starting
+    // the service worker within the content process. As we don't know what
+    // content process we're starting the service worker in (as we're using a
+    // broadcast channel to talk to it), we just broadcast the permissions to
+    // everyone as well.
+    //
+    // This call should be replaced with a proper implementation when
+    // ServiceWorker debugging is improved to support multiple content processes
+    // correctly.
+    Services.perms.broadcastPermissionsForPrincipalToAllContentProcesses(
+      this._registration.principal);
+
     Services.ppmm.broadcastAsyncMessage("serviceWorkerRegistration:start", {
       scope: this._registration.scope
     });

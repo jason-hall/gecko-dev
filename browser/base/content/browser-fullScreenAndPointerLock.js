@@ -3,6 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// This file is loaded into the browser window scope.
+/* eslint-env mozilla/browser-window */
+
 var PointerlockFsWarning = {
 
   _element: null,
@@ -75,7 +78,7 @@ var PointerlockFsWarning = {
     if (aOrigin) {
       this._origin = aOrigin;
     }
-    let uri = BrowserUtils.makeURI(this._origin);
+    let uri = Services.io.newURI(this._origin);
     let host = null;
     try {
       host = uri.host;
@@ -393,7 +396,7 @@ var FullScreen = {
         break;
       }
       case "DOMFullscreen:Painted": {
-        Services.obs.notifyObservers(window, "fullscreen-painted", "");
+        Services.obs.notifyObservers(window, "fullscreen-painted");
         TelemetryStopwatch.finish("FULLSCREEN_CHANGE_MS");
         break;
       }
@@ -593,7 +596,7 @@ var FullScreen = {
 
     this._fullScrToggler.hidden = false;
 
-    if (aAnimate && gPrefService.getBoolPref("browser.fullscreen.animate")) {
+    if (aAnimate && gPrefService.getBoolPref("toolkit.cosmeticAnimations.enabled")) {
       gNavToolbox.setAttribute("fullscreenShouldAnimate", true);
       // Hide the fullscreen toggler until the transition ends.
       let listener = () => {
@@ -636,7 +639,8 @@ var FullScreen = {
       }
     }
 
-    ToolbarIconColor.inferFromText();
+    ToolbarIconColor.inferFromText("fullscreen", aEnterFS);
+
 
     // For Lion fullscreen, all fullscreen controls are hidden, don't
     // bother to touch them. If we don't stop here, the following code

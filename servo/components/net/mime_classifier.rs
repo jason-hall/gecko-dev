@@ -169,14 +169,14 @@ impl MimeClassifier {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        try!(self.image_classifier.validate());
-        try!(self.audio_video_classifier.validate());
-        try!(self.scriptable_classifier.validate());
-        try!(self.plaintext_classifier.validate());
-        try!(self.archive_classifier.validate());
-        try!(self.binary_or_plaintext.validate());
-        try!(self.feeds_classifier.validate());
-        try!(self.font_classifier.validate());
+        self.image_classifier.validate()?;
+        self.audio_video_classifier.validate()?;
+        self.scriptable_classifier.validate()?;
+        self.plaintext_classifier.validate()?;
+        self.archive_classifier.validate()?;
+        self.binary_or_plaintext.validate()?;
+        self.feeds_classifier.validate()?;
+        self.font_classifier.validate()?;
         Ok(())
     }
 
@@ -547,7 +547,7 @@ impl MIMEChecker for GroupedClassifier {
 
     fn validate(&self) -> Result<(), String> {
         for byte_matcher in &self.byte_matchers {
-            try!(byte_matcher.validate())
+            byte_matcher.validate()?
         }
         Ok(())
     }
@@ -815,7 +815,7 @@ impl ByteMatcher {
                 mask: b"\xFF\xFF\xDF\xDF\xDF\xDF\xDF\xDF\xDF\xFF\xDF\xDF\xDF\xDF",
                 content_type: (TopLevel::Text, "html"),
                 leading_ignore: b"\t\n\x0C\r "
-           }
+            }
         }
     }
 

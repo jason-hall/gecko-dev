@@ -28,13 +28,20 @@
 // Assertions and debug printing, defined here instead of in the header above
 // to make `assert` invisible to C++.
 #ifdef DEBUG
-#define assert(b, info) if (!(b)) AssertionFailed(__FILE__ + ":" + __LINE__ + ": " + info)
-#define dbg(msg) DumpMessage(callFunction(std_Array_pop, \
-                                          StringSplitString(__FILE__, '/')) \
-                             + '#' + __LINE__ + ': ' + msg)
+#define assert(b, info) \
+    do { \
+        if (!(b)) \
+            AssertionFailed(__FILE__ + ":" + __LINE__ + ": " + info) \
+    } while (false)
+#define dbg(msg) \
+    do { \
+        DumpMessage(callFunction(std_Array_pop, \
+                                 StringSplitString(__FILE__, '/')) + \
+                    '#' + __LINE__ + ': ' + msg) \
+    } while (false)
 #else
-#define assert(b, info) // Elided assertion.
-#define dbg(msg) // Elided debugging output.
+#define assert(b, info) do {} while (false) // Elided assertion.
+#define dbg(msg) do {} while (false) // Elided debugging output.
 #endif
 
 // All C++-implemented standard builtins library functions used in self-hosted
@@ -100,11 +107,15 @@ function RequireObjectCoercible(v) {
 
 /* Spec: ECMAScript Draft, 6 edition May 22, 2014, 7.1.15 */
 function ToLength(v) {
+    // Step 1.
     v = ToInteger(v);
 
-    if (v <= 0)
-        return 0;
+    // Step 2.
+    // Use max(v, 0) here, because it's easier to optimize in Ion.
+    // This is correct even for -0.
+    v = std_Math_max(v, 0);
 
+    // Step 3.
     // Math.pow(2, 53) - 1 = 0x1fffffffffffff
     return std_Math_min(v, 0x1fffffffffffff);
 }
@@ -153,19 +164,21 @@ function IsPropertyKey(argument) {
 /* Spec: ECMAScript Draft, 6th edition Dec 24, 2014, 7.4.1 */
 function GetIterator(obj, method) {
     // Steps 1-2.
-    if (arguments.length === 1)
-        method = GetMethod(obj, std_iterator);
+    assert(IsCallable(method), "method argument is not optional");
 
     // Steps 3-4.
     var iterator = callContentFunction(method, obj);
 
     // Step 5.
     if (!IsObject(iterator))
-        ThrowTypeError(JSMSG_NOT_ITERATOR, ToString(iterator));
+        ThrowTypeError(JSMSG_GET_ITER_RETURNED_PRIMITIVE);
 
     // Step 6.
     return iterator;
 }
+
+#define TO_PROPERTY_KEY(name) \
+(typeof name !== "string" && typeof name !== "number" && typeof name !== "symbol" ? ToPropertyKey(name) : name)
 
 var _builtinCtorsCache = {__proto__: null};
 
@@ -231,6 +244,69 @@ function GetInternalError(msg) {
 
 // To be used when a function is required but calling it shouldn't do anything.
 function NullFunction() {}
+
+// Object Rest/Spread Properties proposal
+// Abstract operation: CopyDataProperties (target, source, excluded)
+function CopyDataProperties(target, source, excluded) {
+    // Step 1.
+    assert(IsObject(target), "target is an object");
+
+    // Step 2.
+    assert(IsObject(excluded), "excluded is an object");
+
+    // Steps 3, 6.
+    if (source === undefined || source === null)
+        return;
+
+    // Step 4.a.
+    source = ToObject(source);
+
+    // Step 4.b.
+    var keys = OwnPropertyKeys(source, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS);
+
+    // Step 5.
+    for (var index = 0; index < keys.length; index++) {
+        var key = keys[index];
+
+        // We abbreviate this by calling propertyIsEnumerable which is faster
+        // and returns false for not defined properties.
+        if (!hasOwn(key, excluded) && callFunction(std_Object_propertyIsEnumerable, source, key))
+            _DefineDataProperty(target, key, source[key]);
+    }
+
+    // Step 6 (Return).
+}
+
+// Object Rest/Spread Properties proposal
+// Abstract operation: CopyDataProperties (target, source, excluded)
+function CopyDataPropertiesUnfiltered(target, source) {
+    // Step 1.
+    assert(IsObject(target), "target is an object");
+
+    // Step 2 (Not applicable).
+
+    // Steps 3, 6.
+    if (source === undefined || source === null)
+        return;
+
+    // Step 4.a.
+    source = ToObject(source);
+
+    // Step 4.b.
+    var keys = OwnPropertyKeys(source, JSITER_OWNONLY | JSITER_HIDDEN | JSITER_SYMBOLS);
+
+    // Step 5.
+    for (var index = 0; index < keys.length; index++) {
+        var key = keys[index];
+
+        // We abbreviate this by calling propertyIsEnumerable which is faster
+        // and returns false for not defined properties.
+        if (callFunction(std_Object_propertyIsEnumerable, source, key))
+            _DefineDataProperty(target, key, source[key]);
+    }
+
+    // Step 6 (Return).
+}
 
 /*************************************** Testing functions ***************************************/
 function outer() {

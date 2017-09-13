@@ -11,6 +11,7 @@
 #include "gfxFT2FontBase.h"
 #include "gfxPlatformFontList.h"
 #include "mozilla/mozalloc.h"
+#include "nsAutoRef.h"
 #include "nsClassHashtable.h"
 
 #include <fontconfig/fontconfig.h>
@@ -20,13 +21,12 @@
 #include <cairo.h>
 #include <cairo-ft.h>
 
-#include "gfxFontconfigUtils.h" // xxx - only for nsAutoRefTraits<FcPattern>, etc.
-
 template <>
-class nsAutoRefTraits<FcObjectSet> : public nsPointerRefTraits<FcObjectSet>
+class nsAutoRefTraits<FcPattern> : public nsPointerRefTraits<FcPattern>
 {
 public:
-    static void Release(FcObjectSet *ptr) { FcObjectSetDestroy(ptr); }
+    static void Release(FcPattern *ptr) { FcPatternDestroy(ptr); }
+    static void AddRef(FcPattern *ptr) { FcPatternReference(ptr); }
 };
 
 template <>
@@ -46,7 +46,7 @@ public:
 
 class FTUserFontData {
 public:
-    NS_INLINE_DECL_REFCOUNTING(FTUserFontData)
+    NS_INLINE_DECL_THREADSAFE_REFCOUNTING(FTUserFontData)
 
     explicit FTUserFontData(FT_Face aFace, const uint8_t* aData)
         : mFace(aFace), mFontData(aData)
@@ -58,7 +58,7 @@ public:
 private:
     ~FTUserFontData()
     {
-        FT_Done_Face(mFace);
+        mozilla::gfx::Factory::ReleaseFTFace(mFace);
         if (mFontData) {
             NS_Free((void*)mFontData);
         }
@@ -66,23 +66,6 @@ private:
 
     FT_Face        mFace;
     const uint8_t *mFontData;
-};
-
-class FTUserFontDataRef {
-public:
-    explicit FTUserFontDataRef(FTUserFontData *aUserFontData)
-        : mUserFontData(aUserFontData)
-    {
-    }
-
-    static void Destroy(void* aData) {
-        FTUserFontDataRef* aUserFontDataRef =
-            static_cast<FTUserFontDataRef*>(aData);
-        delete aUserFontDataRef;
-    }
-
-private:
-    RefPtr<FTUserFontData> mUserFontData;
 };
 
 // The names for the font entry and font classes should really
@@ -111,6 +94,8 @@ public:
                                     uint16_t aWeight,
                                     int16_t aStretch,
                                     uint8_t aStyle);
+
+    gfxFontEntry* Clone() const override;
 
     FcPattern* GetPattern() { return mFontPattern; }
 
@@ -195,7 +180,8 @@ public:
     explicit gfxFontconfigFontFamily(const nsAString& aName) :
         gfxFontFamily(aName),
         mContainsAppFonts(false),
-        mHasNonScalableFaces(false)
+        mHasNonScalableFaces(false),
+        mForceScalable(false)
     { }
 
     void FindStyleVariations(FontInfoData *aFontInfoData = nullptr) override;
@@ -212,7 +198,8 @@ public:
     void
     FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
                          nsTArray<gfxFontEntry*>& aFontEntryList,
-                         bool& aNeedsSyntheticBold) override;
+                         bool& aNeedsSyntheticBold,
+                         bool aIgnoreSizeTolerance) override;
 
 protected:
     virtual ~gfxFontconfigFontFamily();
@@ -221,9 +208,10 @@ protected:
 
     bool      mContainsAppFonts;
     bool      mHasNonScalableFaces;
+    bool      mForceScalable;
 };
 
-class gfxFontconfigFont : public gfxFontconfigFontBase {
+class gfxFontconfigFont : public gfxFT2FontBase {
 public:
     gfxFontconfigFont(const RefPtr<mozilla::gfx::UnscaledFontFontconfig> &aUnscaledFont,
                       cairo_scaled_font_t *aScaledFont,
@@ -233,11 +221,17 @@ public:
                       const gfxFontStyle *aFontStyle,
                       bool aNeedsBold);
 
-protected:
-    virtual ~gfxFontconfigFont();
-};
+    virtual FontType GetType() const override { return FONT_TYPE_FONTCONFIG; }
+    virtual FcPattern *GetPattern() const { return mPattern; }
 
-class nsILanguageAtomService;
+    virtual already_AddRefed<mozilla::gfx::ScaledFont>
+    GetScaledFont(DrawTarget *aTarget) override;
+
+private:
+    virtual ~gfxFontconfigFont();
+
+    nsCountedRef<FcPattern> mPattern;
+};
 
 class gfxFcPlatformFontList : public gfxPlatformFontList {
 public:
@@ -268,6 +262,7 @@ public:
 
     bool FindAndAddFamilies(const nsAString& aFamily,
                             nsTArray<gfxFontFamily*>* aOutput,
+                            FindFamiliesFlags aFlags,
                             gfxFontStyle* aStyle = nullptr,
                             gfxFloat aDevToCssSize = 1.0) override;
 
@@ -309,6 +304,8 @@ protected:
 
     virtual gfxFontFamily*
     GetDefaultFontForPlatform(const gfxFontStyle* aStyle) override;
+
+    gfxFontFamily* CreateFontFamily(const nsAString& aName) const override;
 
 #ifdef MOZ_BUNDLED_FONTS
     void ActivateBundledFonts();

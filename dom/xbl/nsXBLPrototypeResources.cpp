@@ -38,6 +38,9 @@ nsXBLPrototypeResources::~nsXBLPrototypeResources()
   if (mLoader) {
     mLoader->mResources = nullptr;
   }
+  if (mServoStyleSet) {
+    mServoStyleSet->Shutdown();
+  }
 }
 
 void
@@ -47,13 +50,14 @@ nsXBLPrototypeResources::AddResource(nsIAtom* aResourceType, const nsAString& aS
     mLoader->AddResource(aResourceType, aSrc);
 }
 
-void
-nsXBLPrototypeResources::LoadResources(bool* aResult)
+bool
+nsXBLPrototypeResources::LoadResources(nsIContent* aBoundElement)
 {
-  if (mLoader)
-    mLoader->LoadResources(aResult);
-  else
-    *aResult = true; // All resources loaded.
+  if (mLoader) {
+    return mLoader->LoadResources(aBoundElement);
+  }
+
+  return true; // All resources loaded.
 }
 
 void
@@ -158,6 +162,19 @@ nsXBLPrototypeResources::GatherRuleProcessor()
                                           SheetType::Doc,
                                           nullptr,
                                           mRuleProcessor);
+}
+
+void
+nsXBLPrototypeResources::ComputeServoStyleSet(nsPresContext* aPresContext)
+{
+  nsTArray<RefPtr<ServoStyleSheet>> sheets(mStyleSheetList.Length());
+  for (StyleSheet* sheet : mStyleSheetList) {
+    MOZ_ASSERT(sheet->IsServo(),
+               "This should only be called with Servo-flavored style backend!");
+    sheets.AppendElement(sheet->AsServo());
+  }
+
+  mServoStyleSet = ServoStyleSet::CreateXBLServoStyleSet(aPresContext, sheets);
 }
 
 void

@@ -15,15 +15,16 @@ do_get_profile();
 Cc["@mozilla.org/psm;1"].getService(Ci.nsISupports);
 
 function run_test() {
-  let pkcs11 = Cc["@mozilla.org/security/pkcs11;1"].getService(Ci.nsIPKCS11);
+  let pkcs11ModuleDB = Cc["@mozilla.org/security/pkcs11moduledb;1"]
+                         .getService(Ci.nsIPKCS11ModuleDB);
   loadPKCS11TestModule(true);
-  pkcs11.deleteModule("PKCS11 Test Module");
+  pkcs11ModuleDB.deleteModule("PKCS11 Test Module");
   Services.obs.addObserver(function() {
     ok(false, "smartcard-insert event should not have been emitted");
-  }, "smartcard-insert", false);
+  }, "smartcard-insert");
   Services.obs.addObserver(function() {
     ok(false, "smartcard-remove event should not have been emitted");
-  }, "smartcard-remove", false);
+  }, "smartcard-remove");
   do_timeout(500, do_test_finished);
   do_test_pending();
 }

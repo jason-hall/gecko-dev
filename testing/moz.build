@@ -64,9 +64,6 @@ with Files("specialpowers/**"):
 with Files("crashtest/**"):
     BUG_COMPONENT = ("Testing", "Reftest")
 
-with Files("crashtest/autophone-crashtest-webrtc.list"):
-    BUG_COMPONENT = ("Testing", "Autophone")
-
 with Files("config/marionette*"):
     BUG_COMPONENT = ("Testing", "Marionette")
 
@@ -76,14 +73,11 @@ with Files("config/mozbase_requirements.txt"):
 with Files("config/firefox_ui_requirements.txt"):
     BUG_COMPONENT = ("Testing", "Firfox UI Tests")
 
-with Files("config/external-media-tests-requirements.txt"):
-    BUG_COMPONENT = ("Testing", "external-media-tests")
-
 with Files("tools/**"):
     BUG_COMPONENT = ("Testing", "General")
 
 with Files("tools/fileid/**"):
-    BUG_COMPONENT = ("Toolkit", "Breakpad Integration")
+    BUG_COMPONENT = ("Toolkit", "Crash Reporting")
 
 with Files("tools/iceserver/**"):
     BUG_COMPONENT = ("Core", "WebRTC: Networking")
@@ -92,10 +86,10 @@ with Files("tools/websocketprocessbridge/**"):
     BUG_COMPONENT = ("Core", "WebRTC: Networking")
 
 with Files("tools/fileid/**"):
-    BUG_COMPONENT = ("Toolkit", "Breakpad Integration")
+    BUG_COMPONENT = ("Toolkit", "Crash Reporting")
 
 with Files("tools/minidumpwriter/**"):
-    BUG_COMPONENT = ("Toolkit", "Breakpad Integration")
+    BUG_COMPONENT = ("Toolkit", "Crash Reporting")
 
 with Files("remote*"):
     BUG_COMPONENT = ("Firefox for Android", "Testing")

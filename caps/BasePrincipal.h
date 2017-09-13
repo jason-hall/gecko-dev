@@ -40,6 +40,19 @@ public:
 
   explicit BasePrincipal(PrincipalKind aKind);
 
+  template<typename T>
+  bool Is() const
+  {
+    return mKind == T::Kind();
+  }
+
+  template<typename T>
+  T* As()
+  {
+    MOZ_ASSERT(Is<T>());
+    return static_cast<T*>(this);
+  }
+
   enum DocumentDomainConsideration { DontConsiderDocumentDomain, ConsiderDocumentDomain};
   bool Subsumes(nsIPrincipal* aOther, DocumentDomainConsideration aConsideration);
 
@@ -63,10 +76,8 @@ public:
   NS_IMETHOD GetIsSystemPrincipal(bool* aResult) override;
   NS_IMETHOD GetOriginAttributes(JSContext* aCx, JS::MutableHandle<JS::Value> aVal) final;
   NS_IMETHOD GetOriginSuffix(nsACString& aOriginSuffix) final;
-  NS_IMETHOD GetAppStatus(uint16_t* aAppStatus) final;
-  NS_IMETHOD GetAppId(uint32_t* aAppStatus) final;
+  NS_IMETHOD GetAppId(uint32_t* aAppId) final;
   NS_IMETHOD GetIsInIsolatedMozBrowserElement(bool* aIsInIsolatedMozBrowserElement) final;
-  NS_IMETHOD GetUnknownAppId(bool* aUnknownAppId) final;
   NS_IMETHOD GetUserContextId(uint32_t* aUserContextId) final;
   NS_IMETHOD GetPrivateBrowsingId(uint32_t* aPrivateBrowsingId) final;
 

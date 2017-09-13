@@ -94,11 +94,11 @@ if (AppConstants.platform === "win") {
   ];
 }
 
-add_task(function* setup() {
+add_task(async function setup() {
   do_get_profile();
 
-  yield OS.File.copy(libModulesFile, libUnicodeFile);
-  yield OS.File.copy(libModulesFile, libLongName);
+  await OS.File.copy(libModulesFile, libUnicodeFile);
+  await OS.File.copy(libModulesFile, libLongName);
 
   if (AppConstants.platform !== "android") {
     libModulesHandle = ctypes.open(libModulesFile);
@@ -117,7 +117,7 @@ add_task(function* setup() {
 
   // Start the local ping server and setup Telemetry to use it during the tests.
   PingServer.start();
-  Preferences.set("toolkit.telemetry.server", "http://localhost:" + PingServer.port);
+  Preferences.set(TelemetryUtils.Preferences.Server, "http://localhost:" + PingServer.port);
 });
 
 do_register_cleanup(function() {
@@ -144,10 +144,10 @@ do_register_cleanup(function() {
 
 add_task({
   skip_if: () => !AppConstants.MOZ_GECKO_PROFILER,
-}, function* test_send_ping() {
-  yield TelemetryController.testSetup();
+}, async function test_send_ping() {
+  await TelemetryController.testSetup();
 
-  let found = yield PingServer.promiseNextPing();
+  let found = await PingServer.promiseNextPing();
   Assert.ok(!!found, "Telemetry ping submitted.");
   Assert.strictEqual(found.type, "modules", "Ping type is 'modules'");
   Assert.ok(found.environment, "'modules' ping has an environment.");

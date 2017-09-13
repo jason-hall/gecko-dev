@@ -83,13 +83,16 @@ class RobocopTestRunner(MochitestDesktop):
         # Despite our efforts to clean up servers started by this script, in practice
         # we still see infrequent cases where a process is orphaned and interferes
         # with future tests, typically because the old server is keeping the port in use.
-        # Try to avoid those failures by checking for and killing orphan servers before
+        # Try to avoid those failures by checking for and killing servers before
         # trying to start new ones.
-        self.killNamedOrphans('ssltunnel')
-        self.killNamedOrphans('xpcshell')
+        self.killNamedProc('ssltunnel')
+        self.killNamedProc('xpcshell')
         self.auto.deleteANRs()
         self.auto.deleteTombstones()
-        self.dm.killProcess(self.options.app.split('/')[-1])
+        procName = self.options.app.split('/')[-1]
+        self.dm.killProcess(procName)
+        if self.dm.processExist(procName):
+            self.log.warning("unable to kill %s before running tests!" % procName)
         self.dm.removeDir(self.remoteScreenshots)
         self.dm.removeDir(self.remoteMozLog)
         self.dm.mkDir(self.remoteMozLog)
@@ -456,7 +459,7 @@ class RobocopTestRunner(MochitestDesktop):
             timeout = self.options.timeout
             if not timeout:
                 timeout = self.NO_OUTPUT_TIMEOUT
-            result = self.auto.runApp(
+            result, _ = self.auto.runApp(
                 None, browserEnv, "am", self.localProfile, browserArgs,
                 timeout=timeout, symbolsPath=self.options.symbolsPath)
             self.log.debug("runApp completes with status %d" % result)
@@ -584,6 +587,7 @@ def main(args=sys.argv[1:]):
     parser = MochitestArgumentParser(app='android')
     options = parser.parse_args(args)
     return run_test_harness(parser, options)
+
 
 if __name__ == "__main__":
     sys.exit(main())

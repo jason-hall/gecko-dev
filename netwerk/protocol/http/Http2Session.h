@@ -17,6 +17,8 @@
 #include "nsDataHashtable.h"
 #include "nsDeque.h"
 #include "nsHashKeys.h"
+#include "nsHttpRequestHead.h"
+#include "nsICacheEntryOpenCallback.h"
 
 #include "Http2Compression.h"
 
@@ -43,7 +45,7 @@ public:
   NS_DECL_NSAHTTPSEGMENTREADER
   NS_DECL_NSAHTTPSEGMENTWRITER
 
- Http2Session(nsISocketTransport *, uint32_t version, bool attemptingEarlyData);
+  Http2Session(nsISocketTransport *, uint32_t version, bool attemptingEarlyData);
 
   MOZ_MUST_USE bool AddStream(nsAHttpTransaction *, int32_t,
                               bool, nsIInterfaceRequestor *) override;
@@ -91,8 +93,9 @@ public:
     FRAME_TYPE_WINDOW_UPDATE = 0x8,
     FRAME_TYPE_CONTINUATION  = 0x9,
     FRAME_TYPE_ALTSVC        = 0xA,
-    FRAME_TYPE_ORIGIN        = 0xB,
-    FRAME_TYPE_LAST          = 0xC
+    FRAME_TYPE_UNUSED        = 0xB,
+    FRAME_TYPE_ORIGIN        = 0xC,
+    FRAME_TYPE_LAST          = 0xD
   };
 
   // NO_ERROR is a macro defined on windows, so we'll name the HTTP2 goaway
@@ -168,15 +171,18 @@ public:
     kFrameTypeBytes + kFrameStreamIDBytes;
 
   enum {
-    kLeaderGroupID =     0x3,
+    kLeaderGroupID =      0x3,
     kOtherGroupID =       0x5,
     kBackgroundGroupID =  0x7,
     kSpeculativeGroupID = 0x9,
-    kFollowerGroupID =    0xB
+    kFollowerGroupID =    0xB,
+    kUrgentStartGroupID = 0xD
     // Hey, you! YES YOU! If you add/remove any groups here, you almost
     // certainly need to change the lookup of the stream/ID hash in
-    // Http2Session::OnTransportStatus. Yeah, that's right. YOU!
+    // Http2Session::OnTransportStatus and |kPriorityGroupCount| below.
+    // Yeah, that's right. YOU!
   };
+  const static uint8_t kPriorityGroupCount = 6;
 
   static nsresult RecvHeaders(Http2Session *);
   static nsresult RecvPriority(Http2Session *);
@@ -188,6 +194,7 @@ public:
   static nsresult RecvWindowUpdate(Http2Session *);
   static nsresult RecvContinuation(Http2Session *);
   static nsresult RecvAltSvc(Http2Session *);
+  static nsresult RecvUnused(Http2Session *);
   static nsresult RecvOrigin(Http2Session *);
 
   char       *EnsureOutputBuffer(uint32_t needed);
@@ -246,9 +253,12 @@ public:
   MOZ_MUST_USE nsresult WriteSegmentsAgain(nsAHttpSegmentWriter *, uint32_t , uint32_t *, bool *) override final;
   MOZ_MUST_USE bool Do0RTT() override final { return true; }
   MOZ_MUST_USE nsresult Finish0RTT(bool aRestart, bool aAlpnChanged) override final;
+  void SetFastOpenStatus(uint8_t aStatus) override final;
 
   // For use by an HTTP2Stream
   void Received421(nsHttpConnectionInfo *ci);
+
+  void SendPriorityFrame(uint32_t streamID, uint32_t dependsOn, uint8_t weight);
 
 private:
 
@@ -299,6 +309,7 @@ private:
 
   MOZ_MUST_USE nsresult SetInputFrameDataStream(uint32_t);
   void        CreatePriorityNode(uint32_t, uint32_t, uint8_t, const char *);
+  char        *CreatePriorityFrame(uint32_t, uint32_t, uint8_t);
   bool        VerifyStream(Http2Stream *, uint32_t);
   void        SetNeedsCleanup();
 
@@ -424,6 +435,9 @@ private:
   // the session received a GoAway frame with a valid GoAwayID
   bool                 mCleanShutdown;
 
+  // the session received the opening SETTINGS frame from the server
+  bool                 mReceivedSettings;
+
   // The TLS comlpiance checks are not done in the ctor beacuse of bad
   // exception handling - so we do them at IO time and cache the result
   bool                 mTLSProfileConfirmed;
@@ -513,11 +527,32 @@ private:
 
   bool mAttemptingEarlyData;
   // The ID(s) of the stream(s) that we are getting 0RTT data from.
-  nsTArray<uint32_t> m0RTTStreams;
+  nsTArray<WeakPtr<Http2Stream>> m0RTTStreams;
 
+  bool RealJoinConnection(const nsACString &hostname, int32_t port, bool jk);
   bool TestOriginFrame(const nsACString &name, int32_t port);
   bool mOriginFrameActivated;
   nsDataHashtable<nsCStringHashKey, bool> mOriginFrame;
+
+  nsDataHashtable<nsCStringHashKey, bool> mJoinConnectionCache;
+
+  uint64_t mCurrentForegroundTabOuterContentWindowId;
+
+  class CachePushCheckCallback final : public nsICacheEntryOpenCallback
+  {
+  public:
+    CachePushCheckCallback(Http2Session *session, uint32_t promisedID, const nsACString &requestString);
+
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSICACHEENTRYOPENCALLBACK
+
+  private:
+    ~CachePushCheckCallback() { }
+
+    RefPtr<Http2Session> mSession;
+    uint32_t mPromisedID;
+    nsHttpRequestHead mRequestHead;
+  };
 
 private:
 /// connect tunnels

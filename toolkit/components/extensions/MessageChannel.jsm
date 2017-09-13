@@ -105,18 +105,12 @@ const Cc = Components.classes;
 const Cu = Components.utils;
 const Cr = Components.results;
 
-Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/ExtensionUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "ExtensionUtils",
-                                  "resource://gre/modules/ExtensionUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "PromiseUtils",
-                                  "resource://gre/modules/PromiseUtils.jsm");
-XPCOMUtils.defineLazyModuleGetter(this, "Task",
-                                  "resource://gre/modules/Task.jsm");
-
-XPCOMUtils.defineLazyGetter(this, "MessageManagerProxy",
-                            () => ExtensionUtils.MessageManagerProxy);
+const {
+  MessageManagerProxy,
+} = ExtensionUtils;
 
 /**
  * Handles the mapping and dispatching of messages to their registered
@@ -217,7 +211,9 @@ class FilteringMessageManager {
    *     The handler object to unregister.
    */
   removeHandler(messageName, handler) {
-    this.handlers.get(messageName).delete(handler);
+    if (this.handlers.has(messageName)) {
+      this.handlers.get(messageName).delete(handler);
+    }
   }
 }
 
@@ -280,8 +276,8 @@ const MESSAGE_RESPONSE = "MessageChannel:Response";
 
 this.MessageChannel = {
   init() {
-    Services.obs.addObserver(this, "message-manager-close", false);
-    Services.obs.addObserver(this, "message-manager-disconnect", false);
+    Services.obs.addObserver(this, "message-manager-close");
+    Services.obs.addObserver(this, "message-manager-disconnect");
 
     this.messageManagers = new FilteringMessageManagerMap(
       MESSAGE_MESSAGE, this._handleMessage.bind(this));
@@ -458,7 +454,10 @@ this.MessageChannel = {
    *        message by returning `false`. See `getHandlers` for the parameters.
    */
   addListener(targets, messageName, handler) {
-    for (let target of [].concat(targets)) {
+    if (!Array.isArray(targets)) {
+      targets = [targets];
+    }
+    for (let target of targets) {
       this.messageManagers.get(target).addHandler(messageName, handler);
     }
   },
@@ -474,7 +473,10 @@ this.MessageChannel = {
    *    The handler to stop dispatching to.
    */
   removeListener(targets, messageName, handler) {
-    for (let target of [].concat(targets)) {
+    if (!Array.isArray(targets)) {
+      targets = [targets];
+    }
+    for (let target of targets) {
       if (this.messageManagers.has(target)) {
         this.messageManagers.get(target).removeHandler(messageName, handler);
       }
@@ -520,6 +522,7 @@ this.MessageChannel = {
 
     let channelId = ExtensionUtils.getUniqueId();
     let message = {messageName, channelId, sender, recipient, data, responseType};
+    data = null;
 
     if (responseType == this.RESPONSE_NONE) {
       try {
@@ -532,9 +535,14 @@ this.MessageChannel = {
       return Promise.resolve();  // Not expecting any reply.
     }
 
-    let deferred = PromiseUtils.defer();
+    let deferred = {};
+    deferred.promise = new Promise((resolve, reject) => {
+      deferred.resolve = resolve;
+      deferred.reject = reject;
+    });
     deferred.sender = recipient;
     deferred.messageManager = target;
+    deferred.channelId = channelId;
 
     this._addPendingResponse(deferred);
 
@@ -554,6 +562,7 @@ this.MessageChannel = {
     } catch (e) {
       deferred.reject(e);
     }
+    message = null;
     return deferred.promise;
   },
 
@@ -588,6 +597,7 @@ this.MessageChannel = {
         return Promise.reject(e);
       }
     });
+    data = null;
     responses = responses.filter(response => response !== undefined);
 
     switch (responseType) {
@@ -627,6 +637,7 @@ this.MessageChannel = {
           Cu.reportError(e.stack ? `${e}\n${e.stack}` : e.message || e);
         });
       });
+      data = null;
       // Note: Unhandled messages are silently dropped.
       return;
     }
@@ -636,16 +647,19 @@ this.MessageChannel = {
     let deferred = {
       sender: data.sender,
       messageManager: target,
+      channelId: data.channelId,
+      respondingSide: true,
     };
     deferred.promise = new Promise((resolve, reject) => {
       deferred.reject = reject;
 
       this._callHandlers(handlers, data).then(resolve, reject);
+      data = null;
     }).then(
       value => {
         let response = {
           result: this.RESULT_SUCCESS,
-          messageName: data.channelId,
+          messageName: deferred.channelId,
           recipient: {},
           value,
         };
@@ -665,7 +679,7 @@ this.MessageChannel = {
 
         let response = {
           result: this.RESULT_ERROR,
-          messageName: data.channelId,
+          messageName: deferred.channelId,
           recipient: {},
           error: {},
         };
@@ -760,6 +774,25 @@ this.MessageChannel = {
   },
 
   /**
+   * Aborts pending message response for the specific channel.
+   *
+   * @param {string} channelId
+   *    A string for channelId of the response.
+   * @param {object} reason
+   *    An object describing the reason the response was aborted.
+   *    Will be passed to the promise rejection handler of the aborted
+   *    response.
+   */
+  abortChannel(channelId, reason) {
+    for (let response of this.pendingResponses) {
+      if (channelId === response.channelId && response.respondingSide) {
+        this.pendingResponses.delete(response);
+        response.reject(reason);
+      }
+    }
+  },
+
+  /**
    * Aborts any pending message responses to senders matching the given
    * filter.
    *
@@ -774,6 +807,7 @@ this.MessageChannel = {
   abortResponses(sender, reason = this.REASON_DISCONNECTED) {
     for (let response of this.pendingResponses) {
       if (this.matchesFilter(sender, response.sender)) {
+        this.pendingResponses.delete(response);
         this.abortedResponses.add(response.channelId);
         response.reject(reason);
       }

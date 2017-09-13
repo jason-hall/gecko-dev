@@ -36,6 +36,8 @@ using namespace js::gc;
 
 using mozilla::ArrayEnd;
 using mozilla::ArrayLength;
+using mozilla::Maybe;
+using mozilla::Nothing;
 using mozilla::RangedPtr;
 
 const char*
@@ -47,7 +49,7 @@ js::AtomToPrintableString(JSContext* cx, JSAtom* atom, JSAutoByteString* bytes)
     return bytes->encodeLatin1(cx, str);
 }
 
-#define DEFINE_PROTO_STRING(name,code,init,clasp) const char js_##name##_str[] = #name;
+#define DEFINE_PROTO_STRING(name,init,clasp) const char js_##name##_str[] = #name;
 JS_FOR_EACH_PROTOTYPE(DEFINE_PROTO_STRING)
 #undef DEFINE_PROTO_STRING
 
@@ -103,7 +105,7 @@ JSRuntime::initializeAtoms(JSContext* cx)
 #define COMMON_NAME_INFO(idpart, id, text) { js_##idpart##_str, sizeof(text) - 1 },
         FOR_EACH_COMMON_PROPERTYNAME(COMMON_NAME_INFO)
 #undef COMMON_NAME_INFO
-#define COMMON_NAME_INFO(name, code, init, clasp) { js_##name##_str, sizeof(#name) - 1 },
+#define COMMON_NAME_INFO(name, init, clasp) { js_##name##_str, sizeof(#name) - 1 },
         JS_FOR_EACH_PROTOTYPE(COMMON_NAME_INFO)
 #undef COMMON_NAME_INFO
 #define COMMON_NAME_INFO(name) { #name, sizeof(#name) - 1 },
@@ -168,6 +170,20 @@ JSRuntime::finishAtoms()
     emptyString = nullptr;
 }
 
+static inline void
+TracePinnedAtoms(JSTracer* trc, const AtomSet& atoms)
+{
+    for (auto r = atoms.all(); !r.empty(); r.popFront()) {
+        const AtomStateEntry& entry = r.front();
+        // OMRTODO: We always collect every zone (there is only one zone)
+        // if (entry.isPinned()) {
+            JSAtom* atom = entry.asPtrUnbarriered();
+            TraceRoot(trc, &atom, "interned_atom");
+            MOZ_ASSERT(entry.asPtrUnbarriered() == atom);
+        }
+    }
+}
+
 void
 js::TraceAtoms(JSTracer* trc, AutoLockForExclusiveAccess& lock)
 {
@@ -176,16 +192,9 @@ js::TraceAtoms(JSTracer* trc, AutoLockForExclusiveAccess& lock)
     if (rt->atomsAreFinished())
         return;
 
-    for (AtomSet::Enum e(rt->atoms(lock)); !e.empty(); e.popFront()) {
-        const AtomStateEntry& entry = e.front();
-        // OMRTODO: We always collect every zone (there is only one zone)
-        // if (!entry.isPinned())
-        //    continue;
-
-        JSAtom* atom = entry.asPtrUnbarriered();
-        TraceRoot(trc, &atom, "interned_atom");
-        MOZ_ASSERT(entry.asPtrUnbarriered() == atom);
-    }
+    TracePinnedAtoms(trc, rt->atoms(lock));
+    if (rt->atomsAddedWhileSweeping())
+        TracePinnedAtoms(trc, *rt->atomsAddedWhileSweeping());
 }
 
 void
@@ -225,13 +234,6 @@ js::TraceWellKnownSymbols(JSTracer* trc)
     }
 }
 
-void
-JSRuntime::sweepAtoms()
-{
-    if (atoms_)
-        atoms_->sweep();
-}
-
 bool
 JSRuntime::transformToPermanentAtoms(JSContext* cx)
 {
@@ -256,6 +258,17 @@ JSRuntime::transformToPermanentAtoms(JSContext* cx)
     return true;
 }
 
+static inline AtomSet::Ptr
+LookupAtomState(JSRuntime* rt, const AtomHasher::Lookup& lookup)
+{
+    MOZ_ASSERT(rt->currentThreadHasExclusiveAccess());
+
+    AtomSet::Ptr p = rt->unsafeAtoms().lookup(lookup); // Safe because we hold the lock.
+    if (!p && rt->atomsAddedWhileSweeping())
+        p = rt->atomsAddedWhileSweeping()->lookup(lookup);
+    return p;
+}
+
 bool
 AtomIsPinned(JSContext* cx, JSAtom* atom)
 {
@@ -273,7 +286,7 @@ AtomIsPinned(JSContext* cx, JSAtom* atom)
 
     AutoLockForExclusiveAccess lock(cx);
 
-    p = cx->runtime()->atoms(lock).lookup(lookup);
+    p = LookupAtomState(cx->runtime(), lookup);
     if (!p)
         return false;
 
@@ -291,7 +304,7 @@ AtomIsPinnedInRuntime(JSRuntime* rt, JSAtom* atom)
 
     AtomHasher::Lookup lookup(atom);
 
-    AtomSet::Ptr p = rt->unsafeAtoms().lookup(lookup);
+    AtomSet::Ptr p = LookupAtomState(rt, lookup);
     MOZ_ASSERT(p);
 
     return p->isPinned();
@@ -303,7 +316,8 @@ AtomIsPinnedInRuntime(JSRuntime* rt, JSAtom* atom)
 template <typename CharT>
 MOZ_ALWAYS_INLINE
 static JSAtom*
-AtomizeAndCopyChars(JSContext* cx, const CharT* tbchars, size_t length, PinningBehavior pin)
+AtomizeAndCopyChars(JSContext* cx, const CharT* tbchars, size_t length, PinningBehavior pin,
+                    const Maybe<uint32_t>& indexValue)
 {
     if (JSAtom* s = cx->staticStrings().lookup(tbchars, length))
         return s;
@@ -343,10 +357,37 @@ AtomizeAndCopyChars(JSContext* cx, const CharT* tbchars, size_t length, PinningB
         }
     }
 
+    // Validate the length before taking the exclusive access lock, as throwing
+    // an exception here may reenter this code.
+    if (MOZ_UNLIKELY(!JSString::validateLength(cx, length)))
+        return nullptr;
+
     AutoLockForExclusiveAccess lock(cx);
 
-    AtomSet& atoms = cx->atoms(lock);
-    AtomSet::AddPtr p = atoms.lookupForAdd(lookup);
+    JSRuntime* rt = cx->runtime();
+    AtomSet& atoms = rt->atoms(lock);
+    AtomSet* atomsAddedWhileSweeping = rt->atomsAddedWhileSweeping();
+    AtomSet::AddPtr p;
+
+    if (!atomsAddedWhileSweeping) {
+        p = atoms.lookupForAdd(lookup);
+    } else {
+        // We're currently sweeping the main atoms table and all new atoms will
+        // be added to a secondary table. Check this first.
+        MOZ_ASSERT(rt->atomsZone(lock)->isGCSweeping());
+        p = atomsAddedWhileSweeping->lookupForAdd(lookup);
+
+        // If that fails check the main table but check if any atom found there
+        // is dead.
+        if (!p) {
+            if (AtomSet::AddPtr p2 = atoms.lookupForAdd(lookup)) {
+                JSAtom* atom = p2->asPtrUnbarriered();
+                if (!IsAboutToBeFinalizedUnbarriered(&atom))
+                    p = p2;
+            }
+        }
+    }
+
     if (p) {
         JSAtom* atom = p->asPtr(cx);
         p->setPinned(bool(pin));
@@ -355,9 +396,6 @@ AtomizeAndCopyChars(JSContext* cx, const CharT* tbchars, size_t length, PinningB
             mozilla::Unused << zone->atomCache().add(*zonePtr, AtomStateEntry(atom, false));
         return atom;
     }
-
-    if (!JSString::validateLength(cx, length))
-        return nullptr;
 
     JSAtom* atom;
     {
@@ -375,10 +413,14 @@ AtomizeAndCopyChars(JSContext* cx, const CharT* tbchars, size_t length, PinningB
         atom = flat->morphAtomizedStringIntoAtom(lookup.hash);
         MOZ_ASSERT(atom->hash() == lookup.hash);
 
+        if (indexValue)
+            atom->maybeInitializeIndex(*indexValue, true);
+
         // We have held the lock since looking up p, and the operations we've done
         // since then can't GC; therefore the atoms table has not been modified and
         // p is still valid.
-        if (!atoms.add(p, AtomStateEntry(atom, bool(pin)))) {
+        AtomSet* addSet = atomsAddedWhileSweeping ? atomsAddedWhileSweeping : &atoms;
+        if (!addSet->add(p, AtomStateEntry(atom, bool(pin)))) {
             ReportOutOfMemory(cx); /* SystemAllocPolicy does not report OOM. */
             return nullptr;
         }
@@ -391,10 +433,12 @@ AtomizeAndCopyChars(JSContext* cx, const CharT* tbchars, size_t length, PinningB
 }
 
 template JSAtom*
-AtomizeAndCopyChars(JSContext* cx, const char16_t* tbchars, size_t length, PinningBehavior pin);
+AtomizeAndCopyChars(JSContext* cx, const char16_t* tbchars, size_t length, PinningBehavior pin,
+                    const Maybe<uint32_t>& indexValue);
 
 template JSAtom*
-AtomizeAndCopyChars(JSContext* cx, const Latin1Char* tbchars, size_t length, PinningBehavior pin);
+AtomizeAndCopyChars(JSContext* cx, const Latin1Char* tbchars, size_t length, PinningBehavior pin,
+                    const Maybe<uint32_t>& indexValue);
 
 JSAtom*
 js::AtomizeString(JSContext* cx, JSString* str,
@@ -416,7 +460,7 @@ js::AtomizeString(JSContext* cx, JSString* str,
 
         AutoLockForExclusiveAccess lock(cx);
 
-        p = cx->atoms(lock).lookup(lookup);
+        p = LookupAtomState(cx->runtime(), lookup);
         MOZ_ASSERT(p); /* Non-static atom must exist in atom state set. */
         MOZ_ASSERT(p->asPtrUnbarriered() == &atom);
         MOZ_ASSERT(pin == PinAtom);
@@ -428,19 +472,24 @@ js::AtomizeString(JSContext* cx, JSString* str,
     if (!linear)
         return nullptr;
 
+    Maybe<uint32_t> indexValue;
+    if (str->hasIndexValue())
+        indexValue.emplace(str->getIndexValue());
+
     JS::AutoCheckCannotGC nogc;
     return linear->hasLatin1Chars()
-           ? AtomizeAndCopyChars(cx, linear->latin1Chars(nogc), linear->length(), pin)
-           : AtomizeAndCopyChars(cx, linear->twoByteChars(nogc), linear->length(), pin);
+           ? AtomizeAndCopyChars(cx, linear->latin1Chars(nogc), linear->length(), pin, indexValue)
+           : AtomizeAndCopyChars(cx, linear->twoByteChars(nogc), linear->length(), pin, indexValue);
 }
 
 JSAtom*
-js::Atomize(JSContext* cx, const char* bytes, size_t length, PinningBehavior pin)
+js::Atomize(JSContext* cx, const char* bytes, size_t length, PinningBehavior pin,
+            const Maybe<uint32_t>& indexValue)
 {
     CHECK_REQUEST(cx);
 
     const Latin1Char* chars = reinterpret_cast<const Latin1Char*>(bytes);
-    return AtomizeAndCopyChars(cx, chars, length, pin);
+    return AtomizeAndCopyChars(cx, chars, length, pin, indexValue);
 }
 
 template <typename CharT>
@@ -448,7 +497,7 @@ JSAtom*
 js::AtomizeChars(JSContext* cx, const CharT* chars, size_t length, PinningBehavior pin)
 {
     CHECK_REQUEST(cx);
-    return AtomizeAndCopyChars(cx, chars, length, pin);
+    return AtomizeAndCopyChars(cx, chars, length, pin, Nothing());
 }
 
 template JSAtom*

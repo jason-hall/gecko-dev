@@ -108,6 +108,12 @@ public:
 
     explicit gfxFontEntry(const nsAString& aName, bool aIsStandardFace = false);
 
+    // Create a new entry that refers to the same font as this, but without
+    // additional state that may have been set up (such as family name).
+    // (This is only to be used for system fonts in the platform font list,
+    // not user fonts.)
+    virtual gfxFontEntry* Clone() const = 0;
+
     // unique name for the face, *not* the family; not necessarily the
     // "real" or user-friendly name, may be an internal identifier
     const nsString& Name() const { return mName; }
@@ -189,7 +195,7 @@ public:
     bool HasSVGGlyph(uint32_t aGlyphId);
     bool GetSVGGlyphExtents(DrawTarget* aDrawTarget, uint32_t aGlyphId,
                             gfxRect *aResult);
-    bool RenderSVGGlyph(gfxContext *aContext, uint32_t aGlyphId,
+    void RenderSVGGlyph(gfxContext *aContext, uint32_t aGlyphId,
                         mozilla::SVGContextPaint* aContextPaint);
     // Call this when glyph geometry or rendering has changed
     // (e.g. animated SVG glyphs)
@@ -249,10 +255,15 @@ public:
         AutoTable& operator=(const AutoTable&) = delete;
     };
 
-    already_AddRefed<gfxFont>
-    FindOrMakeFont(const gfxFontStyle *aStyle,
-                   bool aNeedsBold,
-                   gfxCharacterMap* aUnicodeRangeMap = nullptr);
+    // Return a font instance for a particular style. This may be a newly-
+    // created instance, or a font already in the global cache.
+    // We can't return a UniquePtr here, because we may be returning a shared
+    // cached instance; but we also don't return already_AddRefed, because
+    // the caller may only need to use the font temporarily and doesn't need
+    // a strong reference.
+    gfxFont* FindOrMakeFont(const gfxFontStyle *aStyle,
+                            bool aNeedsBold,
+                            gfxCharacterMap* aUnicodeRangeMap = nullptr);
 
     // Get an existing font table cache entry in aBlob if it has been
     // registered, or return false if not.  Callers must call
@@ -396,10 +407,8 @@ protected:
     // Protected destructor, to discourage deletion outside of Release():
     virtual ~gfxFontEntry();
 
-    virtual gfxFont *CreateFontInstance(const gfxFontStyle *aFontStyle, bool aNeedsBold) {
-        NS_NOTREACHED("oops, somebody didn't override CreateFontInstance");
-        return nullptr;
-    }
+    virtual gfxFont *CreateFontInstance(const gfxFontStyle *aFontStyle,
+                                        bool aNeedsBold) = 0;
 
     virtual void CheckForGraphiteTables();
 
@@ -603,14 +612,23 @@ public:
         mIsBadUnderlineFamily(false),
         mFamilyCharacterMapInitialized(false),
         mSkipDefaultFeatureSpaceCheck(false),
-        mCheckForFallbackFaces(false)
+        mCheckForFallbackFaces(false),
+        mCheckedForLegacyFamilyNames(false)
         { }
 
     const nsString& Name() { return mName; }
 
     virtual void LocalizedName(nsAString& aLocalizedName);
     virtual bool HasOtherFamilyNames();
-    
+
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=835204:
+    // check the font's 'name' table to see if it has a legacy family name
+    // that would have been used by GDI (e.g. to split extra-bold or light
+    // faces in a large family into separate "styled families" because of
+    // GDI's 4-faces-per-family limitation). If found, the styled family
+    // name will be added to the font list's "other family names" table.
+    bool CheckForLegacyFamilyNames(gfxPlatformFontList* aFontList);
+
     nsTArray<RefPtr<gfxFontEntry> >& GetFontList() { return mAvailableFonts; }
     
     void AddFontEntry(RefPtr<gfxFontEntry> aFontEntry) {
@@ -640,12 +658,14 @@ public:
     // aNeedsSyntheticBold is set to true when synthetic bolding is
     // needed, false otherwise
     gfxFontEntry *FindFontForStyle(const gfxFontStyle& aFontStyle, 
-                                   bool& aNeedsSyntheticBold);
+                                   bool& aNeedsSyntheticBold,
+                                   bool aIgnoreSizeTolerance = false);
 
     virtual void
     FindAllFontsForStyle(const gfxFontStyle& aFontStyle,
                          nsTArray<gfxFontEntry*>& aFontEntryList,
-                         bool& aNeedsSyntheticBold);
+                         bool& aNeedsSyntheticBold,
+                         bool aIgnoreSizeTolerance = false);
 
     // checks for a matching font within the family
     // used as part of the font fallback process
@@ -762,6 +782,7 @@ protected:
     bool mFamilyCharacterMapInitialized : 1;
     bool mSkipDefaultFeatureSpaceCheck : 1;
     bool mCheckForFallbackFaces : 1;  // check other faces for character
+    bool mCheckedForLegacyFamilyNames : 1;
 
     enum {
         // for "simple" families, the faces are stored in mAvailableFonts

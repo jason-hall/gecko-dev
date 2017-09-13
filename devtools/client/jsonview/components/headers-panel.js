@@ -9,7 +9,7 @@
 define(function (require, exports, module) {
   const { DOM: dom, createFactory, createClass, PropTypes } = require("devtools/client/shared/vendor/react");
 
-  const { createFactories } = require("devtools/client/shared/components/reps/reps");
+  const { createFactories } = require("devtools/client/shared/react-utils");
 
   const { Headers } = createFactories(require("./headers"));
   const { Toolbar, ToolbarButton } = createFactories(require("./reps/toolbar"));
@@ -69,7 +69,7 @@ define(function (require, exports, module) {
       return (
         Toolbar({},
           ToolbarButton({className: "btn copy", onClick: this.onCopy},
-            Locale.$STR("jsonViewer.Copy")
+            JSONView.Locale.$STR("jsonViewer.Copy")
           )
         )
       );

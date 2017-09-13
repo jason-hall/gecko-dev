@@ -27,6 +27,11 @@
       },"Input URL has credentials");
 
       test(function() {
+        assert_throws(new TypeError() , function() { new Request("", {"mode" : "navigate"}); },
+          "Expect TypeError exception");
+      },"RequestInit's mode is navigate");
+
+      test(function() {
         assert_throws(new TypeError() , function() { new Request("", {"referrer" : "http://:not a valid URL"}); },
           "Expect TypeError exception");
       },"RequestInit's referrer is invalid");
@@ -45,12 +50,6 @@
         assert_throws(new TypeError() , function() { new Request("", {"mode" : "no-cors", "method" : "PUT"}); },
           "Expect TypeError exception");
       },"RequestInit's mode is no-cors and method is not simple");
-
-      test(function() {
-        assert_throws(new TypeError() ,
-                      function() { new Request("", {"mode" : "no-cors", "integrity" : "not  an empty string"}); },
-                      "Expect TypeError exception");
-      },"RequestInit's mode is no-cors and integrity is not empty");
 
       test(function() {
         assert_throws(new TypeError() ,

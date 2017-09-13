@@ -9,7 +9,8 @@
 #include "Layers.h"
 #include "mozilla/layers/ContentClient.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
-#include "WebRenderLayerManager.h"
+#include "mozilla/layers/WebRenderLayer.h"
+#include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/webrender/WebRenderTypes.h"
 
 namespace mozilla {
@@ -22,8 +23,7 @@ public:
   typedef RotatedContentBuffer::ContentType ContentType;
 
   explicit WebRenderPaintedLayer(WebRenderLayerManager* aLayerManager)
-    : PaintedLayer(aLayerManager, static_cast<WebRenderLayer*>(this), LayerManager::NONE),
-      mExternalImageId(0)
+    : PaintedLayer(aLayerManager, static_cast<WebRenderLayer*>(this), LayerManager::NONE)
   {
     MOZ_COUNT_CTOR(WebRenderPaintedLayer);
   }
@@ -32,31 +32,32 @@ protected:
   virtual ~WebRenderPaintedLayer()
   {
     MOZ_COUNT_DTOR(WebRenderPaintedLayer);
-    if (mExternalImageId) {
-      WrBridge()->DeallocExternalImageId(mExternalImageId);
-    }
-  }
-  WebRenderLayerManager* Manager()
-  {
-    return static_cast<WebRenderLayerManager*>(mManager);
+    ClearWrResources();
   }
 
-  uint64_t mExternalImageId;
-
+  wr::MaybeExternalImageId mExternalImageId;
+  LayerIntRect mPaintedRect;
 public:
   virtual void InvalidateRegion(const nsIntRegion& aRegion) override
   {
     mInvalidRegion.Add(aRegion);
-    mValidRegion.Sub(mValidRegion, mInvalidRegion.GetRegion());
+    UpdateValidRegionAfterInvalidRegionChanged();
   }
 
   Layer* GetLayer() override { return this; }
-  void RenderLayer(wr::DisplayListBuilder& aBuilder) override;
-  void PaintThebes(nsTArray<ReadbackProcessor::Update>* aReadbackUpdates);
-  void RenderLayerWithReadback(ReadbackProcessor *aReadback);
-  RefPtr<ContentClient> mContentClient;
+  void RenderLayer(wr::DisplayListBuilder& aBuilder,
+                   const StackingContextHelper& aSc) override;
+  virtual void ClearCachedResources() override;
+
   RefPtr<ImageContainer> mImageContainer;
   RefPtr<ImageClient> mImageClient;
+
+private:
+  bool SetupExternalImages();
+  bool UpdateImageClient();
+  void CreateWebRenderDisplayList(wr::DisplayListBuilder& aBuilder,
+                                  const StackingContextHelper& aSc);
+  void ClearWrResources();
 };
 
 } // namespace layers

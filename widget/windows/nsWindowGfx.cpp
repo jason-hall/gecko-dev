@@ -37,7 +37,6 @@ using mozilla::plugins::PluginInstanceParent;
 #include "mozilla/UniquePtrExtensions.h"
 #include "nsGfxCIID.h"
 #include "gfxContext.h"
-#include "prmem.h"
 #include "WinUtils.h"
 #include "nsIWidgetListener.h"
 #include "mozilla/Unused.h"
@@ -179,11 +178,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
 
     gfxWindowsPlatform::GetPlatform()->UpdateRenderMode();
 
-    uint64_t resetSeqNo = GPUProcessManager::Get()->GetNextDeviceResetSequenceNumber();
-    nsTArray<nsWindow*> windows = EnumAllWindows();
-    for (nsWindow* window : windows) {
-      window->OnRenderingDeviceReset(resetSeqNo);
-    }
+    GPUProcessManager::Get()->OnInProcessDeviceReset();
 
     gfxCriticalNote << "(nsWindow) Finished device reset.";
     return false;
@@ -226,12 +221,10 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
     return true;
   }
 
-  ClientLayerManager *clientLayerManager = GetLayerManager()->AsClientLayerManager();
-
-  if (clientLayerManager && !mBounds.IsEqualEdges(mLastPaintBounds)) {
+  if (GetLayerManager()->AsKnowsCompositor() && !mBounds.IsEqualEdges(mLastPaintBounds)) {
     // Do an early async composite so that we at least have something on the
     // screen in the right place, even if the content is out of date.
-    clientLayerManager->Composite();
+    GetLayerManager()->ScheduleComposite();
   }
   mLastPaintBounds = mBounds;
 
@@ -278,11 +271,11 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
 #endif
   nsIntRegion region = GetRegionToPaint(forceRepaint, ps, hDC);
 
-  if (clientLayerManager) {
+  if (GetLayerManager()->AsKnowsCompositor()) {
     // We need to paint to the screen even if nothing changed, since if we
     // don't have a compositing window manager, our pixels could be stale.
-    clientLayerManager->SetNeedsComposite(true);
-    clientLayerManager->SendInvalidRegion(region);
+    GetLayerManager()->SetNeedsComposite(true);
+    GetLayerManager()->SendInvalidRegion(region);
   }
 
   RefPtr<nsWindow> strongThis(this);
@@ -297,9 +290,9 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
     return false;
   }
 
-  if (clientLayerManager && clientLayerManager->NeedsComposite()) {
-    clientLayerManager->Composite();
-    clientLayerManager->SetNeedsComposite(false);
+  if (GetLayerManager()->AsKnowsCompositor() && GetLayerManager()->NeedsComposite()) {
+    GetLayerManager()->ScheduleComposite();
+    GetLayerManager()->SetNeedsComposite(false);
   }
 
   bool result = true;
@@ -400,14 +393,14 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
             this, LayoutDeviceIntRegion::FromUnknownRegion(region));
           if (!gfxEnv::DisableForcePresent() && gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled()) {
             nsCOMPtr<nsIRunnable> event =
-              NewRunnableMethod(this, &nsWindow::ForcePresent);
+              NewRunnableMethod("nsWindow::ForcePresent", this, &nsWindow::ForcePresent);
             NS_DispatchToMainThread(event);
           }
         }
         break;
       case LayersBackend::LAYERS_WR:
       {
-        GetLayerManager()->Composite();
+        GetLayerManager()->ScheduleComposite();
         break;
       }
       default:
@@ -562,7 +555,7 @@ nsresult nsWindowGfx::CreateIcon(imgIContainer *aContainer,
   }
 
   HBITMAP mbmp = DataToBitmap(a1data, iconSize.width, -iconSize.height, 1);
-  PR_Free(a1data);
+  free(a1data);
 
   ICONINFO info = {0};
   info.fIcon = !aIsCursor;
@@ -589,7 +582,7 @@ uint8_t* nsWindowGfx::Data32BitTo1Bit(uint8_t* aImageData,
   uint32_t outBpr = ((aWidth + 31) / 8) & ~3;
 
   // Allocate and clear mask buffer
-  uint8_t* outData = (uint8_t*)PR_Calloc(outBpr, aHeight);
+  uint8_t* outData = (uint8_t*) calloc(outBpr, aHeight);
   if (!outData)
     return nullptr;
 
@@ -678,7 +671,7 @@ HBITMAP nsWindowGfx::DataToBitmap(uint8_t* aImageData,
   head.biYPelsPerMeter = 0;
   head.biClrUsed = 0;
   head.biClrImportant = 0;
-  
+
   BITMAPINFO& bi = *(BITMAPINFO*)reserved_space;
 
   if (aDepth == 1) {

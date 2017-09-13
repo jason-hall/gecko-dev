@@ -95,11 +95,12 @@ vec4 Brightness(vec4 Cs, float amount) {
 }
 
 vec4 Opacity(vec4 Cs, float amount) {
-    return vec4(Cs.rgb, Cs.a * amount);
+    return Cs * amount;
 }
 
 void main(void) {
-    vec4 Cs = texture(sCacheRGBA8, vUv);
+    vec2 uv = clamp(vUv.xy, vUvBounds.xy, vUvBounds.zw);
+    vec4 Cs = textureLod(sCacheRGBA8, vec3(uv, vUv.z), 0.0);
 
     if (Cs.a == 0.0) {
         discard;

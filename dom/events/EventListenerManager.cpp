@@ -9,13 +9,10 @@
 
 #include "mozilla/AddonPathService.h"
 #include "mozilla/BasicEvents.h"
-#include "mozilla/CycleCollectedJSContext.h"
+#include "mozilla/CycleCollectedJSRuntime.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventListenerManager.h"
-#ifdef MOZ_B2G
-#include "mozilla/Hal.h"
-#endif // #ifdef MOZ_B2G
 #include "mozilla/HalSensor.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "mozilla/JSEventHandler.h"
@@ -33,22 +30,20 @@
 
 #include "EventListenerService.h"
 #include "GeckoProfiler.h"
-#ifdef MOZ_GECKO_PROFILER
-#include "ProfilerMarkers.h"
-#endif
+#include "ProfilerMarkerPayload.h"
 #include "nsCOMArray.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
 #include "nsDOMCID.h"
 #include "nsError.h"
 #include "nsGkAtoms.h"
-#include "nsHtml5Atoms.h"
 #include "nsIContent.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsIDocument.h"
 #include "nsIDOMEventListener.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsISupports.h"
+#include "nsISupportsPrimitives.h"
 #include "nsIXPConnect.h"
 #include "nsJSUtils.h"
 #include "nsNameSpaceManager.h"
@@ -131,6 +126,7 @@ EventListenerManagerBase::EventListenerManagerBase()
   , mMayHavePointerEnterLeaveEventListener(false)
   , mMayHaveKeyEventListener(false)
   , mMayHaveInputOrCompositionEventListener(false)
+  , mMayHaveSelectionChangeEventListener(false)
   , mClearingListeners(false)
   , mIsMainThreadELM(NS_IsMainThread())
 {
@@ -347,18 +343,10 @@ EventListenerManager::AddEventListenerInternal(
     EnableDevice(eDeviceLight);
   } else if (aTypeAtom == nsGkAtoms::ondevicemotion) {
     EnableDevice(eDeviceMotion);
-#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
+#if defined(MOZ_WIDGET_ANDROID)
   } else if (aTypeAtom == nsGkAtoms::onorientationchange) {
     EnableDevice(eOrientationChange);
 #endif
-#ifdef MOZ_B2G
-  } else if (aTypeAtom == nsGkAtoms::onmoztimechange) {
-    EnableDevice(eTimeChange);
-  } else if (aTypeAtom == nsGkAtoms::onmoznetworkupload) {
-    EnableDevice(eNetworkUpload);
-  } else if (aTypeAtom == nsGkAtoms::onmoznetworkdownload) {
-    EnableDevice(eNetworkDownload);
-#endif // MOZ_B2G
   } else if (aTypeAtom == nsGkAtoms::ontouchstart ||
              aTypeAtom == nsGkAtoms::ontouchend ||
              aTypeAtom == nsGkAtoms::ontouchmove ||
@@ -418,14 +406,23 @@ EventListenerManager::AddEventListenerInternal(
     if (!aFlags.mInSystemGroup) {
       mMayHaveInputOrCompositionEventListener = true;
     }
+  } else if (aEventMessage == eSelectionChange) {
+    mMayHaveSelectionChangeEventListener = true;
+     if (nsPIDOMWindowInner* window = GetInnerWindowForTarget()) {
+      window->SetHasSelectionChangeEventListeners();
+    }
   }
 
   if (IsApzAwareListener(listener)) {
     ProcessApzAwareEventListenerAdd();
   }
 
-  if (aTypeAtom && mTarget) {
-    mTarget->EventListenerAdded(aTypeAtom);
+  if (mTarget) {
+    if (aTypeAtom) {
+      mTarget->EventListenerAdded(aTypeAtom);
+    } else if (!aTypeString.IsEmpty()) {
+      mTarget->EventListenerAdded(aTypeString);
+    }
   }
 
   if (mIsMainThreadELM && mTarget) {
@@ -482,13 +479,8 @@ EventListenerManager::IsDeviceType(EventMessage aEventMessage)
     case eDeviceLight:
     case eDeviceProximity:
     case eUserProximity:
-#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
+#if defined(MOZ_WIDGET_ANDROID)
     case eOrientationChange:
-#endif
-#ifdef MOZ_B2G
-    case eTimeChange:
-    case eNetworkUpload:
-    case eNetworkDownload:
 #endif
       return true;
     default:
@@ -511,6 +503,7 @@ EventListenerManager::EnableDevice(EventMessage aEventMessage)
       // Falls back to SENSOR_ROTATION_VECTOR and SENSOR_ORIENTATION if
       // unavailable on device.
       window->EnableDeviceSensor(SENSOR_GAME_ROTATION_VECTOR);
+      window->EnableDeviceSensor(SENSOR_ROTATION_VECTOR);
 #else
       window->EnableDeviceSensor(SENSOR_ORIENTATION);
 #endif
@@ -535,18 +528,9 @@ EventListenerManager::EnableDevice(EventMessage aEventMessage)
       window->EnableDeviceSensor(SENSOR_LINEAR_ACCELERATION);
       window->EnableDeviceSensor(SENSOR_GYROSCOPE);
       break;
-#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
+#if defined(MOZ_WIDGET_ANDROID)
     case eOrientationChange:
       window->EnableOrientationChangeListener();
-      break;
-#endif
-#ifdef MOZ_B2G
-    case eTimeChange:
-      window->EnableTimeChangeNotifications();
-      break;
-    case eNetworkUpload:
-    case eNetworkDownload:
-      window->EnableNetworkEvent(aEventMessage);
       break;
 #endif
     default:
@@ -590,20 +574,11 @@ EventListenerManager::DisableDevice(EventMessage aEventMessage)
     case eDeviceLight:
       window->DisableDeviceSensor(SENSOR_LIGHT);
       break;
-#if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_GONK)
+#if defined(MOZ_WIDGET_ANDROID)
     case eOrientationChange:
       window->DisableOrientationChangeListener();
       break;
 #endif
-#ifdef MOZ_B2G
-    case eTimeChange:
-      window->DisableTimeChangeNotifications();
-      break;
-    case eNetworkUpload:
-    case eNetworkDownload:
-      window->DisableNetworkEvent(aEventMessage);
-      break;
-#endif // MOZ_B2G
     default:
       NS_WARNING("Disabling an unknown device sensor.");
       break;
@@ -611,14 +586,19 @@ EventListenerManager::DisableDevice(EventMessage aEventMessage)
 }
 
 void
-EventListenerManager::NotifyEventListenerRemoved(nsIAtom* aUserType)
+EventListenerManager::NotifyEventListenerRemoved(nsIAtom* aUserType,
+                                                 const nsAString& aTypeString)
 {
   // If the following code is changed, other callsites of EventListenerRemoved
   // and NotifyAboutMainThreadListenerChange should be changed too.
   mNoListenerForEvent = eVoidEvent;
   mNoListenerForEventAtom = nullptr;
-  if (mTarget && aUserType) {
-    mTarget->EventListenerRemoved(aUserType);
+  if (mTarget) {
+    if (aUserType) {
+      mTarget->EventListenerRemoved(aUserType);
+    } else if (!aTypeString.IsEmpty()) {
+      mTarget->EventListenerRemoved(aTypeString);
+    }
   }
   if (mIsMainThreadELM && mTarget) {
     EventListenerService::NotifyAboutMainThreadListenerChange(mTarget,
@@ -653,7 +633,7 @@ EventListenerManager::RemoveEventListenerInternal(
       if (listener->mListener == aListenerHolder &&
           listener->mFlags.EqualsForRemoval(aFlags)) {
         mListeners.RemoveElementAt(i);
-        NotifyEventListenerRemoved(aUserType);
+        NotifyEventListenerRemoved(aUserType, aTypeString);
         if (!aAllEvents && deviceType) {
           DisableDevice(aEventMessage);
         }
@@ -682,7 +662,7 @@ EventListenerManager::ListenerCanHandle(const Listener* aListener,
   // true even when aEvent->mMessage == eUnidentifiedEvent and
   // aListener=>mEventMessage != eUnidentifiedEvent as long as the atoms are
   // the same
-  if (aListener->mAllEvents) {
+  if (MOZ_UNLIKELY(aListener->mAllEvents)) {
     return true;
   }
   if (aEvent->mMessage == eUnidentifiedEvent) {
@@ -691,9 +671,9 @@ EventListenerManager::ListenerCanHandle(const Listener* aListener,
     }
     return aListener->mTypeString.Equals(aEvent->mSpecifiedEventTypeString);
   }
-  if (!nsContentUtils::IsUnprefixedFullscreenApiEnabled() &&
-      aEvent->IsTrusted() && (aEventMessage == eFullscreenChange ||
-                              aEventMessage == eFullscreenError)) {
+  if (MOZ_UNLIKELY(!nsContentUtils::IsUnprefixedFullscreenApiEnabled() &&
+                    aEvent->IsTrusted() && (aEventMessage == eFullscreenChange ||
+                                            aEventMessage == eFullscreenError))) {
     // If unprefixed Fullscreen API is not enabled, don't dispatch it
     // to the content.
     if (!aEvent->mFlags.mInSystemGroup && !aListener->mIsChrome) {
@@ -787,9 +767,14 @@ EventListenerManager::SetEventHandlerInternal(
     bool same = jsEventHandler->GetTypedEventHandler() == aTypedHandler;
     // Possibly the same listener, but update still the context and scope.
     jsEventHandler->SetHandler(aTypedHandler);
-    if (mTarget && !same && aName) {
-      mTarget->EventListenerRemoved(aName);
-      mTarget->EventListenerAdded(aName);
+    if (mTarget && !same) {
+      if (aName) {
+        mTarget->EventListenerRemoved(aName);
+        mTarget->EventListenerAdded(aName);
+      } else if (!aTypeString.IsEmpty()) {
+        mTarget->EventListenerRemoved(aTypeString);
+        mTarget->EventListenerAdded(aTypeString);
+      }
     }
     if (mIsMainThreadELM && mTarget) {
       EventListenerService::NotifyAboutMainThreadListenerChange(mTarget, aName);
@@ -858,12 +843,16 @@ EventListenerManager::SetEventHandler(nsIAtom* aName,
       scriptSample.AppendLiteral(" attribute on ");
       scriptSample.Append(tagName);
       scriptSample.AppendLiteral(" element");
+      nsCOMPtr<nsISupportsString> sampleIString(do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID));
+      if (sampleIString) {
+        sampleIString->SetData(scriptSample);
+      }
 
       bool allowsInlineScript = true;
       rv = csp->GetAllowsInline(nsIContentPolicy::TYPE_SCRIPT,
                                 EmptyString(), // aNonce
                                 true, // aParserCreated (true because attribute event handler)
-                                scriptSample,
+                                sampleIString,
                                 0,             // aLineNumber
                                 &allowsInlineScript);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -911,7 +900,7 @@ EventListenerManager::RemoveEventHandler(nsIAtom* aName,
 
   if (listener) {
     mListeners.RemoveElementAt(uint32_t(listener - &mListeners.ElementAt(0)));
-    NotifyEventListenerRemoved(aName);
+    NotifyEventListenerRemoved(aName, aTypeString);
     if (IsDeviceType(eventMessage)) {
       DisableDevice(eventMessage);
     }
@@ -1268,7 +1257,6 @@ EventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
 
             nsresult rv = NS_OK;
             if (profiler_is_active()) {
-#ifdef MOZ_GECKO_PROFILER
               // Add a profiler label and a profiler marker for the actual
               // dispatch of the event.
               // This is a very hot code path, so we need to make sure not to
@@ -1276,9 +1264,9 @@ EventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
               nsAutoString typeStr;
               (*aDOMEvent)->GetType(typeStr);
               NS_LossyConvertUTF16toASCII typeCStr(typeStr);
-              PROFILER_LABEL_DYNAMIC("EventListenerManager", "HandleEventInternal",
-                                     js::ProfileEntry::Category::EVENTS,
-                                     typeCStr.get());
+              AUTO_PROFILER_LABEL_DYNAMIC(
+                "EventListenerManager::HandleEventInternal", EVENTS,
+                typeCStr.get());
               TimeStamp startTime = TimeStamp::Now();
 
               rv = HandleEventSubType(listener, *aDOMEvent, aCurrentTarget);
@@ -1286,13 +1274,11 @@ EventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
               TimeStamp endTime = TimeStamp::Now();
               uint16_t phase;
               (*aDOMEvent)->GetEventPhase(&phase);
-              PROFILER_MARKER_PAYLOAD("DOMEvent",
-                                      new DOMEventMarkerPayload(typeStr, phase,
-                                                                startTime,
-                                                                endTime));
-#else
-              MOZ_CRASH("Gecko Profiler is N/A but profiler_is_active() returned true");
-#endif
+              profiler_add_marker(
+                "DOMEvent",
+                MakeUnique<DOMEventMarkerPayload>(typeStr, phase,
+                                                  aEvent->mTimeStamp,
+                                                  startTime, endTime));
             } else {
               rv = HandleEventSubType(listener, *aDOMEvent, aCurrentTarget);
             }
@@ -1342,7 +1328,8 @@ EventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
     mListeners.RemoveElementsBy([](const Listener& aListener) {
       return aListener.mListenerType == Listener::eNoListener;
     });
-    NotifyEventListenerRemoved(aEvent->mSpecifiedEventType);
+    NotifyEventListenerRemoved(aEvent->mSpecifiedEventType,
+                               aEvent->mSpecifiedEventTypeString);
     if (IsDeviceType(aEvent->mMessage)) {
       // This is a device-type event, we need to check whether we can
       // disable device after removing the once listeners.
@@ -1569,6 +1556,8 @@ EventListenerManager::GetListenerInfo(nsCOMArray<nsIEventListenerInfo>* aList)
     nsAutoString eventType;
     if (listener.mAllEvents) {
       eventType.SetIsVoid(true);
+    } else if (listener.mListenerType == Listener::eNoListener) {
+      continue;
     } else {
       eventType.Assign(Substring(nsDependentAtomString(listener.mTypeAtom), 2));
     }
@@ -1748,6 +1737,41 @@ EventListenerManager::TraceListeners(JSTracer* aTrc)
 }
 
 bool
+EventListenerManager::HasNonSystemGroupListenersForUntrustedKeyEvents()
+{
+  uint32_t count = mListeners.Length();
+  for (uint32_t i = 0; i < count; ++i) {
+    Listener* listener = &mListeners.ElementAt(i);
+    if (!listener->mFlags.mInSystemGroup &&
+        listener->mFlags.mAllowUntrustedEvents &&
+        (listener->mTypeAtom == nsGkAtoms::onkeydown ||
+         listener->mTypeAtom == nsGkAtoms::onkeypress ||
+         listener->mTypeAtom == nsGkAtoms::onkeyup)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool
+EventListenerManager::HasNonPassiveNonSystemGroupListenersForUntrustedKeyEvents()
+{
+  uint32_t count = mListeners.Length();
+  for (uint32_t i = 0; i < count; ++i) {
+    Listener* listener = &mListeners.ElementAt(i);
+    if (!listener->mFlags.mPassive &&
+        !listener->mFlags.mInSystemGroup &&
+        listener->mFlags.mAllowUntrustedEvents &&
+        (listener->mTypeAtom == nsGkAtoms::onkeydown ||
+         listener->mTypeAtom == nsGkAtoms::onkeypress ||
+         listener->mTypeAtom == nsGkAtoms::onkeyup)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool
 EventListenerManager::HasApzAwareListeners()
 {
   uint32_t count = mListeners.Length();
@@ -1769,9 +1793,8 @@ EventListenerManager::IsApzAwareListener(Listener* aListener)
 bool
 EventListenerManager::IsApzAwareEvent(nsIAtom* aEvent)
 {
-  if (aEvent == nsGkAtoms::onwheel ||
-      aEvent == nsGkAtoms::onDOMMouseScroll ||
-      aEvent == nsHtml5Atoms::onmousewheel ||
+  if (aEvent == nsGkAtoms::onwheel || aEvent == nsGkAtoms::onDOMMouseScroll ||
+      aEvent == nsGkAtoms::onmousewheel ||
       aEvent == nsGkAtoms::onMozMousePixelScroll) {
     return true;
   }

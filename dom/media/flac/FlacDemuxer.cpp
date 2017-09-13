@@ -7,7 +7,6 @@
 #include "FlacDemuxer.h"
 
 #include "mozilla/Maybe.h"
-#include "mozilla/SizePrintfMacros.h"
 #include "mp4_demuxer/BitReader.h"
 #include "nsAutoPtr.h"
 #include "prenv.h"
@@ -28,14 +27,6 @@ namespace flac {
 
 // flac::FrameHeader - Holds the flac frame header and its parsing
 // state.
-
-#define FLAC_MAX_CHANNELS           8
-#define FLAC_MIN_BLOCKSIZE         16
-#define FLAC_MAX_BLOCKSIZE      65535
-#define FLAC_MIN_FRAME_SIZE        11
-#define FLAC_MAX_FRAME_HEADER_SIZE 16
-#define FLAC_MAX_FRAME_SIZE (FLAC_MAX_FRAME_HEADER_SIZE \
-                             +FLAC_MAX_BLOCKSIZE*FLAC_MAX_CHANNELS*3)
 
 class FrameHeader
 {
@@ -681,7 +672,7 @@ FlacTrackDemuxer::Init()
     return false;
   }
 
-  if (!mParser->Info().IsValid() || !mParser->Info().mDuration) {
+  if (!mParser->Info().IsValid() || !mParser->Info().mDuration.IsPositive()) {
     // Check if we can look at the last frame for the end time to determine the
     // duration when we don't have any.
     TimeAtEnd();
@@ -706,7 +697,7 @@ FlacTrackDemuxer::GetInfo() const
   } else if (mParser->FirstFrame().Info().IsValid()) {
     // Use the first frame header.
     UniquePtr<TrackInfo> info = mParser->FirstFrame().Info().Clone();
-    info->mDuration = Duration().ToMicroseconds();
+    info->mDuration = Duration();
     return info;
   }
   return nullptr;
@@ -717,7 +708,7 @@ FlacTrackDemuxer::IsSeekable() const
 {
   // For now we only allow seeking if a STREAMINFO block was found and with
   // a known number of samples (duration is set).
-  return mParser->Info().IsValid() && mParser->Info().mDuration;
+  return mParser->Info().IsValid() && mParser->Info().mDuration.IsPositive();
 }
 
 RefPtr<FlacTrackDemuxer::SeekPromise>
@@ -868,7 +859,7 @@ FlacTrackDemuxer::GetSamples(int32_t aNumSamples)
     frames->mSamples.AppendElement(frame);
   }
 
-  LOGV("GetSamples() End mSamples.Length=%" PRIuSIZE " aNumSamples=%d offset=%" PRId64
+  LOGV("GetSamples() End mSamples.Length=%zu aNumSamples=%d offset=%" PRId64
        " mParsedFramesDuration=%f mTotalFrameLen=%" PRIu64,
        frames->mSamples.Length(), aNumSamples, GetResourceOffset(),
        mParsedFramesDuration.ToSeconds(), mTotalFrameLen);
@@ -976,18 +967,18 @@ FlacTrackDemuxer::GetNextFrame(const flac::Frame& aFrame)
 
   const uint32_t read = Read(frameWriter->Data(), offset, size);
   if (read != size) {
-    LOG("GetNextFrame() Exit read=%u frame->Size=%" PRIuSIZE, read, frame->Size());
+    LOG("GetNextFrame() Exit read=%u frame->Size=%zu", read, frame->Size());
     return nullptr;
   }
 
-  frame->mTime = aFrame.Time().ToMicroseconds();
-  frame->mDuration = aFrame.Duration().ToMicroseconds();
+  frame->mTime = aFrame.Time();
+  frame->mDuration = aFrame.Duration();
   frame->mTimecode = frame->mTime;
   frame->mOffset = aFrame.Offset();
   frame->mKeyframe = true;
 
-  MOZ_ASSERT(frame->mTime >= 0);
-  MOZ_ASSERT(frame->mDuration >= 0);
+  MOZ_ASSERT(!frame->mTime.IsNegative());
+  MOZ_ASSERT(!frame->mDuration.IsNegative());
 
   return frame.forget();
 }
@@ -1015,8 +1006,7 @@ FlacTrackDemuxer::AverageFrameLength() const
 TimeUnit
 FlacTrackDemuxer::Duration() const
 {
-  return std::max(mParsedFramesDuration,
-                  TimeUnit::FromMicroseconds(mParser->Info().mDuration));
+  return std::max(mParsedFramesDuration, mParser->Info().mDuration);
 }
 
 TimeUnit

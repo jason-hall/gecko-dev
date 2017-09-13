@@ -71,9 +71,7 @@ NSSDialogs.prototype = {
     });
 
     // Spin this thread while we wait for a result
-    let thread = Services.tm.currentThread;
-    while (response === null)
-      thread.processNextEvent(true);
+    Services.tm.spinEventLoopUntil(() => response != null);
 
     return response;
   },
@@ -206,7 +204,7 @@ NSSDialogs.prototype = {
 
   viewCertDetails: function(details) {
     let p = this.getPrompt(this.getString("clientAuthAsk.message3"),
-                    '',
+                    "",
                     [ this.getString("nssdialogs.ok.label") ]);
     p.addLabel({ label: details });
     this.showPrompt(p);

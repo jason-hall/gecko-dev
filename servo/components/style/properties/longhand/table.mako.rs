@@ -7,24 +7,22 @@
 <% data.new_style_struct("Table", inherited=False) %>
 
 ${helpers.single_keyword("table-layout", "auto fixed",
-                         gecko_ffi_name="mLayoutStrategy", animation_type="none",
+                         gecko_ffi_name="mLayoutStrategy", animation_value_type="discrete",
                          spec="https://drafts.csswg.org/css-tables/#propdef-table-layout")}
 
 <%helpers:longhand name="-x-span" products="gecko"
                    spec="Internal-only (for `<col span>` pres attr)"
-                   animation_type="none"
+                   animation_value_type="none"
                    internal="True">
-    use values::HasViewportPercentage;
     use values::computed::ComputedValueAsSpecified;
 
     impl ComputedValueAsSpecified for SpecifiedValue {}
-    no_viewport_percentage!(SpecifiedValue);
     pub type SpecifiedValue = computed_value::T;
     pub mod computed_value {
         use std::fmt;
         use style_traits::ToCss;
 
-        #[derive(PartialEq, Clone, Copy, Debug)]
+        #[derive(Clone, Copy, Debug, PartialEq)]
         #[cfg_attr(feature = "servo", derive(HeapSizeOf))]
         pub struct T(pub i32);
 
@@ -41,7 +39,8 @@ ${helpers.single_keyword("table-layout", "auto fixed",
     }
 
     // never parse it, only set via presentation attribute
-    fn parse(_: &ParserContext, _: &mut Parser) -> Result<SpecifiedValue, ()> {
-        Err(())
+    fn parse<'i, 't>(_: &ParserContext, _: &mut Parser<'i, 't>)
+                     -> Result<SpecifiedValue, ParseError<'i>> {
+        Err(StyleParseError::UnspecifiedError.into())
     }
 </%helpers:longhand>

@@ -10,7 +10,7 @@ XPCOMUtils.defineLazyServiceGetter(this, "protocolService",
                                    "nsIExternalProtocolService");
 Cu.importGlobalProperties(["URL"]);
 
-function hasHandlerApp(handlerConfig) {
+const hasHandlerApp = handlerConfig => {
   let protoInfo = protocolService.getProtocolHandlerInfo(handlerConfig.protocol);
   let appHandlers = protoInfo.possibleApplicationHandlers;
   for (let i = 0; i < appHandlers.length; i++) {
@@ -21,7 +21,7 @@ function hasHandlerApp(handlerConfig) {
     }
   }
   return false;
-}
+};
 
 this.protocolHandlers = class extends ExtensionAPI {
   onManifestEntry(entryName) {
@@ -39,7 +39,7 @@ this.protocolHandlers = class extends ExtensionAPI {
       handler.uriTemplate = handlerConfig.uriTemplate;
 
       let protoInfo = protocolService.getProtocolHandlerInfo(handlerConfig.protocol);
-      protoInfo.possibleApplicationHandlers.appendElement(handler, false);
+      protoInfo.possibleApplicationHandlers.appendElement(handler);
       handlerService.store(protoInfo);
     }
   }

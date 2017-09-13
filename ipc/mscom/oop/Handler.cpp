@@ -9,6 +9,7 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/mscom/Objref.h"
 #include "nsWindowsHelpers.h"
 
 #include <objbase.h>
@@ -48,7 +49,7 @@ Handler::Handler(IUnknown* aOuter, HRESULT* aResult)
     return;
   }
 
-  // mInnerMarshal is a weak ref
+  // mUnmarshal is a weak ref
   mUnmarshal->Release();
 }
 
@@ -140,6 +141,10 @@ Handler::GetMarshalSizeMax(REFIID riid, void* pv, DWORD dwDestContext,
   hr = mUnmarshal->GetMarshalSizeMax(marshalAs, unkToMarshal.get(),
                                      dwDestContext, pvDestContext,
                                      mshlflags, pSize);
+
+#if defined(MOZ_MSCOM_REMARSHAL_NO_HANDLER)
+  return hr;
+#else
   if (FAILED(hr)) {
     return hr;
   }
@@ -156,6 +161,7 @@ Handler::GetMarshalSizeMax(REFIID riid, void* pv, DWORD dwDestContext,
 
   *pSize += payloadSize;
   return S_OK;
+#endif // defined(MOZ_MSCOM_REMARSHAL_NO_HANDLER)
 }
 
 HRESULT
@@ -169,14 +175,28 @@ Handler::MarshalInterface(IStream* pStm, REFIID riid, void* pv,
   RefPtr<IUnknown> unkToMarshal;
   HRESULT hr;
 
+#if defined(MOZ_MSCOM_REMARSHAL_NO_HANDLER)
+  LARGE_INTEGER seekTo;
+  seekTo.QuadPart = 0;
+
+  ULARGE_INTEGER objrefPos;
+
+  // Save the current position as it points to the location where the OBJREF
+  // will be written.
+  hr = pStm->Seek(seekTo, STREAM_SEEK_CUR, &objrefPos);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  // When marshaling without a handler, we just use the riid as passed in.
+  REFIID marshalAs = riid;
+#else
   REFIID marshalAs = MarshalAs(riid);
-  if (marshalAs == riid) {
-    unkToMarshal = static_cast<IUnknown*>(pv);
-  } else {
-    hr = mInnerUnk->QueryInterface(marshalAs, getter_AddRefs(unkToMarshal));
-    if (FAILED(hr)) {
-      return hr;
-    }
+#endif // defined(MOZ_MSCOM_REMARSHAL_NO_HANDLER)
+
+  hr = mInnerUnk->QueryInterface(marshalAs, getter_AddRefs(unkToMarshal));
+  if (FAILED(hr)) {
+    return hr;
   }
 
   hr = mUnmarshal->MarshalInterface(pStm, marshalAs, unkToMarshal.get(),
@@ -185,6 +205,22 @@ Handler::MarshalInterface(IStream* pStm, REFIID riid, void* pv,
     return hr;
   }
 
+#if defined(MOZ_MSCOM_REMARSHAL_NO_HANDLER)
+  // Obtain the current stream position which is the end of the OBJREF
+  ULARGE_INTEGER endPos;
+  hr = pStm->Seek(seekTo, STREAM_SEEK_CUR, &endPos);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  // Now strip out the handler.
+  if (!StripHandlerFromOBJREF(WrapNotNull(pStm), objrefPos.QuadPart,
+                              endPos.QuadPart)) {
+    return E_FAIL;
+  }
+
+  return S_OK;
+#else
   if (!HasPayload()) {
     return S_OK;
   }
@@ -192,6 +228,7 @@ Handler::MarshalInterface(IStream* pStm, REFIID riid, void* pv,
   // Unfortunately when COM re-marshals a proxy that prevouisly had a payload,
   // we must re-serialize it.
   return WriteHandlerPayload(pStm, marshalAs);
+#endif // defined(MOZ_MSCOM_REMARSHAL_NO_HANDLER)
 }
 
 HRESULT
@@ -203,17 +240,14 @@ Handler::UnmarshalInterface(IStream* pStm, REFIID riid, void** ppv)
     return hr;
   }
 
-  hr = ReadHandlerPayload(pStm, unmarshalAs);
-
   // This method may be called on the same object multiple times (as new
   // interfaces are queried off the proxy). Not all interfaces will necessarily
   // refresh the payload, so we set mHasPayload using OR to reflect that fact.
   // (Otherwise mHasPayload could be cleared and the handler would think that
   // it doesn't have a payload even though it actually does).
-  mHasPayload |= (hr == S_OK);
+  mHasPayload |= (ReadHandlerPayload(pStm, unmarshalAs) == S_OK);
 
-  // hr may be S_FALSE, but we don't want to return that
-  return SUCCEEDED(hr) ? S_OK : hr;
+  return hr;
 }
 
 HRESULT
@@ -232,17 +266,20 @@ template <size_t N>
 static HRESULT
 BuildClsidPath(wchar_t (&aPath)[N], REFCLSID aClsid)
 {
-  const wchar_t kClsid[] = {L'C', L'L', L'S', L'I', L'D', L'\\'};
+  const wchar_t kSubkey[] = L"SOFTWARE\\Classes\\CLSID\\";
+
+  // We exclude kSubkey's null terminator in the length because we include
+  // the stringified GUID's null terminator.
+  constexpr uint32_t kSubkeyLen = mozilla::ArrayLength(kSubkey) - 1;
+
   const size_t kReqdGuidLen = 39;
-  static_assert(N >= kReqdGuidLen + mozilla::ArrayLength(kClsid),
-                "aPath array is too short");
-  if (wcsncpy_s(aPath, kClsid, mozilla::ArrayLength(kClsid))) {
+  static_assert(N >= kReqdGuidLen + kSubkeyLen, "aPath array is too short");
+  if (wcsncpy_s(aPath, kSubkey, kSubkeyLen)) {
     return E_INVALIDARG;
   }
 
   int guidConversionResult =
-    StringFromGUID2(aClsid, &aPath[mozilla::ArrayLength(kClsid)],
-                    N - mozilla::ArrayLength(kClsid));
+    StringFromGUID2(aClsid, &aPath[kSubkeyLen], N - kSubkeyLen);
   if (!guidConversionResult) {
     return E_INVALIDARG;
   }
@@ -259,7 +296,7 @@ Handler::Unregister(REFCLSID aClsid)
     return hr;
   }
 
-  hr = HRESULT_FROM_WIN32(SHDeleteKey(HKEY_CLASSES_ROOT, path));
+  hr = HRESULT_FROM_WIN32(SHDeleteKey(HKEY_LOCAL_MACHINE, path));
   if (FAILED(hr)) {
     return hr;
   }
@@ -278,7 +315,7 @@ Handler::Register(REFCLSID aClsid)
 
   HKEY rawClsidKey;
   DWORD disposition;
-  LONG result = RegCreateKeyEx(HKEY_CLASSES_ROOT, path, 0, nullptr,
+  LONG result = RegCreateKeyEx(HKEY_LOCAL_MACHINE, path, 0, nullptr,
                                REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS,
                                nullptr, &rawClsidKey, &disposition);
   if (result != ERROR_SUCCESS) {
@@ -291,7 +328,7 @@ Handler::Register(REFCLSID aClsid)
   }
 
   HKEY rawInprocHandlerKey;
-  result = RegCreateKeyEx(HKEY_CLASSES_ROOT, path, 0, nullptr,
+  result = RegCreateKeyEx(HKEY_LOCAL_MACHINE, path, 0, nullptr,
                           REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS,
                           nullptr, &rawInprocHandlerKey, &disposition);
   if (result != ERROR_SUCCESS) {

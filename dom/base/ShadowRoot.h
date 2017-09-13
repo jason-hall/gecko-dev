@@ -13,8 +13,8 @@
 #include "nsCOMPtr.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsIContentInlines.h"
+#include "nsIdentifierMapEntry.h"
 #include "nsTHashtable.h"
-#include "nsDocument.h"
 
 class nsIAtom;
 class nsIContent;
@@ -186,7 +186,8 @@ protected:
   // so instead we track it here.
   bool mIsComposedDocParticipant;
 
-  nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult) const override;
+  nsresult Clone(mozilla::dom::NodeInfo *aNodeInfo, nsINode **aResult,
+                 bool aPreallocateChildren) const override;
 };
 
 class ShadowRootStyleSheetList : public StyleSheetList

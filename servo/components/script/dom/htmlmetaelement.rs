@@ -18,15 +18,16 @@ use dom::htmlheadelement::HTMLHeadElement;
 use dom::node::{Node, UnbindContext, document_from_node, window_from_node};
 use dom::virtualmethods::VirtualMethods;
 use dom_struct::dom_struct;
-use html5ever_atoms::LocalName;
+use html5ever::{LocalName, Prefix};
+use parking_lot::RwLock;
+use servo_arc::Arc;
 use servo_config::prefs::PREFS;
 use std::ascii::AsciiExt;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use style::attr::AttrValue;
+use style::media_queries::MediaList;
 use style::str::HTML_SPACE_CHARACTERS;
-use style::stylesheets::{Stylesheet, CssRule, CssRules, Origin};
-use style::viewport::ViewportRule;
+use style::stylesheets::{Stylesheet, StylesheetContents, CssRule, CssRules, Origin, ViewportRule};
 
 #[dom_struct]
 pub struct HTMLMetaElement {
@@ -38,7 +39,7 @@ pub struct HTMLMetaElement {
 
 impl HTMLMetaElement {
     fn new_inherited(local_name: LocalName,
-                     prefix: Option<DOMString>,
+                     prefix: Option<Prefix>,
                      document: &Document) -> HTMLMetaElement {
         HTMLMetaElement {
             htmlelement: HTMLElement::new_inherited(local_name, prefix, document),
@@ -49,7 +50,7 @@ impl HTMLMetaElement {
 
     #[allow(unrooted_must_root)]
     pub fn new(local_name: LocalName,
-               prefix: Option<DOMString>,
+               prefix: Option<Prefix>,
                document: &Document) -> Root<HTMLMetaElement> {
         Node::reflect_node(box HTMLMetaElement::new_inherited(local_name, prefix, document),
                            document,
@@ -98,23 +99,24 @@ impl HTMLMetaElement {
             let content = content.value();
             if !content.is_empty() {
                 if let Some(translated_rule) = ViewportRule::from_meta(&**content) {
-                    let document = self.upcast::<Node>().owner_doc();
+                    let document = document_from_node(self);
                     let shared_lock = document.style_shared_lock();
                     let rule = CssRule::Viewport(Arc::new(shared_lock.wrap(translated_rule)));
-                    *self.stylesheet.borrow_mut() = Some(Arc::new(Stylesheet {
-                        rules: CssRules::new(vec![rule], shared_lock),
-                        origin: Origin::Author,
+                    let sheet = Arc::new(Stylesheet {
+                        contents: StylesheetContents {
+                            rules: CssRules::new(vec![rule], shared_lock),
+                            origin: Origin::Author,
+                            namespaces: Default::default(),
+                            quirks_mode: document.quirks_mode(),
+                            url_data: RwLock::new(window_from_node(self).get_url()),
+                            source_map_url: RwLock::new(None),
+                        },
+                        media: Arc::new(shared_lock.wrap(MediaList::empty())),
                         shared_lock: shared_lock.clone(),
-                        url_data: window_from_node(self).get_url(),
-                        namespaces: Default::default(),
-                        media: Arc::new(shared_lock.wrap(Default::default())),
-                        // Viewport constraints are always recomputed on resize; they don't need to
-                        // force all styles to be recomputed.
-                        dirty_on_viewport_size_change: AtomicBool::new(false),
                         disabled: AtomicBool::new(false),
-                    }));
-                    let doc = document_from_node(self);
-                    doc.invalidate_stylesheets();
+                    });
+                    *self.stylesheet.borrow_mut() = Some(sheet.clone());
+                    document.add_stylesheet(self.upcast(), sheet);
                 }
             }
         }
@@ -193,6 +195,10 @@ impl VirtualMethods for HTMLMetaElement {
 
         if context.tree_in_doc {
             self.process_referrer_attribute();
+
+            if let Some(ref s) = *self.stylesheet.borrow() {
+                document_from_node(self).remove_stylesheet(self.upcast(), s);
+            }
         }
     }
 }

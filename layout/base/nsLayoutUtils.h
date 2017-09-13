@@ -34,7 +34,9 @@
 #include "SVGImageContext.h"
 #include <limits>
 #include <algorithm>
+#include "gfxPoint.h"
 
+class gfxContext;
 class nsPresContext;
 class nsIContent;
 class nsIAtom;
@@ -54,11 +56,9 @@ class nsView;
 class nsIFrame;
 class nsStyleCoord;
 class nsStyleCorners;
-class gfxContext;
 class nsPIDOMWindowOuter;
 class imgIRequest;
 class nsIDocument;
-struct gfxPoint;
 struct nsStyleFont;
 struct nsStyleImageOrientation;
 struct nsOverflowAreas;
@@ -66,9 +66,13 @@ struct nsOverflowAreas;
 namespace mozilla {
 enum class CSSPseudoElementType : uint8_t;
 class EventListenerManager;
+enum class LayoutFrameType : uint8_t;
 struct IntrinsicSize;
 struct ContainerLayerParameters;
 class WritingMode;
+class DisplayItemClip;
+class EffectSet;
+struct ActiveScrolledRoot;
 namespace dom {
 class CanvasRenderingContext2D;
 class DOMRectList;
@@ -81,6 +85,7 @@ class Selection;
 } // namespace dom
 namespace gfx {
 struct RectCornerRadii;
+enum class ShapedTextFlags : uint16_t;
 } // namespace gfx
 namespace layers {
 class Image;
@@ -180,9 +185,20 @@ public:
   static nsIContent* FindContentFor(ViewID aId);
 
   /**
+   * Find the view ID (or generate a new one) for the content element
+   * corresponding to the ASR.
+   */
+  static ViewID ViewIDForASR(const mozilla::ActiveScrolledRoot* aASR);
+
+  /**
    * Find the scrollable frame for a given ID.
    */
   static nsIScrollableFrame* FindScrollableFrameFor(ViewID aId);
+
+  /**
+   * Find the ID for a given scrollable frame.
+   */
+  static ViewID FindIDForScrollableFrame(nsIScrollableFrame* aScrollable);
 
   /**
    * Get display port for the given element, relative to the specified entity,
@@ -286,50 +302,26 @@ public:
   static mozilla::layout::FrameChildListID GetChildListNameFor(nsIFrame* aChildFrame);
 
   /**
-   * GetBeforeFrameForContent returns the ::before frame for aContent, if
-   * one exists.  This is typically O(1).  The frame passed in must be
-   * the first-in-flow.
-   *
-   * @param aGenConParentFrame an ancestor of the ::before frame
-   * @param aContent the content whose ::before is wanted
-   * @return the ::before frame or nullptr if there isn't one
+   * Returns the ::before pseudo-element for aContent, if any.
    */
-  static nsIFrame* GetBeforeFrameForContent(nsIFrame* aGenConParentFrame,
-                                            const nsIContent* aContent);
+  static mozilla::dom::Element* GetBeforePseudo(const nsIContent* aContent);
 
   /**
-   * GetBeforeFrame returns the outermost ::before frame of the given frame, if
-   * one exists.  This is typically O(1).  The frame passed in must be
-   * the first-in-flow.
-   *
-   * @param aFrame the frame whose ::before is wanted
-   * @return the :before frame or nullptr if there isn't one
+   * Returns the frame corresponding to the ::before pseudo-element for
+   * aContent, if any.
    */
-  static nsIFrame* GetBeforeFrame(nsIFrame* aFrame);
+  static nsIFrame* GetBeforeFrame(const nsIContent* aContent);
 
   /**
-   * GetAfterFrameForContent returns the ::after frame for aContent, if one
-   * exists.  This will walk the in-flow chain of aGenConParentFrame to the
-   * last-in-flow if needed.  This function is typically O(N) in the number
-   * of child frames, following in-flows, etc.
-   *
-   * @param aGenConParentFrame an ancestor of the ::after frame
-   * @param aContent the content whose ::after is wanted
-   * @return the ::after frame or nullptr if there isn't one
+   * Returns the ::after pseudo-element for aContent, if any.
    */
-  static nsIFrame* GetAfterFrameForContent(nsIFrame* aGenConParentFrame,
-                                           const nsIContent* aContent);
+  static mozilla::dom::Element* GetAfterPseudo(const nsIContent* aContent);
 
   /**
-   * GetAfterFrame returns the outermost ::after frame of the given frame, if one
-   * exists.  This will walk the in-flow chain to the last-in-flow if
-   * needed.  This function is typically O(N) in the number of child
-   * frames, following in-flows, etc.
-   *
-   * @param aFrame the frame whose ::after is wanted
-   * @return the :after frame or nullptr if there isn't one
+   * Returns the frame corresponding to the ::after pseudo-element for aContent,
+   * if any.
    */
-  static nsIFrame* GetAfterFrame(nsIFrame* aFrame);
+  static nsIFrame* GetAfterFrame(const nsIContent* aContent);
 
   /**
    * Given a frame, search up the frame tree until we find an
@@ -342,7 +334,7 @@ public:
    *         such ancestor exists
    */
   static nsIFrame* GetClosestFrameOfType(nsIFrame* aFrame,
-                                         nsIAtom* aFrameType,
+                                         mozilla::LayoutFrameType aFrameType,
                                          nsIFrame* aStopAt = nullptr);
 
   /**
@@ -350,13 +342,10 @@ public:
    * ancestor that (or the frame itself) is a "Page" frame, if any.
    *
    * @param aFrame the frame to start at
-   * @return a frame of type nsGkAtoms::pageFrame or nullptr if no
+   * @return a frame of type mozilla::LayoutFrameType::Page or nullptr if no
    *         such ancestor exists
    */
-  static nsIFrame* GetPageFrame(nsIFrame* aFrame)
-  {
-    return GetClosestFrameOfType(aFrame, nsGkAtoms::pageFrame);
-  }
+  static nsIFrame* GetPageFrame(nsIFrame* aFrame);
 
   /**
    * Given a frame which is the primary frame for an element,
@@ -584,6 +573,12 @@ public:
                                         const ContainerLayerParameters& aContainerParameters);
 
   /**
+   * Get the scroll id for the root scrollframe of the presshell of the given
+   * prescontext. Returns NULL_SCROLL_ID if it couldn't be found.
+   */
+  static FrameMetrics::ViewID ScrollIdForRootScrollFrame(nsPresContext* aPresContext);
+
+  /**
    * Return true if aPresContext's viewport has a displayport.
    */
   static bool ViewportHasDisplayPort(nsPresContext* aPresContext);
@@ -803,6 +798,9 @@ public:
                           nsView* aView, nsPoint aPt,
                           nsIWidget* aWidget);
 
+  static mozilla::LayoutDeviceIntPoint
+    WidgetToWidgetOffset(nsIWidget* aFromWidget, nsIWidget* aToWidget);
+
   enum FrameForPointFlags {
     /**
      * When set, paint suppression is ignored, so we'll return non-root page
@@ -872,9 +870,12 @@ public:
 
   /**
    * Gets the transform for aFrame relative to aAncestor. Pass null for
-   * aAncestor to go up to the root frame.
+   * aAncestor to go up to the root frame. aInCSSUnits set to true will
+   * return CSS units, set to false (the default) will return App units.
    */
-  static Matrix4x4 GetTransformToAncestor(nsIFrame *aFrame, const nsIFrame *aAncestor);
+  static Matrix4x4 GetTransformToAncestor(nsIFrame *aFrame,
+                                          const nsIFrame *aAncestor,
+                                          bool aInCSSUnits = false);
 
   /**
    * Gets the scale factors of the transform for aFrame relative to the root
@@ -1114,7 +1115,7 @@ public:
    * necessarily correspond to what's visible in the window; we don't
    * want to mess up the widget's layer tree.
    */
-  static nsresult PaintFrame(nsRenderingContext* aRenderingContext, nsIFrame* aFrame,
+  static nsresult PaintFrame(gfxContext* aRenderingContext, nsIFrame* aFrame,
                              const nsRegion& aDirtyRegion, nscolor aBackstop,
                              nsDisplayListBuilderMode aBuilderMode,
                              PaintFrameFlags aFlags = PaintFrameFlags(0));
@@ -1158,6 +1159,11 @@ public:
    * SVG frames return a single box, themselves.
    */
   static void GetAllInFlowBoxes(nsIFrame* aFrame, BoxCallback* aCallback);
+
+  /**
+   * Like GetAllInFlowBoxes, but doesn't include continuations.
+   */
+  static void AddBoxesForFrame(nsIFrame* aFrame, BoxCallback* aCallback);
 
   /**
    * Find the first frame descendant of aFrame (including aFrame) which is
@@ -1365,14 +1371,14 @@ public:
    * containing aFrame.
    */
   static nsIFrame*
-  FirstContinuationOrIBSplitSibling(nsIFrame *aFrame);
+  FirstContinuationOrIBSplitSibling(const nsIFrame *aFrame);
 
   /**
    * Get the last frame in the continuation-plus-ib-split-sibling chain
    * containing aFrame.
    */
   static nsIFrame*
-  LastContinuationOrIBSplitSibling(nsIFrame *aFrame);
+  LastContinuationOrIBSplitSibling(const nsIFrame *aFrame);
 
   /**
    * Is FirstContinuationOrIBSplitSibling(aFrame) going to return
@@ -1396,6 +1402,10 @@ public:
    * width, its 'width', 'min-width', and 'max-width' properties (or 'height'
    * variations if that's what matches aAxis) and its padding, border and margin
    * in the corresponding dimension.
+   * @param aPercentageBasis an optional percentage basis (in aFrame's WM).
+   *   Pass NS_UNCONSTRAINEDSIZE if the basis is indefinite in either/both axes.
+   *   If you pass Nothing() a percentage basis will be calculated from aFrame's
+   *   ancestors' computed size in the relevant axis, if needed.
    * @param aMarginBoxMinSizeClamp make the result fit within this margin-box
    * size by reducing the *content size* (flooring at zero).  This is used for:
    * https://drafts.csswg.org/css-grid/#min-size-auto
@@ -1411,15 +1421,16 @@ public:
   };
   static nscoord
   IntrinsicForAxis(mozilla::PhysicalAxis aAxis,
-                   nsRenderingContext*   aRenderingContext,
+                   gfxContext*           aRenderingContext,
                    nsIFrame*             aFrame,
                    IntrinsicISizeType    aType,
+                   const mozilla::Maybe<mozilla::LogicalSize>& aPercentageBasis = mozilla::Nothing(),
                    uint32_t              aFlags = 0,
                    nscoord               aMarginBoxMinSizeClamp = NS_MAXSIZE);
   /**
    * Calls IntrinsicForAxis with aFrame's parent's inline physical axis.
    */
-  static nscoord IntrinsicForContainer(nsRenderingContext* aRenderingContext,
+  static nscoord IntrinsicForContainer(gfxContext*         aRenderingContext,
                                        nsIFrame*           aFrame,
                                        IntrinsicISizeType  aType,
                                        uint32_t            aFlags = 0);
@@ -1442,7 +1453,7 @@ public:
    * should be a grid/flex item.
    */
   static nscoord MinSizeContributionForAxis(mozilla::PhysicalAxis aAxis,
-                                            nsRenderingContext*   aRC,
+                                            gfxContext*           aRC,
                                             nsIFrame*             aFrame,
                                             IntrinsicISizeType    aType,
                                             uint32_t              aFlags = 0);
@@ -1554,11 +1565,11 @@ public:
 
   // Implement nsIFrame::GetPrefISize in terms of nsIFrame::AddInlinePrefISize
   static nscoord PrefISizeFromInline(nsIFrame* aFrame,
-                                     nsRenderingContext* aRenderingContext);
+                                     gfxContext* aRenderingContext);
 
   // Implement nsIFrame::GetMinISize in terms of nsIFrame::AddInlineMinISize
   static nscoord MinISizeFromInline(nsIFrame* aFrame,
-                                    nsRenderingContext* aRenderingContext);
+                                    gfxContext* aRenderingContext);
 
   // Get a suitable foreground color for painting aColor for aFrame.
   static nscolor DarkenColorIfNeeded(nsIFrame* aFrame, nscolor aColor);
@@ -1599,7 +1610,7 @@ public:
   static nscoord AppUnitWidthOfStringBidi(const nsString& aString,
                                           const nsIFrame* aFrame,
                                           nsFontMetrics& aFontMetrics,
-                                          nsRenderingContext& aContext) {
+                                          gfxContext& aContext) {
     return nsLayoutUtils::AppUnitWidthOfStringBidi(aString.get(),
                                                    aString.Length(), aFrame,
                                                    aFontMetrics, aContext);
@@ -1608,7 +1619,7 @@ public:
                                           uint32_t aLength,
                                           const nsIFrame* aFrame,
                                           nsFontMetrics& aFontMetrics,
-                                          nsRenderingContext& aContext);
+                                          gfxContext& aContext);
 
   static bool StringWidthIsGreaterThan(const nsString& aString,
                                        nsFontMetrics& aFontMetrics,
@@ -1622,12 +1633,16 @@ public:
 
   static void DrawString(const nsIFrame*     aFrame,
                          nsFontMetrics&      aFontMetrics,
-                         nsRenderingContext* aContext,
+                         gfxContext*         aContext,
                          const char16_t*     aString,
                          int32_t             aLength,
                          nsPoint             aPoint,
                          nsStyleContext*     aStyleContext = nullptr,
                          DrawStringFlags     aFlags = DrawStringFlags::eDefault);
+
+  static nsPoint GetBackgroundFirstTilePos(const nsPoint& aDest,
+                                           const nsPoint& aFill,
+                                           const nsSize& aRepeatSize);
 
   /**
    * Supports only LTR or RTL. Bidi (mixed direction) is not supported.
@@ -1636,19 +1651,19 @@ public:
                                uint32_t aLength,
                                nsPoint aPoint,
                                nsFontMetrics& aFontMetrics,
-                               nsRenderingContext& aContext);
+                               gfxContext& aContext);
 
   /**
    * Helper function for drawing text-shadow. The callback's job
    * is to draw whatever needs to be blurred onto the given context.
    */
-  typedef void (* TextShadowCallback)(nsRenderingContext* aCtx,
+  typedef void (* TextShadowCallback)(gfxContext* aCtx,
                                       nsPoint aShadowOffset,
                                       const nscolor& aShadowColor,
                                       void* aData);
 
   static void PaintTextShadow(const nsIFrame*     aFrame,
-                              nsRenderingContext* aContext,
+                              gfxContext*         aContext,
                               const nsRect&       aTextRect,
                               const nsRect&       aDirtyRect,
                               const nscolor&      aForegroundColor,
@@ -1774,9 +1789,10 @@ public:
    * Draw a background image.  The image's dimensions are as specified in aDest;
    * the image itself is not consulted to determine a size.
    * See https://wiki.mozilla.org/Gecko:Image_Snapping_and_Rendering
-   *   @param aRenderingContext Where to draw the image, set up with an
+   *   @param aContext          The context to draw to, already set up with an
    *                            appropriate scale and transform for drawing in
    *                            app units.
+   *   @param aForFrame         The nsIFrame that we're drawing this image for.
    *   @param aImage            The image.
    *   @param aImageSize        The unscaled size of the image being drawn.
    *                            (This might be the image's size if no scaling
@@ -1798,6 +1814,7 @@ public:
    *   @param aExtendMode       How to extend the image over the dest rect.
    */
   static DrawResult DrawBackgroundImage(gfxContext&         aContext,
+                                        nsIFrame*           aForFrame,
                                         nsPresContext*      aPresContext,
                                         imgIContainer*      aImage,
                                         const CSSIntSize&   aImageSize,
@@ -1817,6 +1834,9 @@ public:
    *   @param aRenderingContext Where to draw the image, set up with an
    *                            appropriate scale and transform for drawing in
    *                            app units.
+   *   @param aStyleContext     The style context of the nsIFrame (or
+   *                            pseudo-element) for which this image is being
+   *                            drawn.
    *   @param aImage            The image.
    *   @param aDest             Where one copy of the image should mapped to.
    *   @param aFill             The area to be filled with copies of the
@@ -1827,6 +1847,7 @@ public:
    *   @param aImageFlags       Image flags of the imgIContainer::FLAG_* variety
    */
   static DrawResult DrawImage(gfxContext&         aContext,
+                              nsStyleContext*     aStyleContext,
                               nsPresContext*      aPresContext,
                               imgIContainer*      aImage,
                               const SamplingFilter aSamplingFilter,
@@ -2021,15 +2042,17 @@ public:
    * -- TEXT_OPTIMIZE_SPEED if the text-rendering CSS property and font size
    * and prefs indicate we should be optimizing for speed over quality
    */
-  static uint32_t GetTextRunFlagsForStyle(nsStyleContext* aStyleContext,
-                                          const nsStyleFont* aStyleFont,
-                                          const nsStyleText* aStyleText,
-                                          nscoord aLetterSpacing);
+  static mozilla::gfx::ShapedTextFlags
+  GetTextRunFlagsForStyle(nsStyleContext* aStyleContext,
+                          const nsStyleFont* aStyleFont,
+                          const nsStyleText* aStyleText,
+                          nscoord aLetterSpacing);
 
   /**
    * Get orientation flags for textrun construction.
    */
-  static uint32_t GetTextRunOrientFlagsForStyle(nsStyleContext* aStyleContext);
+  static mozilla::gfx::ShapedTextFlags
+  GetTextRunOrientFlagsForStyle(nsStyleContext* aStyleContext);
 
   /**
    * Takes two rectangles whose origins must be the same, and computes
@@ -2079,12 +2102,11 @@ public:
     SFE_WANT_IMAGE_SURFACE = 1 << 0,
     /* Whether to extract the first frame (as opposed to the
        current frame) in the case that the element is an image. */
-    SFE_WANT_FIRST_FRAME = 1 << 1,
+    SFE_WANT_FIRST_FRAME_IF_IMAGE = 1 << 1,
     /* Whether we should skip colorspace/gamma conversion */
     SFE_NO_COLORSPACE_CONVERSION = 1 << 2,
-    /* Specifies that the caller wants unpremultiplied pixel data.
-       If this is can be done efficiently, the result will be a
-       DataSourceSurface and mIsPremultiplied with be set to false. */
+    /* Specifies that the caller wants either OPAQUE or NON_PREMULT mAlphaType,
+       if this is can be done efficiently. */
     SFE_PREFER_NO_PREMULTIPLY_ALPHA = 1 << 3,
     /* Whether we should skip getting a surface for vector images and
        return a DirectDrawInfo containing an imgIContainer instead. */
@@ -2142,8 +2164,8 @@ public:
     bool mHasSize;
     /* Whether the element used CORS when loading. */
     bool mCORSUsed;
-    /* Whether the returned image contains premultiplied pixel data */
-    bool mIsPremultiplied;
+
+    gfxAlphaType mAlphaType;
 
     // Methods:
 
@@ -2265,6 +2287,13 @@ public:
    * whether the property is overridden by !important rule.
    */
   static bool HasAnimationOfProperty(const nsIFrame* aFrame,
+                                     nsCSSPropertyID aProperty);
+
+  /**
+   * Returns true if |aEffectSet| has an animation of |aProperty| regardless of
+   * whether the property is overridden by !important rule.
+   */
+  static bool HasAnimationOfProperty(mozilla::EffectSet* aEffectSet,
                                      nsCSSPropertyID aProperty);
 
   /**
@@ -2611,7 +2640,9 @@ public:
   /**
    * Helper method to transform |aBounds| from aFrame to aAncestorFrame,
    * and combine it with |aPreciseTargetDest| if it is axis-aligned, or
-   * combine it with |aImpreciseTargetDest| if not.
+   * combine it with |aImpreciseTargetDest| if not. The transformed rect is
+   * clipped to |aClip|; if |aClip| has rounded corners, that also causes
+   * the imprecise target to be used.
    */
   static void
   TransformToAncestorAndCombineRegions(
@@ -2620,7 +2651,8 @@ public:
     const nsIFrame* aAncestorFrame,
     nsRegion* aPreciseTargetDest,
     nsRegion* aImpreciseTargetDest,
-    mozilla::Maybe<Matrix4x4>* aMatrixCache);
+    mozilla::Maybe<Matrix4x4>* aMatrixCache,
+    const mozilla::DisplayItemClip* aClip);
 
   /**
    * Populate aOutSize with the size of the content viewer corresponding
@@ -2713,9 +2745,7 @@ public:
                                   ViewID aScrollId,
                                   const std::string& aKey,
                                   const std::string& aValue) {
-    if (IsAPZTestLoggingEnabled()) {
-      DoLogTestDataForPaint(aManager, aScrollId, aKey, aValue);
-    }
+    DoLogTestDataForPaint(aManager, aScrollId, aKey, aValue);
   }
 
   /**
@@ -2728,10 +2758,8 @@ public:
                                   ViewID aScrollId,
                                   const std::string& aKey,
                                   const Value& aValue) {
-    if (IsAPZTestLoggingEnabled()) {
-      DoLogTestDataForPaint(aManager, aScrollId, aKey,
-          mozilla::ToString(aValue));
-    }
+    DoLogTestDataForPaint(aManager, aScrollId, aKey,
+                          mozilla::ToString(aValue));
   }
 
   /**
@@ -2820,6 +2848,16 @@ public:
                                               const ContainerLayerParameters& aContainerParameters);
 
   /**
+   * Returns the metadata to put onto the root layer of a layer tree, if one is
+   * needed. The last argument is a callback function to check if the caller
+   * already has a metadata for a given scroll id.
+   */
+  static mozilla::Maybe<ScrollMetadata> GetRootMetadata(nsDisplayListBuilder* aBuilder,
+                                                        Layer* aRootLayer,
+                                                        const ContainerLayerParameters& aContainerParameters,
+                                                        const std::function<bool(ViewID& aScrollId)>& aCallback);
+
+  /**
    * If the given scroll frame needs an area excluded from its composition
    * bounds due to scrollbars, return that area, otherwise return an empty
    * margin.
@@ -2900,13 +2938,18 @@ public:
    */
   static CSSPoint GetCumulativeApzCallbackTransform(nsIFrame* aFrame);
 
-  /*
-   * Returns whether the given document supports being rendered with a
-   * Servo-backed style system.  This checks whether Stylo is enabled
-   * globally, that the document is an HTML document, and that it is
-   * being presented in a content docshell.
+  /**
+   * Compute a rect to pre-render in cases where we want to render more of
+   * something than what is visible (usually to support async transformation).
+   * @param aDirtyRect the area that's visible
+   * @param aOverflow the total size of the thing we're rendering
+   * @param aPrerenderSize how large of an area we're willing to render
+   * @return A rectangle that includes |aDirtyRect|, is clamped to |aOverflow|,
+   *         and is no larger than |aPrerenderSize|.
    */
-  static bool SupportsServoStyleBackend(nsIDocument* aDocument);
+  static nsRect ComputePartialPrerenderArea(const nsRect& aDirtyRect,
+                                            const nsRect& aOverflow,
+                                            const nsSize& aPrerenderSize);
 
   /*
    * Checks whether a node is an invisible break.
@@ -3069,7 +3112,8 @@ void StrokeLineWithSnapping(const nsPoint& aP1, const nsPoint& aP2,
       bool mOldValue;
     };
 
-    void MaybeSetupTransactionIdAllocator(layers::LayerManager* aManager, nsView* aView);
+    void MaybeSetupTransactionIdAllocator(layers::LayerManager* aManager,
+                                          nsPresContext* aPresContext);
 
   } // namespace layout
 } // namespace mozilla
@@ -3098,6 +3142,23 @@ public:
 
   nsCOMPtr<nsIContent> mContent;
   nsCOMPtr<nsIAtom> mAttrName;
+};
+
+// This class allows you to easily set any pointer variable and ensure it's
+// set to nullptr when leaving its scope.
+template<typename T>
+class MOZ_RAII SetAndNullOnExit
+{
+public:
+  SetAndNullOnExit(T* &aVariable, T* aValue) {
+    aVariable = aValue;
+    mVariable = &aVariable;
+  }
+  ~SetAndNullOnExit() {
+    *mVariable = nullptr;
+  }
+private:
+  T** mVariable;
 };
 
 #endif // nsLayoutUtils_h__

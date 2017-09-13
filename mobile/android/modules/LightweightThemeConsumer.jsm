@@ -15,27 +15,27 @@ XPCOMUtils.defineLazyModuleGetter(this, "EventDispatcher",
 
 function LightweightThemeConsumer(aDocument) {
   this._doc = aDocument;
-  Services.obs.addObserver(this, "lightweight-theme-styling-update", false);
-  Services.obs.addObserver(this, "lightweight-theme-apply", false);
+  Services.obs.addObserver(this, "lightweight-theme-styling-update");
+  Services.obs.addObserver(this, "lightweight-theme-apply");
 
   this._update(LightweightThemeManager.currentThemeForDisplay);
 }
 
 LightweightThemeConsumer.prototype = {
-  observe: function (aSubject, aTopic, aData) {
+  observe: function(aSubject, aTopic, aData) {
     if (aTopic == "lightweight-theme-styling-update")
       this._update(JSON.parse(aData));
     else if (aTopic == "lightweight-theme-apply")
       this._update(LightweightThemeManager.currentThemeForDisplay);
   },
 
-  destroy: function () {
+  destroy: function() {
     Services.obs.removeObserver(this, "lightweight-theme-styling-update");
     Services.obs.removeObserver(this, "lightweight-theme-apply");
     this._doc = null;
   },
 
-  _update: function (aData) {
+  _update: function(aData) {
     if (!aData)
       aData = { headerURL: "", footerURL: "", textcolor: "", accentcolor: "" };
 

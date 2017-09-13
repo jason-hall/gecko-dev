@@ -9,7 +9,6 @@
 
 #include "mozilla/MozPromise.h"
 #include "mozilla/Pair.h"
-#include "mozilla/RefPtr.h"
 #include "SourceBufferAttributes.h"
 #include "TimeUnits.h"
 #include "MediaResult.h"
@@ -47,7 +46,7 @@ protected:
 
 class AppendBufferTask : public SourceBufferTask {
 public:
-  AppendBufferTask(MediaByteBuffer* aData,
+  AppendBufferTask(already_AddRefed<MediaByteBuffer> aData,
                    const SourceBufferAttributes& aAttributes)
   : mBuffer(aData)
   , mAttributes(aAttributes)

@@ -72,12 +72,6 @@ nsScrollbarFrame::Reflow(nsPresContext*          aPresContext,
   }
 }
 
-nsIAtom*
-nsScrollbarFrame::GetType() const
-{
-  return nsGkAtoms::scrollbarFrame;
-}
-
 nsresult
 nsScrollbarFrame::AttributeChanged(int32_t aNameSpaceID,
                                    nsIAtom* aAttribute,
@@ -117,7 +111,7 @@ nsScrollbarFrame::HandleMultiplePress(nsPresContext* aPresContext,
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsScrollbarFrame::HandleDrag(nsPresContext* aPresContext,
                              WidgetGUIEvent* aEvent,
                              nsEventStatus* aEventStatus)
@@ -125,7 +119,7 @@ nsScrollbarFrame::HandleDrag(nsPresContext* aPresContext,
   return NS_OK;
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 nsScrollbarFrame::HandleRelease(nsPresContext* aPresContext,
                                 WidgetGUIEvent* aEvent,
                                 nsEventStatus* aEventStatus)

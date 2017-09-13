@@ -87,8 +87,8 @@ var gNextTest;
 function test() {
   waitForExplicitFinish();
 
-  gBackgroundTab = gBrowser.addTab();
-  gForegroundTab = gBrowser.addTab();
+  gBackgroundTab = BrowserTestUtils.addTab(gBrowser);
+  gForegroundTab = BrowserTestUtils.addTab(gBrowser);
   gBackgroundBrowser = gBrowser.getBrowserForTab(gBackgroundTab);
   gForegroundBrowser = gBrowser.getBrowserForTab(gForegroundTab);
   gBrowser.selectedTab = gForegroundTab;
@@ -96,8 +96,8 @@ function test() {
   // We must wait until a page has completed loading before
   // starting tests or we get notifications from that
   let promises = [
-    waitForDocLoadComplete(gBackgroundBrowser),
-    waitForDocLoadComplete(gForegroundBrowser)
+    BrowserTestUtils.browserStopped(gBackgroundBrowser, kBasePage),
+    BrowserTestUtils.browserStopped(gForegroundBrowser, kBasePage)
   ];
   gBackgroundBrowser.loadURI(kBasePage);
   gForegroundBrowser.loadURI(kBasePage);

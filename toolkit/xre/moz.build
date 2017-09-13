@@ -12,6 +12,7 @@ if CONFIG['OS_ARCH'] == 'WINNT':
 
 MOCHITEST_MANIFESTS += ['test/mochitest.ini']
 BROWSER_CHROME_MANIFESTS += ['test/browser.ini']
+XPCSHELL_TESTS_MANIFESTS += ['test/xpcshell.ini']
 
 XPIDL_SOURCES += [
     'nsINativeAppSupport.idl',
@@ -35,6 +36,9 @@ if CONFIG['MOZ_INSTRUMENT_EVENT_LOOP']:
     EXPORTS += ['EventTracer.h']
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
+    SOURCES += [
+        '../../other-licenses/nsis/Contrib/CityHash/cityhash/city.cpp',
+    ]
     UNIFIED_SOURCES += [
         'nsNativeAppSupportWin.cpp',
     ]

@@ -25,7 +25,7 @@ const {
 } = require("devtools/shared/css/parsing-utils");
 const promise = require("promise");
 const Services = require("Services");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/shared/old-event-emitter");
 const {Task} = require("devtools/shared/task");
 
 const STYLE_INSPECTOR_PROPERTIES = "devtools/shared/locales/styleinspector.properties";
@@ -97,7 +97,7 @@ RuleEditor.prototype = {
 
   _create: function () {
     this.element = this.doc.createElement("div");
-    this.element.className = "ruleview-rule theme-separator";
+    this.element.className = "ruleview-rule devtools-monospace";
     this.element.setAttribute("uneditable", !this.isEditable);
     this.element.setAttribute("unmatched", this.rule.isUnmatched);
     this.element._ruleEditor = this;
@@ -110,13 +110,13 @@ RuleEditor.prototype = {
     this.source = createChild(this.element, "div", {
       class: "ruleview-rule-source theme-link"
     });
-    this.source.addEventListener("click", function () {
+    this.source.addEventListener("click", () => {
       if (this.source.hasAttribute("unselectable")) {
         return;
       }
       let rule = this.rule.domRule;
       this.ruleView.emit("ruleview-linked-clicked", rule);
-    }.bind(this));
+    });
     let sourceLabel = this.doc.createElement("span");
     sourceLabel.classList.add("ruleview-rule-source-label");
     this.source.appendChild(sourceLabel);
@@ -144,7 +144,6 @@ RuleEditor.prototype = {
         element: this.selectorText,
         done: this._onSelectorDone,
         cssProperties: this.rule.cssProperties,
-        contextMenu: this.ruleView.inspector.onTextBoxContextMenu
       });
     }
 
@@ -276,7 +275,7 @@ RuleEditor.prototype = {
       this.rule.getOriginalSourceStrings().then((strings) => {
         sourceLabel.textContent = strings.short;
         sourceLabel.setAttribute("title", strings.full);
-      }, e => console.error(e)).then(() => {
+      }, console.error).then(() => {
         this.emit("source-link-updated");
       });
     } else {
@@ -463,7 +462,6 @@ RuleEditor.prototype = {
       contentType: InplaceEditor.CONTENT_TYPES.CSS_PROPERTY,
       popup: this.ruleView.popup,
       cssProperties: this.rule.cssProperties,
-      contextMenu: this.ruleView.inspector.onTextBoxContextMenu
     });
 
     // Auto-close the input if multiple rules get pasted into new property.

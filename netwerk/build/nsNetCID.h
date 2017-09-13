@@ -50,7 +50,7 @@
 
 // service implementing nsIProxyAutoConfig.
 #define NS_PROXYAUTOCONFIG_CONTRACTID \
-    "@mozilla.org/network/proxy-auto-config;1" 
+    "@mozilla.org/network/proxy-auto-config;1"
 #define NS_PROXYAUTOCONFIG_CID                       \
 { /* 63ac8c66-1dd2-11b2-b070-84d00d3eaece */         \
     0x63ac8c66,                                      \
@@ -494,17 +494,6 @@
     {0x93, 0x30, 0x18, 0x58, 0xb9, 0x9a, 0xce, 0x69} \
 }
 
-// service implementing nsIThrottlingService
-#define NS_THROTTLINGSERVICE_CONTRACTID \
-    "@mozilla.org/network/throttling-service;1"
-#define NS_THROTTLINGSERVICE_CID \
-{ /* c1c48f2b-cb9c-415e-b4f9-5e4c3476ca86 */ \
-    0xc1c48f2b, \
-    0xcb9c, \
-    0x415e, \
-    {0xb4, 0xf9, 0x5e, 0x4c, 0x34, 0x76, 0xca, 0x86} \
-}
-
 /******************************************************************************
  * netwerk/cache/ classes
  */
@@ -648,6 +637,18 @@
     {0x97, 0xa7, 0x06, 0xaf, 0x5e, 0x6d, 0x84, 0xc4}    \
 }
 
+// Background channel registrar used for pairing HttpChannelParent
+// and its background channel
+#define NS_BACKGROUNDCHANNELREGISTRAR_CONTRACTID \
+    "@mozilla.org/network/background-channel-registrar;1"
+#define NS_BACKGROUNDCHANNELREGISTRAR_CID \
+{ /* 6907788a-17cc-4c2a-a7c5-59ad2d9cc079 */          \
+    0x6907788a,                                       \
+    0x17cc,                                           \
+    0x4c2a,                                           \
+    { 0xa7, 0xc5, 0x59, 0xad, 0x2d, 0x9c, 0xc0, 0x79} \
+}
+
 /******************************************************************************
  * netwerk/protocol/ftp/ classes
  */
@@ -768,18 +769,6 @@
 }
 
 /******************************************************************************
- * netwerk/protocol/rtsp / classes
- */
-
-#define NS_RTSPPROTOCOLHANDLER_CID                   \
-{ /* {5bb4b980-7b10-11e2-b92a-0800200c9a66} */       \
-  0x5bb4b980,                                        \
-  0x7b10,                                            \
-  0x11e2,                                            \
-  {0xb9, 0x2a, 0x08, 0x00, 0x20, 0x0c, 0x9a, 0x66}   \
-}
-
-/******************************************************************************
  * netwerk/protocol/about/ classes
  */
 
@@ -839,7 +828,7 @@
  * netwerk/mime classes
  */
 
-// {1F4DBCF7-245C-4c8c-943D-8A1DA0495E8A} 
+// {1F4DBCF7-245C-4c8c-943D-8A1DA0495E8A}
 #define NS_MIMEHEADERPARAM_CID                         \
 {   0x1f4dbcf7,                                        \
     0x245c,                                            \

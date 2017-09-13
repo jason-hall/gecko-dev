@@ -44,6 +44,7 @@
 // Interfaces Needed
 #include "nsIDocCharset.h"
 #include "nsIInterfaceRequestor.h"
+#include "nsINamed.h"
 #include "nsIRefreshURI.h"
 #include "nsIWebNavigation.h"
 #include "nsIWebPageDescriptor.h"
@@ -60,9 +61,10 @@
 #include "nsRect.h"
 #include "Units.h"
 #include "nsIDeprecationWarner.h"
-#include "nsIThrottlingService.h"
 
 namespace mozilla {
+class Encoding;
+class HTMLEditor;
 enum class TaskCategory;
 namespace dom {
 class EventTarget;
@@ -96,6 +98,7 @@ class nsIURIFixup;
 class nsIURILoader;
 class nsIWebBrowserFind;
 class nsIWidget;
+class FramingChecker;
 
 /* internally used ViewMode types */
 enum ViewMode
@@ -105,12 +108,15 @@ enum ViewMode
 };
 
 class nsRefreshTimer : public nsITimerCallback
+                     , public nsINamed
 {
 public:
-  nsRefreshTimer();
+  nsRefreshTimer(nsDocShell* aDocShell, nsIURI* aURI, int32_t aDelay,
+                 bool aRepeat, bool aMetaRefresh);
 
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSITIMERCALLBACK
+  NS_DECL_NSINAMED
 
   int32_t GetDelay() { return mDelay ;}
 
@@ -154,6 +160,8 @@ class nsDocShell final
   , public mozilla::SupportsWeakPtr<nsDocShell>
 {
   friend class nsDSURIContentListener;
+  friend class FramingChecker;
+  using Encoding = mozilla::Encoding;
 
 public:
   MOZ_DECLARE_WEAKREFERENCE_TYPENAME(nsDocShell)
@@ -234,7 +242,7 @@ public:
   NS_IMETHOD SetPrivateBrowsing(bool) override;
   NS_IMETHOD GetUseRemoteTabs(bool*) override;
   NS_IMETHOD SetRemoteTabs(bool) override;
-  NS_IMETHOD GetOriginAttributes(JS::MutableHandle<JS::Value>) override;
+  NS_IMETHOD GetScriptableOriginAttributes(JS::MutableHandle<JS::Value>) override;
 
   // Restores a cached presentation from history (mLSHE).
   // This method swaps out the content viewer and simulates loads for
@@ -249,6 +257,8 @@ public:
                                     bool aMetaRefresh, nsITimer* aTimer);
 
   friend class OnLinkClickEvent;
+
+  static bool SandboxFlagsImplyCookies(const uint32_t &aSandboxFlags);
 
   // We need dummy OnLocationChange in some cases to update the UI without
   // updating security info.
@@ -272,6 +282,13 @@ public:
     mInFrameSwap = aInSwap;
   }
   bool InFrameSwap();
+
+  const Encoding* GetForcedCharset() { return mForcedCharset; }
+
+  mozilla::HTMLEditor* GetHTMLEditorInternal();
+  nsresult SetHTMLEditorInternal(mozilla::HTMLEditor* aHTMLEditor);
+
+  nsDOMNavigationTiming* GetNavigationTiming() const;
 
 private:
   bool CanSetOriginAttributes();
@@ -370,7 +387,9 @@ protected:
   // If aLoadReplace is true, LOAD_REPLACE flag will be set to the nsIChannel.
   nsresult DoURILoad(nsIURI* aURI,
                      nsIURI* aOriginalURI,
+                     mozilla::Maybe<nsCOMPtr<nsIURI>> const& aResultPrincipalURI,
                      bool aLoadReplace,
+                     bool aLoadFromExternal,
                      nsIURI* aReferrer,
                      bool aSendReferrer,
                      uint32_t aReferrerPolicy,
@@ -430,7 +449,7 @@ protected:
   void SetReferrerPolicy(uint32_t aReferrerPolicy);
 
   // Session History
-  bool ShouldAddToSessionHistory(nsIURI* aURI);
+  bool ShouldAddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel);
   // Either aChannel or aOwner must be null. If aChannel is
   // present, the owner should be gotten from it.
   // If aCloneChildren is true, then our current session history's
@@ -607,7 +626,7 @@ protected:
   nsresult RefreshURIFromQueue();
   NS_IMETHOD LoadErrorPage(nsIURI* aURI, const char16_t* aURL,
                            const char* aErrorPage,
-                           const char16_t* aErrorType,
+                           const char* aErrorType,
                            const char16_t* aDescription,
                            const char* aCSSClass,
                            nsIChannel* aFailedChannel);
@@ -775,7 +794,11 @@ public:
   {
   public:
     NS_DECL_NSIRUNNABLE
-    explicit RestorePresentationEvent(nsDocShell* aDs) : mDocShell(aDs) {}
+    explicit RestorePresentationEvent(nsDocShell* aDs)
+      : mozilla::Runnable("nsDocShell::RestorePresentationEvent")
+      , mDocShell(aDs)
+    {
+    }
     void Revoke() { mDocShell = nullptr; }
   private:
     RefPtr<nsDocShell> mDocShell;
@@ -805,6 +828,8 @@ protected:
   bool HasUnloadedParent();
 
   void UpdateGlobalHistoryTitle(nsIURI* aURI);
+
+  NS_IMETHOD_(void) GetOriginAttributes(mozilla::OriginAttributes& aAttrs) override;
 
   // Dimensions of the docshell
   nsIntRect mBounds;
@@ -889,7 +914,7 @@ protected:
 
   // Offset in the parent's child list.
   // -1 if the docshell is added dynamically to the parent shell.
-  uint32_t mChildOffset;
+  int32_t mChildOffset;
   uint32_t mBusyFlags;
   uint32_t mAppType;
   uint32_t mLoadType;
@@ -902,7 +927,8 @@ protected:
   int32_t mItemType;
 
   // Index into the SHTransaction list, indicating the previous and current
-  // transaction at the time that this DocShell begins to load
+  // transaction at the time that this DocShell begins to load. Consequently
+  // root docshell's indices can differ from child docshells'.
   int32_t mPreviousTransIndex;
   int32_t mLoadedTransIndex;
 
@@ -1031,9 +1057,21 @@ protected:
 
   nsString mInterceptedDocumentId;
 
+  // This represents the CSS display-mode we are currently using.
+  // It can be any of the following values from nsIDocShell.idl:
+  //
+  // DISPLAY_MODE_BROWSER = 0
+  // DISPLAY_MODE_MINIMAL_UI = 1
+  // DISPLAY_MODE_STANDALONE = 2
+  // DISPLAY_MODE_FULLSCREEN = 3
+  //
+  // This is mostly used for media queries. The integer values above
+  // match those used in nsStyleConsts.h
+  uint32_t mDisplayMode;
+
 private:
-  nsCString mForcedCharset;
-  nsCString mParentCharset;
+  const Encoding* mForcedCharset;
+  const Encoding* mParentCharset;
   int32_t mParentCharsetSource;
   nsCOMPtr<nsIPrincipal> mParentCharsetPrincipal;
   nsTObserverArray<nsWeakPtr> mPrivacyObservers;
@@ -1077,8 +1115,7 @@ private:
                                         bool aSkipCheckingDynEntries);
 
   // Dispatch a runnable to the TabGroup associated to this docshell.
-  nsresult DispatchToTabGroup(const char* aName,
-                              mozilla::TaskCategory aCategory,
+  nsresult DispatchToTabGroup(mozilla::TaskCategory aCategory,
                               already_AddRefed<nsIRunnable>&& aRunnable);
 
 #ifdef DEBUG
@@ -1099,9 +1136,6 @@ public:
     InterfaceRequestorProxy() {}
     nsWeakPtr mWeakPtr;
   };
-
-private:
-  mozilla::UniquePtr<mozilla::net::Throttler> mThrottler;
 };
 
 #endif /* nsDocShell_h__ */

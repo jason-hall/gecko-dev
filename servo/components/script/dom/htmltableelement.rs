@@ -23,7 +23,7 @@ use dom::htmltablesectionelement::HTMLTableSectionElement;
 use dom::node::{Node, document_from_node, window_from_node};
 use dom::virtualmethods::VirtualMethods;
 use dom_struct::dom_struct;
-use html5ever_atoms::LocalName;
+use html5ever::{LocalName, Prefix};
 use std::cell::Cell;
 use style::attr::{AttrValue, LengthOrPercentageOrAuto, parse_unsigned_integer};
 
@@ -36,7 +36,7 @@ pub struct HTMLTableElement {
 }
 
 #[allow(unrooted_must_root)]
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct TableRowFilter {
     sections: Vec<JS<Node>>,
 }
@@ -50,7 +50,7 @@ impl CollectionFilter for TableRowFilter {
 }
 
 impl HTMLTableElement {
-    fn new_inherited(local_name: LocalName, prefix: Option<DOMString>, document: &Document)
+    fn new_inherited(local_name: LocalName, prefix: Option<Prefix>, document: &Document)
                      -> HTMLTableElement {
         HTMLTableElement {
             htmlelement: HTMLElement::new_inherited(local_name, prefix, document),
@@ -61,7 +61,7 @@ impl HTMLTableElement {
     }
 
     #[allow(unrooted_must_root)]
-    pub fn new(local_name: LocalName, prefix: Option<DOMString>, document: &Document)
+    pub fn new(local_name: LocalName, prefix: Option<Prefix>, document: &Document)
                -> Root<HTMLTableElement> {
         Node::reflect_node(box HTMLTableElement::new_inherited(local_name, prefix, document),
                            document,
@@ -103,7 +103,7 @@ impl HTMLTableElement {
             let reference_element = node.child_elements().find(reference_predicate);
             let reference_node = reference_element.r().map(|e| e.upcast());
 
-            try!(node.InsertBefore(section.upcast(), reference_node));
+            node.InsertBefore(section.upcast(), reference_node)?;
         }
 
         Ok(())

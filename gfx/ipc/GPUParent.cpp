@@ -7,7 +7,6 @@
 #include "WMF.h"
 #endif
 #include "GPUParent.h"
-#include "GeckoProfiler.h"
 #include "gfxConfig.h"
 #include "gfxPlatform.h"
 #include "gfxPrefs.h"
@@ -25,13 +24,14 @@
 #include "mozilla/layers/APZThreadUtils.h"
 #include "mozilla/layers/APZCTreeManager.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
+#include "mozilla/layers/CompositorManagerParent.h"
 #include "mozilla/layers/CompositorThread.h"
 #include "mozilla/layers/ImageBridgeParent.h"
 #include "mozilla/layers/LayerTreeOwnerTracker.h"
 #include "mozilla/layers/UiCompositorControllerParent.h"
+#include "mozilla/layers/MemoryReportingMLGPU.h"
 #include "mozilla/webrender/RenderThread.h"
 #include "nsDebugImpl.h"
-#include "nsExceptionHandler.h"
 #include "nsThreadManager.h"
 #include "prenv.h"
 #include "ProcessUtils.h"
@@ -41,9 +41,13 @@
 #if defined(XP_WIN)
 # include "mozilla/gfx/DeviceManagerDx.h"
 # include <process.h>
+# include <dwrite.h>
 #endif
 #ifdef MOZ_WIDGET_GTK
 # include <gtk/gtk.h>
+#endif
+#ifdef MOZ_GECKO_PROFILER
+#include "ChildProfilerController.h"
 #endif
 
 namespace mozilla {
@@ -101,6 +105,7 @@ GPUParent::Init(base::ProcessId aParentPid,
   gfxPlatform::InitNullMetadata();
   // Ensure our Factory is initialised, mainly for gfx logging to work.
   gfxPlatform::InitMoz2DLogging();
+  mlg::InitializeMemoryReporters();
 #if defined(XP_WIN)
   DeviceManagerDx::Init();
 #endif
@@ -124,9 +129,10 @@ void
 GPUParent::NotifyDeviceReset()
 {
   if (!NS_IsMainThread()) {
-    NS_DispatchToMainThread(NS_NewRunnableFunction([] () -> void {
-      GPUParent::GetSingleton()->NotifyDeviceReset();
-    }));
+    NS_DispatchToMainThread(
+      NS_NewRunnableFunction("gfx::GPUParent::NotifyDeviceReset", []() -> void {
+        GPUParent::GetSingleton()->NotifyDeviceReset();
+      }));
     return;
   }
 
@@ -165,6 +171,7 @@ GPUParent::RecvInit(nsTArray<GfxPrefSetting>&& prefs,
   gfxConfig::Inherit(Feature::HW_COMPOSITING, devicePrefs.hwCompositing());
   gfxConfig::Inherit(Feature::D3D11_COMPOSITING, devicePrefs.d3d11Compositing());
   gfxConfig::Inherit(Feature::OPENGL_COMPOSITING, devicePrefs.oglCompositing());
+  gfxConfig::Inherit(Feature::ADVANCED_LAYERS, devicePrefs.advancedLayers());
   gfxConfig::Inherit(Feature::DIRECT2D, devicePrefs.useD2D1());
 
   for (const LayerTreeIdMapping& map : aMappings) {
@@ -174,6 +181,9 @@ GPUParent::RecvInit(nsTArray<GfxPrefSetting>&& prefs,
 #if defined(XP_WIN)
   if (gfxConfig::IsEnabled(Feature::D3D11_COMPOSITING)) {
     DeviceManagerDx::Get()->CreateCompositorDevices();
+  }
+  if (gfxVars::UseWebRender()) {
+    Factory::EnsureDWriteFactory();
   }
 #endif
 
@@ -213,6 +223,13 @@ GPUParent::RecvInit(nsTArray<GfxPrefSetting>&& prefs,
 }
 
 mozilla::ipc::IPCResult
+GPUParent::RecvInitCompositorManager(Endpoint<PCompositorManagerParent>&& aEndpoint)
+{
+  CompositorManagerParent::Create(Move(aEndpoint));
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
 GPUParent::RecvInitVsyncBridge(Endpoint<PVsyncBridgeParent>&& aVsyncEndpoint)
 {
   mVsyncBridge = VsyncBridgeParent::Start(Move(aVsyncEndpoint));
@@ -234,9 +251,18 @@ GPUParent::RecvInitVRManager(Endpoint<PVRManagerParent>&& aEndpoint)
 }
 
 mozilla::ipc::IPCResult
-GPUParent::RecvInitUiCompositorController(Endpoint<PUiCompositorControllerParent>&& aEndpoint)
+GPUParent::RecvInitUiCompositorController(const uint64_t& aRootLayerTreeId, Endpoint<PUiCompositorControllerParent>&& aEndpoint)
 {
-  UiCompositorControllerParent::Start(Move(aEndpoint));
+  UiCompositorControllerParent::Start(aRootLayerTreeId, Move(aEndpoint));
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+GPUParent::RecvInitProfiler(Endpoint<PProfilerChild>&& aEndpoint)
+{
+#ifdef MOZ_GECKO_PROFILER
+  mProfilerController = ChildProfilerController::Create(Move(aEndpoint));
+#endif
   return IPC_OK();
 }
 
@@ -281,6 +307,7 @@ GPUParent::RecvGetDeviceStatus(GPUDeviceData* aOut)
 {
   CopyFeatureChange(Feature::D3D11_COMPOSITING, &aOut->d3d11Compositing());
   CopyFeatureChange(Feature::OPENGL_COMPOSITING, &aOut->oglCompositing());
+  CopyFeatureChange(Feature::ADVANCED_LAYERS, &aOut->advancedLayers());
 
 #if defined(XP_WIN)
   if (DeviceManagerDx* dm = DeviceManagerDx::Get()) {
@@ -295,37 +322,10 @@ GPUParent::RecvGetDeviceStatus(GPUDeviceData* aOut)
   return IPC_OK();
 }
 
-static void
-OpenParent(RefPtr<CompositorBridgeParent> aParent,
-           Endpoint<PCompositorBridgeParent>&& aEndpoint)
-{
-  if (!aParent->Bind(Move(aEndpoint))) {
-    MOZ_CRASH("Failed to bind compositor");
-  }
-}
-
 mozilla::ipc::IPCResult
-GPUParent::RecvNewWidgetCompositor(Endpoint<layers::PCompositorBridgeParent>&& aEndpoint,
-                                   const CSSToLayoutDeviceScale& aScale,
-                                   const TimeDuration& aVsyncRate,
-                                   const CompositorOptions& aOptions,
-                                   const bool& aUseExternalSurfaceSize,
-                                   const IntSize& aSurfaceSize)
+GPUParent::RecvNewContentCompositorManager(Endpoint<PCompositorManagerParent>&& aEndpoint)
 {
-  RefPtr<CompositorBridgeParent> cbp =
-    new CompositorBridgeParent(aScale, aVsyncRate, aOptions, aUseExternalSurfaceSize, aSurfaceSize);
-
-  MessageLoop* loop = CompositorThreadHolder::Loop();
-  loop->PostTask(NewRunnableFunction(OpenParent, cbp, Move(aEndpoint)));
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-GPUParent::RecvNewContentCompositorBridge(Endpoint<PCompositorBridgeParent>&& aEndpoint)
-{
-  if (!CompositorBridgeParent::CreateForContent(Move(aEndpoint))) {
-    return IPC_FAIL_NO_REASON(this);
-  }
+  CompositorManagerParent::Create(Move(aEndpoint));
   return IPC_OK();
 }
 
@@ -383,58 +383,6 @@ GPUParent::RecvNotifyGpuObservers(const nsCString& aTopic)
 }
 
 mozilla::ipc::IPCResult
-GPUParent::RecvStartProfiler(const ProfilerInitParams& params)
-{
-  nsTArray<const char*> featureArray;
-  for (size_t i = 0; i < params.features().Length(); ++i) {
-    featureArray.AppendElement(params.features()[i].get());
-  }
-
-  nsTArray<const char*> threadNameFilterArray;
-  for (size_t i = 0; i < params.threadFilters().Length(); ++i) {
-    threadNameFilterArray.AppendElement(params.threadFilters()[i].get());
-  }
-  profiler_start(params.entries(), params.interval(),
-                 featureArray.Elements(), featureArray.Length(),
-                 threadNameFilterArray.Elements(),
-                 threadNameFilterArray.Length());
-
- return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-GPUParent::RecvStopProfiler()
-{
-  profiler_stop();
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-GPUParent::RecvPauseProfiler(const bool& aPause)
-{
-  if (aPause) {
-    profiler_pause();
-  } else {
-    profiler_resume();
-  }
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
-GPUParent::RecvGatherProfile()
-{
-  nsCString profileCString;
-  UniquePtr<char[]> profile = profiler_get_profile();
-  if (profile) {
-    profileCString = nsDependentCString(profile.get());
-  }
-
-  Unused << SendProfile(profileCString);
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult
 GPUParent::RecvRequestMemoryReport(const uint32_t& aGeneration,
                                    const bool& aAnonymize,
                                    const bool& aMinimizeMemoryUsage,
@@ -463,6 +411,13 @@ GPUParent::ActorDestroy(ActorDestroyReason aWhy)
   // No point in going through XPCOM shutdown because we don't keep persistent
   // state.
   ProcessChild::QuickExit();
+#endif
+
+#ifdef MOZ_GECKO_PROFILER
+  if (mProfilerController) {
+    mProfilerController->Shutdown();
+    mProfilerController = nullptr;
+  }
 #endif
 
   if (mVsyncBridge) {

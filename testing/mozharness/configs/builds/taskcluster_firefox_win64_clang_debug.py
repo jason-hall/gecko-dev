@@ -22,29 +22,16 @@ config = {
         'check-test',
     ],
     'exes': {
-        'python2.7': sys.executable,
-        'make': [
-            sys.executable,
-            os.path.join(
-                os.getcwd(), 'build', 'src', 'build', 'pymake', 'make.py'
-            )
-        ],
         'virtualenv': [
             sys.executable,
             os.path.join(
-                os.getcwd(), 'build', 'src', 'python', 'virtualenv', 'virtualenv.py'
+                os.getcwd(), 'build', 'src', 'third_party', 'python', 'virtualenv', 'virtualenv.py'
             )
-        ],
-        'mach-build': [
-            os.path.join(os.environ['MOZILLABUILD'], 'msys', 'bin', 'bash.exe'),
-            os.path.join(os.getcwd(), 'build', 'src', 'mach'),
-            '--log-no-times', 'build', '-v'
         ],
     },
     'app_ini_path': '%(obj_dir)s/dist/bin/application.ini',
     # decides whether we want to use moz_sign_cmd in env
     'enable_signing': True,
-    'enable_ccache': False,
     'vcs_share_base': os.path.join('y:', os.sep, 'hg-shared'),
     'objdir': 'obj-firefox',
     'tooltool_script': [
@@ -54,6 +41,7 @@ config = {
     'tooltool_bootstrap': 'setup.sh',
     'enable_count_ctors': False,
     'max_build_output_timeout': 60 * 80,
+    'perfherder_extra_options': ['static-analysis'],
     #########################################################################
 
 
@@ -66,7 +54,6 @@ config = {
     'publish_nightly_en_US_routes': True,
     'env': {
         'HG_SHARE_BASE_DIR': os.path.join('y:', os.sep, 'hg-shared'),
-        'MOZ_AUTOMATION': '1',
         'MOZ_CRASHREPORTER_NO_REPORT': '1',
         'MOZ_OBJDIR': 'obj-firefox',
         'PDBSTR_PATH': 'C:/Program Files (x86)/Windows Kits/10/Debuggers/x64/srcsrv/pdbstr.exe',
@@ -82,10 +69,9 @@ config = {
     },
     "check_test_env": {
         'MINIDUMP_STACKWALK': '%(abs_tools_dir)s\\breakpad\\win64\\minidump_stackwalk.exe',
-        'MINIDUMP_SAVE_PATH': '%(base_work_dir)s\\minidumps',
+        'MINIDUMP_SAVE_PATH': os.path.join(os.getcwd(), 'public', 'build'),
     },
-    'enable_pymake': True,
     'src_mozconfig': 'browser\\config\\mozconfigs\\win64\\clang-debug',
-    'tooltool_manifest_src': 'browser\\config\\tooltool-manifests\\win64\\clang.manifest',
+    'artifact_flag_build_variant_in_try': None,
     #########################################################################
 }

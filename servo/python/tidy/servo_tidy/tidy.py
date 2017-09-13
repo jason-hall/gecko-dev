@@ -58,6 +58,7 @@ FILE_PATTERNS_TO_IGNORE = ["*.#*", "*.pyc", "fake-ld.sh"]
 SPEC_BASE_PATH = "components/script/dom/"
 
 WEBIDL_STANDARDS = [
+    "//www.khronos.org/registry/webgl/extensions",
     "//www.khronos.org/registry/webgl/specs",
     "//developer.mozilla.org/en-US/docs/Web/API",
     "//dev.w3.org/2006/webapi",
@@ -67,6 +68,7 @@ WEBIDL_STANDARDS = [
     "//dom.spec.whatwg.org",
     "//domparsing.spec.whatwg.org",
     "//drafts.csswg.org",
+    "//drafts.css-houdini.org",
     "//drafts.fxtf.org",
     "//encoding.spec.whatwg.org",
     "//fetch.spec.whatwg.org",
@@ -77,6 +79,7 @@ WEBIDL_STANDARDS = [
     "//heycam.github.io/webidl",
     "//webbluetoothcg.github.io/web-bluetooth/",
     "//svgwg.org/svg2-draft",
+    "//wicg.github.io",
     # Not a URL
     "// This interface is entirely internal to Servo, and should not be" +
     " accessible to\n// web pages."
@@ -446,10 +449,13 @@ def check_rust(file_name, lines):
 
     prev_use = None
     prev_open_brace = False
+    multi_line_string = False
     current_indent = 0
     prev_crate = {}
     prev_mod = {}
     prev_feature_name = ""
+    indent = 0
+    prev_indent = 0
 
     decl_message = "{} is not in alphabetical order"
     decl_expected = "\n\t\033[93mexpected: {}\033[0m"
@@ -458,6 +464,18 @@ def check_rust(file_name, lines):
     for idx, original_line in enumerate(lines):
         # simplify the analysis
         line = original_line.strip()
+        prev_indent = indent
+        indent = len(original_line) - len(line)
+
+        # Hack for components/selectors/build.rs
+        if multi_line_string:
+            if line.startswith('"#'):
+                multi_line_string = False
+            else:
+                continue
+        if line.endswith('r#"'):
+            multi_line_string = True
+
         is_attribute = re.search(r"#\[.*\]", line)
         is_comment = re.search(r"^//|^/\*|^\*", line)
 
@@ -567,6 +585,12 @@ def check_rust(file_name, lines):
             # -> () is unnecessary
             (r"-> \(\)", "encountered function signature with -> ()", no_filter),
         ]
+        keywords = ["if", "let", "mut", "extern", "as", "impl", "fn", "struct", "enum", "pub", "mod",
+                    "use", "in", "ref", "type", "where", "trait"]
+        extra_space_after = lambda key: (r"(?<![A-Za-z0-9\-_]){key}  ".format(key=key),
+                                         "extra space after {key}".format(key=key),
+                                         lambda match, line: not is_attribute)
+        regex_rules.extend(map(extra_space_after, keywords))
 
         for pattern, message, filter_func in regex_rules:
             for match in re.finditer(pattern, line):
@@ -577,11 +601,17 @@ def check_rust(file_name, lines):
             yield (idx + 1, "found an empty line following a {")
         prev_open_brace = line.endswith("{")
 
+        # ensure a line starting with { or } has a number of leading spaces that is a multiple of 4
+        if line.startswith(("{", "}")):
+            match = re.match(r"(?: {4})* {1,3}([{}])", original_line)
+            if match:
+                if indent != prev_indent - 4:
+                    yield (idx + 1, "space before {} is not a multiple of 4".format(match.group(1)))
+
         # check alphabetical order of extern crates
         if line.startswith("extern crate "):
             # strip "extern crate " from the begin and ";" from the end
             crate_name = line[13:-1]
-            indent = len(original_line) - len(line)
             if indent not in prev_crate:
                 prev_crate[indent] = ""
             if prev_crate[indent] > crate_name:
@@ -616,7 +646,6 @@ def check_rust(file_name, lines):
         # into a single import block
         if line.startswith("use "):
             import_block = True
-            indent = len(original_line) - len(line)
             if not line.endswith(";") and '{' in line:
                 yield (idx + 1, "use statement spans multiple lines")
             if '{ ' in line:
@@ -645,7 +674,6 @@ def check_rust(file_name, lines):
 
         # modules must be in the same line and alphabetically sorted
         if line.startswith("mod ") or line.startswith("pub mod "):
-            indent = len(original_line) - len(line)
             # strip /(pub )?mod/ from the left and ";" from the right
             mod = line[4:-1] if line.startswith("mod ") else line[8:-1]
 
@@ -663,6 +691,19 @@ def check_rust(file_name, lines):
         else:
             # we now erase previous entries
             prev_mod = {}
+
+        # derivable traits should be alphabetically ordered
+        if is_attribute:
+            # match the derivable traits filtering out macro expansions
+            match = re.search(r"#\[derive\(([a-zA-Z, ]*)", line)
+            if match:
+                derives = map(lambda w: w.strip(), match.group(1).split(','))
+                # sort, compare and report
+                sorted_derives = sorted(derives)
+                if sorted_derives != derives:
+                    yield(idx + 1, decl_message.format("derivable traits list")
+                              + decl_expected.format(", ".join(sorted_derives))
+                              + decl_found.format(", ".join(derives)))
 
 
 # Avoid flagging <Item=Foo> constructs
@@ -807,8 +848,8 @@ def check_spec(file_name, lines):
     # Pattern representing a line with comment containing a spec link
     link_patt = re.compile("^\s*///? https://.+$")
 
-    # Pattern representing a line with comment
-    comment_patt = re.compile("^\s*///?.+$")
+    # Pattern representing a line with comment or attribute
+    comment_patt = re.compile("^\s*(///?.+|#\[.+\])$")
 
     brace_count = 0
     in_impl = False
@@ -830,12 +871,11 @@ def check_spec(file_name, lines):
                         # No more comments exist above, yield warning
                         yield (idx + 1, "method declared in webidl is missing a comment with a specification link")
                         break
-            if '{' in line and in_impl:
-                brace_count += 1
-            if '}' in line and in_impl:
-                if brace_count == 1:
+            if in_impl:
+                brace_count += line.count('{')
+                brace_count -= line.count('}')
+                if brace_count < 1:
                     break
-                brace_count -= 1
 
 
 def check_config_file(config_file, print_text=True):
@@ -1051,21 +1091,6 @@ def run_lint_scripts(only_changed_files=False, progress=True, stylo=False):
             yield error
 
 
-def check_commits(path='.'):
-    """Gets all commits since the last merge."""
-    args = ['git', 'log', '-n1', '--merges', '--format=%H']
-    last_merge = subprocess.check_output(args, cwd=path).strip()
-    args = ['git', 'log', '{}..HEAD'.format(last_merge), '--format=%s']
-    commits = subprocess.check_output(args, cwd=path).lower().splitlines()
-
-    for commit in commits:
-        # .split() to only match entire words
-        if 'wip' in commit.split():
-            yield ('.', 0, 'no commits should contain WIP')
-
-    raise StopIteration
-
-
 def scan(only_changed_files=False, progress=True, stylo=False):
     # check config file for errors
     config_errors = check_config_file(CONFIG_FILE_PATH)
@@ -1081,11 +1106,9 @@ def scan(only_changed_files=False, progress=True, stylo=False):
     dep_license_errors = check_dep_license_errors(get_dep_toml_files(only_changed_files), progress)
     # other lint checks
     lint_errors = run_lint_scripts(only_changed_files, progress, stylo=stylo)
-    # check commits for WIP
-    commit_errors = [] if stylo else check_commits()
     # chain all the iterators
     errors = itertools.chain(config_errors, directory_errors, lint_errors,
-                             file_errors, dep_license_errors, commit_errors)
+                             file_errors, dep_license_errors)
 
     error = None
     for error in errors:

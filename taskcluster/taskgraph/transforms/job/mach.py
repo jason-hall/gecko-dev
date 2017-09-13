@@ -20,12 +20,6 @@ mach_schema = Schema({
 
     # The mach command (omitting `./mach`) to run
     Required('mach'): basestring,
-
-    # Whether the job requires a build artifact or not. If True, the task
-    # will depend on a build task and run-task will download and set up the
-    # installer. Build labels are determined by the `dependent-build-platforms`
-    # config in kind.yml.
-    Required('requires-build', default=False): bool,
 })
 
 
@@ -35,8 +29,9 @@ def docker_worker_mach(config, job, taskdesc):
     run = job['run']
 
     # defer to the run_task implementation
-    run['command'] = 'cd ~/checkouts/gecko && ./mach ' + run['mach']
+    run['command'] = 'cd /builds/worker/checkouts/gecko && ./mach ' + run['mach']
     run['checkout'] = True
+    run['sparse-profile'] = None
     del run['mach']
     if job['worker']['implementation'] == 'docker-worker':
         docker_worker_run_task(config, job, taskdesc)

@@ -36,11 +36,13 @@ interfaces = [
     'svg',
     'smil',
     'push',
+    'payments',
 ]
 
 DIRS += ['interfaces/' + i for i in interfaces]
 
 DIRS += [
+    'abort',
     'animation',
     'base',
     'bindings',
@@ -49,6 +51,7 @@ DIRS += [
     'cache',
     'canvas',
     'commandhandler',
+    'credentialmanagement',
     'crypto',
     'encoding',
     'events',
@@ -104,6 +107,8 @@ DIRS += [
     'webbrowserpersist',
     'xhr',
     'worklet',
+    'script',
+    'payments',
 ]
 
 if CONFIG['OS_ARCH'] == 'WINNT':
@@ -119,6 +124,6 @@ TEST_DIRS += [
     'imptests',
 ]
 
-if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('gtk2', 'gtk3', 'cocoa', 'windows', 'android'):
+if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('gtk2', 'gtk3', 'cocoa', 'windows'):
     TEST_DIRS += ['plugins/test']
 

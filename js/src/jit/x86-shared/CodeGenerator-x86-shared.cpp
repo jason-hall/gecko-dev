@@ -363,7 +363,6 @@ CodeGeneratorX86Shared::visitWasmSelect(LWasmSelect* ins)
     }
 
     masm.bind(&done);
-    return;
 }
 
 void
@@ -1871,10 +1870,10 @@ CodeGeneratorX86Shared::emitTableSwitchDispatch(MTableSwitch* mir, Register inde
 
     // Compute the position where a pointer to the right case stands.
     masm.mov(ool->jumpLabel()->patchAt(), base);
-    Operand pointer = Operand(base, index, ScalePointer);
+    BaseIndex pointer(base, index, ScalePointer);
 
     // Jump to the right case
-    masm.jmp(pointer);
+    masm.branchToComputedAddress(pointer);
 }
 
 void
@@ -2479,7 +2478,8 @@ CodeGeneratorX86Shared::visitFloat32x4ToInt32x4(LFloat32x4ToInt32x4* ins)
 
     masm.convertFloat32x4ToInt32x4(in, out);
 
-    auto* ool = new(alloc()) OutOfLineSimdFloatToIntCheck(temp, in, ins, ins->mir()->trapOffset());
+    auto* ool = new(alloc()) OutOfLineSimdFloatToIntCheck(temp, in, ins,
+                                                          ins->mir()->bytecodeOffset());
     addOutOfLineCode(ool, ins->mir());
 
     static const SimdConstant InvalidResult = SimdConstant::SplatX4(int32_t(-2147483648));
@@ -2962,8 +2962,10 @@ CodeGeneratorX86Shared::visitSimdAllTrue(LSimdAllTrue* ins)
     FloatRegister input = ToFloatRegister(ins->input());
     Register output = ToRegister(ins->output());
 
-    masm.vmovmskps(input, output);
-    masm.cmp32(output, Imm32(0xf));
+    // We know that the input lanes are boolean, so they are either 0 or -1.
+    // The all-true vector has all 128 bits set, no matter the lane geometry.
+    masm.vpmovmskb(input, output);
+    masm.cmp32(output, Imm32(0xffff));
     masm.emitSet(Assembler::Zero, output);
 }
 
@@ -2973,7 +2975,7 @@ CodeGeneratorX86Shared::visitSimdAnyTrue(LSimdAnyTrue* ins)
     FloatRegister input = ToFloatRegister(ins->input());
     Register output = ToRegister(ins->output());
 
-    masm.vmovmskps(input, output);
+    masm.vpmovmskb(input, output);
     masm.cmp32(output, Imm32(0x0));
     masm.emitSet(Assembler::NonZero, output);
 }
@@ -4596,7 +4598,7 @@ CodeGeneratorX86Shared::visitOutOfLineWasmTruncateCheck(OutOfLineWasmTruncateChe
     MIRType toType = ool->toType();
     Label* oolRejoin = ool->rejoin();
     bool isUnsigned = ool->isUnsigned();
-    wasm::TrapOffset off = ool->trapOffset();
+    wasm::BytecodeOffset off = ool->bytecodeOffset();
 
     if (fromType == MIRType::Float32) {
         if (toType == MIRType::Int32)

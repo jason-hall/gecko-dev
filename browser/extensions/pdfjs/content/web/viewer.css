@@ -201,6 +201,7 @@
 .annotationLayer .underlineAnnotation,
 .annotationLayer .squigglyAnnotation,
 .annotationLayer .strikeoutAnnotation,
+.annotationLayer .lineAnnotation svg line,
 .annotationLayer .fileAttachmentAnnotation {
   cursor: pointer;
 }
@@ -239,6 +240,10 @@
 .pdfViewer .page canvas {
   margin: 0;
   display: block;
+}
+
+.pdfViewer .page canvas[hidden] {
+  display: none;
 }
 
 .pdfViewer .page .loadingIcon {
@@ -1168,6 +1173,10 @@ html[dir="rtl"] .secondaryToolbarButton > span {
   content: url(images/secondaryToolbarButton-rotateCw.png);
 }
 
+.secondaryToolbarButton.selectTool::before {
+  content: url(images/secondaryToolbarButton-selectTool.png);
+}
+
 .secondaryToolbarButton.handTool::before {
   content: url(images/secondaryToolbarButton-handTool.png);
 }
@@ -1871,6 +1880,10 @@ html[dir='rtl'] #documentPropertiesOverlay .row > * {
 
   .secondaryToolbarButton.rotateCw::before {
     content: url(images/secondaryToolbarButton-rotateCw@2x.png);
+  }
+
+  .secondaryToolbarButton.selectTool::before {
+    content: url(images/secondaryToolbarButton-selectTool@2x.png);
   }
 
   .secondaryToolbarButton.handTool::before {

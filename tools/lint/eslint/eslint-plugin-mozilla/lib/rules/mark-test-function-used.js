@@ -22,15 +22,15 @@ module.exports = function(context) {
   // ---------------------------------------------------------------------------
 
   return {
-    Program: function() {
-      if (helpers.getTestType(context) == "browser") {
+    Program() {
+      let testType = helpers.getTestType(context);
+      if (testType == "browser") {
         context.markVariableAsUsed("test");
         return;
       }
 
-      if (helpers.getTestType(context) == "xpcshell") {
+      if (testType == "xpcshell") {
         context.markVariableAsUsed("run_test");
-        return;
       }
     }
   };

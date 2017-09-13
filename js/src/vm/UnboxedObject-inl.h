@@ -84,6 +84,7 @@ SetUnboxedValueNoTypeChange(JSObject* unboxedObject,
 #ifndef OMR // OMRTODO: Writebarriers
         if (IsInsideNursery(obj) && !IsInsideNursery(unboxedObject))
             unboxedObject->zone()->group()->storeBuffer().putWholeCell(unboxedObject);
+
         if (preBarrier)
             JSObject::writeBarrierPre(*np);
 #endif // ! OMR Writebarriers

@@ -17,6 +17,7 @@
 #include "mozilla/dom/ScreenOrientation.h"  // for ScreenOrientation
 #include "mozilla/ipc/SharedMemory.h"   // for SharedMemory, etc
 #include "mozilla/layers/CompositableForwarder.h"
+#include "mozilla/layers/FocusTarget.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/TextureForwarder.h"
 #include "mozilla/layers/CompositorTypes.h"  // for OpenMode, etc
@@ -64,8 +65,9 @@ private:
 class ActiveResourceTracker : public nsExpirationTracker<ActiveResource, 3>
 {
 public:
-  ActiveResourceTracker(uint32_t aExpirationCycle, const char* aName)
-  : nsExpirationTracker(aExpirationCycle, aName)
+  ActiveResourceTracker(uint32_t aExpirationCycle, const char* aName,
+                        nsIEventTarget* aEventTarget)
+  : nsExpirationTracker(aExpirationCycle, aName, aEventTarget)
   {}
 
   virtual void NotifyExpired(ActiveResource* aResource) override
@@ -318,6 +320,10 @@ public:
   bool HasShadowManager() const { return !!mShadowManager; }
   LayerTransactionChild* GetShadowManager() const { return mShadowManager.get(); }
 
+  // Send a synchronous message asking the LayerTransactionParent in the
+  // compositor to shutdown.
+  void SynchronouslyShutdown();
+
   virtual void WindowOverlayChanged() { mWindowOverlayChanged = true; }
 
   /**
@@ -366,7 +372,10 @@ public:
    */
   void SetIsFirstPaint() { mIsFirstPaint = true; }
 
-  void SetPaintSyncId(int32_t aSyncId) { mPaintSyncId = aSyncId; }
+  /**
+   * Set the current focus target to be sent with the next paint.
+   */
+  void SetFocusTarget(const FocusTarget& aFocusTarget) { mFocusTarget = aFocusTarget; }
 
   void SetLayerObserverEpoch(uint64_t aLayerObserverEpoch);
 
@@ -396,6 +405,8 @@ public:
     return mPaintTiming;
   }
 
+  ShadowLayerForwarder* AsLayerForwarder() override { return this; }
+
   // Returns true if aSurface wraps a Shmem.
   static bool IsShmem(SurfaceDescriptor* aSurface);
 
@@ -413,6 +424,11 @@ public:
   LayersIPCActor* GetLayersIPCActor() override { return this; }
 
   ActiveResourceTracker& GetActiveResourceTracker() { return *mActiveResourceTracker.get(); }
+
+  CompositorBridgeChild* GetCompositorBridgeChild();
+
+  nsIEventTarget* GetEventTarget() { return mEventTarget; };
+
 protected:
   virtual ~ShadowLayerForwarder();
 
@@ -428,8 +444,6 @@ protected:
 
   bool InWorkerThread();
 
-  CompositorBridgeChild* GetCompositorBridgeChild();
-
   RefPtr<LayerTransactionChild> mShadowManager;
   RefPtr<CompositorBridgeChild> mCompositorBridgeChild;
 
@@ -440,13 +454,19 @@ private:
   MessageLoop* mMessageLoop;
   DiagnosticTypes mDiagnosticTypes;
   bool mIsFirstPaint;
+  FocusTarget mFocusTarget;
   bool mWindowOverlayChanged;
-  int32_t mPaintSyncId;
   InfallibleTArray<PluginWindowData> mPluginWindowData;
   UniquePtr<ActiveResourceTracker> mActiveResourceTracker;
   uint64_t mNextLayerHandle;
   nsDataHashtable<nsUint64HashKey, CompositableClient*> mCompositables;
   PaintTiming mPaintTiming;
+  /**
+   * ShadowLayerForwarder might dispatch tasks to main while puppet widget and
+   * tabChild don't exist anymore; therefore we hold the event target since its
+   *  lifecycle is independent of these objects.
+   */
+  nsCOMPtr<nsIEventTarget> mEventTarget;
 };
 
 class CompositableClient;

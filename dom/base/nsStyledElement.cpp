@@ -40,13 +40,28 @@ nsStyledElement::ParseAttribute(int32_t aNamespaceID,
                                 nsAttrValue& aResult)
 {
   if (aAttribute == nsGkAtoms::style && aNamespaceID == kNameSpaceID_None) {
-    SetMayHaveStyle();
     ParseStyleAttribute(aValue, aResult, false);
     return true;
   }
 
   return nsStyledElementBase::ParseAttribute(aNamespaceID, aAttribute, aValue,
                                              aResult);
+}
+
+nsresult
+nsStyledElement::BeforeSetAttr(int32_t aNamespaceID, nsIAtom* aName,
+                               const nsAttrValueOrString* aValue, bool aNotify)
+{
+  if (aNamespaceID == kNameSpaceID_None) {
+    if (aName == nsGkAtoms::style) {
+      if (aValue) {
+        SetMayHaveStyle();
+      }
+    }
+  }
+
+  return nsStyledElementBase::BeforeSetAttr(aNamespaceID, aName, aValue,
+                                            aNotify);
 }
 
 nsresult
@@ -57,6 +72,7 @@ nsStyledElement::SetInlineStyleDeclaration(DeclarationBlock* aDeclaration,
   SetMayHaveStyle();
   bool modification = false;
   nsAttrValue oldValue;
+  bool oldValueSet = false;
 
   bool hasListeners = aNotify &&
     nsContentUtils::HasMutationListeners(this,
@@ -74,6 +90,7 @@ nsStyledElement::SetInlineStyleDeclaration(DeclarationBlock* aDeclaration,
                            oldValueStr);
     if (modification) {
       oldValue.SetTo(oldValueStr);
+      oldValueSet = true;
     }
   }
   else if (aNotify && IsInUncomposedDoc()) {
@@ -90,9 +107,9 @@ nsStyledElement::SetInlineStyleDeclaration(DeclarationBlock* aDeclaration,
   nsIDocument* document = GetComposedDoc();
   mozAutoDocUpdate updateBatch(document, UPDATE_CONTENT_MODEL, aNotify);
   return SetAttrAndNotify(kNameSpaceID_None, nsGkAtoms::style, nullptr,
-                          oldValue, attrValue, modType, hasListeners,
-                          aNotify, kDontCallAfterSetAttr, document,
-                          updateBatch);
+                          oldValueSet ? &oldValue : nullptr, attrValue, modType,
+                          hasListeners, aNotify, kDontCallAfterSetAttr,
+                          document, updateBatch);
 }
 
 // ---------------------------------------------------------------
@@ -128,10 +145,12 @@ nsStyledElement::ReparseStyleAttribute(bool aForceInDataDoc, bool aForceIfAlread
     ParseStyleAttribute(stringValue, attrValue, aForceInDataDoc);
     // Don't bother going through SetInlineStyleDeclaration; we don't
     // want to fire off mutation events or document notifications anyway
-    nsresult rv = mAttrsAndChildren.SetAndSwapAttr(nsGkAtoms::style, attrValue);
+    bool oldValueSet;
+    nsresult rv = mAttrsAndChildren.SetAndSwapAttr(nsGkAtoms::style, attrValue,
+                                                   &oldValueSet);
     NS_ENSURE_SUCCESS(rv, rv);
   }
-  
+
   return NS_OK;
 }
 

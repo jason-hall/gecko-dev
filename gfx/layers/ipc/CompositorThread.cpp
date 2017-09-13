@@ -7,6 +7,7 @@
 #include "MainThreadUtils.h"
 #include "nsThreadUtils.h"
 #include "CompositorBridgeParent.h"
+#include "mozilla/layers/ImageBridgeParent.h"
 #include "mozilla/media/MediaSystemResourceService.h"
 
 namespace mozilla {
@@ -105,6 +106,7 @@ CompositorThreadHolder::CreateCompositorThread()
   }
 
   CompositorBridgeParent::Setup();
+  ImageBridgeParent::Setup();
 
   return compositorThread;
 }
@@ -132,9 +134,7 @@ CompositorThreadHolder::Shutdown()
 
   // No locking is needed around sFinishedCompositorShutDown because it is only
   // ever accessed on the main thread.
-  while (!sFinishedCompositorShutDown) {
-    NS_ProcessNextEvent(nullptr, true);
-  }
+  SpinEventLoopUntil([&]() { return sFinishedCompositorShutDown; });
 
   CompositorBridgeParent::FinishShutdown();
 }

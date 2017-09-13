@@ -7,22 +7,16 @@ mozlint-eslint:
         tier: 1
     worker-type: aws-provisioner-v1/gecko-t-linux-xlarge
     worker:
-        implementation: docker-worker
         docker-image: {in-tree: "lint"}
         max-run-time: 1800
     run:
         using: run-task
         command: >
-            cd /home/worker/checkouts/gecko/ &&
-            /build/tooltool.py fetch -m tools/lint/eslint/manifest.tt &&
-            tar xvfz eslint.tar.gz &&
-            rm eslint.tar.gz &&
+            cd /builds/worker/checkouts/gecko/ &&
+            cp -r /build/node_modules_eslint node_modules &&
             ln -s ../tools/lint/eslint/eslint-plugin-mozilla node_modules &&
             ln -s ../tools/lint/eslint/eslint-plugin-spidermonkey-js node_modules &&
             ./mach lint -l eslint -f treeherder --quiet
-    run-on-projects:
-        - integration
-        - release
     when:
         files-changed:
             # Files that are likely audited.
@@ -42,7 +36,7 @@ mozlint-eslint:
             - 'python/mozlint/**'
             - 'tools/lint/**'
 
-mozlint-flake8:
+mozlint-py-flake8:
     description: flake8 run over the gecko codebase
     platform: lint/opt
     treeherder:
@@ -51,19 +45,57 @@ mozlint-flake8:
         tier: 1
     worker-type: aws-provisioner-v1/gecko-t-linux-xlarge
     worker:
-        implementation: docker-worker
         docker-image: {in-tree: "lint"}
         max-run-time: 1800
     run:
         using: mach
         mach: lint -l flake8 -f treeherder
-    run-on-projects:
-        - integration
-        - release
     when:
         files-changed:
             - '**/*.py'
             - '**/.flake8'
+            - 'python/mozlint/**'
+            - 'tools/lint/**'
+
+mozlint-yaml:
+    description: yamllint run over the gecko codebase
+    platform: lint/opt
+    treeherder:
+        symbol: yaml
+        kind: test
+        tier: 1
+    worker-type: aws-provisioner-v1/gecko-t-linux-xlarge
+    worker:
+        docker-image: {in-tree: "lint"}
+        max-run-time: 1800
+    run:
+        using: mach
+        mach: lint -l yaml -f treeherder
+    when:
+        files-changed:
+            - '**/*.yml'
+            - '**/*.yaml'
+            - '**/.ymllint'
+            - 'python/mozlint/**'
+            - 'tools/lint/**'
+
+mozlint-py-compat:
+    description: lint for python 2/3 compatibility issues
+    platform: lint/opt
+    treeherder:
+        symbol: py-compat
+        kind: test
+        tier: 1
+    worker-type: aws-provisioner-v1/gecko-t-linux-xlarge
+    worker:
+        docker-image: {in-tree: "lint"}
+        max-run-time: 1800
+    run:
+        using: mach
+        mach: lint -l py2 -l py3 -f treeherder
+    when:
+        files-changed:
+            - '**/*.py'
             - 'python/mozlint/**'
             - 'tools/lint/**'
 
@@ -76,15 +108,11 @@ wptlint-gecko:
         tier: 1
     worker-type: aws-provisioner-v1/gecko-t-linux-xlarge
     worker:
-        implementation: docker-worker
         docker-image: {in-tree: "lint"}
         max-run-time: 1800
     run:
         using: mach
         mach: lint -l wpt -l wpt_manifest -f treeherder
-    run-on-projects:
-        - integration
-        - release
     when:
         files-changed:
             - 'testing/web-platform/tests/**'

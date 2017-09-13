@@ -193,14 +193,14 @@ void nsMenuBarX::ConstructFallbackNativeMenus()
     return;
   }
 
-  nsXPIDLString labelUTF16;
-  nsXPIDLString keyUTF16;
+  nsAutoString labelUTF16;
+  nsAutoString keyUTF16;
 
-  const char16_t* labelProp = u"quitMenuitem.label";
-  const char16_t* keyProp = u"quitMenuitem.key";
+  const char* labelProp = "quitMenuitem.label";
+  const char* keyProp = "quitMenuitem.key";
 
-  stringBundle->GetStringFromName(labelProp, getter_Copies(labelUTF16));
-  stringBundle->GetStringFromName(keyProp, getter_Copies(keyUTF16));
+  stringBundle->GetStringFromName(labelProp, labelUTF16);
+  stringBundle->GetStringFromName(keyProp, keyUTF16);
 
   NSString* labelStr = [NSString stringWithUTF8String:
                         NS_ConvertUTF16toUTF8(labelUTF16).get()];
@@ -525,6 +525,11 @@ void nsMenuBarX::ApplicationMenuOpened()
     }
     mNeedsRebuild = false;
   }
+}
+
+bool nsMenuBarX::PerformKeyEquivalent(NSEvent* theEvent)
+{
+  return [mNativeMenu performSuperKeyEquivalent:theEvent];
 }
 
 // Hide the item in the menu by setting the 'hidden' attribute. Returns it in |outHiddenNode| so
@@ -874,6 +879,11 @@ static BOOL gMenuItemsExecuteCommands = YES;
 
   // Return NO so that we can handle the event via NSView's "keyDown:".
   return NO;
+}
+
+- (BOOL)performSuperKeyEquivalent:(NSEvent*)theEvent
+{
+  return [super performKeyEquivalent:theEvent];
 }
 
 @end

@@ -2,8 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from contextlib import closing
 import sys
+import logging
 import os
+import signal
 import time
 import tempfile
 import traceback
@@ -11,6 +14,7 @@ import urllib2
 
 import mozdevice
 import mozinfo
+import mozprocess
 from automation import Automation
 from remoteautomation import RemoteAutomation, fennecLogcatFilters
 
@@ -58,8 +62,14 @@ class ReftestServer:
         self.scriptDir = scriptDir
         self.pidFile = options.pidFile
         self._httpdPath = os.path.abspath(options.httpdPath)
+        if options.remoteWebServer == "10.0.2.2":
+            # probably running an Android emulator and 10.0.2.2 will
+            # not be visible from host
+            shutdownServer = "127.0.0.1"
+        else:
+            shutdownServer = self.webServer
         self.shutdownURL = "http://%(server)s:%(port)s/server/shutdown" % {
-                           "server": self.webServer, "port": self.httpPort}
+                           "server": shutdownServer, "port": self.httpPort}
 
     def start(self):
         "Run the Refest server, returning the process ID of the server."
@@ -119,14 +129,16 @@ class ReftestServer:
     def stop(self):
         if hasattr(self, '_process'):
             try:
-                c = urllib2.urlopen(self.shutdownURL)
-                c.read()
-                c.close()
+                with closing(urllib2.urlopen(self.shutdownURL)) as c:
+                    c.read()
 
                 rtncode = self._process.poll()
                 if (rtncode is None):
                     self._process.terminate()
             except:
+                self.automation.log.info("Failed to shutdown server at %s" %
+                                         self.shutdownURL)
+                traceback.print_exc()
                 self._process.kill()
 
 
@@ -144,6 +156,7 @@ class RemoteReftest(RefTest):
         self.remoteProfile = options.remoteProfile
         self.remoteTestRoot = options.remoteTestRoot
         self.remoteLogFile = options.remoteLogFile
+        self.remoteCache = os.path.join(options.remoteTestRoot, "cache/")
         self.localLogName = options.localLogName
         self.pidFile = options.pidFile
         if self.automation.IS_DEBUG_BUILD:
@@ -152,6 +165,7 @@ class RemoteReftest(RefTest):
             self.SERVER_STARTUP_TIMEOUT = 90
         self.automation.deleteANRs()
         self.automation.deleteTombstones()
+        self._devicemanager.removeDir(self.remoteCache)
 
         self._populate_logger(options)
         outputHandler = OutputHandler(self.log, options.utilityPath, options.symbolsPath)
@@ -226,12 +240,44 @@ class RemoteReftest(RefTest):
     def stopWebServer(self, options):
         self.server.stop()
 
-    def createReftestProfile(self, options, manifest):
+    def killNamedProc(self, pname):
+        """ Kill processes matching the given command name """
+        self.log.info("Checking for %s processes..." % pname)
+
+        def _psInfo(line):
+            if pname in line:
+                self.log.info(line)
+        process = mozprocess.ProcessHandler(['ps', '-f'],
+                                            processOutputLine=_psInfo)
+        process.run()
+        process.wait()
+
+        def _psKill(line):
+            parts = line.split()
+            if len(parts) == 3 and parts[0].isdigit():
+                pid = int(parts[0])
+                if parts[2] == pname:
+                    self.log.info("killing %s with pid %d" % (pname, pid))
+                    try:
+                        os.kill(
+                            pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+                    except Exception as e:
+                        self.log.info("Failed to kill process %d: %s" %
+                                      (pid, str(e)))
+        process = mozprocess.ProcessHandler(['ps', '-o', 'pid,ppid,comm'],
+                                            processOutputLine=_psKill)
+        process.run()
+        process.wait()
+
+    def createReftestProfile(self, options, manifest, startAfter=None):
         profile = RefTest.createReftestProfile(self,
                                                options,
                                                manifest,
                                                server=options.remoteWebServer,
                                                port=options.httpPort)
+        if startAfter is not None:
+            print ("WARNING: Continuing after a crash is not supported for remote "
+                   "reftest yet.")
         profileDir = profile.profile
 
         prefs = {}
@@ -239,6 +285,8 @@ class RemoteReftest(RefTest):
         prefs["browser.firstrun.show.localepicker"] = False
         prefs["reftest.remote"] = True
         prefs["datareporting.policy.dataSubmissionPolicyBypassAcceptance"] = True
+        # move necko cache to a location that can be cleaned up
+        prefs["browser.cache.disk.parent_directory"] = self.remoteCache
 
         prefs["layout.css.devPixelsPerPx"] = "1.0"
         # Because Fennec is a little wacky (see bug 1156817) we need to load the
@@ -299,16 +347,16 @@ class RemoteReftest(RefTest):
                timeout=None, debuggerInfo=None,
                symbolsPath=None, options=None,
                valgrindPath=None, valgrindArgs=None, valgrindSuppFiles=None):
-        status = self.automation.runApp(None, env,
-                                        binary,
-                                        profile.profile,
-                                        cmdargs,
-                                        utilityPath=options.utilityPath,
-                                        xrePath=options.xrePath,
-                                        debuggerInfo=debuggerInfo,
-                                        symbolsPath=symbolsPath,
-                                        timeout=timeout)
-        return status
+        status, lastTestSeen = self.automation.runApp(None, env,
+                                                      binary,
+                                                      profile.profile,
+                                                      cmdargs,
+                                                      utilityPath=options.utilityPath,
+                                                      xrePath=options.xrePath,
+                                                      debuggerInfo=debuggerInfo,
+                                                      symbolsPath=symbolsPath,
+                                                      timeout=timeout)
+        return status, lastTestSeen
 
     def cleanup(self, profileDir):
         # Pull results back from device
@@ -319,6 +367,7 @@ class RemoteReftest(RefTest):
             print "WARNING: Unable to retrieve log file (%s) from remote " \
                 "device" % self.remoteLogFile
         self._devicemanager.removeDir(self.remoteProfile)
+        self._devicemanager.removeDir(self.remoteCache)
         self._devicemanager.removeDir(self.remoteTestRoot)
         RefTest.cleanup(self, profileDir)
         if (self.pidFile != ""):
@@ -340,6 +389,8 @@ def run_test_harness(parser, options):
     dm_args['adbPath'] = options.adb_path
     if not dm_args['host']:
         dm_args['deviceSerial'] = options.deviceSerial
+    if options.log_tbpl_level == 'debug' or options.log_mach_level == 'debug':
+        dm_args['logLevel'] = logging.DEBUG
 
     try:
         dm = mozdevice.DroidADB(**dm_args)
@@ -378,14 +429,23 @@ def run_test_harness(parser, options):
     # Hack in a symbolic link for jsreftest
     os.system("ln -s ../jsreftest " + str(os.path.join(SCRIPT_DIRECTORY, "jsreftest")))
 
+    # Despite our efforts to clean up servers started by this script, in practice
+    # we still see infrequent cases where a process is orphaned and interferes
+    # with future tests, typically because the old server is keeping the port in use.
+    # Try to avoid those failures by checking for and killing servers before
+    # trying to start new ones.
+    reftest.killNamedProc('ssltunnel')
+    reftest.killNamedProc('xpcshell')
+
     # Start the webserver
     retVal = reftest.startWebServer(options)
     if retVal:
         return retVal
 
     procName = options.app.split('/')[-1]
-    if (dm.processExist(procName)):
-        dm.killProcess(procName)
+    dm.killProcess(procName)
+    if dm.processExist(procName):
+        print "unable to kill %s before starting tests!" % procName
 
     if options.printDeviceInfo:
         reftest.printDeviceInfo()

@@ -19,6 +19,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "SVGGeometryElement.h"
 #include "SVGUseElement.h"
+#include "ImageLoader.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -82,11 +83,12 @@ nsSVGRenderingObserver::GetReferencedFrame()
 }
 
 nsIFrame*
-nsSVGRenderingObserver::GetReferencedFrame(nsIAtom* aFrameType, bool* aOK)
+nsSVGRenderingObserver::GetReferencedFrame(LayoutFrameType aFrameType,
+                                           bool* aOK)
 {
   nsIFrame* frame = GetReferencedFrame();
   if (frame) {
-    if (frame->GetType() == aFrameType)
+    if (frame->Type() == aFrameType)
       return frame;
     if (aOK) {
       *aOK = false;
@@ -259,8 +261,8 @@ NS_INTERFACE_MAP_END
 nsSVGFilterFrame *
 nsSVGFilterReference::GetFilterFrame()
 {
-  return static_cast<nsSVGFilterFrame *>
-    (GetReferencedFrame(nsGkAtoms::svgFilterFrame, nullptr));
+  return static_cast<nsSVGFilterFrame*>(
+    GetReferencedFrame(LayoutFrameType::SVGFilter, nullptr));
 }
 
 void
@@ -391,14 +393,48 @@ nsSVGMarkerProperty::DoUpdate()
 NS_IMPL_ISUPPORTS(nsSVGMaskProperty, nsISupports)
 
 nsSVGMaskProperty::nsSVGMaskProperty(nsIFrame* aFrame)
+ : mFrame(aFrame)
 {
   const nsStyleSVGReset *svgReset = aFrame->StyleSVGReset();
 
   for (uint32_t i = 0; i < svgReset->mMask.mImageCount; i++) {
     nsCOMPtr<nsIURI> maskUri = nsSVGEffects::GetMaskURI(aFrame, i);
-    nsSVGPaintingProperty* prop = new nsSVGPaintingProperty(maskUri, aFrame,
-                                                            false);
+    bool hasRef = false;
+    if (maskUri) {
+      maskUri->GetHasRef(&hasRef);
+    }
+
+    // Accrording to maskUri, nsSVGPaintingProperty's ctor may trigger an
+    // external SVG resource download, so we should pass maskUri in only if
+    // maskUri has a chance pointing to an SVG mask resource.
+    //
+    // And, an URL may refer to an SVG mask resource if it consists of
+    // a fragment.
+    nsSVGPaintingProperty* prop =
+      new nsSVGPaintingProperty(hasRef ? maskUri.get() : nullptr,
+                                aFrame, false);
     mProperties.AppendElement(prop);
+  }
+}
+
+void
+nsSVGMaskProperty::ResolveImage(uint32_t aIndex)
+{
+  const nsStyleSVGReset* svgReset = mFrame->StyleSVGReset();
+  MOZ_ASSERT(aIndex < svgReset->mMask.mImageCount);
+
+  nsStyleImage& image =
+    const_cast<nsStyleImage&>(svgReset->mMask.mLayers[aIndex].mImage);
+
+  if (!image.IsResolved()) {
+    MOZ_ASSERT(image.GetType() == nsStyleImageType::eStyleImageType_Image);
+    image.ResolveImage(mFrame->PresContext());
+
+    mozilla::css::ImageLoader* imageLoader =
+      mFrame->PresContext()->Document()->StyleImageLoader();
+    if (imgRequestProxy* req = image.GetImageData()) {
+      imageLoader->AssociateRequestToFrame(req, mFrame);
+    }
   }
 }
 
@@ -481,27 +517,26 @@ GetOrCreateFilterProperty(nsIFrame* aFrame)
   if (!effects->HasFilters())
     return nullptr;
 
-  FrameProperties props = aFrame->Properties();
-  nsSVGFilterProperty *prop = props.Get(nsSVGEffects::FilterProperty());
+  nsSVGFilterProperty *prop =
+    aFrame->GetProperty(nsSVGEffects::FilterProperty());
   if (prop)
     return prop;
   prop = new nsSVGFilterProperty(effects->mFilters, aFrame);
   NS_ADDREF(prop);
-  props.Set(nsSVGEffects::FilterProperty(), prop);
+  aFrame->SetProperty(nsSVGEffects::FilterProperty(), prop);
   return prop;
 }
 
 static nsSVGMaskProperty*
 GetOrCreateMaskProperty(nsIFrame* aFrame)
 {
-  FrameProperties props = aFrame->Properties();
-  nsSVGMaskProperty *prop = props.Get(nsSVGEffects::MaskProperty());
+  nsSVGMaskProperty *prop = aFrame->GetProperty(nsSVGEffects::MaskProperty());
   if (prop)
     return prop;
 
   prop = new nsSVGMaskProperty(aFrame);
   NS_ADDREF(prop);
-  props.Set(nsSVGEffects::MaskProperty(), prop);
+  aFrame->SetProperty(nsSVGEffects::MaskProperty(), prop);
   return prop;
 }
 
@@ -513,13 +548,12 @@ GetEffectProperty(nsIURI* aURI, nsIFrame* aFrame,
   if (!aURI)
     return nullptr;
 
-  FrameProperties props = aFrame->Properties();
-  T* prop = props.Get(aProperty);
+  T* prop = aFrame->GetProperty(aProperty);
   if (prop)
     return prop;
   prop = new T(aURI, aFrame, false);
   NS_ADDREF(prop);
-  props.Set(aProperty, prop);
+  aFrame->SetProperty(aProperty, prop);
   return prop;
 }
 
@@ -527,7 +561,7 @@ nsSVGMarkerProperty*
 nsSVGEffects::GetMarkerProperty(nsIURI* aURI, nsIFrame* aFrame,
   const mozilla::FramePropertyDescriptor<nsSVGMarkerProperty>* aProperty)
 {
-  MOZ_ASSERT(aFrame->GetType() == nsGkAtoms::svgGeometryFrame &&
+  MOZ_ASSERT(aFrame->IsSVGGeometryFrame() &&
              static_cast<SVGGeometryElement*>(aFrame->GetContent())->IsMarkable(),
              "Bad frame");
   return GetEffectProperty(aURI, aFrame, aProperty);
@@ -554,11 +588,11 @@ nsSVGEffects::GetPaintingPropertyForURI(nsIURI* aURI, nsIFrame* aFrame,
   if (!aURI)
     return nullptr;
 
-  FrameProperties props = aFrame->Properties();
-  nsSVGEffects::URIObserverHashtable *hashtable = props.Get(aProperty);
+  nsSVGEffects::URIObserverHashtable *hashtable =
+    aFrame->GetProperty(aProperty);
   if (!hashtable) {
     hashtable = new nsSVGEffects::URIObserverHashtable();
-    props.Set(aProperty, hashtable);
+    aFrame->SetProperty(aProperty, hashtable);
   }
   nsSVGPaintingProperty* prop =
     static_cast<nsSVGPaintingProperty*>(hashtable->GetWeak(aURI));
@@ -612,7 +646,7 @@ nsSVGEffects::GetPaintServer(nsIFrame* aTargetFrame,
   if (frame->GetContent()->IsNodeOfType(nsINode::eTEXT)) {
     frame = frame->GetParent();
     nsIFrame* grandparent = frame->GetParent();
-    if (grandparent && grandparent->GetType() == nsGkAtoms::svgTextFrame) {
+    if (grandparent && grandparent->IsSVGTextFrame()) {
       frame = grandparent;
     }
   }
@@ -622,14 +656,14 @@ nsSVGEffects::GetPaintServer(nsIFrame* aTargetFrame,
     nsSVGEffects::GetPaintingProperty(paintServerURL, frame, aType);
   if (!property)
     return nullptr;
-  nsIFrame *result = property->GetReferencedFrame();
+  nsIFrame* result = property->GetReferencedFrame();
   if (!result)
     return nullptr;
 
-  nsIAtom *type = result->GetType();
-  if (type != nsGkAtoms::svgLinearGradientFrame &&
-      type != nsGkAtoms::svgRadialGradientFrame &&
-      type != nsGkAtoms::svgPatternFrame)
+  LayoutFrameType type = result->Type();
+  if (type != LayoutFrameType::SVGLinearGradient &&
+      type != LayoutFrameType::SVGRadialGradient &&
+      type != LayoutFrameType::SVGPattern)
     return nullptr;
 
   return static_cast<nsSVGPaintServerFrame*>(result);
@@ -641,8 +675,8 @@ nsSVGEffects::EffectProperties::GetClipPathFrame()
   if (!mClipPath)
     return nullptr;
 
-  nsSVGClipPathFrame *frame = static_cast<nsSVGClipPathFrame *>
-    (mClipPath->GetReferencedFrame(nsGkAtoms::svgClipPathFrame, nullptr));
+  nsSVGClipPathFrame* frame = static_cast<nsSVGClipPathFrame*>(
+    mClipPath->GetReferencedFrame(LayoutFrameType::SVGClipPath, nullptr));
 
   return frame;
 }
@@ -657,10 +691,18 @@ nsSVGEffects::EffectProperties::GetMaskFrames()
   bool ok = true;
   const nsTArray<RefPtr<nsSVGPaintingProperty>>& props = mMask->GetProps();
   for (size_t i = 0; i < props.Length(); i++) {
-    nsSVGMaskFrame* maskFrame =
-      static_cast<nsSVGMaskFrame *>(props[i]->GetReferencedFrame(
-                                                nsGkAtoms::svgMaskFrame, &ok));
-    MOZ_ASSERT_IF(maskFrame, ok);
+    nsSVGMaskFrame* maskFrame = static_cast<nsSVGMaskFrame*>(
+      props[i]->GetReferencedFrame(LayoutFrameType::SVGMask, &ok));
+    MOZ_ASSERT(!maskFrame || ok);
+    if (!ok) {
+      // We can not find the specific SVG mask resource in the downloaded SVG
+      // document. There are two possibilities:
+      // 1. The given resource id is invalid.
+      // 2. The given resource id refers to a viewbox.
+      //
+      // Hand it over to the style image.
+      mMask->ResolveImage(i);
+    }
     result.AppendElement(maskFrame);
   }
 
@@ -678,8 +720,8 @@ nsSVGEffects::EffectProperties::HasNoOrValidClipPath()
 {
   if (mClipPath) {
     bool ok = true;
-    nsSVGClipPathFrame *frame = static_cast<nsSVGClipPathFrame *>
-      (mClipPath->GetReferencedFrame(nsGkAtoms::svgClipPathFrame, &ok));
+    nsSVGClipPathFrame* frame = static_cast<nsSVGClipPathFrame*>(
+      mClipPath->GetReferencedFrame(LayoutFrameType::SVGClipPath, &ok));
     if (!ok || (frame && !frame->IsValid())) {
       return false;
     }
@@ -695,7 +737,7 @@ nsSVGEffects::EffectProperties::HasNoOrValidMask()
     bool ok = true;
     const nsTArray<RefPtr<nsSVGPaintingProperty>>& props = mMask->GetProps();
     for (size_t i = 0; i < props.Length(); i++) {
-      props[i]->GetReferencedFrame(nsGkAtoms::svgMaskFrame, &ok);
+      props[i]->GetReferencedFrame(LayoutFrameType::SVGMask, &ok);
       if (!ok) {
         return false;
       }
@@ -711,22 +753,21 @@ nsSVGEffects::UpdateEffects(nsIFrame* aFrame)
   NS_ASSERTION(aFrame->GetContent()->IsElement(),
                "aFrame's content should be an element");
 
-  FrameProperties props = aFrame->Properties();
-  props.Delete(FilterProperty());
-  props.Delete(MaskProperty());
-  props.Delete(ClipPathProperty());
-  props.Delete(MarkerBeginProperty());
-  props.Delete(MarkerMiddleProperty());
-  props.Delete(MarkerEndProperty());
-  props.Delete(FillProperty());
-  props.Delete(StrokeProperty());
-  props.Delete(BackgroundImageProperty());
+  aFrame->DeleteProperty(FilterProperty());
+  aFrame->DeleteProperty(MaskProperty());
+  aFrame->DeleteProperty(ClipPathProperty());
+  aFrame->DeleteProperty(MarkerBeginProperty());
+  aFrame->DeleteProperty(MarkerMiddleProperty());
+  aFrame->DeleteProperty(MarkerEndProperty());
+  aFrame->DeleteProperty(FillProperty());
+  aFrame->DeleteProperty(StrokeProperty());
+  aFrame->DeleteProperty(BackgroundImageProperty());
 
   // Ensure that the filter is repainted correctly
   // We can't do that in DoUpdate as the referenced frame may not be valid
   GetOrCreateFilterProperty(aFrame);
 
-  if (aFrame->GetType() == nsGkAtoms::svgGeometryFrame &&
+  if (aFrame->IsSVGGeometryFrame() &&
       static_cast<SVGGeometryElement*>(aFrame->GetContent())->IsMarkable()) {
     // Set marker properties here to avoid reference loops
     nsCOMPtr<nsIURI> markerURL =
@@ -747,7 +788,7 @@ nsSVGEffects::GetFilterProperty(nsIFrame* aFrame)
   if (!aFrame->StyleEffects()->HasFilters())
     return nullptr;
 
-  return aFrame->Properties().Get(FilterProperty());
+  return aFrame->GetProperty(FilterProperty());
 }
 
 void
@@ -857,7 +898,7 @@ nsSVGEffects::InvalidateRenderingObservers(nsIFrame* aFrame)
     return;
 
   // If the rendering has changed, the bounds may well have changed too:
-  aFrame->Properties().Delete(nsSVGUtils::ObjectBoundingBoxProperty());
+  aFrame->DeleteProperty(nsSVGUtils::ObjectBoundingBoxProperty());
 
   nsSVGRenderingObserverList *observerList =
     GetObserverList(content->AsElement());
@@ -886,7 +927,7 @@ nsSVGEffects::InvalidateDirectRenderingObservers(Element* aElement, uint32_t aFl
   nsIFrame* frame = aElement->GetPrimaryFrame();
   if (frame) {
     // If the rendering has changed, the bounds may well have changed too:
-    frame->Properties().Delete(nsSVGUtils::ObjectBoundingBoxProperty());
+    frame->DeleteProperty(nsSVGUtils::ObjectBoundingBoxProperty());
   }
 
   if (aElement->HasRenderingObservers()) {
@@ -910,24 +951,13 @@ nsSVGEffects::InvalidateDirectRenderingObservers(nsIFrame* aFrame, uint32_t aFla
   }
 }
 
-static already_AddRefed<nsIURI>
-ResolveURLUsingLocalRef(nsIFrame* aFrame, const css::URLValueData* aURL)
+already_AddRefed<nsIURI>
+nsSVGEffects::GetBaseURLForLocalRef(nsIContent* content, nsIURI* aDocURI)
 {
-  MOZ_ASSERT(aFrame);
-
-  if (!aURL) {
-    return nullptr;
-  }
-
-  // Non-local-reference URL.
-  if (!aURL->IsLocalRef()) {
-    nsCOMPtr<nsIURI> result = aURL->GetURI();
-    return result.forget();
-  }
+  MOZ_ASSERT(content);
 
   // For a local-reference URL, resolve that fragment against the current
   // document that relative URLs are resolved against.
-  nsIContent* content = aFrame->GetContent();
   nsCOMPtr<nsIURI> baseURI = content->OwnerDoc()->GetDocumentURI();
 
   if (content->IsInAnonymousSubtree()) {
@@ -955,11 +985,36 @@ ResolveURLUsingLocalRef(nsIFrame* aFrame, const css::URLValueData* aURL)
         }
       }
 
-      if (originalURI && aURL->EqualsExceptRef(originalURI)) {
-        baseURI = originalURI;
+      if (originalURI) {
+        bool isEqualsExceptRef = false;
+        aDocURI->EqualsExceptRef(originalURI, &isEqualsExceptRef);
+        if (isEqualsExceptRef) {
+          baseURI = originalURI;
+        }
       }
     }
   }
+
+  return baseURI.forget();
+}
+
+static already_AddRefed<nsIURI>
+ResolveURLUsingLocalRef(nsIFrame* aFrame, const css::URLValueData* aURL)
+{
+  MOZ_ASSERT(aFrame);
+
+  if (!aURL) {
+    return nullptr;
+  }
+
+  // Non-local-reference URL.
+  if (!aURL->IsLocalRef()) {
+    nsCOMPtr<nsIURI> result = aURL->GetURI();
+    return result.forget();
+  }
+
+  nsCOMPtr<nsIURI> baseURI =
+    nsSVGEffects::GetBaseURLForLocalRef(aFrame->GetContent(), aURL->GetURI());
 
   return aURL->ResolveLocalRef(baseURI);
 }

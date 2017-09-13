@@ -6,7 +6,6 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/SizePrintfMacros.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
 #include "nsCSPParser.h"
@@ -135,6 +134,7 @@ nsCSPParser::nsCSPParser(cspTokens& aTokens,
  , mUnsafeInlineKeywordSrc(nullptr)
  , mChildSrc(nullptr)
  , mFrameSrc(nullptr)
+ , mParsingFrameAncestorsDir(false)
  , mTokens(aTokens)
  , mSelfURI(aSelfURI)
  , mPolicy(nullptr)
@@ -283,7 +283,7 @@ nsCSPParser::logWarningErrorToConsole(uint32_t aSeverityFlag,
   CSPPARSERLOG(("nsCSPParser::logWarningErrorToConsole: %s", aProperty));
   // send console messages off to the context and let the context
   // deal with it (potentially messages need to be queued up)
-  mCSPContext->logToConsole(NS_ConvertUTF8toUTF16(aProperty).get(),
+  mCSPContext->logToConsole(aProperty,
                             aParams,
                             aParamsLength,
                             EmptyString(), // aSourceName
@@ -536,7 +536,7 @@ nsCSPParser::keywordSource()
   // Special case handling for 'self' which is not stored internally as a keyword,
   // but rather creates a nsCSPHostSrc using the selfURI
   if (CSP_IsKeyword(mCurToken, CSP_SELF)) {
-    return CSP_CreateHostSrcFromURI(mSelfURI);
+    return CSP_CreateHostSrcFromSelfURI(mSelfURI);
   }
 
   if (CSP_IsKeyword(mCurToken, CSP_STRICT_DYNAMIC)) {
@@ -813,6 +813,7 @@ nsCSPParser::sourceExpression()
   if (nsCSPHostSrc *cspHost = hostSource()) {
     // Do not forget to set the parsed scheme.
     cspHost->setScheme(parsedScheme);
+    cspHost->setWithinFrameAncestorsDir(mParsingFrameAncestorsDir);
     return cspHost;
   }
   // Error was reported in hostSource()
@@ -877,7 +878,7 @@ nsCSPParser::referrerDirectiveValue(nsCSPDirective* aDir)
   CSPPARSERLOG(("nsCSPParser::referrerDirectiveValue"));
 
   if (mCurDir.Length() != 2) {
-    CSPPARSERLOG(("Incorrect number of tokens in referrer directive, got %" PRIuSIZE " expected 1",
+    CSPPARSERLOG(("Incorrect number of tokens in referrer directive, got %zu expected 1",
                  mCurDir.Length() - 1));
     delete aDir;
     return;
@@ -946,7 +947,7 @@ nsCSPParser::requireSRIForDirectiveValue(nsRequireSRIForDirective* aDir)
     delete aDir;
     return;
   }
-  
+
   mPolicy->addDirective(aDir);
 }
 
@@ -1219,6 +1220,9 @@ nsCSPParser::directive()
   mHasHashOrNonce = false;
   mStrictDynamic = false;
   mUnsafeInlineKeywordSrc = nullptr;
+
+  mParsingFrameAncestorsDir =
+    CSP_IsDirective(mCurDir[0], nsIContentSecurityPolicy::FRAME_ANCESTORS_DIRECTIVE);
 
   // Try to parse all the srcs by handing the array off to directiveValue
   nsTArray<nsCSPBaseSrc*> srcs;

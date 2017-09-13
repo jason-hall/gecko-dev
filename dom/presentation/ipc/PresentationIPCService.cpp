@@ -35,7 +35,7 @@ NS_IMPL_ISUPPORTS(PresentationIPCService,
 PresentationIPCService::PresentationIPCService()
 {
   ContentChild* contentChild = ContentChild::GetSingleton();
-  if (NS_WARN_IF(!contentChild)) {
+  if (NS_WARN_IF(!contentChild || contentChild->IsShuttingDown())) {
     return;
   }
   sPresentationChild = new PresentationChild(this);
@@ -485,13 +485,15 @@ PresentationIPCService::UntrackSessionInfo(const nsAString& aSessionId,
     if (NS_SUCCEEDED(GetWindowIdBySessionIdInternal(aSessionId,
                                                     aRole,
                                                     &windowId))) {
-      NS_DispatchToMainThread(NS_NewRunnableFunction([windowId]() -> void {
-        PRES_DEBUG("Attempt to close window[%" PRIu64 "]\n", windowId);
+      NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "dom::PresentationIPCService::UntrackSessionInfo",
+        [windowId]() -> void {
+          PRES_DEBUG("Attempt to close window[%" PRIu64 "]\n", windowId);
 
-        if (auto* window = nsGlobalWindow::GetInnerWindowWithId(windowId)) {
-          window->Close();
-        }
-      }));
+          if (auto* window = nsGlobalWindow::GetInnerWindowWithId(windowId)) {
+            window->Close();
+          }
+        }));
     }
   }
 

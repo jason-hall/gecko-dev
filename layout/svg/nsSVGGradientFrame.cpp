@@ -25,8 +25,10 @@ using namespace mozilla::gfx;
 //----------------------------------------------------------------------
 // Implementation
 
-nsSVGGradientFrame::nsSVGGradientFrame(nsStyleContext* aContext)
-  : nsSVGPaintServerFrame(aContext)
+nsSVGGradientFrame::nsSVGGradientFrame(nsStyleContext* aContext,
+                                       ClassID aID)
+  : nsSVGPaintServerFrame(aContext, aID)
+  , mSource(nullptr)
   , mLoopFlag(false)
   , mNoHRefURI(false)
 {
@@ -49,7 +51,7 @@ nsSVGGradientFrame::AttributeChanged(int32_t         aNameSpaceID,
               aNameSpaceID == kNameSpaceID_None) &&
              aAttribute == nsGkAtoms::href) {
     // Blow away our reference, if any
-    Properties().Delete(nsSVGEffects::HrefAsPaintingProperty());
+    DeleteProperty(nsSVGEffects::HrefAsPaintingProperty());
     mNoHRefURI = false;
     // And update whoever references us
     nsSVGEffects::InvalidateDirectRenderingObservers(this);
@@ -65,7 +67,7 @@ uint16_t
 nsSVGGradientFrame::GetEnumValue(uint32_t aIndex, nsIContent *aDefault)
 {
   const nsSVGEnum& thisEnum =
-    static_cast<dom::SVGGradientElement*>(mContent)->mEnumAttributes[aIndex];
+    static_cast<dom::SVGGradientElement*>(GetContent())->mEnumAttributes[aIndex];
 
   if (thisEnum.IsExplicitlySet())
     return thisEnum.GetAnimValue();
@@ -105,7 +107,7 @@ const nsSVGAnimatedTransformList*
 nsSVGGradientFrame::GetGradientTransformList(nsIContent* aDefault)
 {
   nsSVGAnimatedTransformList *thisTransformList =
-    static_cast<dom::SVGGradientElement*>(mContent)->GetAnimatedTransformList();
+    static_cast<dom::SVGGradientElement*>(GetContent())->GetAnimatedTransformList();
 
   if (thisTransformList && thisTransformList->IsExplicitlySet())
     return thisTransformList;
@@ -150,7 +152,7 @@ nsSVGGradientFrame::GetGradientTransform(nsIFrame *aSource,
   }
 
   const nsSVGAnimatedTransformList* animTransformList =
-    GetGradientTransformList(mContent);
+    GetGradientTransformList(GetContent());
   if (!animTransformList)
     return bboxMatrix;
 
@@ -223,14 +225,14 @@ static void GetStopInformation(nsIFrame* aStopFrame,
   *aStopOpacity = aStopFrame->StyleSVGReset()->mStopOpacity;
 }
 
-mozilla::Pair<DrawResult, RefPtr<gfxPattern>>
+already_AddRefed<gfxPattern>
 nsSVGGradientFrame::GetPaintServerPattern(nsIFrame* aSource,
                                           const DrawTarget* aDrawTarget,
                                           const gfxMatrix& aContextMatrix,
                                           nsStyleSVGPaint nsStyleSVG::*aFillOrStroke,
                                           float aGraphicOpacity,
-                                          const gfxRect* aOverrideBounds,
-                                          uint32_t aFlags)
+                                          imgDrawingParams& aImgParams,
+                                          const gfxRect* aOverrideBounds)
 {
   uint16_t gradientUnits = GetGradientUnits();
   MOZ_ASSERT(gradientUnits == SVG_UNIT_TYPE_OBJECTBOUNDINGBOX ||
@@ -252,7 +254,7 @@ nsSVGGradientFrame::GetPaintServerPattern(nsIFrame* aSource,
   // the corresponding fill or stroke had "none" specified.
   if (nStops == 0) {
     RefPtr<gfxPattern> pattern = new gfxPattern(Color());
-    return MakePair(DrawResult::SUCCESS, Move(pattern));
+    return do_AddRef(new gfxPattern(Color()));
   }
 
   if (nStops == 1 || GradientVectorLengthIsZero()) {
@@ -263,8 +265,7 @@ nsSVGGradientFrame::GetPaintServerPattern(nsIFrame* aSource,
 
     Color stopColor2 = Color::FromABGR(stopColor);
     stopColor2.a *= stopOpacity * aGraphicOpacity;
-    RefPtr<gfxPattern> pattern = new gfxPattern(stopColor2);
-    return MakePair(DrawResult::SUCCESS, Move(pattern));
+    return do_AddRef(new gfxPattern(stopColor2));
   }
 
   // Get the transform list (if there is one). We do this after the returns
@@ -273,7 +274,7 @@ nsSVGGradientFrame::GetPaintServerPattern(nsIFrame* aSource,
   gfxMatrix patternMatrix = GetGradientTransform(aSource, aOverrideBounds);
 
   if (patternMatrix.IsSingular()) {
-    return MakePair(DrawResult::SUCCESS, RefPtr<gfxPattern>());
+    return nullptr;
   }
 
   // revert any vector effect transform so that the gradient appears unchanged
@@ -285,12 +286,12 @@ nsSVGGradientFrame::GetPaintServerPattern(nsIFrame* aSource,
   }
 
   if (!patternMatrix.Invert()) {
-    return MakePair(DrawResult::SUCCESS, RefPtr<gfxPattern>());
+    return nullptr;
   }
 
   RefPtr<gfxPattern> gradient = CreateGradient();
   if (!gradient) {
-    return MakePair(DrawResult::TEMPORARY_ERROR, RefPtr<gfxPattern>());
+    return nullptr;
   }
 
   uint16_t aSpread = GetSpreadMethod();
@@ -322,7 +323,7 @@ nsSVGGradientFrame::GetPaintServerPattern(nsIFrame* aSource,
     gradient->AddColorStop(offset, stopColor2);
   }
 
-  return MakePair(DrawResult::SUCCESS, Move(gradient));
+  return gradient.forget();
 }
 
 // Private (helper) methods
@@ -334,12 +335,12 @@ nsSVGGradientFrame::GetReferencedGradient()
     return nullptr;
 
   nsSVGPaintingProperty *property =
-    Properties().Get(nsSVGEffects::HrefAsPaintingProperty());
+    GetProperty(nsSVGEffects::HrefAsPaintingProperty());
 
   if (!property) {
     // Fetch our gradient element's href or xlink:href attribute
     dom::SVGGradientElement* grad =
-      static_cast<dom::SVGGradientElement*>(mContent);
+      static_cast<dom::SVGGradientElement*>(GetContent());
     nsAutoString href;
     if (grad->mStringAttributes[dom::SVGGradientElement::HREF]
           .IsExplicitlySet()) {
@@ -372,9 +373,9 @@ nsSVGGradientFrame::GetReferencedGradient()
   if (!result)
     return nullptr;
 
-  nsIAtom* frameType = result->GetType();
-  if (frameType != nsGkAtoms::svgLinearGradientFrame &&
-      frameType != nsGkAtoms::svgRadialGradientFrame)
+  LayoutFrameType frameType = result->Type();
+  if (frameType != LayoutFrameType::SVGLinearGradient &&
+      frameType != LayoutFrameType::SVGRadialGradient)
     return nullptr;
 
   return static_cast<nsSVGGradientFrame*>(result);
@@ -386,7 +387,7 @@ nsSVGGradientFrame::GetStopFrames(nsTArray<nsIFrame*>* aStopFrames)
   nsIFrame *stopFrame = nullptr;
   for (stopFrame = mFrames.FirstChild(); stopFrame;
        stopFrame = stopFrame->GetNextSibling()) {
-    if (stopFrame->GetType() == nsGkAtoms::svgStopFrame) {
+    if (stopFrame->IsSVGStopFrame()) {
       aStopFrames->AppendElement(stopFrame);
     }
   }
@@ -429,12 +430,6 @@ nsSVGLinearGradientFrame::Init(nsIContent*       aContent,
 }
 #endif /* DEBUG */
 
-nsIAtom*
-nsSVGLinearGradientFrame::GetType() const
-{
-  return nsGkAtoms::svgLinearGradientFrame;
-}
-
 nsresult
 nsSVGLinearGradientFrame::AttributeChanged(int32_t         aNameSpaceID,
                                            nsIAtom*        aAttribute,
@@ -459,7 +454,7 @@ nsSVGLinearGradientFrame::GetLengthValue(uint32_t aIndex)
 {
   dom::SVGLinearGradientElement* lengthElement =
     GetLinearGradientWithLength(aIndex,
-      static_cast<dom::SVGLinearGradientElement*>(mContent));
+      static_cast<dom::SVGLinearGradientElement*>(GetContent()));
   // We passed in mContent as a fallback, so, assuming mContent is non-null, the
   // return value should also be non-null.
   MOZ_ASSERT(lengthElement,
@@ -479,7 +474,7 @@ nsSVGLinearGradientFrame::GetLengthValue(uint32_t aIndex)
     gradientUnits == SVG_UNIT_TYPE_OBJECTBOUNDINGBOX,
     "Unknown gradientUnits type");
 
-  return length.GetAnimValue(static_cast<SVGSVGElement*>(nullptr));
+  return length.GetAnimValue(static_cast<SVGViewportElement*>(nullptr));
 }
 
 dom::SVGLinearGradientElement*
@@ -487,7 +482,7 @@ nsSVGLinearGradientFrame::GetLinearGradientWithLength(uint32_t aIndex,
   dom::SVGLinearGradientElement* aDefault)
 {
   dom::SVGLinearGradientElement* thisElement =
-    static_cast<dom::SVGLinearGradientElement*>(mContent);
+    static_cast<dom::SVGLinearGradientElement*>(GetContent());
   const nsSVGLength2 &length = thisElement->mLengthAttributes[aIndex];
 
   if (length.IsExplicitlySet()) {
@@ -537,12 +532,6 @@ nsSVGRadialGradientFrame::Init(nsIContent*       aContent,
 }
 #endif /* DEBUG */
 
-nsIAtom*
-nsSVGRadialGradientFrame::GetType() const
-{
-  return nsGkAtoms::svgRadialGradientFrame;
-}
-
 nsresult
 nsSVGRadialGradientFrame::AttributeChanged(int32_t         aNameSpaceID,
                                            nsIAtom*        aAttribute,
@@ -568,7 +557,7 @@ nsSVGRadialGradientFrame::GetLengthValue(uint32_t aIndex)
 {
   dom::SVGRadialGradientElement* lengthElement =
     GetRadialGradientWithLength(aIndex,
-      static_cast<dom::SVGRadialGradientElement*>(mContent));
+      static_cast<dom::SVGRadialGradientElement*>(GetContent()));
   // We passed in mContent as a fallback, so, assuming mContent is non-null,
   // the return value should also be non-null.
   MOZ_ASSERT(lengthElement,
@@ -605,7 +594,7 @@ nsSVGRadialGradientFrame::GetLengthValueFromElement(uint32_t aIndex,
     gradientUnits == SVG_UNIT_TYPE_OBJECTBOUNDINGBOX,
     "Unknown gradientUnits type");
 
-  return length.GetAnimValue(static_cast<SVGSVGElement*>(nullptr));
+  return length.GetAnimValue(static_cast<SVGViewportElement*>(nullptr));
 }
 
 dom::SVGRadialGradientElement*
@@ -613,7 +602,7 @@ nsSVGRadialGradientFrame::GetRadialGradientWithLength(uint32_t aIndex,
   dom::SVGRadialGradientElement* aDefault)
 {
   dom::SVGRadialGradientElement* thisElement =
-    static_cast<dom::SVGRadialGradientElement*>(mContent);
+    static_cast<dom::SVGRadialGradientElement*>(GetContent());
   const nsSVGLength2 &length = thisElement->mLengthAttributes[aIndex];
 
   if (length.IsExplicitlySet()) {
@@ -632,7 +621,7 @@ nsSVGRadialGradientFrame::GradientVectorLengthIsZero()
 already_AddRefed<gfxPattern>
 nsSVGRadialGradientFrame::CreateGradient()
 {
-  float cx, cy, r, fx, fy;
+  float cx, cy, r, fx, fy, fr;
 
   cx = GetLengthValue(dom::SVGRadialGradientElement::ATTR_CX);
   cy = GetLengthValue(dom::SVGRadialGradientElement::ATTR_CY);
@@ -640,6 +629,7 @@ nsSVGRadialGradientFrame::CreateGradient()
   // If fx or fy are not set, use cx/cy instead
   fx = GetLengthValue(dom::SVGRadialGradientElement::ATTR_FX, cx);
   fy = GetLengthValue(dom::SVGRadialGradientElement::ATTR_FY, cy);
+  fr = GetLengthValue(dom::SVGRadialGradientElement::ATTR_FR);
 
   if (fx != cx || fy != cy) {
     // The focal point (fFx and fFy) must be clamped to be *inside* - not on -
@@ -660,7 +650,7 @@ nsSVGRadialGradientFrame::CreateGradient()
     }
   }
 
-  RefPtr<gfxPattern> pattern = new gfxPattern(fx, fy, 0, cx, cy, r);
+  RefPtr<gfxPattern> pattern = new gfxPattern(fx, fy, fr, cx, cy, r);
   return pattern.forget();
 }
 

@@ -8,6 +8,7 @@
 from __future__ import print_function
 
 import re
+import yaml
 
 # This is a list of flags that determine which process a measurement is allowed
 # to record from.
@@ -20,6 +21,11 @@ KNOWN_PROCESS_FLAGS = {
 }
 
 PROCESS_ENUM_PREFIX = "mozilla::Telemetry::Common::RecordedProcessType::"
+
+
+# This is thrown by the different probe parsers.
+class ParserError(Exception):
+    pass
 
 
 def is_valid_process_name(name):
@@ -90,7 +96,8 @@ class StringTable:
         f.write("const char %s[] = {\n" % name)
         for (string, offset) in entries:
             if "*/" in string:
-                raise ValueError("String in string table contains unexpected sequence '*/': %s" % string)
+                raise ValueError("String in string table contains unexpected sequence '*/': %s" %
+                                 string)
 
             e = explodeToCharArray(string)
             if e:
@@ -111,6 +118,21 @@ def static_assert(output, expression, message):
     print("static_assert(%s, \"%s\");" % (expression, message), file=output)
 
 
+def validate_expiration_version(expiration):
+    """ Makes sure the expiration version has the expected format.
+
+    Allowed examples: "1.0", "20", "300.0a1", "60.0a1", "30.5a1", "never"
+    Disallowed examples: "Never", "asd", "4000000", "60a1"
+
+    :param expiration: the expiration version string.
+    :return: True if the expiration validates correctly, False otherwise.
+    """
+    if expiration != 'never' and not re.match(r'^\d{1,3}(\.\d|\.\da1)?$', expiration):
+        return False
+
+    return True
+
+
 def add_expiration_postfix(expiration):
     """ Formats the expiration version and adds a version postfix if needed.
 
@@ -124,3 +146,15 @@ def add_expiration_postfix(expiration):
         return expiration + "a1"
 
     return expiration
+
+
+def load_yaml_file(filename):
+    """ Load a YAML file from disk, throw a ParserError on failure."""
+    try:
+        with open(filename, 'r') as f:
+            return yaml.safe_load(f)
+    except IOError, e:
+        raise ParserError('Error opening ' + filename + ': ' + e.message)
+    except ValueError, e:
+        raise ParserError('Error parsing processes in {}: {}'
+                          .format(filename, e.message))

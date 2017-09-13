@@ -6,6 +6,7 @@
 Cu.import("resource://services-sync/main.js");
 
 Services.prefs.setCharPref("services.sync.username", "someone@somewhere.com");
+Services.prefs.setCharPref("services.sync.registerEngines", "");
 
 // A mock "Tabs" engine which autocomplete will use instead of the real
 // engine. We pass a constructor that Sync creates.
@@ -59,7 +60,7 @@ function makeRemoteTabMatch(url, deviceName, extra = {}) {
 }
 
 // The tests.
-add_task(function* test_nomatch() {
+add_task(async function test_nomatch() {
   // Nothing matches.
   configureEngine({
     guid_desktop: {
@@ -71,14 +72,14 @@ add_task(function* test_nomatch() {
   });
 
   // No remote tabs match here, so we only expect search results.
-  yield check_autocomplete({
+  await check_autocomplete({
     search: "ex",
     searchParam: "enable-actions",
     matches: [ makeSearchMatch("ex", { heuristic: true }) ],
   });
 });
 
-add_task(function* test_minimal() {
+add_task(async function test_minimal() {
   // The minimal client and tabs info we can get away with.
   configureEngine({
     guid_desktop: {
@@ -89,7 +90,7 @@ add_task(function* test_minimal() {
     }
   });
 
-  yield check_autocomplete({
+  await check_autocomplete({
     search: "ex",
     searchParam: "enable-actions",
     matches: [ makeSearchMatch("ex", { heuristic: true }),
@@ -97,7 +98,7 @@ add_task(function* test_minimal() {
   });
 });
 
-add_task(function* test_maximal() {
+add_task(async function test_maximal() {
   // Every field that could possibly exist on a remote record.
   configureEngine({
     guid_mobile: {
@@ -110,7 +111,7 @@ add_task(function* test_maximal() {
     }
   });
 
-  yield check_autocomplete({
+  await check_autocomplete({
     search: "ex",
     searchParam: "enable-actions",
     matches: [ makeSearchMatch("ex", { heuristic: true }),
@@ -122,7 +123,7 @@ add_task(function* test_maximal() {
   });
 });
 
-add_task(function* test_noShowIcons() {
+add_task(async function test_noShowIcons() {
   Services.prefs.setBoolPref("services.sync.syncedTabs.showRemoteIcons", false);
   configureEngine({
     guid_mobile: {
@@ -135,7 +136,7 @@ add_task(function* test_noShowIcons() {
     }
   });
 
-  yield check_autocomplete({
+  await check_autocomplete({
     search: "ex",
     searchParam: "enable-actions",
     matches: [ makeSearchMatch("ex", { heuristic: true }),
@@ -149,7 +150,7 @@ add_task(function* test_noShowIcons() {
   Services.prefs.clearUserPref("services.sync.syncedTabs.showRemoteIcons");
 });
 
-add_task(function* test_matches_title() {
+add_task(async function test_matches_title() {
   // URL doesn't match search expression, should still match the title.
   configureEngine({
     guid_mobile: {
@@ -161,7 +162,7 @@ add_task(function* test_matches_title() {
     }
   });
 
-  yield check_autocomplete({
+  await check_autocomplete({
     search: "ex",
     searchParam: "enable-actions",
     matches: [ makeSearchMatch("ex", { heuristic: true }),
@@ -171,7 +172,7 @@ add_task(function* test_matches_title() {
   });
 });
 
-add_task(function* test_localtab_matches_override() {
+add_task(async function test_localtab_matches_override() {
   // We have an open tab to the same page on a remote device, only "switch to
   // tab" should appear as duplicate detection removed the remote one.
 
@@ -188,12 +189,12 @@ add_task(function* test_localtab_matches_override() {
 
   // Setup Places to think the tab is open locally.
   let uri = NetUtil.newURI("http://foo.com/");
-  yield PlacesTestUtils.addVisits([
+  await PlacesTestUtils.addVisits([
     { uri, title: "An Example" },
   ]);
   addOpenPages(uri, 1);
 
-  yield check_autocomplete({
+  await check_autocomplete({
     search: "ex",
     searchParam: "enable-actions",
     matches: [ makeSearchMatch("ex", { heuristic: true }),

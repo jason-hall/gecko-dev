@@ -2,16 +2,70 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use gpu_store::GpuStoreAddress;
-use prim_store::{ClipData, GpuBlock32, PrimitiveStore};
-use prim_store::{CLIP_DATA_GPU_SIZE, MASK_DATA_GPU_SIZE};
-use renderer::VertexDataStore;
-use util::{MatrixHelpers, TransformedRect};
-use webrender_traits::{AuxiliaryLists, BorderRadius, ClipRegion, ComplexClipRegion, ImageMask};
-use webrender_traits::{DeviceIntRect, LayerToWorldTransform};
-use webrender_traits::{LayerRect, LayerPoint, LayerSize};
+use api::{BorderRadius, ComplexClipRegion, DeviceIntRect, ImageMask, LayerPoint, LayerRect};
+use api::{LayerSize, LayerToWorldTransform, LocalClip};
+use border::BorderCornerClipSource;
+use gpu_cache::{GpuCache, GpuCacheHandle, ToGpuBlocks};
+use prim_store::{CLIP_DATA_GPU_BLOCKS, ClipData, ImageMaskData};
+use util::{ComplexClipRegionHelpers, TransformedRect};
+use std::ops::Not;
 
 const MAX_CLIP: f32 = 1000000.0;
+
+#[derive(Clone, Debug)]
+pub struct ClipRegion {
+    pub origin: LayerPoint,
+    pub main: LayerRect,
+    pub image_mask: Option<ImageMask>,
+    pub complex_clips: Vec<ComplexClipRegion>,
+}
+
+impl ClipRegion {
+    pub fn create_for_clip_node(rect: LayerRect,
+                                mut complex_clips: Vec<ComplexClipRegion>,
+                                mut image_mask: Option<ImageMask>)
+                                -> ClipRegion {
+        // All the coordinates we receive are relative to the stacking context, but we want
+        // to convert them to something relative to the origin of the clip.
+        let negative_origin = -rect.origin.to_vector();
+        if let Some(ref mut image_mask) = image_mask {
+            image_mask.rect = image_mask.rect.translate(&negative_origin);
+        }
+
+        for complex_clip in complex_clips.iter_mut() {
+            complex_clip.rect = complex_clip.rect.translate(&negative_origin);
+        }
+
+        ClipRegion {
+            origin: rect.origin,
+            main: LayerRect::new(LayerPoint::zero(), rect.size),
+            image_mask,
+            complex_clips,
+        }
+    }
+
+    pub fn create_for_clip_node_with_local_clip(local_clip: &LocalClip) -> ClipRegion {
+        let complex_clips = match local_clip {
+            &LocalClip::Rect(_) => Vec::new(),
+            &LocalClip::RoundedRect(_, ref region) => vec![region.clone()],
+        };
+        ClipRegion::create_for_clip_node(*local_clip.clip_rect(), complex_clips, None)
+    }
+
+    pub fn create_for_local_clip(local_clip: &LocalClip) -> ClipRegion {
+        let complex_clips = match local_clip {
+            &LocalClip::Rect(_) => Vec::new(),
+            &LocalClip::RoundedRect(_, ref region) => vec![region.clone()],
+        };
+
+        ClipRegion {
+            origin: LayerPoint::zero(),
+            main: *local_clip.clip_rect(),
+            image_mask: None,
+            complex_clips,
+        }
+    }
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -20,62 +74,83 @@ pub enum ClipMode {
     ClipOut,        // Pixels outside the region are visible.
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum RegionMode {
-    IncludeRect,
-    ExcludeRect,
+impl Not for ClipMode {
+    type Output = ClipMode;
+
+    fn not(self) -> ClipMode {
+        match self {
+            ClipMode::Clip => ClipMode::ClipOut,
+            ClipMode::ClipOut => ClipMode::Clip
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub enum ClipSource {
     Complex(LayerRect, f32, ClipMode),
-    // The RegionMode here specifies whether to consider the rect
-    // from the clip region as part of the mask. This is true
-    // for clip/scroll nodes, but false for primitives, where
-    // the clip rect is handled in local space.
-    Region(ClipRegion, RegionMode),
+    Region(ClipRegion),
+    /// TODO(gw): This currently only handles dashed style
+    /// clips, where the border style is dashed for both
+    /// adjacent border edges. Expand to handle dotted style
+    /// and different styles per edge.
+    BorderCorner(BorderCornerClipSource),
 }
 
 impl ClipSource {
     pub fn image_mask(&self) -> Option<ImageMask> {
-        match self {
-            &ClipSource::Complex(..) => None,
-            &ClipSource::Region(ref region, _) => region.image_mask,
+        match *self {
+            ClipSource::Complex(..) |
+            ClipSource::BorderCorner(..) => None,
+            ClipSource::Region(ref region) => region.image_mask,
         }
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone)]
 pub struct ClipAddressRange {
-    pub start: GpuStoreAddress,
+    pub location: GpuCacheHandle,
     item_count: usize,
 }
 
-/// Represents a local rect and a device space
-/// bounding rect that can be updated when the
-/// transform changes.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Geometry {
-    pub local_rect: LayerRect,
-    pub bounding_rect: DeviceIntRect,
-}
-
-impl Geometry {
-    fn new(local_rect: LayerRect) -> Geometry {
-        Geometry {
-            local_rect: local_rect,
-            bounding_rect: DeviceIntRect::zero(),
+impl ClipAddressRange {
+    fn new(count: usize) -> Self {
+        ClipAddressRange {
+            location: GpuCacheHandle::new(),
+            item_count: count,
         }
     }
 
-    fn update(&mut self,
-              transform: &LayerToWorldTransform,
-              device_pixel_ratio: f32) {
-        let transformed = TransformedRect::new(&self.local_rect,
-                                               &transform,
-                                               device_pixel_ratio);
-        self.bounding_rect = transformed.bounding_rect;
+    pub fn is_empty(&self) -> bool {
+        self.item_count == 0
+    }
+
+    pub fn get_count(&self) -> usize {
+        self.item_count
+    }
+
+    fn get_block_count(&self) -> Option<usize> {
+        if self.item_count != 0 {
+            Some(self.item_count * CLIP_DATA_GPU_BLOCKS)
+        } else {
+            None
+        }
+    }
+}
+
+/// Represents a local rect and a device space
+/// rectangles that are either outside or inside bounds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Geometry {
+    pub local_rect: LayerRect,
+    pub device_rect: DeviceIntRect,
+}
+
+impl From<LayerRect> for Geometry {
+    fn from(local_rect: LayerRect) -> Self {
+        Geometry {
+            local_rect,
+            device_rect: DeviceIntRect::zero(),
+        }
     }
 }
 
@@ -86,160 +161,141 @@ impl Geometry {
 /// correctness. In the future we can make this a lot
 /// more clever with some proper region handling.
 #[derive(Clone, Debug, PartialEq)]
-pub enum MaskBounds {
-    /// We know both the outer and inner rect. This is the
-    /// fast path for, e.g. a simple rounded rect.
-    OuterInner(Geometry, Geometry),
-    /// We know the outer rect only.
-    Outer(Geometry),
-    /// We can't determine the bounds - draw mask over entire rect.
-    /// This is currently used for clip-out operations on
-    /// box shadows.
-    None,
+pub struct MaskBounds {
+    pub outer: Option<Geometry>,
+    pub inner: Option<Geometry>,
+}
+
+impl MaskBounds {
+    pub fn update(&mut self, transform: &LayerToWorldTransform, device_pixel_ratio: f32) {
+        if let Some(ref mut outer) = self.outer {
+            let transformed = TransformedRect::new(&outer.local_rect,
+                                                   transform,
+                                                   device_pixel_ratio);
+            outer.device_rect = transformed.bounding_rect;
+        }
+        if let Some(ref mut inner) = self.inner {
+            let transformed = TransformedRect::new(&inner.local_rect,
+                                                   transform,
+                                                   device_pixel_ratio);
+            inner.device_rect = transformed.inner_rect;
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct MaskCacheInfo {
-    pub clip_range: ClipAddressRange,
-    pub effective_clip_count: usize,
-    pub image: Option<(ImageMask, GpuStoreAddress)>,
-    pub bounds: Option<MaskBounds>,
-    pub is_aligned: bool,
+    /// Clip items that are always applied
+    pub complex_clip_range: ClipAddressRange,
+    /// Clip items that are only applied if the clip space is transformed from
+    /// the local space of target primitive/layer.
+    pub layer_clip_range: ClipAddressRange,
+    pub image: Option<(ImageMask, GpuCacheHandle)>,
+    pub border_corners: Vec<(BorderCornerClipSource, GpuCacheHandle)>,
+    pub bounds: MaskBounds,
 }
 
 impl MaskCacheInfo {
     /// Create a new mask cache info. It allocates the GPU store data but leaves
-    /// it unitialized for the following `update()` call to deal with.
-    pub fn new(clips: &[ClipSource],
-               clip_store: &mut VertexDataStore<GpuBlock32>)
-               -> Option<MaskCacheInfo> {
-        if clips.is_empty() {
-            return None;
-        }
-
+    /// it uninitialized for the following `update()` call to deal with.
+    pub fn new(clips: &[ClipSource]) -> MaskCacheInfo {
         let mut image = None;
-        let mut clip_count = 0;
+        let mut border_corners = Vec::new();
+        let mut complex_clip_count = 0;
+        let mut layer_clip_count = 0;
 
         // Work out how much clip data space we need to allocate
         // and if we have an image mask.
         for clip in clips {
-            match clip {
-                &ClipSource::Complex(..) => {
-                    clip_count += 1;
-                },
-                &ClipSource::Region(ref region, region_mode) => {
+            match *clip {
+                ClipSource::Complex(..) => {
+                    complex_clip_count += 1;
+                }
+                ClipSource::Region(ref region) => {
                     if let Some(info) = region.image_mask {
                         debug_assert!(image.is_none());     // TODO(gw): Support >1 image mask!
-                        image = Some((info, clip_store.alloc(MASK_DATA_GPU_SIZE)));
+                        image = Some((info, GpuCacheHandle::new()));
                     }
-
-                    clip_count += region.complex.length;
-                    if region_mode == RegionMode::IncludeRect {
-                        clip_count += 1;
-                    }
-                },
+                    complex_clip_count += region.complex_clips.len();
+                    layer_clip_count += 1;
+                }
+                ClipSource::BorderCorner(ref source) => {
+                    border_corners.push((source.clone(), GpuCacheHandle::new()));
+                }
             }
         }
 
-        let clip_range = ClipAddressRange {
-            start: if clip_count > 0 {
-                clip_store.alloc(CLIP_DATA_GPU_SIZE * clip_count)
-            } else {
-                GpuStoreAddress(0)
+        MaskCacheInfo {
+            complex_clip_range: ClipAddressRange::new(complex_clip_count),
+            layer_clip_range: ClipAddressRange::new(layer_clip_count),
+            image,
+            border_corners,
+            bounds: MaskBounds {
+                inner: None,
+                outer: None,
             },
-            item_count: clip_count,
-        };
-
-        Some(MaskCacheInfo {
-            clip_range: clip_range,
-            effective_clip_count: clip_range.item_count,
-            image: image,
-            bounds: None,
-            is_aligned: true,
-        })
+        }
     }
 
     pub fn update(&mut self,
                   sources: &[ClipSource],
                   transform: &LayerToWorldTransform,
-                  clip_store: &mut VertexDataStore<GpuBlock32>,
-                  device_pixel_ratio: f32,
-                  aux_lists: &AuxiliaryLists) {
-        let is_aligned = transform.can_losslessly_transform_and_perspective_project_a_2d_rect();
+                  gpu_cache: &mut GpuCache,
+                  device_pixel_ratio: f32)
+                  -> &MaskBounds {
 
-        // If we haven't cached this info, or if the transform type has changed
-        // we need to re-calculate the number of clips.
-        if self.bounds.is_none() || self.is_aligned != is_aligned {
+        // Step[1] - compute the local bounds
+        //TODO: move to initialization stage?
+        if self.bounds.inner.is_none() {
             let mut local_rect = Some(LayerRect::new(LayerPoint::new(-MAX_CLIP, -MAX_CLIP),
                                                      LayerSize::new(2.0 * MAX_CLIP, 2.0 * MAX_CLIP)));
             let mut local_inner: Option<LayerRect> = None;
             let mut has_clip_out = false;
-
-            self.effective_clip_count = 0;
-            self.is_aligned = is_aligned;
+            let has_border_clip = !self.border_corners.is_empty();
 
             for source in sources {
-                match source {
-                    &ClipSource::Complex(rect, radius, mode) => {
+                match *source {
+                    ClipSource::Complex(rect, radius, mode) => {
                         // Once we encounter a clip-out, we just assume the worst
                         // case clip mask size, for now.
                         if mode == ClipMode::ClipOut {
                             has_clip_out = true;
+                            break;
                         }
-                        debug_assert!(self.effective_clip_count < self.clip_range.item_count);
-                        let address = self.clip_range.start + self.effective_clip_count * CLIP_DATA_GPU_SIZE;
-                        self.effective_clip_count += 1;
-
-                        let slice = clip_store.get_slice_mut(address, CLIP_DATA_GPU_SIZE);
-                        let data = ClipData::uniform(rect, radius, mode);
-                        PrimitiveStore::populate_clip_data(slice, data);
                         local_rect = local_rect.and_then(|r| r.intersection(&rect));
                         local_inner = ComplexClipRegion::new(rect, BorderRadius::uniform(radius))
-                                                        .get_inner_rect();
+                                                        .get_inner_rect_safe();
                     }
-                    &ClipSource::Region(ref region, region_mode) => {
+                    ClipSource::Region(ref region) => {
                         local_rect = local_rect.and_then(|r| r.intersection(&region.main));
                         local_inner = match region.image_mask {
-                            Some(ref mask) if !mask.repeat => {
-                                local_rect = local_rect.and_then(|r| r.intersection(&mask.rect));
+                            Some(ref mask) => {
+                                if !mask.repeat {
+                                    local_rect = local_rect.and_then(|r| r.intersection(&mask.rect));
+                                }
                                 None
                             },
-                            Some(_) => None,
                             None => local_rect,
                         };
 
-                        let clips = aux_lists.complex_clip_regions(&region.complex);
-                        if !self.is_aligned && region_mode == RegionMode::IncludeRect {
-                            // we have an extra clip rect coming from the transformed layer
-                            debug_assert!(self.effective_clip_count < self.clip_range.item_count);
-                            let address = self.clip_range.start + self.effective_clip_count * CLIP_DATA_GPU_SIZE;
-                            self.effective_clip_count += 1;
-
-                            let slice = clip_store.get_slice_mut(address, CLIP_DATA_GPU_SIZE);
-                            PrimitiveStore::populate_clip_data(slice, ClipData::uniform(region.main, 0.0, ClipMode::Clip));
-                        }
-
-                        debug_assert!(self.effective_clip_count + clips.len() <= self.clip_range.item_count);
-                        let address = self.clip_range.start + self.effective_clip_count * CLIP_DATA_GPU_SIZE;
-                        self.effective_clip_count += clips.len();
-
-                        let slice = clip_store.get_slice_mut(address, CLIP_DATA_GPU_SIZE * clips.len());
-                        for (clip, chunk) in clips.iter().zip(slice.chunks_mut(CLIP_DATA_GPU_SIZE)) {
-                            let data = ClipData::from_clip_region(clip);
-                            PrimitiveStore::populate_clip_data(chunk, data);
+                        for clip in &region.complex_clips {
                             local_rect = local_rect.and_then(|r| r.intersection(&clip.rect));
-                            local_inner = local_inner.and_then(|r| clip.get_inner_rect()
-                                                                       .and_then(|ref inner| r.intersection(&inner)));
+                            local_inner = local_inner.and_then(|r| clip.get_inner_rect_safe()
+                                                                       .and_then(|ref inner| r.intersection(inner)));
                         }
                     }
+                    ClipSource::BorderCorner{..} => {}
                 }
             }
 
             // Work out the type of mask geometry we have, based on the
             // list of clip sources above.
-            if has_clip_out {
+            self.bounds = if has_clip_out || has_border_clip {
                 // For clip-out, the mask rect is not known.
-                self.bounds = Some(MaskBounds::None);
+                MaskBounds {
+                    outer: None,
+                    inner: Some(LayerRect::zero().into()),
+                }
             } else {
                 // TODO(gw): local inner is only valid if there's a single clip (for now).
                 // This can be improved in the future, with some proper
@@ -248,38 +304,81 @@ impl MaskCacheInfo {
                     local_inner = None;
                 }
 
-                let local_rect = local_rect.unwrap_or(LayerRect::zero());
+                MaskBounds {
+                    outer: Some(local_rect.unwrap_or(LayerRect::zero()).into()),
+                    inner: Some(local_inner.unwrap_or(LayerRect::zero()).into()),
+                }
+            };
+        }
 
-                self.bounds = match local_inner {
-                    Some(local_inner) => {
-                        Some(MaskBounds::OuterInner(Geometry::new(local_rect),
-                                                    Geometry::new(local_inner)))
+        // Step[2] - update GPU cache data
+
+        if let Some(block_count) = self.complex_clip_range.get_block_count() {
+            if let Some(mut request) = gpu_cache.request(&mut self.complex_clip_range.location) {
+                for source in sources {
+                    match *source {
+                        ClipSource::Complex(rect, radius, mode) => {
+                            let data = ClipData::uniform(rect, radius, mode);
+                            data.write(&mut request);
+                        }
+                        ClipSource::Region(ref region) => {
+                            for clip in &region.complex_clips {
+                                let data = ClipData::from_clip_region(&clip);
+                                data.write(&mut request);
+                            }
+                        }
+                        ClipSource::BorderCorner{..} => {}
                     }
-                    None => {
-                        Some(MaskBounds::Outer(Geometry::new(local_rect)))
+                }
+                assert_eq!(request.close(), block_count);
+            }
+        }
+
+        if let Some(block_count) = self.layer_clip_range.get_block_count() {
+            if let Some(mut request) = gpu_cache.request(&mut self.layer_clip_range.location) {
+                for source in sources {
+                    if let ClipSource::Region(ref region) = *source {
+                        let data = ClipData::uniform(region.main, 0.0, ClipMode::Clip);
+                        data.write(&mut request);
                     }
+                }
+                assert_eq!(request.close(), block_count);
+            }
+        }
+
+        for &mut (ref mut border_source, ref mut gpu_location) in &mut self.border_corners {
+            if let Some(request) = gpu_cache.request(gpu_location) {
+                border_source.write(request);
+            }
+        }
+
+        if let Some((ref mask, ref mut gpu_location)) = self.image {
+            if let Some(request) = gpu_cache.request(gpu_location) {
+                let data = ImageMaskData {
+                    local_rect: mask.rect,
                 };
+                data.write_gpu_blocks(request);
             }
         }
 
-        // Update the device space bounding rects of the mask
-        // geometry.
-        match self.bounds.as_mut().unwrap() {
-            &mut MaskBounds::None => {}
-            &mut MaskBounds::Outer(ref mut outer) => {
-                outer.update(transform, device_pixel_ratio);
-            }
-            &mut MaskBounds::OuterInner(ref mut outer, ref mut inner) => {
-                outer.update(transform, device_pixel_ratio);
-                inner.update(transform, device_pixel_ratio);
-            }
-        }
+        // Step[3] - update the screen bounds
+        self.bounds.update(transform, device_pixel_ratio);
+        &self.bounds
     }
 
-    /// Check if this `MaskCacheInfo` actually carries any masks. `effective_clip_count`
-    /// can change during the `update` call depending on the transformation, so the mask may
-    /// appear to be empty.
+    /// Check if this `MaskCacheInfo` actually carries any masks.
     pub fn is_masking(&self) -> bool {
-        self.image.is_some() || self.effective_clip_count != 0
+        self.image.is_some() ||
+        self.complex_clip_range.item_count != 0 ||
+        self.layer_clip_range.item_count != 0 ||
+        !self.border_corners.is_empty()
+    }
+
+    /// Return a clone of this object without any layer-aligned clip items
+    pub fn strip_aligned(&self) -> Self {
+        MaskCacheInfo {
+            layer_clip_range: ClipAddressRange::new(0),
+            .. self.clone()
+        }
     }
 }

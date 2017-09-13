@@ -83,6 +83,12 @@ SampleIterator::SampleIterator(Index* aIndex)
   , mCurrentMoof(0)
   , mCurrentSample(0)
 {
+  mIndex->RegisterIterator(this);
+}
+
+SampleIterator::~SampleIterator()
+{
+  mIndex->UnregisterIterator(this);
 }
 
 already_AddRefed<MediaRawData> SampleIterator::GetNext()
@@ -100,9 +106,9 @@ already_AddRefed<MediaRawData> SampleIterator::GetNext()
   }
 
   RefPtr<MediaRawData> sample = new MediaRawData();
-  sample->mTimecode= s->mDecodeTime;
-  sample->mTime = s->mCompositionRange.start;
-  sample->mDuration = s->mCompositionRange.Length();
+  sample->mTimecode= TimeUnit::FromMicroseconds(s->mDecodeTime);
+  sample->mTime = TimeUnit::FromMicroseconds(s->mCompositionRange.start);
+  sample->mDuration = TimeUnit::FromMicroseconds(s->mCompositionRange.Length());
   sample->mOffset = s->mByteRange.mStart;
   sample->mKeyframe = s->mSync;
 
@@ -116,6 +122,20 @@ already_AddRefed<MediaRawData> SampleIterator::GetNext()
   if (!mIndex->mSource->ReadAt(sample->mOffset, writer->Data(), sample->Size(),
                                &bytesRead) || bytesRead != sample->Size()) {
     return nullptr;
+  }
+
+  if (mCurrentSample == 0 && mIndex->mMoofParser) {
+    const nsTArray<Moof>& moofs = mIndex->mMoofParser->Moofs();
+    MOZ_ASSERT(mCurrentMoof < moofs.Length());
+    const Moof* currentMoof = &moofs[mCurrentMoof];
+    if (!currentMoof->mPsshes.IsEmpty()) {
+      // This Moof contained crypto init data. Report that. We only report
+      // the init data on the Moof's first sample, to avoid reporting it more
+      // than once per Moof.
+      writer->mCrypto.mValid = true;
+      writer->mCrypto.mInitDatas.AppendElements(currentMoof->mPsshes);
+      writer->mCrypto.mInitDataType = NS_LITERAL_STRING("cenc");
+    }
   }
 
   if (!s->mCencRange.IsEmpty()) {
@@ -178,7 +198,7 @@ CencSampleEncryptionInfoEntry* SampleIterator::GetSampleEncryptionEntry()
 
   // Default to using the sample to group entries for the fragment, otherwise
   // fall back to the sample to group entries for the track.
-  nsTArray<SampleToGroupEntry>* sampleToGroupEntries =
+  FallibleTArray<SampleToGroupEntry>* sampleToGroupEntries =
     currentMoof->mFragmentSampleToGroupEntries.Length() != 0
     ? &currentMoof->mFragmentSampleToGroupEntries
     : &mIndex->mMoofParser->mTrackSampleToGroupEntries;
@@ -211,7 +231,7 @@ CencSampleEncryptionInfoEntry* SampleIterator::GetSampleEncryptionEntry()
     return nullptr;
   }
 
-  nsTArray<CencSampleEncryptionInfoEntry>* entries =
+  FallibleTArray<CencSampleEncryptionInfoEntry>* entries =
                       &mIndex->mMoofParser->mTrackSampleEncryptionInfoEntries;
 
   uint32_t groupIndex = sampleToGroupEntry->mGroupDescriptionIndex;
@@ -387,11 +407,36 @@ Index::~Index() {}
 void
 Index::UpdateMoofIndex(const MediaByteRangeSet& aByteRanges)
 {
+  UpdateMoofIndex(aByteRanges, false);
+}
+
+void
+Index::UpdateMoofIndex(const MediaByteRangeSet& aByteRanges, bool aCanEvict)
+{
   if (!mMoofParser) {
     return;
   }
-
-  mMoofParser->RebuildFragmentedIndex(aByteRanges);
+  size_t moofs = mMoofParser->Moofs().Length();
+  bool canEvict = aCanEvict && moofs > 1;
+  if (canEvict) {
+    // Check that we can trim the mMoofParser. We can only do so if all
+    // iterators have demuxed all possible samples.
+    for (const SampleIterator* iterator : mIterators) {
+      if ((iterator->mCurrentSample == 0 && iterator->mCurrentMoof == moofs) ||
+          iterator->mCurrentMoof == moofs - 1) {
+        continue;
+      }
+      canEvict = false;
+      break;
+    }
+  }
+  mMoofParser->RebuildFragmentedIndex(aByteRanges, &canEvict);
+  if (canEvict) {
+    // The moofparser got trimmed. Adjust all registered iterators.
+    for (SampleIterator* iterator : mIterators) {
+      iterator->mCurrentMoof -= moofs - 1;
+    }
+  }
 }
 
 Microseconds
@@ -559,4 +604,17 @@ Index::GetEvictionOffset(Microseconds aTime)
   }
   return offset;
 }
+
+void
+Index::RegisterIterator(SampleIterator* aIterator)
+{
+  mIterators.AppendElement(aIterator);
+}
+
+void
+Index::UnregisterIterator(SampleIterator* aIterator)
+{
+  mIterators.RemoveElement(aIterator);
+}
+
 }

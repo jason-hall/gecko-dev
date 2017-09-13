@@ -23,11 +23,14 @@
 #include "jscntxt.h"
 #include "jspubtd.h"
 
+#include "frontend/ErrorReporter.h"
 #include "frontend/TokenKind.h"
 #include "js/UniquePtr.h"
 #include "js/Vector.h"
-#include "vm/RegExpObject.h"
+#include "vm/ErrorReporting.h"
+#include "vm/RegExpShared.h"
 #include "vm/String.h"
+#include "vm/Unicode.h"
 
 struct KeywordInfo;
 
@@ -94,7 +97,7 @@ enum class InvalidEscapeType {
     Octal
 };
 
-class TokenStreamBase;
+class TokenStreamAnyChars;
 
 struct Token
 {
@@ -162,7 +165,7 @@ struct Token
         // gotten with None, but we expect Operand.
         OperandIsNone,
     };
-    friend class TokenStreamBase;
+    friend class TokenStreamAnyChars;
 
   public:
     TokenKind           type;           // char value or above enumerator
@@ -198,7 +201,7 @@ struct Token
         u.atom = atom;
     }
 
-    void setRegExpFlags(js::RegExpFlag flags) {
+    void setRegExpFlags(RegExpFlag flags) {
         MOZ_ASSERT(type == TOK_REGEXP);
         MOZ_ASSERT((flags & AllFlags) == flags);
         u.reflags = flags;
@@ -224,7 +227,7 @@ struct Token
         return u.atom;
     }
 
-    js::RegExpFlag regExpFlags() const {
+    RegExpFlag regExpFlags() const {
         MOZ_ASSERT(type == TOK_REGEXP);
         MOZ_ASSERT((u.reflags & AllFlags) == u.reflags);
         return u.reflags;
@@ -241,22 +244,14 @@ struct Token
     }
 };
 
-class CompileError : public JSErrorReport {
-  public:
-    void throwError(JSContext* cx);
-};
+extern TokenKind
+ReservedWordTokenKind(PropertyName* str);
 
 extern const char*
 ReservedWordToCharZ(PropertyName* str);
 
-extern MOZ_MUST_USE bool
-IsFutureReservedWord(JSLinearString* str);
-
-extern MOZ_MUST_USE bool
-IsReservedWordLiteral(JSLinearString* str);
-
-extern MOZ_MUST_USE bool
-IsStrictReservedWord(JSLinearString* str);
+extern const char*
+ReservedWordToCharZ(TokenKind tt);
 
 // Ideally, tokenizing would be entirely independent of context.  But the
 // strict mode flag, which is in SharedContext, affects tokenizing, and
@@ -270,47 +265,10 @@ class StrictModeGetter {
     virtual bool strictMode() = 0;
 };
 
-/**
- * Metadata for a compilation error (or warning) at a particular offset, or at
- * no offset (i.e. with respect to a script overall).
- */
-struct ErrorMetadata
-{
-    // The file/URL where the error occurred.
-    const char* filename;
-
-    // The line and column numbers where the error occurred.  If the error
-    // is with respect to the entire script and not with respect to a
-    // particular location, these will both be zero.
-    uint32_t lineNumber;
-    uint32_t columnNumber;
-
-    // If the error occurs at a particular location, context surrounding the
-    // location of the error: the line that contained the error, or a small
-    // portion of it if the line is long.
-    //
-    // This information is provided on a best-effort basis: code populating
-    // ErrorMetadata instances isn't obligated to supply this.
-    UniqueTwoByteChars lineOfContext;
-
-    // If |lineOfContext| is non-null, its length.
-    size_t lineLength;
-
-    // If |lineOfContext| is non-null, the offset within it of the token that
-    // triggered the error.
-    size_t tokenOffset;
-};
-
-class TokenStreamBase
+class TokenStreamAnyChars: public ErrorReporter
 {
   protected:
-    TokenStreamBase(JSContext* cx, const ReadOnlyCompileOptions& options, StrictModeGetter* smg);
-
-    // Unicode separators that are treated as line terminators, in addition to \n, \r.
-    enum {
-        LINE_SEPARATOR = 0x2028,
-        PARA_SEPARATOR = 0x2029
-    };
+    TokenStreamAnyChars(JSContext* cx, const ReadOnlyCompileOptions& options, StrictModeGetter* smg);
 
     static const size_t ntokens = 4;                // 1 current + 2 lookahead, rounded
                                                     // to power of 2 to avoid divmod by 3
@@ -324,10 +282,11 @@ class TokenStreamBase
         return currentToken().type == type;
     }
 
-    const char* getFilename() const { return filename; }
     bool getMutedErrors() const { return mutedErrors; }
     JSVersion versionNumber() const { return VersionNumber(options().version); }
     JSVersion versionWithFlags() const { return options().version; }
+
+    MOZ_MUST_USE bool checkOptions();
 
   protected:
     PropertyName* reservedWordToPropertyName(TokenKind tt) const;
@@ -339,6 +298,16 @@ class TokenStreamBase
 
         MOZ_ASSERT(TokenKindIsPossibleIdentifierName(currentToken().type));
         return reservedWordToPropertyName(currentToken().type);
+    }
+
+    bool currentNameHasEscapes() const {
+        if (isCurrentTokenType(TOK_NAME)) {
+            TokenPos pos = currentToken().pos;
+            return (pos.end - pos.begin) != currentToken().name()->length();
+        }
+
+        MOZ_ASSERT(TokenKindIsPossibleIdentifierName(currentToken().type));
+        return false;
     }
 
     PropertyName* nextName() const {
@@ -497,7 +466,8 @@ class TokenStreamBase
         // For a given buffer holding source code, |lineStartOffsets_| has one
         // element per line of source code, plus one sentinel element.  Each
         // non-sentinel element holds the buffer offset for the start of the
-        // corresponding line of source code.  For this example script:
+        // corresponding line of source code.  For this example script,
+        // assuming an initialLineOffset of 0:
         //
         // 1  // xyz            [line starts at offset 0]
         // 2  var x;            [line starts at offset 7]
@@ -515,8 +485,8 @@ class TokenStreamBase
         // which is 14.  (Note that |initialLineNum_| is often 1, but not
         // always.)
         //
-        // The first element is always 0, and the last element is always the
-        // MAX_PTR sentinel.
+        // The first element is always initialLineOffset, passed to the
+        // constructor, and the last element is always the MAX_PTR sentinel.
         //
         // offset-to-line/column lookups are O(log n) in the worst case (binary
         // search), but in practice they're heavily clustered and we do better
@@ -528,6 +498,7 @@ class TokenStreamBase
         //
         Vector<uint32_t, 128> lineStartOffsets_;
         uint32_t            initialLineNum_;
+        uint32_t            initialColumn_;
 
         // This is mutable because it's modified on every search, but that fact
         // isn't visible outside this class.
@@ -539,9 +510,17 @@ class TokenStreamBase
 
         uint32_t lineIndexToNum(uint32_t lineIndex) const { return lineIndex + initialLineNum_; }
         uint32_t lineNumToIndex(uint32_t lineNum)   const { return lineNum   - initialLineNum_; }
+        uint32_t lineIndexAndOffsetToColumn(uint32_t lineIndex, uint32_t offset) const {
+            uint32_t lineStartOffset = lineStartOffsets_[lineIndex];
+            MOZ_RELEASE_ASSERT(offset >= lineStartOffset);
+            uint32_t column = offset - lineStartOffset;
+            if (lineIndex == 0)
+                return column + initialColumn_;
+            return column;
+        }
 
       public:
-        SourceCoords(JSContext* cx, uint32_t ln);
+        SourceCoords(JSContext* cx, uint32_t ln, uint32_t col, uint32_t initialLineOffset);
 
         MOZ_MUST_USE bool add(uint32_t lineNum, uint32_t lineStartOffset);
         MOZ_MUST_USE bool fill(const SourceCoords& other);
@@ -557,7 +536,7 @@ class TokenStreamBase
 
         uint32_t lineNum(uint32_t offset) const;
         uint32_t columnIndex(uint32_t offset) const;
-        void lineNumAndColumnIndex(uint32_t offset, uint32_t* lineNum, uint32_t* columnIndex) const;
+        void lineNumAndColumnIndex(uint32_t offset, uint32_t* lineNum, uint32_t* column) const;
     };
 
     SourceCoords srcCoords;
@@ -570,9 +549,16 @@ class TokenStreamBase
         return cx;
     }
 
-    const ReadOnlyCompileOptions& options() const {
+    virtual const ReadOnlyCompileOptions& options() const override final {
         return options_;
     }
+
+    /**
+     * Fill in |err|, excepting line-of-context-related fields.  If the token
+     * stream has location information, use that and return true.  If it does
+     * not, use the caller's location information and return false.
+     */
+    bool fillExcludingContext(ErrorMetadata* err, uint32_t offset);
 
     void updateFlagsForEOL();
 
@@ -582,6 +568,19 @@ class TokenStreamBase
     }
 
     bool hasLookahead() const { return lookahead > 0; }
+
+  public:
+    MOZ_MUST_USE bool compileWarning(ErrorMetadata&& metadata, UniquePtr<JSErrorNotes> notes,
+                                     unsigned flags, unsigned errorNumber, va_list args);
+
+    // Compute error metadata for an error at no offset.
+    void computeErrorMetadataNoOffset(ErrorMetadata* err);
+
+    virtual const char* getFilename() const override { return filename; }
+    virtual bool hasTokenizationStarted() const override;
+    virtual void lineNumAndColumnIndex(size_t offset, uint32_t* line, uint32_t* column) const override;
+    virtual void reportErrorNoOffset(unsigned errorNumber, ...) override;
+    virtual size_t offset() const override;
 
   protected:
     // Options used for parsing/tokenizing.
@@ -643,15 +642,14 @@ class TokenStreamBase
 // The methods seek() and tell() allow to rescan from a previous visited
 // location of the buffer.
 //
-class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
+class MOZ_STACK_CLASS TokenStream final : public TokenStreamAnyChars
 {
   public:
-    using CharBuffer = Vector<char16_t, 32>;
+    using CharT = char16_t;
+    using CharBuffer = Vector<CharT, 32>;
 
     TokenStream(JSContext* cx, const ReadOnlyCompileOptions& options,
-                const char16_t* base, size_t length, StrictModeGetter* smg);
-
-    MOZ_MUST_USE bool checkOptions();
+                const CharT* base, size_t length, StrictModeGetter* smg);
 
     const CharBuffer& getTokenbuf() const { return tokenbuf; }
 
@@ -667,7 +665,6 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
 
     // TokenStream-specific error reporters.
     void reportError(unsigned errorNumber, ...);
-    void reportErrorNoOffset(unsigned errorNumber, ...);
 
     // Report the given error at the current offset.
     void error(unsigned errorNumber, ...);
@@ -685,21 +682,12 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
     MOZ_MUST_USE bool computeLineOfContext(ErrorMetadata* err, uint32_t offset);
 
   public:
-    // Compute error metadata for an error at no offset.
-    void computeErrorMetadataNoOffset(ErrorMetadata* err);
-
     // Compute error metadata for an error at the given offset.
     MOZ_MUST_USE bool computeErrorMetadata(ErrorMetadata* err, uint32_t offset);
 
     // General-purpose error reporters.  You should avoid calling these
     // directly, and instead use the more succinct alternatives (error(),
     // warning(), &c.) in TokenStream, Parser, and BytecodeEmitter.
-    void compileError(ErrorMetadata&& metadata, UniquePtr<JSErrorNotes> notes, unsigned flags,
-                      unsigned errorNumber, va_list args);
-
-    MOZ_MUST_USE bool compileWarning(ErrorMetadata&& metadata, UniquePtr<JSErrorNotes> notes,
-                                     unsigned flags, unsigned errorNumber, va_list args);
-
     bool reportStrictModeErrorNumberVA(UniquePtr<JSErrorNotes> notes, uint32_t offset,
                                        bool strictMode, unsigned errorNumber, va_list args);
     bool reportExtraWarningErrorNumberVA(UniquePtr<JSErrorNotes> notes, uint32_t offset,
@@ -708,8 +696,8 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
     JSAtom* getRawTemplateStringAtom() {
         MOZ_ASSERT(currentToken().type == TOK_TEMPLATE_HEAD ||
                    currentToken().type == TOK_NO_SUBS_TEMPLATE);
-        const char16_t* cur = userbuf.rawCharPtrAt(currentToken().pos.begin + 1);
-        const char16_t* end;
+        const CharT* cur = userbuf.rawCharPtrAt(currentToken().pos.begin + 1);
+        const CharT* end;
         if (currentToken().type == TOK_TEMPLATE_HEAD) {
             // Of the form    |`...${|   or   |}...${|
             end = userbuf.rawCharPtrAt(currentToken().pos.end - 2);
@@ -720,7 +708,7 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
 
         CharBuffer charbuf(cx);
         while (cur < end) {
-            int32_t ch = *cur;
+            CharT ch = *cur;
             if (ch == '\r') {
                 ch = '\n';
                 if ((cur + 1 < end) && (*(cur + 1) == '\n'))
@@ -759,7 +747,7 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
     }
 
     static JSAtom* atomize(JSContext* cx, CharBuffer& cb);
-    MOZ_MUST_USE bool putIdentInTokenbuf(const char16_t* identStart);
+    MOZ_MUST_USE bool putIdentInTokenbuf(const CharT* identStart);
 
   public:
     // Advance to the next token.  If the token stream encountered an error,
@@ -914,7 +902,7 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
       private:
         Position(const Position&) = delete;
         friend class TokenStream;
-        const char16_t* buf;
+        const CharT* buf;
         Flags flags;
         unsigned lineno;
         size_t linebase;
@@ -929,11 +917,11 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
     void seek(const Position& pos);
     MOZ_MUST_USE bool seek(const Position& pos, const TokenStream& other);
 
-    const char16_t* rawCharPtrAt(size_t offset) const {
+    const CharT* rawCharPtrAt(size_t offset) const {
         return userbuf.rawCharPtrAt(offset);
     }
 
-    const char16_t* rawLimit() const {
+    const CharT* rawLimit() const {
         return userbuf.limit();
     }
 
@@ -950,7 +938,7 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
     // begins, the offset of |buf[0]|.
     class TokenBuf {
       public:
-        TokenBuf(JSContext* cx, const char16_t* buf, size_t length, size_t startOffset)
+        TokenBuf(JSContext* cx, const CharT* buf, size_t length, size_t startOffset)
           : base_(buf),
             startOffset_(startOffset),
             limit_(buf + length),
@@ -973,25 +961,25 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
             return startOffset_ + mozilla::PointerRangeSize(base_, ptr);
         }
 
-        const char16_t* rawCharPtrAt(size_t offset) const {
+        const CharT* rawCharPtrAt(size_t offset) const {
             MOZ_ASSERT(startOffset_ <= offset);
             MOZ_ASSERT(offset - startOffset_ <= mozilla::PointerRangeSize(base_, limit_));
             return base_ + (offset - startOffset_);
         }
 
-        const char16_t* limit() const {
+        const CharT* limit() const {
             return limit_;
         }
 
-        char16_t getRawChar() {
+        CharT getRawChar() {
             return *ptr++;      // this will nullptr-crash if poisoned
         }
 
-        char16_t peekRawChar() const {
+        CharT peekRawChar() const {
             return *ptr;        // this will nullptr-crash if poisoned
         }
 
-        bool matchRawChar(char16_t c) {
+        bool matchRawChar(CharT c) {
             if (*ptr == c) {    // this will nullptr-crash if poisoned
                 ptr++;
                 return true;
@@ -999,7 +987,7 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
             return false;
         }
 
-        bool matchRawCharBackwards(char16_t c) {
+        bool matchRawCharBackwards(CharT c) {
             MOZ_ASSERT(ptr);     // make sure it hasn't been poisoned
             if (*(ptr - 1) == c) {
                 ptr--;
@@ -1013,13 +1001,13 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
             ptr--;
         }
 
-        const char16_t* addressOfNextRawChar(bool allowPoisoned = false) const {
+        const CharT* addressOfNextRawChar(bool allowPoisoned = false) const {
             MOZ_ASSERT_IF(!allowPoisoned, ptr);     // make sure it hasn't been poisoned
             return ptr;
         }
 
         // Use this with caution!
-        void setAddressOfNextRawChar(const char16_t* a, bool allowPoisoned = false) {
+        void setAddressOfNextRawChar(const CharT* a, bool allowPoisoned = false) {
             MOZ_ASSERT_IF(!allowPoisoned, a);
             ptr = a;
         }
@@ -1032,7 +1020,10 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
 #endif
 
         static bool isRawEOLChar(int32_t c) {
-            return c == '\n' || c == '\r' || c == LINE_SEPARATOR || c == PARA_SEPARATOR;
+            return c == '\n' ||
+                   c == '\r' ||
+                   c == unicode::LINE_SEPARATOR ||
+                   c == unicode::PARA_SEPARATOR;
         }
 
         // Returns the offset of the next EOL, but stops once 'max' characters
@@ -1040,10 +1031,10 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
         size_t findEOLMax(size_t start, size_t max);
 
       private:
-        const char16_t* base_;          // base of buffer
+        const CharT* base_;          // base of buffer
         uint32_t startOffset_;          // offset of base_[0]
-        const char16_t* limit_;         // limit for quick bounds check
-        const char16_t* ptr;            // next char to get
+        const CharT* limit_;         // limit for quick bounds check
+        const CharT* ptr;            // next char to get
     };
 
     MOZ_MUST_USE bool getTokenInternal(TokenKind* ttp, Modifier modifier);
@@ -1065,13 +1056,13 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
     uint32_t matchUnicodeEscapeIdStart(uint32_t* codePoint);
     bool matchUnicodeEscapeIdent(uint32_t* codePoint);
     bool matchTrailForLeadSurrogate(char16_t lead, char16_t* trail, uint32_t* codePoint);
-    bool peekChars(int n, char16_t* cp);
+    bool peekChars(int n, CharT* cp);
 
     MOZ_MUST_USE bool getDirectives(bool isMultiline, bool shouldWarnDeprecated);
     MOZ_MUST_USE bool getDirective(bool isMultiline, bool shouldWarnDeprecated,
                                    const char* directive, uint8_t directiveLength,
                                    const char* errorMsgPragma,
-                                   UniquePtr<char16_t[], JS::FreePolicy>* destination);
+                                   UniquePtr<CharT[], JS::FreePolicy>* destination);
     MOZ_MUST_USE bool getDisplayURL(bool isMultiline, bool shouldWarnDeprecated);
     MOZ_MUST_USE bool getSourceMappingURL(bool isMultiline, bool shouldWarnDeprecated);
 
@@ -1095,7 +1086,7 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
         return true;
     }
 
-    void skipChars(uint8_t n) {
+    void skipChars(uint32_t n) {
         while (n-- > 0) {
             MOZ_ASSERT(userbuf.hasRawChars());
             mozilla::DebugOnly<int32_t> c = getCharIgnoreEOL();
@@ -1114,6 +1105,9 @@ class MOZ_STACK_CLASS TokenStream final : public TokenStreamBase
 
     TokenBuf            userbuf;            // user input buffer
     CharBuffer          tokenbuf;           // current token string buffer
+
+public:
+    virtual size_t offset() const override;
 };
 
 extern const char*

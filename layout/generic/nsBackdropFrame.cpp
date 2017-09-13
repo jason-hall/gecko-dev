@@ -14,12 +14,6 @@ using namespace mozilla;
 
 NS_IMPL_FRAMEARENA_HELPERS(nsBackdropFrame)
 
-/* virtual */ nsIAtom*
-nsBackdropFrame::GetType() const
-{
-  return nsGkAtoms::backdropFrame;
-}
-
 #ifdef DEBUG_FRAME_DUMP
 nsresult
 nsBackdropFrame::GetFrameName(nsAString& aResult) const
@@ -39,7 +33,6 @@ nsBackdropFrame::GetParentStyleContext(nsIFrame** aProviderFrame) const
 
 /* virtual */ void
 nsBackdropFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
-                                  const nsRect& aDirtyRect,
                                   const nsDisplayListSet& aLists)
 {
   DO_GLOBAL_REFLOW_COUNT_DSP("nsBackdropFrame");
@@ -56,7 +49,7 @@ nsBackdropFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 }
 
 /* virtual */ LogicalSize
-nsBackdropFrame::ComputeAutoSize(nsRenderingContext* aRenderingContext,
+nsBackdropFrame::ComputeAutoSize(gfxContext*         aRenderingContext,
                                  WritingMode         aWM,
                                  const LogicalSize&  aCBSize,
                                  nscoord             aAvailableISize,

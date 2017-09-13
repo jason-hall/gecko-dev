@@ -13,6 +13,7 @@ use dom::globalscope::GlobalScope;
 use dom_struct::dom_struct;
 use js::jsapi::{Heap, JSContext, JSObject};
 use js::typedarray::{Float32Array, CreateWith};
+use std::ptr;
 use webvr_traits::WebVRStageParameters;
 
 #[dom_struct]
@@ -26,28 +27,30 @@ pub struct VRStageParameters {
 unsafe_no_jsmanaged_fields!(WebVRStageParameters);
 
 impl VRStageParameters {
-    #[allow(unsafe_code)]
-    #[allow(unrooted_must_root)]
-    fn new_inherited(parameters: WebVRStageParameters, global: &GlobalScope) -> VRStageParameters {
-        let stage = VRStageParameters {
+    fn new_inherited(parameters: WebVRStageParameters) -> VRStageParameters {
+        VRStageParameters {
             reflector_: Reflector::new(),
             parameters: DOMRefCell::new(parameters),
             transform: Heap::default()
-        };
-        // XXX unsound!
-        unsafe {
-            let _ = Float32Array::create(global.get_cx(),
-                                         CreateWith::Slice(&stage.parameters.borrow().sitting_to_standing_transform),
-                                         stage.transform.handle_mut());
         }
-
-        stage
     }
 
+    #[allow(unsafe_code)]
     pub fn new(parameters: WebVRStageParameters, global: &GlobalScope) -> Root<VRStageParameters> {
-        reflect_dom_object(box VRStageParameters::new_inherited(parameters, global),
-                           global,
-                           VRStageParametersBinding::Wrap)
+        let cx = global.get_cx();
+        rooted!(in (cx) let mut array = ptr::null_mut());
+        unsafe {
+            let _ = Float32Array::create(cx, CreateWith::Slice(&parameters.sitting_to_standing_transform),
+                                                               array.handle_mut());
+        }
+
+        let stage_parameters  = reflect_dom_object(box VRStageParameters::new_inherited(parameters),
+                                                   global,
+                                                   VRStageParametersBinding::Wrap);
+
+        stage_parameters.transform.set(array.get());
+
+        stage_parameters
     }
 
     #[allow(unsafe_code)]
@@ -67,7 +70,7 @@ impl VRStageParametersMethods for VRStageParameters {
     #[allow(unsafe_code)]
     // https://w3c.github.io/webvr/#dom-vrstageparameters-sittingtostandingtransform
     unsafe fn SittingToStandingTransform(&self, _cx: *mut JSContext) -> NonZero<*mut JSObject> {
-        NonZero::new(self.transform.get())
+        NonZero::new_unchecked(self.transform.get())
     }
 
     // https://w3c.github.io/webvr/#dom-vrstageparameters-sizex

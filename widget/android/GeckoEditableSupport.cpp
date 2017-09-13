@@ -9,7 +9,6 @@
 #include "AndroidRect.h"
 #include "KeyEvent.h"
 #include "PuppetWidget.h"
-#include "android_npapi.h"
 #include "nsIContent.h"
 #include "nsISelection.h"
 
@@ -302,24 +301,6 @@ InitKeyEvent(WidgetKeyboardEvent& aEvent, int32_t aAction, int32_t aKeyCode,
     aEvent.mModifiers = nsWindow::GetModifiers(aMetaState);
     aEvent.mKeyCode = domKeyCode;
 
-    if (aEvent.mMessage != eKeyPress) {
-        ANPEvent pluginEvent;
-        pluginEvent.inSize = sizeof(pluginEvent);
-        pluginEvent.eventType = kKey_ANPEventType;
-        pluginEvent.data.key.action = (aEvent.mMessage == eKeyDown) ?
-                kDown_ANPKeyAction : kUp_ANPKeyAction;
-        pluginEvent.data.key.nativeCode = aKeyCode;
-        pluginEvent.data.key.virtualCode = domKeyCode;
-        pluginEvent.data.key.unichar = aDomPrintableKeyValue;
-        pluginEvent.data.key.modifiers =
-                (aMetaState & sdk::KeyEvent::META_SHIFT_MASK
-                        ? kShift_ANPKeyModifier : 0) |
-                (aMetaState & sdk::KeyEvent::META_ALT_MASK
-                        ? kAlt_ANPKeyModifier : 0);
-        pluginEvent.data.key.repeatCount = aRepeatCount;
-        aEvent.mPluginEvent.Copy(pluginEvent);
-    }
-
     aEvent.mIsRepeat =
         (aEvent.mMessage == eKeyDown || aEvent.mMessage == eKeyPress) &&
         ((aFlags & sdk::KeyEvent::FLAG_LONG_PRESS) || aRepeatCount);
@@ -359,11 +340,9 @@ ConvertRectArrayToJavaRectFArray(const nsTArray<LayoutDeviceIntRect>& aRects,
     for (size_t i = 0; i < length; i++) {
         LayoutDeviceIntRect tmp = aRects[i] + aOffset;
 
-        sdk::RectF::LocalRef rect(rects.Env());
-        sdk::RectF::New(tmp.x / aScale.scale, tmp.y / aScale.scale,
-                        (tmp.x + tmp.width) / aScale.scale,
-                        (tmp.y + tmp.height) / aScale.scale,
-                        &rect);
+        auto rect = sdk::RectF::New(tmp.x / aScale.scale, tmp.y / aScale.scale,
+                                    (tmp.x + tmp.width) / aScale.scale,
+                                    (tmp.y + tmp.height) / aScale.scale);
         rects->SetElement(i, rect);
     }
     return rects;
@@ -465,10 +444,8 @@ GeckoEditableSupport::OnKeyEvent(int32_t aAction, int32_t aKeyCode,
         mIMEKeyEvents.AppendElement(
                 UniquePtr<WidgetEvent>(pressEvent.Duplicate()));
     } else if (nsIWidget::UsePuppetWidgets()) {
-        AutoCacheNativeKeyCommands autoCache(
-                static_cast<PuppetWidget*>(widget.get()));
         // Don't use native key bindings.
-        autoCache.CacheNoCommands();
+        pressEvent.PreventNativeKeyBindings();
         dispatcher->MaybeDispatchKeypressEvents(pressEvent, status);
     } else {
         dispatcher->MaybeDispatchKeypressEvents(pressEvent, status);
@@ -668,7 +645,11 @@ GeckoEditableSupport::FlushIMEChanges(FlushChangesFlag aFlags)
             FlushIMEText(FLUSH_FLAG_RECOVER);
         } else {
             // Give up because we've already tried.
+#ifdef RELEASE_OR_BETA
+            env->ExceptionClear();
+#else
             MOZ_CATCH_JNI_EXCEPTION(env);
+#endif
         }
         return true;
     };
@@ -803,10 +784,8 @@ GeckoEditableSupport::OnImeReplaceText(int32_t aStart, int32_t aEnd,
                     mDispatcher->DispatchKeyboardEvent(
                             event->mMessage, *event, status);
                 } else if (nsIWidget::UsePuppetWidgets()) {
-                    AutoCacheNativeKeyCommands autoCache(
-                            static_cast<PuppetWidget*>(widget.get()));
                     // Don't use native key bindings.
-                    autoCache.CacheNoCommands();
+                    event->PreventNativeKeyBindings();
                     mDispatcher->MaybeDispatchKeypressEvents(*event, status);
                 } else {
                     mDispatcher->MaybeDispatchKeypressEvents(*event, status);
@@ -893,7 +872,8 @@ GeckoEditableSupport::OnImeAddCompositionRange(
 }
 
 void
-GeckoEditableSupport::OnImeUpdateComposition(int32_t aStart, int32_t aEnd)
+GeckoEditableSupport::OnImeUpdateComposition(int32_t aStart, int32_t aEnd,
+                                             int32_t aFlags)
 {
     if (mIMEMaskEventsCount > 0) {
         // Not focused.
@@ -904,8 +884,16 @@ GeckoEditableSupport::OnImeUpdateComposition(int32_t aStart, int32_t aEnd)
     nsEventStatus status = nsEventStatus_eIgnore;
     NS_ENSURE_TRUE_VOID(mDispatcher && widget);
 
+    const bool keepCurrent = !!(aFlags &
+            java::GeckoEditableChild::FLAG_KEEP_CURRENT_COMPOSITION);
+
     // A composition with no ranges means we want to set the selection.
     if (mIMERanges->IsEmpty()) {
+        if (keepCurrent && mDispatcher->IsComposing()) {
+            // Don't set selection if we want to keep current composition.
+            return;
+        }
+
         MOZ_ASSERT(aStart >= 0 && aEnd >= 0);
         RemoveComposition();
 
@@ -933,6 +921,12 @@ GeckoEditableSupport::OnImeUpdateComposition(int32_t aStart, int32_t aEnd)
         uint32_t(aStart) != composition->NativeOffsetOfStartComposition() ||
         uint32_t(aEnd) != composition->NativeOffsetOfStartComposition() +
                           composition->String().Length()) {
+        if (keepCurrent) {
+            // Don't start a new composition if we want to keep the current one.
+            mIMERanges->Clear();
+            return;
+        }
+
         // Only start new composition if we don't have an existing one,
         // or if the existing composition doesn't match the new one.
         RemoveComposition();
@@ -965,7 +959,10 @@ GeckoEditableSupport::OnImeUpdateComposition(int32_t aStart, int32_t aEnd)
             text, event.mData.Length(), event.mRanges->Length());
 #endif // DEBUG_ANDROID_IME
 
-    NS_ENSURE_SUCCESS_VOID(BeginInputTransaction(mDispatcher));
+    if (NS_WARN_IF(NS_FAILED(BeginInputTransaction(mDispatcher)))) {
+        mIMERanges->Clear();
+        return;
+    }
     mDispatcher->SetPendingComposition(string, mIMERanges);
     mDispatcher->FlushPendingComposition(status);
     mIMERanges->Clear();
@@ -1135,14 +1132,14 @@ GeckoEditableSupport::WillDispatchKeyboardEvent(
 {
 }
 
-NS_IMETHODIMP_(nsIMEUpdatePreference)
-GeckoEditableSupport::GetIMEUpdatePreference()
+NS_IMETHODIMP_(IMENotificationRequests)
+GeckoEditableSupport::GetIMENotificationRequests()
 {
     // While a plugin has focus, Listener doesn't need any notifications.
     if (GetInputContext().mIMEState.mEnabled == IMEState::PLUGIN) {
-      return nsIMEUpdatePreference();
+      return IMENotificationRequests();
     }
-    return nsIMEUpdatePreference(nsIMEUpdatePreference::NOTIFY_TEXT_CHANGE);
+    return IMENotificationRequests(IMENotificationRequests::NOTIFY_TEXT_CHANGE);
 }
 
 void
@@ -1200,7 +1197,8 @@ GeckoEditableSupport::SetInputContext(const InputContext& aContext,
         mEditable->NotifyIMEContext(mInputContext.mIMEState.mEnabled,
                                     mInputContext.mHTMLInputType,
                                     mInputContext.mHTMLInputInputmode,
-                                    mInputContext.mActionHint);
+                                    mInputContext.mActionHint,
+                                    mInputContext.mInPrivateBrowsing);
     });
 }
 

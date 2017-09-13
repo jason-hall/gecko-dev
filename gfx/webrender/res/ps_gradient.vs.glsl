@@ -1,22 +1,27 @@
-#line 1
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 void main(void) {
     Primitive prim = load_primitive();
-    Gradient gradient = fetch_gradient(prim.prim_index);
+    Gradient gradient = fetch_gradient(prim.specific_prim_address);
 
-    GradientStop g0 = fetch_gradient_stop(prim.sub_index + 0);
-    GradientStop g1 = fetch_gradient_stop(prim.sub_index + 1);
+    vec4 abs_start_end_point = gradient.start_end_point + prim.local_rect.p0.xyxy;
+
+    int stop_address = prim.specific_prim_address +
+                       VECS_PER_GRADIENT +
+                       VECS_PER_GRADIENT_STOP * prim.user_data0;
+
+    GradientStop g0 = fetch_gradient_stop(stop_address);
+    GradientStop g1 = fetch_gradient_stop(stop_address + VECS_PER_GRADIENT_STOP);
 
     RectWithSize segment_rect;
     vec2 axis;
     vec4 adjusted_color_g0 = g0.color;
     vec4 adjusted_color_g1 = g1.color;
-    if (gradient.start_end_point.y == gradient.start_end_point.w) {
+    if (abs_start_end_point.y == abs_start_end_point.w) {
         // Calculate the x coord of the gradient stops
-        vec2 g01_x = mix(gradient.start_end_point.xx, gradient.start_end_point.zz,
+        vec2 g01_x = mix(abs_start_end_point.xx, abs_start_end_point.zz,
                          vec2(g0.offset.x, g1.offset.x));
 
         // The gradient stops might exceed the geometry rect so clamp them
@@ -35,7 +40,7 @@ void main(void) {
         adjusted_color_g1 = mix(g0.color, g1.color, adjusted_offset.y);
     } else {
         // Calculate the y coord of the gradient stops
-        vec2 g01_y = mix(gradient.start_end_point.yy, gradient.start_end_point.ww,
+        vec2 g01_y = mix(abs_start_end_point.yy, abs_start_end_point.ww,
                          vec2(g0.offset.x, g1.offset.x));
 
         // The gradient stops might exceed the geometry rect so clamp them
@@ -59,8 +64,8 @@ void main(void) {
                                                     prim.local_clip_rect,
                                                     prim.z,
                                                     prim.layer,
-                                                    prim.task);
-    vLocalRect = vi.clipped_local_rect;
+                                                    prim.task,
+                                                    prim.local_rect);
     vLocalPos = vi.local_pos;
     vec2 f = (vi.local_pos.xy - prim.local_rect.p0) / prim.local_rect.size;
 #else
@@ -68,7 +73,8 @@ void main(void) {
                                  prim.local_clip_rect,
                                  prim.z,
                                  prim.layer,
-                                 prim.task);
+                                 prim.task,
+                                 prim.local_rect);
 
     vec2 f = (vi.local_pos - segment_rect.p0) / segment_rect.size;
     vPos = vi.local_pos;

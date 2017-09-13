@@ -6,11 +6,12 @@
 #ifndef __NS_ISVGCHILDFRAME_H__
 #define __NS_ISVGCHILDFRAME_H__
 
+#include "gfxMatrix.h"
 #include "gfxRect.h"
 #include "nsQueryFrame.h"
+#include "mozilla/gfx/MatrixFwd.h"
 
 class gfxContext;
-class gfxMatrix;
 class nsIFrame;
 class SVGBBox;
 
@@ -23,9 +24,6 @@ class SVGLengthList;
 class SVGNumberList;
 class SVGUserUnitList;
 
-namespace gfx {
-class Matrix;
-} // namespace gfx
 } // namespace mozilla
 
 /**
@@ -51,7 +49,7 @@ public:
   typedef mozilla::SVGAnimatedLengthList SVGAnimatedLengthList;
   typedef mozilla::SVGLengthList SVGLengthList;
   typedef mozilla::SVGUserUnitList SVGUserUnitList;
-  typedef mozilla::image::DrawResult DrawResult;
+  typedef mozilla::image::imgDrawingParams imgDrawingParams;
 
   NS_DECL_QUERYFRAME_TARGET(nsSVGDisplayableFrame)
 
@@ -79,15 +77,16 @@ public:
    *   very expensive for certain DrawTarget backends so it is best to minimize
    *   the number of transform changes.
    *
+   * @param aImgParams imagelib parameters that may be used when painting
+   *   feImage.
+   *
    * @param aDirtyRect The area being redrawn, in frame offset pixel
    *   coordinates.
-   *
-   * @param aFlags Image flags of the imgIContainer::FLAG_* variety.
    */
-  virtual DrawResult PaintSVG(gfxContext& aContext,
-                              const gfxMatrix& aTransform,
-                              const nsIntRect* aDirtyRect = nullptr,
-                              uint32_t aFlags = 0) = 0;
+  virtual void PaintSVG(gfxContext& aContext,
+                        const gfxMatrix& aTransform,
+                        imgDrawingParams& aImgParams,
+                        const nsIntRect* aDirtyRect = nullptr) = 0;
 
   /**
    * Returns the frame that should handle pointer events at aPoint.  aPoint is
@@ -124,7 +123,7 @@ public:
    * ancestors that might affect the frame too. SVGChangedFlags are passed
    * to indicate what changed.
    *
-   * Implementations do not need to invalidate, since the caller will 
+   * Implementations do not need to invalidate, since the caller will
    * invalidate the entire area of the ancestor that changed. However, they
    * may need to update their bounds.
    */

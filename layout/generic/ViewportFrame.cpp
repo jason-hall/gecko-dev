@@ -10,6 +10,7 @@
 
 #include "mozilla/ViewportFrame.h"
 
+#include "mozilla/ServoRestyleManager.h"
 #include "nsGkAtoms.h"
 #include "nsIScrollableFrame.h"
 #include "nsSubDocumentFrame.h"
@@ -18,6 +19,7 @@
 #include "GeckoProfiler.h"
 #include "nsIMozBrowserFrame.h"
 #include "nsPlaceholderFrame.h"
+#include "mozilla/ServoStyleContextInlines.h"
 
 using namespace mozilla;
 typedef nsAbsoluteContainingBlock::AbsPosReflowFlags AbsPosReflowFlags;
@@ -52,17 +54,15 @@ ViewportFrame::Init(nsIContent*       aContent,
 
 void
 ViewportFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists)
 {
-  PROFILER_LABEL("ViewportFrame", "BuildDisplayList",
-    js::ProfileEntry::Category::GRAPHICS);
+  AUTO_PROFILER_LABEL("ViewportFrame::BuildDisplayList", GRAPHICS);
 
   if (nsIFrame* kid = mFrames.FirstChild()) {
     // make the kid's BorderBackground our own. This ensures that the canvas
     // frame's background becomes our own background and therefore appears
     // below negative z-index elements.
-    BuildDisplayListForChild(aBuilder, kid, aDirtyRect, aLists);
+    BuildDisplayListForChild(aBuilder, kid, aLists);
   }
 
   nsDisplayList topLayerList;
@@ -123,8 +123,12 @@ BuildDisplayListForTopLayerFrame(nsDisplayListBuilder* aBuilder,
     asrSetter.SetCurrentActiveScrolledRoot(
       savedOutOfFlowData->mContainingBlockActiveScrolledRoot);
   }
+  nsDisplayListBuilder::AutoBuildingDisplayList
+    buildingForChild(aBuilder, aFrame, dirty,
+                     aBuilder->IsAtRootOfPseudoStackingContext());
+
   nsDisplayList list;
-  aFrame->BuildDisplayListForStackingContext(aBuilder, dirty, &list);
+  aFrame->BuildDisplayListForStackingContext(aBuilder, &list);
   aList->AppendToTop(&list);
 }
 
@@ -161,7 +165,7 @@ ViewportFrame::BuildDisplayListForTopLayer(nsDisplayListBuilder* aBuilder,
       }
       if (nsIFrame* backdropPh =
           frame->GetChildList(kBackdropList).FirstChild()) {
-        MOZ_ASSERT(backdropPh->GetType() == nsGkAtoms::placeholderFrame);
+        MOZ_ASSERT(backdropPh->IsPlaceholderFrame());
         nsIFrame* backdropFrame =
           static_cast<nsPlaceholderFrame*>(backdropPh)->GetOutOfFlowFrame();
         MOZ_ASSERT(backdropFrame);
@@ -211,7 +215,7 @@ ViewportFrame::RemoveFrame(ChildListID     aListID,
 #endif
 
 /* virtual */ nscoord
-ViewportFrame::GetMinISize(nsRenderingContext *aRenderingContext)
+ViewportFrame::GetMinISize(gfxContext *aRenderingContext)
 {
   nscoord result;
   DISPLAY_MIN_WIDTH(this, result);
@@ -224,7 +228,7 @@ ViewportFrame::GetMinISize(nsRenderingContext *aRenderingContext)
 }
 
 /* virtual */ nscoord
-ViewportFrame::GetPrefISize(nsRenderingContext *aRenderingContext)
+ViewportFrame::GetPrefISize(gfxContext *aRenderingContext)
 {
   nscoord result;
   DISPLAY_PREF_WIDTH(this, result);
@@ -415,10 +419,32 @@ ViewportFrame::ComputeCustomOverflow(nsOverflowAreas& aOverflowAreas)
   return nsContainerFrame::ComputeCustomOverflow(aOverflowAreas);
 }
 
-nsIAtom*
-ViewportFrame::GetType() const
+void
+ViewportFrame::UpdateStyle(ServoRestyleState& aRestyleState)
 {
-  return nsGkAtoms::viewportFrame;
+  ServoStyleContext* oldContext = StyleContext()->AsServo();
+  nsIAtom* pseudo = oldContext->GetPseudo();
+  RefPtr<ServoStyleContext> newContext =
+    aRestyleState.StyleSet().ResolveInheritingAnonymousBoxStyle(pseudo, nullptr);
+
+  // We're special because we have a null GetContent(), so don't call things
+  // like UpdateStyleOfOwnedChildFrame that try to append changes for the
+  // content to the change list.  Nor do we computed a changehint, since we have
+  // no way to apply it anyway.
+  newContext->ResolveSameStructsAs(oldContext);
+
+  MOZ_ASSERT(!GetNextContinuation(), "Viewport has continuations?");
+  SetStyleContext(newContext);
+
+  UpdateStyleOfOwnedAnonBoxes(aRestyleState);
+}
+
+void
+ViewportFrame::AppendDirectlyOwnedAnonBoxes(nsTArray<OwnedAnonBox>& aResult)
+{
+  if (mFrames.NotEmpty()) {
+    aResult.AppendElement(mFrames.FirstChild());
+  }
 }
 
 #ifdef DEBUG_FRAME_DUMP

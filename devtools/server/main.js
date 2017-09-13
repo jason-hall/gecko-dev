@@ -17,8 +17,7 @@ var { LocalDebuggerTransport, ChildDebuggerTransport, WorkerDebuggerTransport } 
 var DevToolsUtils = require("devtools/shared/DevToolsUtils");
 var { dumpn, dumpv } = DevToolsUtils;
 var flags = require("devtools/shared/flags");
-var EventEmitter = require("devtools/shared/event-emitter");
-var Promise = require("promise");
+var OldEventEmitter = require("devtools/shared/old-event-emitter");
 var SyncPromise = require("devtools/shared/deprecated-sync-thenables");
 
 DevToolsUtils.defineLazyGetter(this, "DebuggerSocket", () => {
@@ -69,6 +68,9 @@ if (isWorker) {
     Services.prefs.getBoolPref(VERBOSE_PREF);
 }
 
+const CONTENT_PROCESS_DBG_SERVER_SCRIPT =
+  "resource://devtools/server/content-process-debugger-server.js";
+
 function loadSubScript(url) {
   try {
     let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
@@ -84,7 +86,7 @@ function loadSubScript(url) {
   }
 }
 
-loader.lazyRequireGetter(this, "events", "sdk/event/core");
+loader.lazyRequireGetter(this, "EventEmitter", "devtools/shared/event-emitter");
 
 var gRegisteredModules = Object.create(null);
 
@@ -149,6 +151,8 @@ function ModuleAPI() {
 var DebuggerServer = {
   _listeners: [],
   _initialized: false,
+  // Flag to check if the content process debugger server script was already loaded.
+  _contentProcessScriptLoaded: false,
   // Map of global actor names to actor constructors provided by extensions.
   globalActorFactories: {},
   // Map of tab actor names to actor constructors provided by extensions.
@@ -545,11 +549,6 @@ var DebuggerServer = {
       type: { tab: true }
     });
     if ("nsIProfiler" in Ci) {
-      this.registerModule("devtools/server/actors/profiler", {
-        prefix: "profiler",
-        constructor: "ProfilerActor",
-        type: { tab: true }
-      });
       this.registerModule("devtools/server/actors/performance", {
         prefix: "performance",
         constructor: "PerformanceActor",
@@ -579,6 +578,11 @@ var DebuggerServer = {
     this.registerModule("devtools/server/actors/webextension-inspected-window", {
       prefix: "webExtensionInspectedWindow",
       constructor: "WebExtensionInspectedWindowActor",
+      type: { tab: true }
+    });
+    this.registerModule("devtools/server/actors/accessibility", {
+      prefix: "accessibility",
+      constructor: "AccessibilityActor",
       type: { tab: true }
     });
   },
@@ -755,13 +759,22 @@ var DebuggerServer = {
       deferred.resolve(actor);
     });
 
-    mm.sendAsyncMessage("DevTools:InitDebuggerServer", {
+    // Load the content process debugger server script only once.
+    if (!this._contentProcessScriptLoaded) {
+      // Load the process script that will receive the debug:init-content-server message
+      Services.ppmm.loadProcessScript(CONTENT_PROCESS_DBG_SERVER_SCRIPT, true);
+      this._contentProcessScriptLoaded = true;
+    }
+
+    // Send a message to the content process debugger server script to forward it the
+    // prefix.
+    mm.sendAsyncMessage("debug:init-content-server", {
       prefix: prefix
     });
 
     function onClose() {
       Services.obs.removeObserver(onMessageManagerClose, "message-manager-close");
-      events.off(connection, "closed", onClose);
+      EventEmitter.off(connection, "closed", onClose);
       if (childTransport) {
         // If we have a child transport, the actor has already
         // been created. We need to stop using this message manager.
@@ -789,9 +802,9 @@ var DebuggerServer = {
       }
     });
     Services.obs.addObserver(onMessageManagerClose,
-                             "message-manager-close", false);
+                             "message-manager-close");
 
-    events.on(connection, "closed", onClose);
+    EventEmitter.on(connection, "closed", onClose);
 
     return deferred.promise;
   },
@@ -951,42 +964,41 @@ var DebuggerServer = {
     if (this._childMessageManagers.size == 0) {
       return Promise.resolve();
     }
-    let deferred = Promise.defer();
-
-    // If waitForEval is set, pass a unique id and expect child.js to send
-    // a message back once the code in child is evaluated.
-    if (typeof (waitForEval) != "boolean") {
-      waitForEval = false;
-    }
-    let count = this._childMessageManagers.size;
-    let id = waitForEval ? generateUUID().toString() : null;
-
-    this._childMessageManagers.forEach(mm => {
-      if (waitForEval) {
-        // Listen for the end of each child execution
-        let evalListener = msg => {
-          if (msg.data.id !== id) {
-            return;
-          }
-          mm.removeMessageListener("debug:setup-in-child-response", evalListener);
-          if (--count === 0) {
-            deferred.resolve();
-          }
-        };
-        mm.addMessageListener("debug:setup-in-child-response", evalListener);
+    return new Promise(done => {
+      // If waitForEval is set, pass a unique id and expect child.js to send
+      // a message back once the code in child is evaluated.
+      if (typeof (waitForEval) != "boolean") {
+        waitForEval = false;
       }
-      mm.sendAsyncMessage("debug:setup-in-child", {
-        module: module,
-        setupChild: setupChild,
-        args: args,
-        id: id,
-      });
-    });
+      let count = this._childMessageManagers.size;
+      let id = waitForEval ? generateUUID().toString() : null;
 
-    if (waitForEval) {
-      return deferred.promise;
-    }
-    return Promise.resolve();
+      this._childMessageManagers.forEach(mm => {
+        if (waitForEval) {
+          // Listen for the end of each child execution
+          let evalListener = msg => {
+            if (msg.data.id !== id) {
+              return;
+            }
+            mm.removeMessageListener("debug:setup-in-child-response", evalListener);
+            if (--count === 0) {
+              done();
+            }
+          };
+          mm.addMessageListener("debug:setup-in-child-response", evalListener);
+        }
+        mm.sendAsyncMessage("debug:setup-in-child", {
+          module: module,
+          setupChild: setupChild,
+          args: args,
+          id: id,
+        });
+      });
+
+      if (!waitForEval) {
+        done();
+      }
+    });
   },
 
   /**
@@ -1009,7 +1021,7 @@ var DebuggerServer = {
    *         A promise object that is resolved once the connection is
    *         established.
    */
-  connectToChild(connection, frame, onDestroy) {
+  connectToChild(connection, frame, onDestroy, {addonId} = {}) {
     let deferred = SyncPromise.defer();
 
     // Get messageManager from XUL browser (which might be a specialized tunnel for RDM)
@@ -1122,6 +1134,9 @@ var DebuggerServer = {
     };
 
     let destroy = DevToolsUtils.makeInfallible(function () {
+      EventEmitter.off(connection, "closed", destroy);
+      Services.obs.removeObserver(onMessageManagerClose, "message-manager-close");
+
       // provides hook to actor modules that need to exchange messages
       // between e10s parent and child processes
       parentModules.forEach(mod => {
@@ -1168,8 +1183,6 @@ var DebuggerServer = {
 
       // Cleanup all listeners
       untrackMessageManager();
-      Services.obs.removeObserver(onMessageManagerClose, "message-manager-close");
-      events.off(connection, "closed", destroy);
     });
 
     // Listen for various messages and frame events
@@ -1182,13 +1195,13 @@ var DebuggerServer = {
       }
     };
     Services.obs.addObserver(onMessageManagerClose,
-                             "message-manager-close", false);
+                             "message-manager-close");
 
     // Listen for connection close to cleanup things
     // when user unplug the device or we lose the connection somehow.
-    events.on(connection, "closed", destroy);
+    EventEmitter.on(connection, "closed", destroy);
 
-    mm.sendAsyncMessage("debug:connect", { prefix });
+    mm.sendAsyncMessage("debug:connect", { prefix, addonId });
 
     return deferred.promise;
   },
@@ -1368,11 +1381,36 @@ var DebuggerServer = {
   },
 
   /**
-   * ⚠ TESTING ONLY! ⚠ Searches all active connections for an actor matching an ID.
-   * This is helpful for some tests which depend on reaching into the server to check some
-   * properties of an actor.
+   * Called when DevTools are unloaded to remove the contend process server script for the
+   * list of scripts loaded for each new content process. Will also remove message
+   * listeners from already loaded scripts.
    */
-  _searchAllConnectionsForActor(actorID) {
+  removeContentServerScript() {
+    Services.ppmm.removeDelayedProcessScript(CONTENT_PROCESS_DBG_SERVER_SCRIPT);
+    try {
+      Services.ppmm.broadcastAsyncMessage("debug:close-content-server");
+    } catch (e) {
+      // Nothing to do
+    }
+  },
+
+  /**
+   * Searches all active connections for an actor matching an ID.
+   *
+   * ⚠ TO BE USED ONLY FROM SERVER CODE OR TESTING ONLY! ⚠`
+   *
+   * This is helpful for some tests which depend on reaching into the server to check some
+   * properties of an actor, and it is also used by the actors related to the
+   * DevTools WebExtensions API to be able to interact with the actors created for the
+   * panels natively provided by the DevTools Toolbox.
+   */
+  searchAllConnectionsForActor(actorID) {
+    // NOTE: the actor IDs are generated with the following format:
+    //
+    //   `server${loaderID}.conn${ConnectionID}${ActorPrefix}${ActorID}`
+    //
+    // as an optimization we can come up with a regexp to query only
+    // the right connection via its id.
     for (let connID of Object.getOwnPropertyNames(this._connections)) {
       let actor = this._connections[connID].getActor(actorID);
       if (actor) {
@@ -1391,7 +1429,7 @@ DevToolsUtils.defineLazyGetter(DebuggerServer, "AuthenticationResult", () => {
   return Authentication.AuthenticationResult;
 });
 
-EventEmitter.decorate(DebuggerServer);
+OldEventEmitter.decorate(DebuggerServer);
 
 if (this.exports) {
   exports.DebuggerServer = DebuggerServer;
@@ -1636,7 +1674,7 @@ DebuggerServerConnection.prototype = {
         response.from = from;
       }
       this.transport.send(response);
-    }).then(null, (e) => {
+    }).catch((e) => {
       let errorPacket = this._unknownError(
         "error occurred while processing '" + type, e);
       errorPacket.from = from;
@@ -1854,7 +1892,7 @@ DebuggerServerConnection.prototype = {
     }
     this._actorPool = null;
 
-    events.emit(this, "closed", status);
+    EventEmitter.emit(this, "closed", status);
 
     this._extraPools.forEach(p => p.destroy());
     this._extraPools = null;

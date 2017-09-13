@@ -8,18 +8,18 @@
 
 define(function (require, exports, module) {
   const { render } = require("devtools/client/shared/vendor/react-dom");
-  const { createFactories } = require("devtools/client/shared/components/reps/reps");
+  const { createFactories } = require("devtools/client/shared/react-utils");
   const { MainTabbedArea } = createFactories(require("./components/main-tabbed-area"));
 
   const json = document.getElementById("json");
-  const headers = document.getElementById("headers");
 
   let jsonData;
+  let prettyURL;
 
   try {
     jsonData = JSON.parse(json.textContent);
   } catch (err) {
-    jsonData = err + "";
+    jsonData = err;
   }
 
   // Application state object.
@@ -27,13 +27,12 @@ define(function (require, exports, module) {
     jsonText: json.textContent,
     jsonPretty: null,
     json: jsonData,
-    headers: JSON.parse(headers.textContent),
+    headers: JSONView.headers,
     tabActive: 0,
     prettified: false
   };
 
   json.remove();
-  headers.remove();
 
   /**
    * Application actions/commands. This list implements all commands
@@ -45,7 +44,10 @@ define(function (require, exports, module) {
     },
 
     onSaveJson: function () {
-      dispatchEvent("save", input.prettified ? input.jsonPretty : input.jsonText);
+      if (input.prettified && !prettyURL) {
+        prettyURL = URL.createObjectURL(new window.Blob([input.jsonPretty]));
+      }
+      dispatchEvent("save", input.prettified ? prettyURL : null);
     },
 
     onCopyHeaders: function () {
@@ -57,6 +59,10 @@ define(function (require, exports, module) {
     },
 
     onPrettify: function (data) {
+      if (jsonData instanceof Error) {
+        // Cannot prettify invalid JSON
+        return;
+      }
       if (input.prettified) {
         theApp.setState({jsonText: input.jsonText});
       } else {
@@ -95,17 +101,9 @@ define(function (require, exports, module) {
   let content = document.getElementById("content");
   let theApp = render(MainTabbedArea(input), content);
 
-  let onResize = event => {
-    window.document.body.style.height = window.innerHeight + "px";
-    window.document.body.style.width = window.innerWidth + "px";
-  };
-
-  window.addEventListener("resize", onResize);
-  onResize();
-
   // Send notification event to the window. Can be useful for
   // tests as well as extensions.
   let event = new CustomEvent("JSONViewInitialized", {});
-  window.jsonViewInitialized = true;
+  JSONView.initialized = true;
   window.dispatchEvent(event);
 });

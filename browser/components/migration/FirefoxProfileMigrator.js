@@ -1,6 +1,6 @@
-/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
- * vim: sw=2 ts=2 sts=2 et */
- /* This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*- */
+/* vim: set sw=2 ts=2 sts=2 et */
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -16,7 +16,7 @@
 const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource:///modules/MigrationUtils.jsm"); /* globals MigratorPrototype */
+Cu.import("resource:///modules/MigrationUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PlacesBackups",
@@ -105,7 +105,7 @@ FirefoxProfileMigrator.prototype.getLastUsedDate = function() {
 };
 
 FirefoxProfileMigrator.prototype._getResourcesInternal = function(sourceProfileDir, currentProfileDir) {
-  let getFileResource = function(aMigrationType, aFileNames) {
+  let getFileResource = (aMigrationType, aFileNames) => {
     let files = [];
     for (let fileName of aFileNames) {
       let file = this._getFileObject(sourceProfileDir, fileName);
@@ -124,50 +124,62 @@ FirefoxProfileMigrator.prototype._getResourcesInternal = function(sourceProfileD
         aCallback(true);
       }
     };
-  }.bind(this);
+  };
 
   let types = MigrationUtils.resourceTypes;
-  let places = getFileResource(types.HISTORY, ["places.sqlite"]);
-  let cookies = getFileResource(types.COOKIES, ["cookies.sqlite"]);
+  let places = getFileResource(types.HISTORY, ["places.sqlite", "places.sqlite-wal"]);
+  let favicons = getFileResource(types.HISTORY, ["favicons.sqlite", "favicons.sqlite-wal"]);
+  let cookies = getFileResource(types.COOKIES, ["cookies.sqlite", "cookies.sqlite-wal"]);
   let passwords = getFileResource(types.PASSWORDS,
-    ["signons.sqlite", "logins.json", "key3.db",
+    ["signons.sqlite", "logins.json", "key3.db", "key4.db",
      "signedInUser.json"]);
-  let formData = getFileResource(types.FORMDATA, ["formhistory.sqlite"]);
+  let formData = getFileResource(types.FORMDATA, [
+    "formhistory.sqlite",
+    "autofill-profiles.json",
+  ]);
   let bookmarksBackups = getFileResource(types.OTHERDATA,
     [PlacesBackups.profileRelativeFolderPath]);
   let dictionary = getFileResource(types.OTHERDATA, ["persdict.dat"]);
 
-  let sessionCheckpoints = this._getFileObject(sourceProfileDir, "sessionCheckpoints.json");
-  let sessionFile = this._getFileObject(sourceProfileDir, "sessionstore.js");
   let session;
-  if (sessionFile) {
-    session = {
-      type: types.SESSION,
-      migrate(aCallback) {
-        sessionCheckpoints.copyTo(currentProfileDir, "sessionCheckpoints.json");
-        let newSessionFile = currentProfileDir.clone();
-        newSessionFile.append("sessionstore.js");
-        let migrationPromise = SessionMigration.migrate(sessionFile.path, newSessionFile.path);
-        migrationPromise.then(function() {
-          let buildID = Services.appinfo.platformBuildID;
-          let mstone = Services.appinfo.platformVersion;
-          // Force the browser to one-off resume the session that we give it:
-          Services.prefs.setBoolPref("browser.sessionstore.resume_session_once", true);
-          // Reset the homepage_override prefs so that the browser doesn't override our
-          // session with the "what's new" page:
-          Services.prefs.setCharPref("browser.startup.homepage_override.mstone", mstone);
-          Services.prefs.setCharPref("browser.startup.homepage_override.buildID", buildID);
-          // It's too early in startup for the pref service to have a profile directory,
-          // so we have to manually tell it where to save the prefs file.
-          let newPrefsFile = currentProfileDir.clone();
-          newPrefsFile.append("prefs.js");
-          Services.prefs.savePrefFile(newPrefsFile);
-          aCallback(true);
-        }, function() {
-          aCallback(false);
-        });
-      }
-    };
+  let env = Cc["@mozilla.org/process/environment;1"].getService(Ci.nsIEnvironment);
+  if (env.get("MOZ_RESET_PROFILE_MIGRATE_SESSION")) {
+    // We only want to restore the previous firefox session if the profile refresh was
+    // triggered by user. The MOZ_RESET_PROFILE_MIGRATE_SESSION would be set when a user-triggered
+    // profile refresh happened in nsAppRunner.cpp. Hence, we detect the MOZ_RESET_PROFILE_MIGRATE_SESSION
+    // to see if session data migration is required.
+    env.set("MOZ_RESET_PROFILE_MIGRATE_SESSION", "");
+    let sessionCheckpoints = this._getFileObject(sourceProfileDir, "sessionCheckpoints.json");
+    let sessionFile = this._getFileObject(sourceProfileDir, "sessionstore.jsonlz4");
+    if (sessionFile) {
+      session = {
+        type: types.SESSION,
+        migrate(aCallback) {
+          sessionCheckpoints.copyTo(currentProfileDir, "sessionCheckpoints.json");
+          let newSessionFile = currentProfileDir.clone();
+          newSessionFile.append("sessionstore.jsonlz4");
+          let migrationPromise = SessionMigration.migrate(sessionFile.path, newSessionFile.path);
+          migrationPromise.then(function() {
+            let buildID = Services.appinfo.platformBuildID;
+            let mstone = Services.appinfo.platformVersion;
+            // Force the browser to one-off resume the session that we give it:
+            Services.prefs.setBoolPref("browser.sessionstore.resume_session_once", true);
+            // Reset the homepage_override prefs so that the browser doesn't override our
+            // session with the "what's new" page:
+            Services.prefs.setCharPref("browser.startup.homepage_override.mstone", mstone);
+            Services.prefs.setCharPref("browser.startup.homepage_override.buildID", buildID);
+            // It's too early in startup for the pref service to have a profile directory,
+            // so we have to manually tell it where to save the prefs file.
+            let newPrefsFile = currentProfileDir.clone();
+            newPrefsFile.append("prefs.js");
+            Services.prefs.savePrefFile(newPrefsFile);
+            aCallback(true);
+          }, function() {
+            aCallback(false);
+          });
+        }
+      };
+    }
   }
 
   // Telemetry related migrations.
@@ -240,7 +252,7 @@ FirefoxProfileMigrator.prototype._getResourcesInternal = function(sourceProfileD
   };
 
   return [places, cookies, passwords, formData, dictionary, bookmarksBackups,
-          session, times, telemetry].filter(r => r);
+          session, times, telemetry, favicons].filter(r => r);
 };
 
 Object.defineProperty(FirefoxProfileMigrator.prototype, "startupOnlyMigrator", {

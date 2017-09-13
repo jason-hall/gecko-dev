@@ -450,11 +450,20 @@ public:
   GetParameters(dom::MediaStreamTrack& aTrack,
                 std::vector<JsepTrack::JsConstraints>* aOutConstraints);
 
-  NS_IMETHODIMP_TO_ERRORRESULT(SelectSsrc, ErrorResult &rv,
+  // test-only: called from simulcast mochitests.
+  NS_IMETHODIMP_TO_ERRORRESULT(AddRIDExtension, ErrorResult &rv,
                                dom::MediaStreamTrack& aRecvTrack,
-                               unsigned short aSsrcIndex)
+                               unsigned short aExtensionId)
   {
-    rv = SelectSsrc(aRecvTrack, aSsrcIndex);
+    rv = AddRIDExtension(aRecvTrack, aExtensionId);
+  }
+
+  // test-only: called from simulcast mochitests.
+  NS_IMETHODIMP_TO_ERRORRESULT(AddRIDFilter, ErrorResult& rv,
+                               dom::MediaStreamTrack& aRecvTrack,
+                               const nsAString& aRid)
+  {
+    rv = AddRIDFilter(aRecvTrack, aRid);
   }
 
   nsresult GetPeerIdentity(nsAString& peerIdentity)
@@ -500,25 +509,13 @@ public:
     delete[] tmp;
   }
 
-  NS_IMETHODIMP GetLocalDescription(char** aSDP);
+  NS_IMETHODIMP GetLocalDescription(nsAString& aSDP);
+  NS_IMETHODIMP GetCurrentLocalDescription(nsAString& aSDP);
+  NS_IMETHODIMP GetPendingLocalDescription(nsAString& aSDP);
 
-  void GetLocalDescription(nsAString& aSDP)
-  {
-    char *tmp;
-    GetLocalDescription(&tmp);
-    aSDP.AssignASCII(tmp);
-    delete[] tmp;
-  }
-
-  NS_IMETHODIMP GetRemoteDescription(char** aSDP);
-
-  void GetRemoteDescription(nsAString& aSDP)
-  {
-    char *tmp;
-    GetRemoteDescription(&tmp);
-    aSDP.AssignASCII(tmp);
-    delete[] tmp;
-  }
+  NS_IMETHODIMP GetRemoteDescription(nsAString& aSDP);
+  NS_IMETHODIMP GetCurrentRemoteDescription(nsAString& aSDP);
+  NS_IMETHODIMP GetPendingRemoteDescription(nsAString& aSDP);
 
   NS_IMETHODIMP SignalingState(mozilla::dom::PCImplSignalingState* aState);
 
@@ -637,7 +634,8 @@ private:
                                 std::vector<uint8_t>* fingerprint) const;
   nsresult ConfigureJsepSessionCodecs();
 
-  NS_IMETHODIMP EnsureDataConnection(uint16_t aNumstreams);
+  NS_IMETHODIMP EnsureDataConnection(uint16_t aLocalPort, uint16_t aNumstreams,
+                                     uint32_t aMaxMessageSize, bool aMMSSet);
 
   nsresult CloseInt();
   nsresult CheckApiState(bool assert_ice_ready) const;
@@ -650,6 +648,11 @@ private:
     NS_ENSURE_TRUE(on, false);
     return true;
   }
+
+  // test-only: called from AddRIDExtension and AddRIDFilter
+  // for simulcast mochitests.
+  RefPtr<MediaPipeline> GetMediaPipelineForTrack(
+      dom::MediaStreamTrack& aRecvTrack);
 
   nsresult GetTimeSinceEpoch(DOMHighResTimeStamp *result);
 
@@ -665,6 +668,8 @@ private:
       uint32_t* channels,
       uint16_t* localport,
       uint16_t* remoteport,
+      uint32_t* maxmessagesize,
+      bool*     mmsset,
       uint16_t* level) const;
 
   static void DeferredAddTrackToJsepSession(const std::string& pcHandle,
@@ -722,7 +727,7 @@ private:
 
   nsCOMPtr<nsPIDOMWindowInner> mWindow;
 
-  // The SDP sent in from JS - here for debugging.
+  // The SDP sent in from JS
   std::string mLocalRequestedSDP;
   std::string mRemoteRequestedSDP;
 
@@ -772,12 +777,6 @@ private:
   // Start time of call used for Telemetry
   mozilla::TimeStamp mStartTime;
 
-  // Temporary: used to prevent multiple audio streams or multiple video streams
-  // in a single PC. This is tied up in the IETF discussion around proper
-  // representation of multiple streams in SDP, and strongly related to
-  // Bug 840728.
-  int mNumAudioStreams;
-  int mNumVideoStreams;
   bool mHaveConfiguredCodecs;
 
   bool mHaveDataStream;
@@ -789,6 +788,9 @@ private:
   bool mNegotiationNeeded;
 
   bool mPrivateWindow;
+
+  // Whether this PeerConnection is being counted as active by mWindow
+  bool mActiveOnWindow;
 
   // storage for Telemetry data
   uint16_t mMaxReceiving[SdpMediaSection::kMediaTypes];

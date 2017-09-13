@@ -19,22 +19,12 @@
 #include "nsDebug.h"
 #include "opus/opus_multistream.h"
 
-// On Android JellyBean, the hardware.h header redefines version_major and
-// version_minor, which breaks our build.  See:
-// https://bugzilla.mozilla.org/show_bug.cgi?id=912702#c6
-#ifdef MOZ_WIDGET_GONK
-#ifdef version_major
-#undef version_major
-#endif
-#ifdef version_minor
-#undef version_minor
-#endif
-#endif
-
 namespace mozilla {
 
 extern LazyLogModule gMediaDecoderLog;
 #define LOG(type, msg) MOZ_LOG(gMediaDecoderLog, type, msg)
+
+using media::TimeUnit;
 
 /** Decoder base class for Ogg-encapsulated streams. */
 OggCodecState*
@@ -259,9 +249,9 @@ OggCodecState::PacketOutAsMediaRawData()
   int64_t duration = PacketDuration(packet.get());
   NS_ASSERTION(duration >= 0, "duration invalid");
 
-  sample->mTimecode = packet->granulepos;
-  sample->mTime = end_tstamp - duration;
-  sample->mDuration = duration;
+  sample->mTimecode = TimeUnit::FromMicroseconds(packet->granulepos);
+  sample->mTime = TimeUnit::FromMicroseconds(end_tstamp - duration);
+  sample->mDuration = TimeUnit::FromMicroseconds(duration);
   sample->mKeyframe = IsKeyframe(packet.get());
   sample->mEOS = packet->e_o_s;
 
@@ -360,10 +350,12 @@ TheoraState::Init()
 
   // Ensure the frame and picture regions aren't larger than our prescribed
   // maximum, or zero sized.
-  nsIntSize frame(mTheoraInfo.frame_width, mTheoraInfo.frame_height);
-  nsIntRect picture(mTheoraInfo.pic_x, mTheoraInfo.pic_y,
-                    mTheoraInfo.pic_width, mTheoraInfo.pic_height);
-  nsIntSize display(mTheoraInfo.pic_width, mTheoraInfo.pic_height);
+  gfx::IntSize frame(mTheoraInfo.frame_width, mTheoraInfo.frame_height);
+  gfx::IntRect picture(mTheoraInfo.pic_x,
+                       mTheoraInfo.pic_y,
+                       mTheoraInfo.pic_width,
+                       mTheoraInfo.pic_height);
+  gfx::IntSize display(mTheoraInfo.pic_width, mTheoraInfo.pic_height);
   ScaleDisplayByAspectRatio(display, aspectRatio);
   if (!IsValidVideoRegion(frame, picture, display)) {
     return mActive = false;
@@ -1814,12 +1806,11 @@ SkeletonState::DecodeFisbone(ogg_packet* aPacket)
 
           if ((i == 0 && IsASCII(strMsg)) || (i != 0 && IsUTF8(strMsg))) {
             EMsgHeaderType eHeaderType = kFieldTypeMaps[i].mMsgHeaderType;
-            if (!field->mValuesStore.Contains(eHeaderType)) {
-              uint32_t nameLen = strlen(kFieldTypeMaps[i].mPatternToRecognize);
-              field->mValuesStore.Put(
-                eHeaderType,
-                new nsCString(msgHead + nameLen, msgProbe - msgHead - nameLen));
-            }
+            field->mValuesStore.LookupForAdd(eHeaderType).OrInsert(
+              [i, msgHead, msgProbe] () {
+                uint32_t nameLen = strlen(kFieldTypeMaps[i].mPatternToRecognize);
+                return new nsCString(msgHead + nameLen, msgProbe - msgHead - nameLen);
+              });
             isContentTypeParsed = i == 0 ? true : isContentTypeParsed;
           }
           break;
@@ -1834,12 +1825,12 @@ SkeletonState::DecodeFisbone(ogg_packet* aPacket)
     msgProbe++;
   }
 
-  if (!mMsgFieldStore.Contains(serialno)) {
-    mMsgFieldStore.Put(serialno, field.forget());
-  } else {
+  auto entry = mMsgFieldStore.LookupForAdd(serialno);
+  if (entry) {
+    // mMsgFieldStore has an entry for serialno already.
     return false;
   }
-
+  entry.OrInsert([&field]() { return field.forget(); });
   return true;
 }
 

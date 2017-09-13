@@ -132,6 +132,8 @@ CompareAddresses(const SharedLibrary& first, const SharedLibrary& second)
 class SharedLibraryInfo {
 public:
   static SharedLibraryInfo GetInfoForSelf();
+  static void Initialize();
+
   SharedLibraryInfo() {}
 
   void AddSharedLibrary(SharedLibrary entry)
@@ -140,6 +142,11 @@ public:
   }
 
   const SharedLibrary& GetEntry(size_t i) const
+  {
+    return mEntries[i];
+  }
+
+  SharedLibrary& GetMutableEntry(size_t i)
   {
     return mEntries[i];
   }

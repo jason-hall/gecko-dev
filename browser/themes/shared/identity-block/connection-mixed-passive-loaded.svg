@@ -2,14 +2,8 @@
 <!-- This Source Code Form is subject to the terms of the Mozilla Public
    - License, v. 2.0. If a copy of the MPL was not distributed with this
    - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+<svg xmlns="http://www.w3.org/2000/svg"
      width="16" height="16" viewBox="0 0 16 16">
-#include ../icon-colors.inc.svg
-  <style>
-    svg > g:not(:target) {
-      display: none;
-    }
-  </style>
 
   <defs>
     <rect id="shape-lock-clasp-outer" x="2" y="1" width="8" height="10" rx="4" ry="4" />
@@ -18,13 +12,13 @@
 
     <mask id="mask-clasp-cutout">
       <rect width="16" height="16" fill="#000" />
-      <use xlink:href="#shape-lock-clasp-outer" fill="#fff" />
-      <use xlink:href="#shape-lock-clasp-inner" fill="#000" />
+      <use href="#shape-lock-clasp-outer" fill="#fff"/>
+      <use href="#shape-lock-clasp-inner" fill="#000"/>
     </mask>
 
     <mask id="mask-lock">
-      <use xlink:href="#shape-lock-clasp-outer" mask="url(#mask-clasp-cutout)" fill="#fff"/>
-      <use xlink:href="#shape-lock-base" fill="#fff"/>
+      <use href="#shape-lock-clasp-outer" mask="url(#mask-clasp-cutout)" fill="#fff"/>
+      <use href="#shape-lock-base" fill="#fff"/>
     </mask>
 
     <g id="warning-triangle">
@@ -35,18 +29,6 @@
     </g>
   </defs>
 
-  <g id="icon">
-    <rect width="16" height="16" mask="url(#mask-lock)" class="fieldtext"/>
-    <use xlink:href="#warning-triangle"/>
-  </g>
-
-  <g id="icon-black">
-    <rect width="16" height="16" mask="url(#mask-lock)" class="black"/>
-    <use xlink:href="#warning-triangle"/>
-  </g>
-
-  <g id="icon-white">
-    <rect width="16" height="16" mask="url(#mask-lock)" class="white"/>
-    <use xlink:href="#warning-triangle"/>
-  </g>
+  <rect fill="context-fill" fill-opacity="context-fill-opacity" width="16" height="16" mask="url(#mask-lock)"/>
+  <use href="#warning-triangle"/>
 </svg>

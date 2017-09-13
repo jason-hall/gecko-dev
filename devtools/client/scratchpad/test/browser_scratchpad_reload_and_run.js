@@ -16,7 +16,7 @@ function test()
   waitForExplicitFinish();
   Services.prefs.setBoolPref(DEVTOOLS_CHROME_ENABLED, true);
 
-  gBrowser.selectedTab = gBrowser.addTab();
+  gBrowser.selectedTab = BrowserTestUtils.addTab(gBrowser);
   gBrowser.selectedBrowser.addEventListener("load", function () {
     openScratchpad(runTests);
   }, {capture: true, once: true});
@@ -53,7 +53,7 @@ function runTests()
 
   let browser = gBrowser.selectedBrowser;
 
-  let deferred = promise.defer();
+  let deferred = defer();
   browser.addEventListener("DOMWindowCreated", function () {
     browser.contentWindow.addEventListener("foo", function () {
       is(browser.contentWindow.document.body.innerHTML, "Modified text",

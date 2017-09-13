@@ -4,13 +4,14 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 DevToolsModules(
-    'client.js',
     'create-store.js',
+    'filter-autocomplete-provider.js',
     'filter-predicates.js',
     'filter-text-utils.js',
     'format-utils.js',
     'l10n.js',
     'mdn-utils.js',
+    'menu.js',
     'prefs.js',
     'request-utils.js',
     'sort-predicates.js',

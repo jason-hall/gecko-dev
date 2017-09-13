@@ -550,7 +550,7 @@ tests.push(
 // Test that Promise.resolve throws when its argument is an async function.
 tests.push(
   make_promise_test(function test_promise_resolve_throws_with_async_function(test) {
-    Assert.throws(() => Promise.resolve(Task.async(function* () {})),
+    Assert.throws(() => Promise.resolve(Task.async(function* () {})), // eslint-disable-line mozilla/no-task
                   /Cannot resolve a promise with an async function/);
     return Promise.resolve();
   }));
@@ -922,10 +922,7 @@ tests.push(
     let shouldExitNestedEventLoop = false;
 
     function event_loop() {
-      let thr = Services.tm.mainThread;
-      while (!shouldExitNestedEventLoop) {
-        thr.processNextEvent(true);
-      }
+      Services.tm.spinEventLoopUntil(() => shouldExitNestedEventLoop);
     }
 
     // I wish there was a way to cancel xpcshell do_timeout()s

@@ -25,6 +25,7 @@
 #include "nsSocketTransport2.h"
 #include "nsHashPropertyBag.h"
 #include "nsNetUtil.h"
+#include "nsINamed.h"
 #include "nsISimpleEnumerator.h"
 #include "nsIProperty.h"
 #include "nsICertOverrideService.h"
@@ -159,6 +160,7 @@ class FlyWebMDNSService final
   , public nsIDNSServiceResolveListener
   , public nsIDNSRegistrationListener
   , public nsITimerCallback
+  , public nsINamed
 {
   friend class FlyWebService;
 
@@ -179,6 +181,12 @@ public:
 
   explicit FlyWebMDNSService(FlyWebService* aService,
                              const nsACString& aServiceType);
+
+  NS_IMETHOD GetName(nsACString& aName) override
+  {
+    aName.AssignLiteral("FlyWebMDNSService");
+    return NS_OK;
+  }
 
 private:
   virtual ~FlyWebMDNSService() = default;
@@ -296,7 +304,8 @@ NS_IMPL_ISUPPORTS(FlyWebMDNSService,
                   nsIDNSServiceDiscoveryListener,
                   nsIDNSServiceResolveListener,
                   nsIDNSRegistrationListener,
-                  nsITimerCallback)
+                  nsITimerCallback,
+                  nsINamed)
 
 FlyWebMDNSService::FlyWebMDNSService(
         FlyWebService* aService,
@@ -790,14 +799,18 @@ FlyWebMDNSService::PairWithService(const nsAString& aServiceId,
   } else {
     url.AssignLiteral("https://");
   }
-  url.Append(aInfo->mService.mHostname + NS_LITERAL_STRING("/"));
+  url.Append(aInfo->mService.mHostname);
+  if (!discInfo->mService.mPath.IsEmpty()) {
+    if (discInfo->mService.mPath.Find("/") != 0) {
+      url.Append(NS_LITERAL_STRING("/"));
+    }
+    url.Append(discInfo->mService.mPath);
+  } else {
+    url.Append(NS_LITERAL_STRING("/"));
+  }
   nsCOMPtr<nsIURI> uiURL;
   NS_NewURI(getter_AddRefs(uiURL), url);
   MOZ_ASSERT(uiURL);
-  if (!discInfo->mService.mPath.IsEmpty()) {
-    nsCOMPtr<nsIURI> tmp = uiURL.forget();
-    NS_NewURI(getter_AddRefs(uiURL), discInfo->mService.mPath, nullptr, tmp);
-  }
   if (uiURL) {
     nsAutoCString spec;
     uiURL->GetSpec(spec);
@@ -1106,7 +1119,14 @@ FlyWebService::Observe(nsISupports* aSubject, const char* aTopic,
   nsresult rv = wrapper->GetData(&innerID);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // Make a copy of mServers to iterate over, because closing a server
+  // can remove entries from mServers.
+  nsCOMArray<FlyWebPublishedServer> serversCopy;
   for (FlyWebPublishedServer* server : mServers) {
+    serversCopy.AppendElement(server);
+  }
+
+  for (FlyWebPublishedServer* server : serversCopy) {
     if (server->OwnerWindowID() == innerID) {
       server->Close();
     }

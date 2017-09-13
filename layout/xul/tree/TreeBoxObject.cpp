@@ -30,7 +30,7 @@ NS_IMPL_CYCLE_COLLECTION_INHERITED(TreeBoxObject, BoxObject,
 NS_IMPL_ADDREF_INHERITED(TreeBoxObject, BoxObject)
 NS_IMPL_RELEASE_INHERITED(TreeBoxObject, BoxObject)
 
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(TreeBoxObject)
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(TreeBoxObject)
   NS_INTERFACE_MAP_ENTRY(nsITreeBoxObject)
 NS_INTERFACE_MAP_END_INHERITING(BoxObject)
 
@@ -665,6 +665,24 @@ TreeBoxObject::ClearStyleAndImageCaches()
   if (body)
     return body->ClearStyleAndImageCaches();
   return NS_OK;
+}
+
+NS_IMETHODIMP
+TreeBoxObject::RemoveImageCacheEntry(int32_t aRowIndex, nsITreeColumn* aCol)
+{
+  NS_ENSURE_ARG(aCol);
+  NS_ENSURE_TRUE(aRowIndex >= 0, NS_ERROR_INVALID_ARG);
+  nsTreeBodyFrame* body = GetTreeBodyFrame();
+  if (body) {
+    return body->RemoveImageCacheEntry(aRowIndex, aCol);
+  }
+  return NS_OK;
+}
+
+void
+TreeBoxObject::RemoveImageCacheEntry(int32_t row, nsITreeColumn& col, ErrorResult& aRv)
+{
+  aRv = RemoveImageCacheEntry(row, &col);
 }
 
 void

@@ -3,8 +3,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
-import sys
 
+import mozunit
 import pytest
 
 from mozlint.result import ResultContainer
@@ -17,7 +17,11 @@ def path(filedir):
     return _path
 
 
-@pytest.fixture(params=['string.lint', 'regex.lint', 'external.lint', 'structured.lint'])
+@pytest.fixture(params=[
+    'string.yml',
+    'regex.yml',
+    'external.yml',
+    'structured.yml'])
 def linter(lintdir, request):
     return os.path.join(lintdir, request.param)
 
@@ -37,7 +41,7 @@ def test_linter_types(lint, linter, files, path):
 
 
 def test_no_filter(lint, lintdir, files):
-    lint.read(os.path.join(lintdir, 'explicit_path.lint'))
+    lint.read(os.path.join(lintdir, 'explicit_path.yml'))
     result = lint.roll(files)
     assert len(result) == 0
 
@@ -47,4 +51,4 @@ def test_no_filter(lint, lintdir, files):
 
 
 if __name__ == '__main__':
-    sys.exit(pytest.main(['--verbose', __file__]))
+    mozunit.main()

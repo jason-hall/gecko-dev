@@ -158,6 +158,14 @@ enum class StyleShapeSourceType : uint8_t {
   Box,
 };
 
+// -moz-stack-sizing
+enum class StyleStackSizing : uint8_t {
+  Ignore,
+  StretchToFit,
+  IgnoreHorizontal,
+  IgnoreVertical,
+};
+
 // text-justify
 enum class StyleTextJustify : uint8_t {
   None,
@@ -221,10 +229,6 @@ enum class StyleOrient : uint8_t {
   Horizontal,
   Vertical,
 };
-
-// stack-sizing
-#define NS_STYLE_STACK_SIZING_IGNORE         0
-#define NS_STYLE_STACK_SIZING_STRETCH_TO_FIT 1
 
 // Azimuth - See nsStyleAural
 #define NS_STYLE_AZIMUTH_LEFT_SIDE        0x00
@@ -345,12 +349,15 @@ enum class FillMode : uint8_t;
 #define NS_STYLE_IMAGELAYER_POSITION_RIGHT           (1<<4)
 
 // See nsStyleImageLayers
-#define NS_STYLE_IMAGELAYER_REPEAT_NO_REPEAT         0x00
-#define NS_STYLE_IMAGELAYER_REPEAT_REPEAT_X          0x01
-#define NS_STYLE_IMAGELAYER_REPEAT_REPEAT_Y          0x02
-#define NS_STYLE_IMAGELAYER_REPEAT_REPEAT            0x03
-#define NS_STYLE_IMAGELAYER_REPEAT_SPACE             0x04
-#define NS_STYLE_IMAGELAYER_REPEAT_ROUND             0x05
+enum class StyleImageLayerRepeat : uint8_t {
+  NoRepeat = 0x00,
+  RepeatX,
+  RepeatY,
+  Repeat,
+  Space,
+  Round
+};
+
 
 // See nsStyleImageLayers
 #define NS_STYLE_IMAGELAYER_SIZE_CONTAIN             0
@@ -399,11 +406,13 @@ enum class FillMode : uint8_t;
 #define NS_STYLE_BORDER_IMAGE_SLICE_FILL        1
 
 // See nsStyleContent
-#define NS_STYLE_CONTENT_OPEN_QUOTE             0
-#define NS_STYLE_CONTENT_CLOSE_QUOTE            1
-#define NS_STYLE_CONTENT_NO_OPEN_QUOTE          2
-#define NS_STYLE_CONTENT_NO_CLOSE_QUOTE         3
-#define NS_STYLE_CONTENT_ALT_CONTENT            4
+enum class StyleContent : uint8_t {
+  OpenQuote,
+  CloseQuote,
+  NoOpenQuote,
+  NoCloseQuote,
+  AltContent
+};
 
 // See nsStyleColor
 #define NS_STYLE_CURSOR_AUTO                    1
@@ -769,24 +778,23 @@ enum class StyleGridTrackBreadth : uint8_t {
 // See nsStyleList
 #define NS_STYLE_LIST_STYLE_CUSTOM                -1 // for @counter-style
 #define NS_STYLE_LIST_STYLE_NONE                  0
-#define NS_STYLE_LIST_STYLE_DISC                  1
-#define NS_STYLE_LIST_STYLE_CIRCLE                2
-#define NS_STYLE_LIST_STYLE_SQUARE                3
-#define NS_STYLE_LIST_STYLE_DECIMAL               4
-#define NS_STYLE_LIST_STYLE_HEBREW                5
-#define NS_STYLE_LIST_STYLE_JAPANESE_INFORMAL     6
-#define NS_STYLE_LIST_STYLE_JAPANESE_FORMAL       7
-#define NS_STYLE_LIST_STYLE_KOREAN_HANGUL_FORMAL  8
-#define NS_STYLE_LIST_STYLE_KOREAN_HANJA_INFORMAL 9
-#define NS_STYLE_LIST_STYLE_KOREAN_HANJA_FORMAL   10
-#define NS_STYLE_LIST_STYLE_SIMP_CHINESE_INFORMAL 11
-#define NS_STYLE_LIST_STYLE_SIMP_CHINESE_FORMAL   12
-#define NS_STYLE_LIST_STYLE_TRAD_CHINESE_INFORMAL 13
-#define NS_STYLE_LIST_STYLE_TRAD_CHINESE_FORMAL   14
-#define NS_STYLE_LIST_STYLE_ETHIOPIC_NUMERIC      15
-#define NS_STYLE_LIST_STYLE_DISCLOSURE_CLOSED     16
-#define NS_STYLE_LIST_STYLE_DISCLOSURE_OPEN       17
-#define NS_STYLE_LIST_STYLE__MAX                  18
+#define NS_STYLE_LIST_STYLE_DECIMAL               1
+#define NS_STYLE_LIST_STYLE_DISC                  2
+#define NS_STYLE_LIST_STYLE_CIRCLE                3
+#define NS_STYLE_LIST_STYLE_SQUARE                4
+#define NS_STYLE_LIST_STYLE_DISCLOSURE_CLOSED     5
+#define NS_STYLE_LIST_STYLE_DISCLOSURE_OPEN       6
+#define NS_STYLE_LIST_STYLE_HEBREW                7
+#define NS_STYLE_LIST_STYLE_JAPANESE_INFORMAL     8
+#define NS_STYLE_LIST_STYLE_JAPANESE_FORMAL       9
+#define NS_STYLE_LIST_STYLE_KOREAN_HANGUL_FORMAL  10
+#define NS_STYLE_LIST_STYLE_KOREAN_HANJA_INFORMAL 11
+#define NS_STYLE_LIST_STYLE_KOREAN_HANJA_FORMAL   12
+#define NS_STYLE_LIST_STYLE_SIMP_CHINESE_INFORMAL 13
+#define NS_STYLE_LIST_STYLE_SIMP_CHINESE_FORMAL   14
+#define NS_STYLE_LIST_STYLE_TRAD_CHINESE_INFORMAL 15
+#define NS_STYLE_LIST_STYLE_TRAD_CHINESE_FORMAL   16
+#define NS_STYLE_LIST_STYLE_ETHIOPIC_NUMERIC      17
 // These styles are handled as custom styles defined in counterstyles.css.
 // They are preserved here only for html attribute map.
 #define NS_STYLE_LIST_STYLE_LOWER_ROMAN           100
@@ -860,10 +868,9 @@ enum class StyleGridTrackBreadth : uint8_t {
 #define NS_STYLE_TEXT_DECORATION_LINE_OVERLINE     0x02
 #define NS_STYLE_TEXT_DECORATION_LINE_LINE_THROUGH 0x04
 #define NS_STYLE_TEXT_DECORATION_LINE_BLINK        0x08
-#define NS_STYLE_TEXT_DECORATION_LINE_PREF_ANCHORS 0x10
 // OVERRIDE_ALL does not occur in stylesheets; it only comes from HTML
 // attribute mapping (and thus appears in computed data)
-#define NS_STYLE_TEXT_DECORATION_LINE_OVERRIDE_ALL 0x20
+#define NS_STYLE_TEXT_DECORATION_LINE_OVERRIDE_ALL 0x10
 #define NS_STYLE_TEXT_DECORATION_LINE_LINES_MASK   (NS_STYLE_TEXT_DECORATION_LINE_UNDERLINE | NS_STYLE_TEXT_DECORATION_LINE_OVERLINE | NS_STYLE_TEXT_DECORATION_LINE_LINE_THROUGH)
 
 // See nsStyleText
@@ -930,12 +937,14 @@ enum class StyleGridTrackBreadth : uint8_t {
 #define NS_STYLE_TABSIZE_INITIAL                8
 
 // See nsStyleText
-#define NS_STYLE_WHITESPACE_NORMAL               0
-#define NS_STYLE_WHITESPACE_PRE                  1
-#define NS_STYLE_WHITESPACE_NOWRAP               2
-#define NS_STYLE_WHITESPACE_PRE_WRAP             3
-#define NS_STYLE_WHITESPACE_PRE_LINE             4
-#define NS_STYLE_WHITESPACE_PRE_SPACE            5
+enum class StyleWhiteSpace : uint8_t {
+  Normal = 0,
+  Pre,
+  Nowrap,
+  PreWrap,
+  PreLine,
+  PreSpace,
+};
 
 // See nsStyleText
 #define NS_STYLE_WORDBREAK_NORMAL               0
@@ -1053,6 +1062,23 @@ enum class StyleGridTrackBreadth : uint8_t {
 #define NS_STYLE_GRADIENT_SIZE_EXPLICIT_SIZE    4
 
 // See nsStyleSVG
+
+// -moz-context-properties
+#define NS_STYLE_CONTEXT_PROPERTY_FILL          (1 << 0)
+#define NS_STYLE_CONTEXT_PROPERTY_STROKE        (1 << 1)
+#define NS_STYLE_CONTEXT_PROPERTY_FILL_OPACITY   (1 << 2)
+#define NS_STYLE_CONTEXT_PROPERTY_STROKE_OPACITY (1 << 3)
+
+/*
+ * -moz-window-shadow
+ * Also used in widget code
+ */
+
+#define NS_STYLE_WINDOW_SHADOW_NONE             0
+#define NS_STYLE_WINDOW_SHADOW_DEFAULT          1
+#define NS_STYLE_WINDOW_SHADOW_MENU             2
+#define NS_STYLE_WINDOW_SHADOW_TOOLTIP          3
+#define NS_STYLE_WINDOW_SHADOW_SHEET            4
 
 // dominant-baseline
 #define NS_STYLE_DOMINANT_BASELINE_AUTO              0

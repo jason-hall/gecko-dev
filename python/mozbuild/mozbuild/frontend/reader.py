@@ -54,7 +54,6 @@ from mozpack.files import FileFinder
 import mozpack.path as mozpath
 
 from .data import (
-    AndroidEclipseProjectData,
     JavaJarData,
 )
 
@@ -118,9 +117,6 @@ class EmptyConfig(object):
         # changing all the instances.
         b'MOZ_APP_NAME': b'empty',
         b'MOZ_CHILD_PROCESS_NAME': b'empty',
-        # Set manipulations are performed within the moz.build files. But
-        # set() is not an exposed symbol, so we can't create an empty set.
-        b'NECKO_PROTOCOLS': set(),
         # Needed to prevent js/src's config.status from loading.
         b'JS_STANDALONE': b'1',
     }
@@ -267,34 +263,6 @@ class MozbuildSandbox(Sandbox):
         jar = JavaJarData(name)
         self['JAVA_JAR_TARGETS'][name] = jar
         return jar
-
-    # Not exposed to the sandbox.
-    def add_android_eclipse_project_helper(self, name):
-        """Add an Android Eclipse project target."""
-        if not name:
-            raise Exception('Android Eclipse project cannot be registered without a name')
-
-        if name in self['ANDROID_ECLIPSE_PROJECT_TARGETS']:
-            raise Exception('Android Eclipse project has already been registered: %s' % name)
-
-        data = AndroidEclipseProjectData(name)
-        self['ANDROID_ECLIPSE_PROJECT_TARGETS'][name] = data
-        return data
-
-    def _add_android_eclipse_project(self, name, manifest):
-        if not manifest:
-            raise Exception('Android Eclipse project must specify a manifest')
-
-        data = self.add_android_eclipse_project_helper(name)
-        data.manifest = manifest
-        data.is_library = False
-        return data
-
-    def _add_android_eclipse_library_project(self, name):
-        data = self.add_android_eclipse_project_helper(name)
-        data.manifest = None
-        data.is_library = True
-        return data
 
     def _export(self, varname):
         """Export the variable to all subdirectories of the current path."""
@@ -884,6 +852,18 @@ class BuildReader(object):
         self._execution_stack = []
         self._finder = finder
 
+        # Finder patterns to ignore when searching for moz.build files.
+        ignores = {
+            # Ignore fake moz.build files used for testing moz.build.
+            'python/mozbuild/mozbuild/test',
+
+            # Ignore object directories.
+            'obj*',
+        }
+
+        self._relevant_mozbuild_finder = FileFinder(self.config.topsrcdir,
+                                                    ignore=ignores)
+
         max_workers = cpu_count()
         self._gyp_worker_pool = ProcessPoolExecutor(max_workers=max_workers)
         self._gyp_processors = []
@@ -936,20 +916,10 @@ class BuildReader(object):
         # In the future, we may traverse moz.build files by looking
         # for DIRS references in the AST, even if a directory is added behind
         # a conditional. For now, just walk the filesystem.
-        ignore = {
-            # Ignore fake moz.build files used for testing moz.build.
-            'python/mozbuild/mozbuild/test',
-
-            # Ignore object directories.
-            'obj*',
-        }
-
-        finder = FileFinder(self.config.topsrcdir, ignore=ignore)
-
         # The root doesn't get picked up by FileFinder.
         yield 'moz.build'
 
-        for path, f in finder.find('**/moz.build'):
+        for path, f in self._relevant_mozbuild_finder.find('**/moz.build'):
             yield path
 
     def find_sphinx_variables(self):
@@ -1265,7 +1235,7 @@ class BuildReader(object):
 
         @memoize
         def exists(path):
-            return self._finder.get(path) is not None
+            return self._relevant_mozbuild_finder.get(path) is not None
 
         def itermozbuild(path):
             subpath = ''
@@ -1281,8 +1251,7 @@ class BuildReader(object):
                     raise Exception('Path outside topsrcdir: %s' % path)
                 path = mozpath.relpath(path, root)
 
-            result[path] = [p for p in itermozbuild(path)
-                              if exists(mozpath.join(root, p))]
+            result[path] = [p for p in itermozbuild(path) if exists(p)]
 
         return result
 
@@ -1372,16 +1341,43 @@ class BuildReader(object):
         """
         paths, _ = self.read_relevant_mozbuilds(paths)
 
+        # For thousands of inputs (say every file in a sub-tree),
+        # test_defaults_for_path() gets called with the same contexts multiple
+        # times (once for every path in a directory that doesn't have any
+        # test metadata). So, we cache the function call.
+        defaults_cache = {}
+        def test_defaults_for_path(ctxs):
+            key = tuple(ctx.current_path or ctx.main_path for ctx in ctxs)
+
+            if key not in defaults_cache:
+                defaults_cache[key] = self.test_defaults_for_path(ctxs)
+
+            return defaults_cache[key]
+
         r = {}
 
         for path, ctxs in paths.items():
+            # Should be normalized by read_relevant_mozbuilds.
+            assert '\\' not in path
+
             flags = Files(Context())
 
             for ctx in ctxs:
                 if not isinstance(ctx, Files):
                     continue
 
-                relpath = mozpath.relpath(path, ctx.relsrcdir)
+                # read_relevant_mozbuilds() normalizes paths and ensures that
+                # the contexts have paths in the ancestry of the path. When
+                # iterating over tens of thousands of paths, mozpath.relpath()
+                # can be very expensive. So, given our assumptions about paths,
+                # we implement an optimized version.
+                ctx_rel_dir = ctx.relsrcdir
+                if ctx_rel_dir:
+                    assert path.startswith(ctx_rel_dir)
+                    relpath = path[len(ctx_rel_dir) + 1:]
+                else:
+                    relpath = path
+
                 pattern = ctx.pattern
 
                 # Only do wildcard matching if the '*' character is present.
@@ -1392,7 +1388,7 @@ class BuildReader(object):
                     flags += ctx
 
             if not any([flags.test_tags, flags.test_files, flags.test_flavors]):
-                flags += self.test_defaults_for_path(ctxs)
+                flags += test_defaults_for_path(ctxs)
 
             r[path] = flags
 
@@ -1416,7 +1412,7 @@ class BuildReader(object):
                     if isinstance(paths, tuple):
                         path, tests_root = paths
                         tests_root = mozpath.join(ctx.relsrcdir, tests_root)
-                        for t in (mozpath.join(tests_root, path) for path, _ in obj):
+                        for t in (mozpath.join(tests_root, it[0]) for it in obj):
                             result_context.test_files.add(mozpath.dirname(t) + '/**')
                     else:
                         for t in obj.tests:

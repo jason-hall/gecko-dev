@@ -15,12 +15,18 @@ const { LocalizationHelper } = require("devtools/shared/l10n");
 const INSPECTOR_L10N =
   new LocalizationHelper("devtools/client/locales/inspector.properties");
 
-const SHOW_GRID_OUTLINE_PREF = "devtools.gridinspector.showGridOutline";
+// @remove after release 56 (See Bug 1355747)
+const PROMOTE_COUNT_PREF = "devtools.promote.layoutview";
+
+// @remove after release 56 (See Bug 1355747)
+const GRID_LINK = "https://www.mozilla.org/en-US/developer/css-grid/?utm_source=gridtooltip&utm_medium=devtools&utm_campaign=cssgrid_layout";
 
 function LayoutView(inspector, window) {
   this.document = window.document;
   this.inspector = inspector;
   this.store = inspector.store;
+
+  this.onPromoteLearnMoreClick = this.onPromoteLearnMoreClick.bind(this);
 
   this.init();
 }
@@ -49,10 +55,16 @@ LayoutView.prototype = {
       onSetGridOverlayColor,
       onShowGridAreaHighlight,
       onShowGridCellHighlight,
+      onShowGridLineNamesHighlight,
       onToggleGridHighlighter,
+      onToggleShowGridAreas,
       onToggleShowGridLineNumbers,
       onToggleShowInfiniteLines,
     } = this.inspector.gridInspector.getComponentProps();
+
+    let {
+      onPromoteLearnMoreClick,
+    } = this;
 
     let app = App({
       getSwatchColorPickerTooltip,
@@ -62,31 +74,31 @@ LayoutView.prototype = {
        * default.
        */
       showBoxModelProperties: true,
-
-      /**
-       * Shows the grid outline if user preferences are set to true, otherwise, hidden by
-       * default.
-       */
-      showGridOutline: Services.prefs.getBoolPref(SHOW_GRID_OUTLINE_PREF),
-
       onHideBoxModelHighlighter,
+      onPromoteLearnMoreClick,
       onSetGridOverlayColor,
       onShowBoxModelEditor,
       onShowBoxModelHighlighter,
       onShowBoxModelHighlighterForNode,
       onShowGridAreaHighlight,
       onShowGridCellHighlight,
+      onShowGridLineNamesHighlight,
       onToggleGeometryEditor,
       onToggleGridHighlighter,
+      onToggleShowGridAreas,
       onToggleShowGridLineNumbers,
       onToggleShowInfiniteLines,
     });
 
     let provider = createElement(Provider, {
-      store: this.store,
       id: "layoutview",
-      title: INSPECTOR_L10N.getStr("inspector.sidebar.layoutViewTitle2"),
       key: "layoutview",
+      store: this.store,
+      title: INSPECTOR_L10N.getStr("inspector.sidebar.layoutViewTitle2"),
+      // @remove after release 56 (See Bug 1355747)
+      badge: Services.prefs.getIntPref(PROMOTE_COUNT_PREF) > 0 ?
+        INSPECTOR_L10N.getStr("inspector.sidebar.newBadge") : null,
+      showBadge: () => Services.prefs.getIntPref(PROMOTE_COUNT_PREF) > 0,
     }, app);
 
     let defaultTab = Services.prefs.getCharPref("devtools.inspector.activeSidebar");
@@ -107,6 +119,11 @@ LayoutView.prototype = {
     this.inspector = null;
     this.store = null;
   },
+
+  onPromoteLearnMoreClick() {
+    let browserWin = this.inspector.target.tab.ownerDocument.defaultView;
+    browserWin.openUILinkIn(GRID_LINK, "current");
+  }
 
 };
 

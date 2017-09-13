@@ -27,6 +27,8 @@
 
 "use strict";
 
+Components.utils.import("resource://gre/modules/AppConstants.jsm");
+
 // DownloadsButton
 
 /**
@@ -216,19 +218,8 @@ const DownloadsIndicatorView = {
     }
     this._initialized = true;
 
-    this._setIndicatorType();
     window.addEventListener("unload", this.onWindowUnload);
     DownloadsCommon.getIndicatorData(window).addView(this);
-  },
-
-  _setIndicatorType() {
-    // We keep a killerswitch for old-styled progressbar for now. Corresponding
-    // css class is added here to reflect the type chosen for showing progress.
-    let node = CustomizableUI.getWidget("downloads-button")
-                             .forWindow(window).node;
-
-    node.classList.toggle("withProgressBar",
-                          !DownloadsCommon.arrowStyledIndicator);
   },
 
   /**
@@ -245,9 +236,7 @@ const DownloadsIndicatorView = {
 
     // Reset the view properties, so that a neutral indicator is displayed if we
     // are visible only temporarily as an anchor.
-    this.counter = "";
     this.percentComplete = 0;
-    this.paused = false;
     this.attention = DownloadsCommon.ATTENTION_NONE;
   },
 
@@ -289,9 +278,15 @@ const DownloadsIndicatorView = {
   // Direct control functions
 
   /**
-   * Set while we are waiting for a notification to fade out.
+   * Set to the type ("start" or "finish") when display of a notification is in-progress
    */
-  _notificationTimeout: null,
+  _currentNotificationType: null,
+
+  /**
+   * Set to the type ("start" or "finish") when a notification arrives while we
+   * are waiting for the timeout of the previous notification
+   */
+  _nextNotificationType: null,
 
   /**
    * Check if the panel containing aNode is open.
@@ -306,8 +301,7 @@ const DownloadsIndicatorView = {
   },
 
   /**
-   * If the status indicator is visible in its assigned position, shows for a
-   * brief time a visual notification of a relevant event, like a new download.
+   * Display or enqueue a visual notification of a relevant event, like a new download.
    *
    * @param aType
    *        Set to "start" for new downloads, "finish" for completed downloads.
@@ -321,6 +315,25 @@ const DownloadsIndicatorView = {
       return;
     }
 
+    // enqueue this notification while the current one is being displayed
+    if (this._currentNotificationType) {
+      // only queue up the notification if it is different to the current one
+      if (this._currentNotificationType != aType) {
+        this._nextNotificationType = aType;
+      }
+    } else {
+      this._showNotification(aType);
+    }
+  },
+
+  /**
+   * If the status indicator is visible in its assigned position, shows for a
+   * brief time a visual notification of a relevant event, like a new download.
+   *
+   * @param aType
+   *        Set to "start" for new downloads, "finish" for completed downloads.
+   */
+  _showNotification(aType) {
     // No need to show visual notification if the panel is visible.
     if (DownloadsPanel.isPanelShowing) {
       return;
@@ -345,17 +358,22 @@ const DownloadsIndicatorView = {
       return;
     }
 
-    if (this._notificationTimeout) {
-      clearTimeout(this._notificationTimeout);
-    }
-
     // The notification element is positioned to show in the same location as
     // the downloads button. It's not in the downloads button itself in order to
     // be able to anchor the notification elsewhere if required, and to ensure
     // the notification isn't clipped by overflow properties of the anchor's
     // container.
+    // Note: no notifier animation for download finished in Photon
     let notifier = this.notifier;
-    if (notifier.style.transform == "") {
+
+    if (aType == "start") {
+      // Show the notifier before measuring for size/placement. Being hidden by default
+      // avoids the interference with scrolling/APZ when the notifier element is
+      // tall enough to overlap the tabbrowser element
+      notifier.removeAttribute("hidden");
+
+      // the anchor height may vary if font-size is changed or
+      // compact/tablet mode is selected so recalculate this each time
       let anchorRect = anchor.getBoundingClientRect();
       let notifierRect = notifier.getBoundingClientRect();
       let topDiff = anchorRect.top - notifierRect.top;
@@ -365,15 +383,33 @@ const DownloadsIndicatorView = {
       let translateX = (leftDiff + .5 * widthDiff) + "px";
       let translateY = (topDiff + .5 * heightDiff) + "px";
       notifier.style.transform = "translate(" + translateX + ", " + translateY + ")";
+      notifier.setAttribute("notification", aType);
     }
-    notifier.setAttribute("notification", aType);
     anchor.setAttribute("notification", aType);
-    this._notificationTimeout = setTimeout(() => {
-      anchor.removeAttribute("notification");
-      notifier.removeAttribute("notification");
-      notifier.style.transform = "";
-      // This value is determined by the overall duration of animation in CSS.
-    }, 2000);
+
+    let animationDuration;
+    // This value is determined by the overall duration of animation in CSS.
+    animationDuration = aType == "start" ? 760 : 850;
+
+    this._currentNotificationType = aType;
+
+    setTimeout(() => {
+      requestAnimationFrame(() => {
+        notifier.setAttribute("hidden", "true");
+        notifier.removeAttribute("notification");
+        notifier.style.transform = "";
+        anchor.removeAttribute("notification");
+
+        requestAnimationFrame(() => {
+          let nextType = this._nextNotificationType;
+          this._currentNotificationType = null;
+          this._nextNotificationType = null;
+          if (nextType) {
+            this._showNotification(nextType);
+          }
+        });
+      });
+    }, animationDuration);
   },
 
   // Callback functions from DownloadsIndicatorData
@@ -399,35 +435,8 @@ const DownloadsIndicatorView = {
   _hasDownloads: false,
 
   /**
-   * Status text displayed in the indicator.  If this is set to an empty value,
-   * then the small downloads icon is displayed instead of the text.
-   */
-  set counter(aValue) {
-    if (!this._operational) {
-      return this._counter;
-    }
-
-    if (this._counter !== aValue) {
-      this._counter = aValue;
-      if (this._counter)
-        this.indicator.setAttribute("counter", "true");
-      else
-        this.indicator.removeAttribute("counter");
-      // We have to set the attribute instead of using the property because the
-      // XBL binding isn't applied if the element is invisible for any reason.
-      this._indicatorCounter.setAttribute("value", aValue);
-    }
-    return aValue;
-  },
-  _counter: null,
-
-  /**
    * Progress indication to display, from 0 to 100, or -1 if unknown.
-   * Bar-type:
-   *   The progress bar is hidden if the current progress is unknown and no
-   *   status text is set in the "counter" property.
-   * Arrow-type:
-   *   progress is not visible if the current progress is unknown.
+   * Progress is not visible if the current progress is unknown.
    */
   set percentComplete(aValue) {
     if (!this._operational) {
@@ -448,35 +457,10 @@ const DownloadsIndicatorView = {
         this.indicator.removeAttribute("progress");
         this._progressIcon.style.animationDelay = "1s";
       }
-      // We have to set the attribute instead of using the property because the
-      // XBL binding isn't applied if the element is invisible for any reason.
-      this._indicatorProgress.setAttribute("value", Math.max(aValue, 0));
     }
     return aValue;
   },
   _percentComplete: null,
-
-  /**
-   * Indicates whether the progress won't advance because of a paused state.
-   * Setting this property forces a paused progress bar to be displayed, even if
-   * the current progress information is unavailable.
-   */
-  set paused(aValue) {
-    if (!this._operational) {
-      return this._paused;
-    }
-
-    if (this._paused != aValue) {
-      this._paused = aValue;
-      if (this._paused) {
-        this.indicator.setAttribute("paused", "true")
-      } else {
-        this.indicator.removeAttribute("paused");
-      }
-    }
-    return aValue;
-  },
-  _paused: false,
 
   /**
    * Set when the indicator should draw user attention to itself.
@@ -500,21 +484,14 @@ const DownloadsIndicatorView = {
 
     // For arrow-Styled indicator, suppress success attention if we have
     // progress in toolbar
-    let suppressAttention = DownloadsCommon.arrowStyledIndicator && !inMenu &&
+    let suppressAttention = !inMenu &&
       this._attention == DownloadsCommon.ATTENTION_SUCCESS &&
       this._percentComplete >= 0;
 
     if (suppressAttention || this._attention == DownloadsCommon.ATTENTION_NONE) {
       this.indicator.removeAttribute("attention");
-      if (inMenu) {
-        PanelUI.removeNotification(/^download-/);
-      }
     } else {
       this.indicator.setAttribute("attention", this._attention);
-      if (inMenu) {
-        let badgeClass = "download-" + this._attention;
-        PanelUI.showBadgeOnlyNotification(badgeClass);
-      }
     }
   },
   _attention: DownloadsCommon.ATTENTION_NONE,
@@ -566,8 +543,6 @@ const DownloadsIndicatorView = {
   },
 
   _indicator: null,
-  __indicatorCounter: null,
-  __indicatorProgress: null,
   __progressIcon: null,
 
   /**
@@ -596,19 +571,9 @@ const DownloadsIndicatorView = {
     return document.getElementById("downloads-indicator-anchor");
   },
 
-  get _indicatorCounter() {
-    return this.__indicatorCounter ||
-      (this.__indicatorCounter = document.getElementById("downloads-indicator-counter"));
-  },
-
-  get _indicatorProgress() {
-    return this.__indicatorProgress ||
-      (this.__indicatorProgress = document.getElementById("downloads-indicator-progress"));
-  },
-
   get _progressIcon() {
     return this.__progressIcon ||
-      (this.__progressIcon = document.getElementById("downloads-indicator-progress-icon"));
+      (this.__progressIcon = document.getElementById("downloads-indicator-progress-inner"));
   },
 
   get notifier() {
@@ -619,8 +584,6 @@ const DownloadsIndicatorView = {
   _onCustomizedAway() {
     this._indicator = null;
     this.__progressIcon = null;
-    this.__indicatorCounter = null;
-    this.__indicatorProgress = null;
   },
 
   afterCustomize() {

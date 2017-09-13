@@ -9,7 +9,6 @@ this.EXPORTED_SYMBOLS = ["ExtensionTestUtils"];
 const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
 Components.utils.import("resource://gre/modules/ExtensionUtils.jsm");
-Components.utils.import("resource://gre/modules/Task.jsm");
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
@@ -24,6 +23,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "Schemas",
                                   "resource://gre/modules/Schemas.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
                                   "resource://gre/modules/Services.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "TestUtils",
+                                  "resource://testing-common/TestUtils.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "Management", () => {
   const {Management} = Cu.import("resource://gre/modules/Extension.jsm", {});
@@ -55,31 +56,23 @@ let BASE_MANIFEST = Object.freeze({
 
 
 function frameScript() {
-  Components.utils.import("resource://gre/modules/ExtensionContent.jsm");
+  Components.utils.import("resource://gre/modules/Services.jsm");
 
-  ExtensionContent.init(this);
-  this.addEventListener("unload", () => { // eslint-disable-line mozilla/balanced-listeners
-    ExtensionContent.uninit(this);
-  });
+  Services.obs.notifyObservers(this, "tab-content-frameloader-created");
 }
 
 const FRAME_SCRIPT = `data:text/javascript,(${encodeURI(frameScript)}).call(this)`;
 
-
-const XUL_URL = "data:application/vnd.mozilla.xul+xml;charset=utf-8," + encodeURI(
-  `<?xml version="1.0"?>
-  <window id="documentElement"/>`);
-
 let kungFuDeathGrip = new Set();
-function promiseBrowserLoaded(browser, url) {
+function promiseBrowserLoaded(browser, url, redirectUrl) {
   return new Promise(resolve => {
     const listener = {
       QueryInterface: XPCOMUtils.generateQI([Ci.nsISupportsWeakReference, Ci.nsIWebProgressListener]),
 
       onStateChange(webProgress, request, stateFlags, statusCode) {
         let requestUrl = request.URI ? request.URI.spec : webProgress.DOMWindow.location.href;
-
-        if (webProgress.isTopLevel && requestUrl === url &&
+        if (webProgress.isTopLevel &&
+            (requestUrl === url || requestUrl === redirectUrl) &&
             (stateFlags & Ci.nsIWebProgressListener.STATE_STOP)) {
           resolve();
           kungFuDeathGrip.delete(listener);
@@ -114,7 +107,7 @@ class ContentPage {
 
     chromeShell.createAboutBlankContentViewer(system);
     chromeShell.useGlobalHistory = false;
-    chromeShell.loadURI(XUL_URL, 0, null, null, null);
+    chromeShell.loadURI("chrome://extensions/content/dummy.xul", 0, null, null, null);
 
     await promiseObserved("chrome-document-global-created",
                           win => win.document == chromeShell.document);
@@ -140,20 +133,25 @@ class ContentPage {
     return browser;
   }
 
-  async loadURL(url) {
+  async loadURL(url, redirectUrl = undefined) {
     await this.browserReady;
 
     this.browser.loadURI(url);
-    return promiseBrowserLoaded(this.browser, url);
+    return promiseBrowserLoaded(this.browser, url, redirectUrl);
   }
 
   async close() {
     await this.browserReady;
 
+    let {messageManager} = this.browser;
+
     this.browser = null;
 
     this.windowlessBrowser.close();
     this.windowlessBrowser = null;
+
+    await TestUtils.topicObserved("message-manager-disconnect",
+                                  subject => subject === messageManager);
   }
 }
 
@@ -191,6 +189,7 @@ class ExtensionWrapper {
 
     if (extension) {
       this.id = extension.id;
+      this.uuid = extension.uuid;
       this.attachExtension(extension);
     }
   }
@@ -412,7 +411,7 @@ class AOMExtensionWrapper extends ExtensionWrapper {
 
     for (let file of this.cleanupFiles.splice(0)) {
       try {
-        Services.obs.notifyObservers(file, "flush-cache-entry", null);
+        Services.obs.notifyObservers(file, "flush-cache-entry");
         file.remove(false);
       } catch (e) {
         Cu.reportError(e);
@@ -526,6 +525,13 @@ class AOMExtensionWrapper extends ExtensionWrapper {
     }
   }
 
+  async _flushCache() {
+    if (this.extension && this.extension.rootURI instanceof Ci.nsIJARURI) {
+      let file = this.extension.rootURI.JARFile.QueryInterface(Ci.nsIFileURL).file;
+      await Services.ppmm.broadcastAsyncMessage("Extension:FlushJarCache", {path: file.path});
+    }
+  }
+
   get version() {
     return this.addon && this.addon.version;
   }
@@ -543,11 +549,18 @@ class AOMExtensionWrapper extends ExtensionWrapper {
     return this._install(this.file);
   }
 
-  upgrade(data) {
+  async unload() {
+    await this._flushCache();
+    return super.unload();
+  }
+
+  async upgrade(data) {
     this.startupPromise = new Promise(resolve => {
       this.resolveStartup = resolve;
     });
     this.state = "restarting";
+
+    await this._flushCache();
 
     let xpiFile = Extension.generateXPI(data);
 
@@ -560,8 +573,8 @@ class AOMExtensionWrapper extends ExtensionWrapper {
 var ExtensionTestUtils = {
   BASE_MANIFEST,
 
-  normalizeManifest: Task.async(function* (manifest, baseManifest = BASE_MANIFEST) {
-    yield Management.lazyInit();
+  async normalizeManifest(manifest, baseManifest = BASE_MANIFEST) {
+    await Management.lazyInit();
 
     let errors = [];
     let context = {
@@ -580,7 +593,7 @@ var ExtensionTestUtils = {
     normalized.errors = errors;
 
     return normalized;
-  }),
+  },
 
   currentScope: null,
 
@@ -670,10 +683,10 @@ var ExtensionTestUtils = {
     REMOTE_CONTENT_SCRIPTS = !!val;
   },
 
-  loadContentPage(url, remote = undefined) {
+  loadContentPage(url, remote = undefined, redirectUrl = undefined) {
     let contentPage = new ContentPage(remote);
 
-    return contentPage.loadURL(url).then(() => {
+    return contentPage.loadURL(url, redirectUrl).then(() => {
       return contentPage;
     });
   },

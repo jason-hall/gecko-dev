@@ -10,105 +10,100 @@
                          inherited=True,
                          gecko_name="SVG") %>
 
-// TODO(emilio): Should some of these types be animatable?
-
 // Section 10 - Text
 
 ${helpers.single_keyword("text-anchor",
                          "start middle end",
                          products="gecko",
-                         animation_type="none",
+                         animation_value_type="discrete",
                          spec="https://www.w3.org/TR/SVG/text.html#TextAnchorProperty")}
 
 // Section 11 - Painting: Filling, Stroking and Marker Symbols
 ${helpers.single_keyword("color-interpolation",
                          "srgb auto linearrgb",
                          products="gecko",
-                         animation_type="none",
+                         animation_value_type="discrete",
                          spec="https://www.w3.org/TR/SVG11/painting.html#ColorInterpolationProperty")}
 
 ${helpers.single_keyword("color-interpolation-filters", "linearrgb auto srgb",
                          products="gecko",
                          gecko_constant_prefix="NS_STYLE_COLOR_INTERPOLATION",
-                         animation_type="none",
+                         animation_value_type="discrete",
                          spec="https://www.w3.org/TR/SVG11/painting.html#ColorInterpolationFiltersProperty")}
 
 ${helpers.predefined_type(
     "fill", "SVGPaint",
     "::values::computed::SVGPaint::black()",
     products="gecko",
-    animation_type="none",
+    animation_value_type="IntermediateSVGPaint",
     boxed=True,
     spec="https://www.w3.org/TR/SVG2/painting.html#SpecifyingFillPaint")}
 
-${helpers.predefined_type("fill-opacity", "Opacity", "1.0",
-                          products="gecko", animation_type="none",
+${helpers.predefined_type("fill-opacity", "SVGOpacity", "Default::default()",
+                          products="gecko", animation_value_type="ComputedValue",
                           spec="https://www.w3.org/TR/SVG11/painting.html#FillOpacityProperty")}
 
 ${helpers.single_keyword("fill-rule", "nonzero evenodd",
                          gecko_enum_prefix="StyleFillRule",
                          gecko_inexhaustive=True,
-                         products="gecko", animation_type="none",
+                         products="gecko", animation_value_type="discrete",
                          spec="https://www.w3.org/TR/SVG11/painting.html#FillRuleProperty")}
 
 ${helpers.single_keyword("shape-rendering",
                          "auto optimizespeed crispedges geometricprecision",
                          products="gecko",
-                         animation_type="none",
+                         animation_value_type="discrete",
                          spec="https://www.w3.org/TR/SVG11/painting.html#ShapeRenderingProperty")}
 
 ${helpers.predefined_type(
     "stroke", "SVGPaint",
     "Default::default()",
     products="gecko",
-    animation_type="none",
+    animation_value_type="IntermediateSVGPaint",
     boxed=True,
     spec="https://www.w3.org/TR/SVG2/painting.html#SpecifyingStrokePaint")}
 
 ${helpers.predefined_type(
-    "stroke-width", "LengthOrPercentage",
-    "computed::LengthOrPercentage::one()",
-    "parse_numbers_are_pixels_non_negative",
+    "stroke-width", "SVGWidth",
+    "::values::computed::NonNegativeAu::from_px(1).into()",
     products="gecko",
-    animation_type="normal",
-    needs_context=False,
+    boxed="True",
+    animation_value_type="::values::computed::SVGWidth",
     spec="https://www.w3.org/TR/SVG2/painting.html#StrokeWidth")}
 
 ${helpers.single_keyword("stroke-linecap", "butt round square",
-                         products="gecko", animation_type="none",
+                         products="gecko", animation_value_type="discrete",
                          spec="https://www.w3.org/TR/SVG11/painting.html#StrokeLinecapProperty")}
 
 ${helpers.single_keyword("stroke-linejoin", "miter round bevel",
-                         products="gecko", animation_type="none",
+                         products="gecko", animation_value_type="discrete",
                          spec="https://www.w3.org/TR/SVG11/painting.html#StrokeLinejoinProperty")}
 
-${helpers.predefined_type("stroke-miterlimit", "Number", "4.0",
-                          "parse_at_least_one", products="gecko",
-                          needs_context=False,
-                          animation_type="none",
+${helpers.predefined_type("stroke-miterlimit", "GreaterThanOrEqualToOneNumber",
+                          "From::from(4.0)",
+                          products="gecko",
+                          animation_value_type="::values::computed::GreaterThanOrEqualToOneNumber",
                           spec="https://www.w3.org/TR/SVG11/painting.html#StrokeMiterlimitProperty")}
 
-${helpers.predefined_type("stroke-opacity", "Opacity", "1.0",
-                          products="gecko", animation_type="none",
+${helpers.predefined_type("stroke-opacity", "SVGOpacity", "Default::default()",
+                          products="gecko", animation_value_type="ComputedValue",
                           spec="https://www.w3.org/TR/SVG11/painting.html#StrokeOpacityProperty")}
 
-${helpers.predefined_type("stroke-dasharray",
-                          "LengthOrPercentageOrNumber",
-                          "Either::Second(0.0)",
-                          "parse_non_negative",
-                          vector="True",
-                          products="gecko",
-                          animation_type="none",
-                          space_separated_allowed="True",
-                          spec="https://www.w3.org/TR/SVG2/painting.html#StrokeDashing")}
+${helpers.predefined_type(
+    "stroke-dasharray",
+    "SVGStrokeDashArray",
+    "Default::default()",
+    products="gecko",
+    animation_value_type="::values::computed::SVGStrokeDashArray",
+    spec="https://www.w3.org/TR/SVG2/painting.html#StrokeDashing",
+)}
 
 ${helpers.predefined_type(
-    "stroke-dashoffset", "LengthOrPercentage",
-    "computed::LengthOrPercentage::zero()",
-    "parse_numbers_are_pixels",
+    "stroke-dashoffset", "SVGLength",
+    "Au(0).into()",
     products="gecko",
-    animation_type="normal",
-    needs_context=False,
+    boxed="True",
+    animation_value_type="ComputedValue",
     spec="https://www.w3.org/TR/SVG2/painting.html#StrokeDashing")}
 
 // Section 14 - Clipping, Masking and Compositing
@@ -116,33 +111,35 @@ ${helpers.single_keyword("clip-rule", "nonzero evenodd",
                          products="gecko",
                          gecko_enum_prefix="StyleFillRule",
                          gecko_inexhaustive=True,
-                         animation_type="none",
+                         animation_value_type="discrete",
                          spec="https://www.w3.org/TR/SVG11/masking.html#ClipRuleProperty")}
 
 ${helpers.predefined_type("marker-start", "UrlOrNone", "Either::Second(None_)",
                           products="gecko",
-                          animation_type="none",
+                          boxed="True" if product == "gecko" else "False",
+                          animation_value_type="discrete",
                           spec="https://www.w3.org/TR/SVG2/painting.html#VertexMarkerProperties")}
 
 ${helpers.predefined_type("marker-mid", "UrlOrNone", "Either::Second(None_)",
                           products="gecko",
-                          animation_type="none",
+                          boxed="True" if product == "gecko" else "False",
+                          animation_value_type="discrete",
                           spec="https://www.w3.org/TR/SVG2/painting.html#VertexMarkerProperties")}
 
 ${helpers.predefined_type("marker-end", "UrlOrNone", "Either::Second(None_)",
                           products="gecko",
-                          animation_type="none",
+                          boxed="True" if product == "gecko" else "False",
+                          animation_value_type="discrete",
                           spec="https://www.w3.org/TR/SVG2/painting.html#VertexMarkerProperties")}
 
 <%helpers:longhand name="paint-order"
-                   animation_type="none"
+                   animation_value_type="discrete"
                    products="gecko"
                    spec="https://www.w3.org/TR/SVG2/painting.html#PaintOrder">
 
     use values::computed::ComputedValueAsSpecified;
     use std::fmt;
     use style_traits::ToCss;
-    use values::HasViewportPercentage;
 
     pub const NORMAL: u8 = 0;
     pub const FILL: u8 = 1;
@@ -167,7 +164,7 @@ ${helpers.predefined_type("marker-end", "UrlOrNone", "Either::Second(None_)",
     ///
     /// Higher priority values, i.e. the values specified first,
     /// will be painted first (and may be covered by paintings of lower priority)
-    #[derive(PartialEq, Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, PartialEq)]
     #[cfg_attr(feature = "servo", derive(HeapSizeOf))]
     pub struct SpecifiedValue(pub u8);
 
@@ -185,7 +182,8 @@ ${helpers.predefined_type("marker-end", "UrlOrNone", "Either::Second(None_)",
         }
     }
 
-    pub fn parse(_context: &ParserContext, input: &mut Parser) -> Result<SpecifiedValue,()> {
+    pub fn parse<'i, 't>(_context: &ParserContext, input: &mut Parser<'i, 't>)
+                         -> Result<SpecifiedValue,ParseError<'i>> {
         if let Ok(()) = input.try(|i| i.expect_ident_matching("normal")) {
             Ok(SpecifiedValue(0))
         } else {
@@ -196,13 +194,11 @@ ${helpers.predefined_type("marker-end", "UrlOrNone", "Either::Second(None_)",
             let mut pos = 0;
 
             loop {
-
-                let result = input.try(|i| {
-                    match_ignore_ascii_case! { &i.expect_ident()?,
+                let result: Result<_, ParseError> = input.try(|i| {
+                    try_match_ident_ignore_ascii_case! { i.expect_ident()?,
                         "fill" => Ok(FILL),
                         "stroke" => Ok(STROKE),
                         "markers" => Ok(MARKERS),
-                        _ => Err(())
                     }
                 });
 
@@ -210,20 +206,20 @@ ${helpers.predefined_type("marker-end", "UrlOrNone", "Either::Second(None_)",
                     Ok(val) => {
                         if (seen & (1 << val)) != 0 {
                             // don't parse the same ident twice
-                            return Err(())
+                            return Err(StyleParseError::UnspecifiedError.into())
                         } else {
                             value |= val << (pos * SHIFT);
                             seen |= 1 << val;
                             pos += 1;
                         }
                     }
-                    Err(()) => break,
+                    Err(_) => break,
                 }
             }
 
             if value == 0 {
                 // couldn't find any keyword
-                Err(())
+                Err(StyleParseError::UnspecifiedError.into())
             } else {
                 // fill in rest
                 for i in pos..COUNT {
@@ -263,8 +259,30 @@ ${helpers.predefined_type("marker-end", "UrlOrNone", "Either::Second(None_)",
         }
     }
 
-    no_viewport_percentage!(SpecifiedValue);
 
     impl ComputedValueAsSpecified for SpecifiedValue { }
 </%helpers:longhand>
+<%helpers:vector_longhand name="-moz-context-properties"
+                   animation_value_type="none"
+                   products="gecko"
+                   spec="Nonstandard (Internal-only)"
+                   allow_empty="True">
+    use values::CustomIdent;
+    use values::computed::ComputedValueAsSpecified;
 
+
+    impl ComputedValueAsSpecified for SpecifiedValue { }
+
+    pub type SpecifiedValue = CustomIdent;
+
+    pub mod computed_value {
+        pub type T = super::SpecifiedValue;
+    }
+
+
+    pub fn parse<'i, 't>(_context: &ParserContext, input: &mut Parser<'i, 't>)
+                         -> Result<SpecifiedValue, ParseError<'i>> {
+        let i = input.expect_ident()?;
+        CustomIdent::from_ident(i, &["all", "none", "auto"])
+    }
+</%helpers:vector_longhand>

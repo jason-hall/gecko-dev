@@ -10,8 +10,10 @@ const {
   DOM,
   PropTypes,
 } = require("devtools/client/shared/vendor/react");
-const { NetMonitorController } = require("../netmonitor-controller");
-const { getFormattedSize } = require("../utils/format-utils");
+const {
+  getFormattedIPAndPort,
+  getFormattedSize,
+} = require("../utils/format-utils");
 const { L10N } = require("../utils/l10n");
 const {
   getHeadersURL,
@@ -24,8 +26,8 @@ const { REPS, MODE } = require("devtools/client/shared/components/reps/reps");
 const MDNLink = createFactory(require("./mdn-link"));
 const PropertiesView = createFactory(require("./properties-view"));
 
-const Rep = createFactory(REPS.Rep);
-const { button, div, input, textarea } = DOM;
+const { Rep } = REPS;
+const { button, div, input, textarea, span } = DOM;
 
 const EDIT_AND_RESEND = L10N.getStr("netmonitor.summary.editAndResend");
 const RAW_HEADERS = L10N.getStr("netmonitor.summary.rawHeaders");
@@ -162,7 +164,7 @@ const HeadersPanel = createClass({
 
     let summaryAddress = remoteAddress ?
       this.renderSummary(SUMMARY_ADDRESS,
-        remotePort ? `${remoteAddress}:${remotePort}` : remoteAddress) : null;
+        getFormattedIPAndPort(remoteAddress, remotePort)) : null;
 
     let summaryStatus;
 
@@ -176,8 +178,8 @@ const HeadersPanel = createClass({
         code = status;
       }
 
-      let statusCodeDocURL = getHTTPStatusCodeURL(code);
-      let inputWidth = status.length + statusText.length + 1;
+      let statusCodeDocURL = getHTTPStatusCodeURL(status.toString());
+      let inputWidth = status.toString().length + statusText.length + 1;
 
       summaryStatus = (
         div({ className: "tabpanel-summary-container headers-summary" },
@@ -197,13 +199,15 @@ const HeadersPanel = createClass({
           }),
           statusCodeDocURL ? MDNLink({
             url: statusCodeDocURL,
-          }) : null,
-          NetMonitorController.supportsCustomRequest && button({
-            className: "devtools-button",
+          }) : span({
+            className: "headers-summary learn-more-link",
+          }),
+          button({
+            className: "devtools-button edit-and-resend-button",
             onClick: cloneSelectedRequest,
           }, EDIT_AND_RESEND),
           button({
-            className: "devtools-button",
+            className: "devtools-button raw-headers-button",
             onClick: this.toggleRawHeaders,
           }, RAW_HEADERS),
         )

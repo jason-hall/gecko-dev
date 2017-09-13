@@ -106,6 +106,9 @@ include css-ruby/reftest.list
 # css required
 include css-required/reftest.list
 
+# css shapes
+include css-shapes/reftest.list
+
 # css optional
 include css-optional/reftest.list
 
@@ -208,6 +211,9 @@ include font-matching/reftest.list
 # forms
 include forms/reftest.list
 
+# frameset
+include frameset/reftest.list
+
 # gfx
 include ../../gfx/tests/reftest/reftest.list
 
@@ -305,6 +311,9 @@ include selection/reftest.list
 # sticky positioning
 include position-sticky/reftest.list
 
+# stylesheet cloning
+include stylesheet-cloning/reftest.list
+
 # svg/
 include svg/reftest.list
 
@@ -373,6 +382,9 @@ include usercss/reftest.list
 
 include view-source/reftest.list
 
+# vr
+include ../../dom/vr/test/reftest/reftest.list
+
 # web-animations
 include web-animations/reftest.list
 
@@ -426,3 +438,6 @@ include ../../dom/encoding/test/reftest/reftest.list
 
 # APZ/async positioning tests
 include ../../gfx/layers/apz/test/reftest/reftest.list
+
+# Media
+include ../../dom/media/test/reftest/reftest.list

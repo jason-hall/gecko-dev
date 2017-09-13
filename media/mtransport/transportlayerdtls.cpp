@@ -370,6 +370,9 @@ static const struct PRIOMethods TransportLayerMethods = {
 };
 
 TransportLayerDtls::~TransportLayerDtls() {
+  // Destroy the NSS instance first so it can still send out an alert before
+  // we disable the nspr_io_adapter_.
+  ssl_fd_ = nullptr;
   nspr_io_adapter_->SetEnabled(false);
   if (timer_) {
     timer_->Cancel();
@@ -847,10 +850,11 @@ void TransportLayerDtls::StateChange(TransportLayer *layer, State state) {
       TL_SET_STATE(TS_CONNECTING);
       timer_->Cancel();
       timer_->SetTarget(target_);
-      timer_->InitWithFuncCallback(TimerCallback,
-                                   this,
-                                   0,
-                                   nsITimer::TYPE_ONE_SHOT);
+      timer_->InitWithNamedFuncCallback(TimerCallback,
+                                        this,
+                                        0,
+                                        nsITimer::TYPE_ONE_SHOT,
+                                        "TransportLayerDtls::TimerCallback");
       break;
 
     case TS_CLOSED:
@@ -909,9 +913,10 @@ void TransportLayerDtls::Handshake() {
           MOZ_MTLOG(ML_DEBUG,
                     LAYER_INFO << "Setting DTLS timeout to " << timeout_ms);
           timer_->SetTarget(target_);
-          timer_->InitWithFuncCallback(TimerCallback,
-                                       this, timeout_ms,
-                                       nsITimer::TYPE_ONE_SHOT);
+          timer_->InitWithNamedFuncCallback(TimerCallback,
+                                            this, timeout_ms,
+                                            nsITimer::TYPE_ONE_SHOT,
+                                            "TransportLayerDtls::TimerCallback");
         }
         break;
       default:

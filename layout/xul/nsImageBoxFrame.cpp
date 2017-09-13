@@ -10,9 +10,9 @@
 // See documentation in associated header file
 //
 
+#include "gfxContext.h"
 #include "nsImageBoxFrame.h"
 #include "nsGkAtoms.h"
-#include "nsRenderingContext.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
 #include "nsStyleUtil.h"
@@ -34,7 +34,6 @@
 #include "nsIDOMHTMLImageElement.h"
 #include "nsNameSpaceManager.h"
 #include "nsTextFragment.h"
-#include "nsIDOMHTMLMapElement.h"
 #include "nsTransform2D.h"
 #include "nsITheme.h"
 
@@ -64,8 +63,12 @@ using namespace mozilla::layers;
 class nsImageBoxFrameEvent : public Runnable
 {
 public:
-  nsImageBoxFrameEvent(nsIContent *content, EventMessage message)
-    : mContent(content), mMessage(message) {}
+  nsImageBoxFrameEvent(nsIContent* content, EventMessage message)
+    : mozilla::Runnable("nsImageBoxFrameEvent")
+    , mContent(content)
+    , mMessage(message)
+  {
+  }
 
   NS_IMETHOD Run() override;
 
@@ -110,8 +113,7 @@ FireImageDOMEvent(nsIContent* aContent, EventMessage aMessage)
                "invalid message");
 
   nsCOMPtr<nsIRunnable> event = new nsImageBoxFrameEvent(aContent, aMessage);
-  nsresult rv = aContent->OwnerDoc()->Dispatch("nsImageBoxFrameEvent",
-                                               TaskCategory::Other,
+  nsresult rv = aContent->OwnerDoc()->Dispatch(TaskCategory::Other,
                                                event.forget());
   if (NS_FAILED(rv)) {
     NS_WARNING("failed to dispatch image event");
@@ -150,13 +152,13 @@ nsImageBoxFrame::AttributeChanged(int32_t aNameSpaceID,
   return rv;
 }
 
-nsImageBoxFrame::nsImageBoxFrame(nsStyleContext* aContext):
-  nsLeafBoxFrame(aContext),
-  mIntrinsicSize(0,0),
-  mLoadFlags(nsIRequest::LOAD_NORMAL),
-  mRequestRegistered(false),
-  mUseSrcAttr(false),
-  mSuppressStyleCheck(false)
+nsImageBoxFrame::nsImageBoxFrame(nsStyleContext* aContext)
+  : nsLeafBoxFrame(aContext, kClassID)
+  , mIntrinsicSize(0, 0)
+  , mLoadFlags(nsIRequest::LOAD_NORMAL)
+  , mRequestRegistered(false)
+  , mUseSrcAttr(false)
+  , mSuppressStyleCheck(false)
 {
   MarkIntrinsicISizesDirty();
 }
@@ -260,13 +262,15 @@ nsImageBoxFrame::UpdateImage()
   } else {
     // Only get the list-style-image if we aren't being drawn
     // by a native theme.
-    uint8_t appearance = StyleDisplay()->UsedAppearance();
+    uint8_t appearance = StyleDisplay()->mAppearance;
     if (!(appearance && nsBox::gTheme &&
           nsBox::gTheme->ThemeSupportsWidget(nullptr, this, appearance))) {
       // get the list-style-image
       imgRequestProxy *styleRequest = StyleList()->GetListStyleImage();
       if (styleRequest) {
-        styleRequest->Clone(mListener, getter_AddRefs(mImageRequest));
+        styleRequest->SyncClone(mListener,
+                                mContent->GetComposedDoc(),
+                                getter_AddRefs(mImageRequest));
       }
     }
   }
@@ -307,10 +311,9 @@ nsImageBoxFrame::UpdateLoadFlags()
 
 void
 nsImageBoxFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                  const nsRect&           aDirtyRect,
                                   const nsDisplayListSet& aLists)
 {
-  nsLeafBoxFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
+  nsLeafBoxFrame::BuildDisplayList(aBuilder, aLists);
 
   if ((0 == mRect.width) || (0 == mRect.height)) {
     // Do not render when given a zero area. This avoids some useless
@@ -339,25 +342,13 @@ nsImageBoxFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 }
 
 DrawResult
-nsImageBoxFrame::PaintImage(nsRenderingContext& aRenderingContext,
+nsImageBoxFrame::PaintImage(gfxContext& aRenderingContext,
                             const nsRect& aDirtyRect, nsPoint aPt,
                             uint32_t aFlags)
 {
-  nsRect constraintRect;
-  GetXULClientRect(constraintRect);
-
-  constraintRect += aPt;
-
   if (!mImageRequest) {
     // This probably means we're drawn by a native theme.
     return DrawResult::SUCCESS;
-  }
-
-  // don't draw if the image is not dirty
-  // XXX(seth): Can this actually happen anymore?
-  nsRect dirty;
-  if (!dirty.IntersectRect(aDirtyRect, constraintRect)) {
-    return DrawResult::TEMPORARY_ERROR;
   }
 
   // Don't draw if the image's size isn't available.
@@ -374,9 +365,40 @@ nsImageBoxFrame::PaintImage(nsRenderingContext& aRenderingContext,
     return DrawResult::NOT_READY;
   }
 
+  Maybe<nsPoint> anchorPoint;
+  nsRect dest = GetDestRect(aPt, anchorPoint);
+
+  // don't draw if the image is not dirty
+  // XXX(seth): Can this actually happen anymore?
+  nsRect dirty;
+  if (!dirty.IntersectRect(aDirtyRect, dest)) {
+    return DrawResult::TEMPORARY_ERROR;
+  }
+
   bool hasSubRect = !mUseSrcAttr && (mSubRect.width > 0 || mSubRect.height > 0);
 
-  Maybe<nsPoint> anchorPoint;
+  Maybe<SVGImageContext> svgContext;
+  SVGImageContext::MaybeStoreContextPaint(svgContext, this, imgCon);
+  return nsLayoutUtils::DrawSingleImage(
+           aRenderingContext,
+           PresContext(), imgCon,
+           nsLayoutUtils::GetSamplingFilterForFrame(this),
+           dest, dirty,
+           svgContext, aFlags,
+           anchorPoint.ptrOr(nullptr),
+           hasSubRect ? &mSubRect : nullptr);
+}
+
+nsRect
+nsImageBoxFrame::GetDestRect(const nsPoint& aOffset, Maybe<nsPoint>& aAnchorPoint)
+{
+  nsCOMPtr<imgIContainer> imgCon;
+  mImageRequest->GetImage(getter_AddRefs(imgCon));
+  MOZ_ASSERT(imgCon);
+
+  nsRect clientRect;
+  GetXULClientRect(clientRect);
+  clientRect += aOffset;
   nsRect dest;
   if (!mUseSrcAttr) {
     // Our image (if we have one) is coming from the CSS property
@@ -385,7 +407,7 @@ nsImageBoxFrame::PaintImage(nsRenderingContext& aRenderingContext,
     // XXXdholbert Should we even honor these properties in this case? They only
     // apply to replaced elements, and I'm not sure we count as a replaced
     // element when our image data is determined by CSS.
-    dest = constraintRect;
+    dest = clientRect;
   } else {
     // Determine dest rect based on intrinsic size & ratio, along with
     // 'object-fit' & 'object-position' properties:
@@ -401,29 +423,19 @@ nsImageBoxFrame::PaintImage(nsRenderingContext& aRenderingContext,
       // Try to look up intrinsic ratio and use that at least.
       imgCon->GetIntrinsicRatio(&intrinsicRatio);
     }
-    anchorPoint.emplace();
-    dest = nsLayoutUtils::ComputeObjectDestRect(constraintRect,
+    aAnchorPoint.emplace();
+    dest = nsLayoutUtils::ComputeObjectDestRect(clientRect,
                                                 intrinsicSize,
                                                 intrinsicRatio,
                                                 StylePosition(),
-                                                anchorPoint.ptr());
+                                                aAnchorPoint.ptr());
   }
 
-  Maybe<SVGImageContext> svgContext;
-  SVGImageContext::MaybeInitAndStoreContextPaint(svgContext, this, imgCon);
-
-  return nsLayoutUtils::DrawSingleImage(
-           *aRenderingContext.ThebesContext(),
-           PresContext(), imgCon,
-           nsLayoutUtils::GetSamplingFilterForFrame(this),
-           dest, dirty,
-           svgContext, aFlags,
-           anchorPoint.ptrOr(nullptr),
-           hasSubRect ? &mSubRect : nullptr);
+  return dest;
 }
 
 void nsDisplayXULImage::Paint(nsDisplayListBuilder* aBuilder,
-                              nsRenderingContext* aCtx)
+                              gfxContext* aCtx)
 {
   // Even though we call StartDecoding when we get a new image we pass
   // FLAG_SYNC_DECODE_IF_FAST here for the case where the size we draw at is not
@@ -488,19 +500,15 @@ nsDisplayXULImage::GetImage()
 
   nsCOMPtr<imgIContainer> imgCon;
   imageFrame->mImageRequest->GetImage(getter_AddRefs(imgCon));
-  
+
   return imgCon.forget();
 }
 
 nsRect
 nsDisplayXULImage::GetDestRect()
 {
-  nsImageBoxFrame* imageFrame = static_cast<nsImageBoxFrame*>(mFrame);
-
-  nsRect clientRect;
-  imageFrame->GetXULClientRect(clientRect);
-
-  return clientRect + ToReferenceFrame();
+  Maybe<nsPoint> anchorPoint;
+  return static_cast<nsImageBoxFrame*>(mFrame)->GetDestRect(ToReferenceFrame(), anchorPoint);
 }
 
 bool
@@ -532,8 +540,8 @@ nsImageBoxFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
 
   // If we're using a native theme implementation, we shouldn't draw anything.
   const nsStyleDisplay* disp = StyleDisplay();
-  if (disp->UsedAppearance() && nsBox::gTheme &&
-      nsBox::gTheme->ThemeSupportsWidget(nullptr, this, disp->UsedAppearance()))
+  if (disp->mAppearance && nsBox::gTheme &&
+      nsBox::gTheme->ThemeSupportsWidget(nullptr, this, disp->mAppearance))
     return;
 
   // If list-style-image changes, we have a new image.
@@ -662,12 +670,6 @@ nsImageBoxFrame::GetXULBoxAscent(nsBoxLayoutState& aState)
   return GetXULPrefSize(aState).height;
 }
 
-nsIAtom*
-nsImageBoxFrame::GetType() const
-{
-  return nsGkAtoms::imageBoxFrame;
-}
-
 #ifdef DEBUG_FRAME_DUMP
 nsresult
 nsImageBoxFrame::GetFrameName(nsAString& aResult) const
@@ -776,8 +778,8 @@ nsImageBoxFrame::OnFrameUpdate(imgIRequest* aRequest)
   if ((0 == mRect.width) || (0 == mRect.height)) {
     return NS_OK;
   }
- 
-  InvalidateLayer(nsDisplayItem::TYPE_XUL_IMAGE);
+
+  InvalidateLayer(DisplayItemType::TYPE_XUL_IMAGE);
 
   return NS_OK;
 }

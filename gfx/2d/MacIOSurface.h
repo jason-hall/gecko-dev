@@ -11,6 +11,12 @@
 #include <CoreVideo/CoreVideo.h>
 #include <dlfcn.h>
 
+namespace mozilla {
+namespace gl {
+class GLContext;
+}
+}
+
 struct _CGLContextObject;
 
 typedef _CGLContextObject* CGLContextObj;
@@ -91,7 +97,7 @@ public:
                                                            double aContentsScaleFactor = 1.0,
                                                            bool aHasAlpha = true);
 
-  explicit MacIOSurface(const void *aIOSurfacePtr,
+  explicit MacIOSurface(IOSurfacePtr aIOSurfacePtr,
                         double aContentsScaleFactor = 1.0,
                         bool aHasAlpha = true);
   ~MacIOSurface();
@@ -120,7 +126,15 @@ public:
 
   // We would like to forward declare NSOpenGLContext, but it is an @interface
   // and this file is also used from c++, so we use a void *.
-  CGLError CGLTexImageIOSurface2D(CGLContextObj ctxt, size_t plane = 0);
+  CGLError CGLTexImageIOSurface2D(mozilla::gl::GLContext* aGL,
+                                  CGLContextObj ctxt,
+                                  size_t plane,
+                                  mozilla::gfx::SurfaceFormat* aOutReadFormat = nullptr);
+  CGLError CGLTexImageIOSurface2D(CGLContextObj ctxt,
+                                  GLenum target, GLenum internalFormat,
+                                  GLsizei width, GLsizei height,
+                                  GLenum format, GLenum type,
+                                  GLuint plane) const;
   already_AddRefed<SourceSurface> GetAsSurface();
   CGContextRef CreateIOSurfaceContext();
 
@@ -131,10 +145,11 @@ public:
                                                                         bool aHasAlpha = true);
   static size_t GetMaxWidth();
   static size_t GetMaxHeight();
+  const void* GetIOSurfacePtr() { return mIOSurfacePtr; }
 
 private:
   friend class nsCARenderer;
-  const void* mIOSurfacePtr;
+  const IOSurfacePtr mIOSurfacePtr;
   double mContentsScaleFactor;
   bool mHasAlpha;
 };

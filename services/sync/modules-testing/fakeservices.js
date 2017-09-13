@@ -13,10 +13,9 @@ this.EXPORTED_SYMBOLS = [
 
 var {utils: Cu} = Components;
 
+Cu.import("resource://services-sync/main.js");
 Cu.import("resource://services-sync/record.js");
 Cu.import("resource://services-sync/util.js");
-
-var btoa = Cu.import("resource://gre/modules/Log.jsm").btoa;
 
 this.FakeFilesystemService = function FakeFilesystemService(contents) {
   this.fakeContents = contents;
@@ -36,25 +35,18 @@ this.FakeFilesystemService = function FakeFilesystemService(contents) {
     }
   }
 
-  Utils.jsonSave = function jsonSave(filePath, that, obj, callback) {
+  Utils.jsonSave = async function jsonSave(filePath, that, obj) {
     let json = typeof obj == "function" ? obj.call(that) : obj;
     self.fakeContents["weave/" + filePath + ".json"] = JSON.stringify(json);
-    if (callback) {
-      callback.call(that);
-    }
-    return Promise.resolve();
   };
 
-  Utils.jsonLoad = function jsonLoad(filePath, that, cb) {
+  Utils.jsonLoad = async function jsonLoad(filePath, that) {
     let obj;
     let json = self.fakeContents["weave/" + filePath + ".json"];
     if (json) {
       obj = JSON.parse(json);
     }
-    if (cb) {
-      cb.call(that, obj);
-    }
-    return Promise.resolve(obj);
+    return obj;
   };
 
   Utils.jsonMove = function jsonMove(aFrom, aTo, that) {
@@ -95,8 +87,8 @@ this.FakeGUIDService = function FakeGUIDService() {
 this.FakeCryptoService = function FakeCryptoService() {
   this.counter = 0;
 
-  delete Svc.Crypto;  // get rid of the getter first
-  Svc.Crypto = this;
+  delete Weave.Crypto;  // get rid of the getter first
+  Weave.Crypto = this;
 
   CryptoWrapper.prototype.ciphertextHMAC = function ciphertextHMAC(keyBundle) {
     return fakeSHA256HMAC(this.ciphertext);
@@ -123,11 +115,6 @@ FakeCryptoService.prototype = {
 
   expandData: function expandData(data, len) {
     return data;
-  },
-
-  deriveKeyFromPassphrase: function deriveKeyFromPassphrase(passphrase,
-                                                            salt, keyLength) {
-    return "some derived key string composed of bytes";
   },
 
   generateRandomBytes: function generateRandomBytes(byteCount) {

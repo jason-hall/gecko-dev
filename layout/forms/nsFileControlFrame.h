@@ -33,17 +33,16 @@ public:
                     nsIFrame*         aPrevInFlow) override;
 
   virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                const nsRect&           aDirtyRect,
                                 const nsDisplayListSet& aLists) override;
 
   NS_DECL_QUERYFRAME
-  NS_DECL_FRAMEARENA_HELPERS
+  NS_DECL_FRAMEARENA_HELPERS(nsFileControlFrame)
 
   // nsIFormControlFrame
   virtual nsresult SetFormProperty(nsIAtom* aName, const nsAString& aValue) override;
   virtual void SetFocus(bool aOn, bool aRepaint) override;
 
-  virtual nscoord GetMinISize(nsRenderingContext *aRenderingContext) override;
+  virtual nscoord GetMinISize(gfxContext *aRenderingContext) override;
 
   virtual void DestroyFrom(nsIFrame* aDestructRoot) override;
 
@@ -55,10 +54,6 @@ public:
                                     nsIAtom*        aAttribute,
                                     int32_t         aModType) override;
   virtual void ContentStatesChanged(mozilla::EventStates aStates) override;
-  virtual bool IsLeaf() const override
-  {
-    return true;
-  }
 
   // nsIAnonymousContentCreator
   virtual nsresult CreateAnonymousContent(nsTArray<ContentInfo>& aElements) override;
@@ -99,7 +94,8 @@ protected:
   {
   public:
     explicit SyncDisabledStateEvent(nsFileControlFrame* aFrame)
-      : mFrame(aFrame)
+      : mozilla::Runnable("nsFileControlFrame::SyncDisabledStateEvent")
+      , mFrame(aFrame)
     {}
 
     NS_IMETHOD Run() override {

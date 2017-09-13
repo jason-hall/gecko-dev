@@ -51,23 +51,24 @@ let signonReloadDisplay = {
           if (filterField && filterField.value != "") {
             FilterPasswords();
           }
+          signonsTree.treeBoxObject.ensureRowIsVisible(signonsTree.view.selection.currentIndex);
           break;
       }
-      Services.obs.notifyObservers(null, "passwordmgr-dialog-updated", null);
+      Services.obs.notifyObservers(null, "passwordmgr-dialog-updated");
     }
   }
 };
 
 // Formatter for localization.
-let dateFormatter = new Intl.DateTimeFormat(undefined,
-                      { day: "numeric", month: "short", year: "numeric" });
-let dateAndTimeFormatter = new Intl.DateTimeFormat(undefined,
-                             { day: "numeric", month: "short", year: "numeric",
-                               hour: "numeric", minute: "numeric" });
+let dateFormatter = Services.intl.createDateTimeFormat(undefined,
+                      { dateStyle: "medium" });
+let dateAndTimeFormatter = Services.intl.createDateTimeFormat(undefined,
+                             { dateStyle: "medium",
+                               timeStyle: "short" });
 
 function Startup() {
   // be prepared to reload the display if anything changes
-  Services.obs.addObserver(signonReloadDisplay, "passwordmgr-storage-changed", false);
+  Services.obs.addObserver(signonReloadDisplay, "passwordmgr-storage-changed");
 
   signonsTree = document.getElementById("signonsTree");
   kSignonBundle = document.getElementById("signonBundle");
@@ -79,7 +80,7 @@ function Startup() {
 
   togglePasswordsButton.label = kSignonBundle.getString("showPasswords");
   togglePasswordsButton.accessKey = kSignonBundle.getString("showPasswordsAccessKey");
-  signonsIntro.textContent = kSignonBundle.getString("loginsDescriptionAll");
+  signonsIntro.textContent = kSignonBundle.getString("loginsDescriptionAll2");
   removeAllButton.setAttribute("label", kSignonBundle.getString("removeAll.label"));
   removeAllButton.setAttribute("accesskey", kSignonBundle.getString("removeAll.accesskey"));
   document.getElementsByTagName("treecols")[0].addEventListener("click", (event) => {
@@ -389,7 +390,6 @@ function DeleteSignon() {
     // update selection
     let nextSelection = (selections[0] < table.length) ? selections[0] : table.length - 1;
     tree.view.selection.select(nextSelection);
-    tree.treeBoxObject.ensureRowIsVisible(nextSelection);
   } else {
     // disable buttons
     removeButton.setAttribute("disabled", "true");
@@ -450,7 +450,7 @@ function TogglePasswordVisible() {
 
   // Notify observers that the password visibility toggling is
   // completed.  (Mostly useful for tests)
-  Services.obs.notifyObservers(null, "passwordmgr-password-toggle-complete", null);
+  Services.obs.notifyObservers(null, "passwordmgr-password-toggle-complete");
   Services.telemetry.getHistogramById("PWMGR_MANAGE_VISIBILITY_TOGGLED").add(showingPasswords);
 }
 
@@ -491,6 +491,7 @@ function HandleSignonKeyPress(e) {
       (AppConstants.platform == "macosx" &&
        e.keyCode == KeyboardEvent.DOM_VK_BACK_SPACE)) {
     DeleteSignon();
+    e.preventDefault();
   }
 }
 
@@ -557,7 +558,7 @@ function SignonClearFilter() {
   }
   signonsTreeView._lastSelectedRanges = [];
 
-  signonsIntro.textContent = kSignonBundle.getString("loginsDescriptionAll");
+  signonsIntro.textContent = kSignonBundle.getString("loginsDescriptionAll2");
   removeAllButton.setAttribute("label", kSignonBundle.getString("removeAll.label"));
   removeAllButton.setAttribute("accesskey", kSignonBundle.getString("removeAll.accesskey"));
 }

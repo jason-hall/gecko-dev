@@ -48,8 +48,7 @@ public:
   nsrefcnt AddRef()
   {
     NS_PRECONDITION(int32_t(mRefCnt) >= 0, "illegal refcnt");
-    MOZ_ASSERT(_mOwningThread.GetThread() == PR_GetCurrentThread(),
-      "imgCacheEntry addref isn't thread-safe!");
+    NS_ASSERT_OWNINGTHREAD(imgCacheEntry);
     ++mRefCnt;
     NS_LOG_ADDREF(this, mRefCnt, "imgCacheEntry", sizeof(*this));
     return mRefCnt;
@@ -58,8 +57,7 @@ public:
   nsrefcnt Release()
   {
     NS_PRECONDITION(0 != mRefCnt, "dup release");
-    MOZ_ASSERT(_mOwningThread.GetThread() == PR_GetCurrentThread(),
-      "imgCacheEntry release isn't thread-safe!");
+    NS_ASSERT_OWNINGTHREAD(imgCacheEntry);
     --mRefCnt;
     NS_LOG_RELEASE(this, mRefCnt, "imgCacheEntry");
     if (mRefCnt == 0) {
@@ -300,6 +298,7 @@ public:
                                   nsISupports* aCacheKey,
                                   nsContentPolicyType aContentPolicyType,
                                   const nsAString& initiatorType,
+                                  bool aUseUrgentStartForChannel,
                                   imgRequestProxy** _retval);
 
   MOZ_MUST_USE nsresult
@@ -399,6 +398,7 @@ private: // methods
                      ReferrerPolicy aReferrerPolicy,
                      nsILoadGroup* aLoadGroup,
                      imgINotificationObserver* aObserver, nsISupports* aCX,
+                     nsIDocument* aLoadingDocument,
                      nsLoadFlags aLoadFlags,
                      nsContentPolicyType aContentPolicyType,
                      bool aCanMakeNewChannel,
@@ -412,7 +412,9 @@ private: // methods
                                      ReferrerPolicy aReferrerPolicy,
                                      nsILoadGroup* aLoadGroup,
                                      imgINotificationObserver* aObserver,
-                                     nsISupports* aCX, nsLoadFlags aLoadFlags,
+                                     nsISupports* aCX,
+                                     nsIDocument* aLoadingDocument,
+                                     nsLoadFlags aLoadFlags,
                                      nsContentPolicyType aContentPolicyType,
                                      imgRequestProxy** aProxyRequest,
                                      nsIPrincipal* aLoadingPrincipal,
@@ -420,6 +422,7 @@ private: // methods
 
   nsresult CreateNewProxyForRequest(imgRequest* aRequest,
                                     nsILoadGroup* aLoadGroup,
+                                    nsIDocument* aLoadingDocument,
                                     imgINotificationObserver* aObserver,
                                     nsLoadFlags aLoadFlags,
                                     imgRequestProxy** _retval);
@@ -542,7 +545,7 @@ public:
 
   void AddProxy(imgRequestProxy* aProxy);
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSITHREADRETARGETABLESTREAMLISTENER
   NS_DECL_NSISTREAMLISTENER
   NS_DECL_NSIREQUESTOBSERVER

@@ -18,7 +18,7 @@ var { BrowserToolboxProcess } = Cu.import("resource://devtools/client/framework/
 var { DebuggerServer } = require("devtools/server/main");
 var { DebuggerClient, ObjectClient } = require("devtools/shared/client/main");
 var { AddonManager } = Cu.import("resource://gre/modules/AddonManager.jsm", {});
-var EventEmitter = require("devtools/shared/event-emitter");
+var EventEmitter = require("devtools/shared/old-event-emitter");
 var { Toolbox } = require("devtools/client/framework/toolbox");
 
 const chromeRegistry = Cc["@mozilla.org/chrome/chrome-registry;1"].getService(Ci.nsIChromeRegistry);
@@ -52,8 +52,12 @@ registerCleanupFunction(function* () {
   DebuggerServer.destroy();
 
   // Debugger tests use a lot of memory, so force a GC to help fragmentation.
-  info("Forcing GC after debugger test.");
-  Cu.forceGC();
+  info("Forcing GC/CC after debugger test.");
+  yield new Promise(resolve => {
+    Cu.forceGC();
+    Cu.forceCC();
+    Cu.schedulePreciseGC(resolve);
+  });
 });
 
 // Import the GCLI test helper

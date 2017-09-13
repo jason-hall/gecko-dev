@@ -24,7 +24,7 @@ config = {
     "exes": {
         'gittool.py': '%(abs_tools_dir)s/buildfarm/utils/gittool.py',
         'tooltool.py': '/tools/tooltool.py',
-        "virtualenv": [PYTHON_DIR + "/bin/python", "/tools/misc-python/virtualenv.py"],
+        "virtualenv": "/tools/virtualenv/bin/virtualenv",
     },
 
     "force_clobber": True,
@@ -45,7 +45,6 @@ config = {
     "virtualenv_path": '%s/venv' % os.getcwd(),
     'tools_dir': "/tools",
     'compiler_manifest': "build/gcc.manifest",
-    'b2g_compiler_manifest': "build/gcc-b2g.manifest",
     'sixgill_manifest': "build/sixgill.manifest",
 
     # Mock.

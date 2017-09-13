@@ -19,6 +19,9 @@ import android.util.Log;
 
 import java.util.LinkedList;
 import java.util.List;
+import java.util.NoSuchElementException;
+
+import org.mozilla.gecko.gfx.GeckoSurface;
 
 public final class RemoteManager implements IBinder.DeathRecipient {
     private static final String LOGTAG = "GeckoRemoteManager";
@@ -56,11 +59,7 @@ public final class RemoteManager implements IBinder.DeathRecipient {
         @Override
         public void onServiceDisconnected(ComponentName name) {
             if (DEBUG) Log.d(LOGTAG, "service disconnected");
-            mRemote.asBinder().unlinkToDeath(RemoteManager.this, 0);
-            synchronized (this) {
-                mRemote = null;
-                notify();
-            }
+            unlink();
         }
 
         private boolean connect() {
@@ -96,6 +95,19 @@ public final class RemoteManager implements IBinder.DeathRecipient {
                 }
             }
         }
+
+        private synchronized void unlink() {
+            if (mRemote == null) {
+                return;
+            }
+            try {
+                mRemote.asBinder().unlinkToDeath(RemoteManager.this, 0);
+            } catch (NoSuchElementException e) {
+                Log.w(LOGTAG, "death recipient already released");
+            }
+            mRemote = null;
+            notify();
+        }
     };
 
     RemoteConnection mConnection = new RemoteConnection();
@@ -111,7 +123,7 @@ public final class RemoteManager implements IBinder.DeathRecipient {
 
     public synchronized CodecProxy createCodec(boolean isEncoder,
                                                MediaFormat format,
-                                               Surface surface,
+                                               GeckoSurface surface,
                                                CodecProxy.Callbacks callbacks,
                                                String drmStubId) {
         if (mRemote == null) {
@@ -214,9 +226,8 @@ public final class RemoteManager implements IBinder.DeathRecipient {
 
     private void release() {
         if (DEBUG) Log.d(LOGTAG, "release remote manager " + this);
+        mConnection.unlink();
         Context appCtxt = GeckoAppShell.getApplicationContext();
-        mRemote.asBinder().unlinkToDeath(this, 0);
-        mRemote = null;
         appCtxt.unbindService(mConnection);
     }
 } // RemoteManager

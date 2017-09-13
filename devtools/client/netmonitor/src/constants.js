@@ -14,6 +14,7 @@ const actionTypes = {
   CLONE_SELECTED_REQUEST: "CLONE_SELECTED_REQUEST",
   ENABLE_REQUEST_FILTER_TYPE_ONLY: "ENABLE_REQUEST_FILTER_TYPE_ONLY",
   OPEN_NETWORK_DETAILS: "OPEN_NETWORK_DETAILS",
+  DISABLE_BROWSER_CACHE: "DISABLE_BROWSER_CACHE",
   OPEN_STATISTICS: "OPEN_STATISTICS",
   REMOVE_SELECTED_CUSTOM_REQUEST: "REMOVE_SELECTED_CUSTOM_REQUEST",
   RESET_COLUMNS: "RESET_COLUMNS",
@@ -47,10 +48,6 @@ const ACTIVITY_TYPE = {
 
 // The panel's window global is an EventEmitter firing the following events:
 const EVENTS = {
-  // When the monitored target begins and finishes navigating.
-  TARGET_WILL_NAVIGATE: "NetMonitor:TargetWillNavigate",
-  TARGET_DID_NAVIGATE: "NetMonitor:TargetNavigate",
-
   // When a network or timeline event is received.
   // See https://developer.mozilla.org/docs/Tools/Web_Console/remoting for
   // more information about what each packet is supposed to deliver.
@@ -93,22 +90,59 @@ const EVENTS = {
   UPDATING_RESPONSE_CONTENT: "NetMonitor:NetworkEventUpdating:ResponseContent",
   RECEIVED_RESPONSE_CONTENT: "NetMonitor:NetworkEventUpdated:ResponseContent",
 
-  // When the request post params are displayed in the UI.
-  REQUEST_POST_PARAMS_DISPLAYED: "NetMonitor:RequestPostParamsAvailable",
-
-  // When the image response thumbnail is displayed in the UI.
-  RESPONSE_IMAGE_THUMBNAIL_DISPLAYED:
-    "NetMonitor:ResponseImageThumbnailAvailable",
-
-  // Fired when charts have been displayed in the PerformanceStatisticsView.
-  PLACEHOLDER_CHARTS_DISPLAYED: "NetMonitor:PlaceholderChartsDisplayed",
-  PRIMED_CACHE_CHART_DISPLAYED: "NetMonitor:PrimedChartsDisplayed",
-  EMPTY_CACHE_CHART_DISPLAYED: "NetMonitor:EmptyChartsDisplayed",
-
-  // Fired once the NetMonitorController establishes a connection to the debug
-  // target.
+  // Fired once the connection is established
   CONNECTED: "connected",
 };
+
+const UPDATE_PROPS = [
+  "method",
+  "url",
+  "remotePort",
+  "remoteAddress",
+  "status",
+  "statusText",
+  "httpVersion",
+  "securityState",
+  "securityInfo",
+  "mimeType",
+  "contentSize",
+  "transferredSize",
+  "totalTime",
+  "eventTimings",
+  "headersSize",
+  "customQueryValue",
+  "requestHeaders",
+  "requestHeadersFromUploadStream",
+  "requestCookies",
+  "requestPostData",
+  "responseHeaders",
+  "responseCookies",
+  "responseContent",
+  "responseContentDataUri",
+  "formDataSections",
+];
+
+const PANELS = {
+  COOKIES: "cookies",
+  HEADERS: "headers",
+  PARAMS: "params",
+  RESPONSE: "response",
+  SECURITY: "security",
+  STACK_TRACE: "stack-trace",
+  TIMINGS: "timings",
+};
+
+const RESPONSE_HEADERS = [
+  "Cache-Control",
+  "Connection",
+  "Content-Encoding",
+  "Content-Length",
+  "ETag",
+  "Keep-Alive",
+  "Last-Modified",
+  "Server",
+  "Vary"
+];
 
 const HEADERS = [
   {
@@ -123,13 +157,24 @@ const HEADERS = [
   },
   {
     name: "file",
-    boxName: "icon-and-file",
     canFilter: false,
   },
   {
-    name: "domain",
-    boxName: "security-and-domain",
+    name: "protocol",
     canFilter: true,
+  },
+  {
+    name: "scheme",
+    canFilter: true,
+  },
+  {
+    name: "domain",
+    canFilter: true,
+  },
+  {
+    name: "remoteip",
+    canFilter: true,
+    filterKey: "remote-ip",
   },
   {
     name: "cause",
@@ -137,6 +182,15 @@ const HEADERS = [
   },
   {
     name: "type",
+    canFilter: false,
+  },
+  {
+    name: "cookies",
+    canFilter: false,
+  },
+  {
+    name: "setCookies",
+    boxName: "set-cookies",
     canFilter: false,
   },
   {
@@ -150,18 +204,93 @@ const HEADERS = [
     canFilter: true,
   },
   {
+    name: "startTime",
+    boxName: "start-time",
+    canFilter: false,
+    subMenu: "timings",
+  },
+  {
+    name: "endTime",
+    boxName: "end-time",
+    canFilter: false,
+    subMenu: "timings",
+  },
+  {
+    name: "responseTime",
+    boxName: "response-time",
+    canFilter: false,
+    subMenu: "timings",
+  },
+  {
+    name: "duration",
+    canFilter: false,
+    subMenu: "timings",
+  },
+  {
+    name: "latency",
+    canFilter: false,
+    subMenu: "timings",
+  },
+  ...RESPONSE_HEADERS
+    .map(header => ({
+      name: header,
+      canFilter: false,
+      subMenu: "responseHeaders",
+      noLocalization: true
+    })),
+  {
     name: "waterfall",
     canFilter: false,
   }
 ];
 
+const HEADER_FILTERS = HEADERS
+  .filter(h => h.canFilter)
+  .map(h => h.filterKey || h.name);
+
+const FILTER_FLAGS = [
+  ...HEADER_FILTERS,
+  "set-cookie-domain",
+  "set-cookie-name",
+  "set-cookie-value",
+  "mime-type",
+  "larger-than",
+  "transferred-larger-than",
+  "is",
+  "has-response-header",
+  "regexp",
+];
+
+const REQUESTS_WATERFALL = {
+  BACKGROUND_TICKS_MULTIPLE: 5, // ms
+  BACKGROUND_TICKS_SCALES: 3,
+  BACKGROUND_TICKS_SPACING_MIN: 10, // px
+  BACKGROUND_TICKS_COLOR_RGB: [128, 136, 144],
+  // 8-bit value of the alpha component of the tick color
+  BACKGROUND_TICKS_OPACITY_MIN: 32,
+  BACKGROUND_TICKS_OPACITY_ADD: 32,
+  // Colors for timing markers (theme colors, see variables.css)
+  DOMCONTENTLOADED_TICKS_COLOR: "highlight-blue",
+  LOAD_TICKS_COLOR: "highlight-red",
+  // Opacity for the timing markers
+  TICKS_COLOR_OPACITY: 192,
+  HEADER_TICKS_MULTIPLE: 5, // ms
+  HEADER_TICKS_SPACING_MIN: 60, // px
+  // Reserve extra space for rendering waterfall time label
+  LABEL_WIDTH: 50, // px
+};
+
 const general = {
   ACTIVITY_TYPE,
   EVENTS,
   FILTER_SEARCH_DELAY: 200,
+  UPDATE_PROPS,
   HEADERS,
-  // 100 KB in bytes
-  SOURCE_SYNTAX_HIGHLIGHT_MAX_FILE_SIZE: 102400,
+  RESPONSE_HEADERS,
+  FILTER_FLAGS,
+  SOURCE_EDITOR_SYNTAX_HIGHLIGHT_MAX_SIZE: 51200, // 50 KB in bytes
+  REQUESTS_WATERFALL,
+  PANELS,
 };
 
 // flatten constants

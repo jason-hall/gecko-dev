@@ -184,7 +184,7 @@ public:
 
   AtomType mGroupingType;
   uint32_t mGroupingTypeParam;
-  nsTArray<SampleToGroupEntry> mEntries;
+  FallibleTArray<SampleToGroupEntry> mEntries;
 };
 
 struct CencSampleEncryptionInfoEntry final
@@ -205,7 +205,7 @@ public:
   explicit Sgpd(Box& aBox);
 
   AtomType mGroupingType;
-  nsTArray<CencSampleEncryptionInfoEntry> mEntries;
+  FallibleTArray<CencSampleEncryptionInfoEntry> mEntries;
 };
 
 class AuxInfo {
@@ -222,7 +222,7 @@ class Moof final : public Atom
 {
 public:
   Moof(Box& aBox, Trex& aTrex, Mvhd& aMvhd, Mdhd& aMdhd, Edts& aEdts, Sinf& aSinf, uint64_t* aDecoderTime, bool aIsAudio);
-  bool GetAuxInfo(AtomType aType, nsTArray<MediaByteRange>* aByteRanges);
+  bool GetAuxInfo(AtomType aType, FallibleTArray<MediaByteRange>* aByteRanges);
   void FixRounding(const Moof& aMoof);
 
   mozilla::MediaByteRange mRange;
@@ -230,11 +230,12 @@ public:
   Interval<Microseconds> mTimeRange;
   FallibleTArray<Sample> mIndex;
 
-  nsTArray<CencSampleEncryptionInfoEntry> mFragmentSampleEncryptionInfoEntries;
-  nsTArray<SampleToGroupEntry> mFragmentSampleToGroupEntries;
+  FallibleTArray<CencSampleEncryptionInfoEntry> mFragmentSampleEncryptionInfoEntries;
+  FallibleTArray<SampleToGroupEntry> mFragmentSampleToGroupEntries;
 
-  nsTArray<Saiz> mSaizs;
-  nsTArray<Saio> mSaios;
+  FallibleTArray<Saiz> mSaizs;
+  FallibleTArray<Saio> mSaios;
+  nsTArray<nsTArray<uint8_t>> mPsshes;
 
 private:
     // aDecodeTime is updated to the end of the parsed TRAF on return.
@@ -262,6 +263,11 @@ public:
   }
   bool RebuildFragmentedIndex(
     const mozilla::MediaByteRangeSet& aByteRanges);
+  // If *aCanEvict is set to true. then will remove all moofs already parsed
+  // from index then rebuild the index. *aCanEvict is set to true upon return if
+  // some moofs were removed.
+  bool RebuildFragmentedIndex(
+    const mozilla::MediaByteRangeSet& aByteRanges, bool* aCanEvict);
   bool RebuildFragmentedIndex(BoxContext& aContext);
   Interval<Microseconds> GetCompositionRange(
     const mozilla::MediaByteRangeSet& aByteRanges);
@@ -286,7 +292,6 @@ public:
   mozilla::MediaByteRange mInitRange;
   RefPtr<Stream> mSource;
   uint64_t mOffset;
-  nsTArray<uint64_t> mMoofOffsets;
   Mvhd mMvhd;
   Mdhd mMdhd;
   Trex mTrex;
@@ -294,8 +299,8 @@ public:
   Edts mEdts;
   Sinf mSinf;
 
-  nsTArray<CencSampleEncryptionInfoEntry> mTrackSampleEncryptionInfoEntries;
-  nsTArray<SampleToGroupEntry> mTrackSampleToGroupEntries;
+  FallibleTArray<CencSampleEncryptionInfoEntry> mTrackSampleEncryptionInfoEntries;
+  FallibleTArray<SampleToGroupEntry> mTrackSampleToGroupEntries;
 
   nsTArray<Moof>& Moofs() { return mMoofs; }
 private:

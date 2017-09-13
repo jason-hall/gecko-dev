@@ -6,15 +6,16 @@
 
 #include "mozilla/StyleSheet.h"
 
+#include "mozilla/dom/CSSImportRule.h"
 #include "mozilla/dom/CSSRuleList.h"
 #include "mozilla/dom/MediaList.h"
 #include "mozilla/dom/ShadowRoot.h"
+#include "mozilla/ServoCSSRuleList.h"
 #include "mozilla/ServoStyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
 #include "mozilla/CSSStyleSheet.h"
 
 #include "mozAutoDocUpdate.h"
-#include "nsMediaList.h"
 #include "NullPrincipal.h"
 
 namespace mozilla {
@@ -23,26 +24,32 @@ StyleSheet::StyleSheet(StyleBackendType aType, css::SheetParsingMode aParsingMod
   : mParent(nullptr)
   , mDocument(nullptr)
   , mOwningNode(nullptr)
+  , mOwnerRule(nullptr)
   , mParsingMode(aParsingMode)
   , mType(aType)
   , mDisabled(false)
+  , mDirty(false)
   , mDocumentAssociationMode(NotOwnedByDocument)
   , mInner(nullptr)
 {
 }
 
 StyleSheet::StyleSheet(const StyleSheet& aCopy,
+                       StyleSheet* aParentToUse,
+                       dom::CSSImportRule* aOwnerRuleToUse,
                        nsIDocument* aDocumentToUse,
                        nsINode* aOwningNodeToUse)
-  : mParent(nullptr)
+  : mParent(aParentToUse)
   , mTitle(aCopy.mTitle)
   , mDocument(aDocumentToUse)
   , mOwningNode(aOwningNodeToUse)
+  , mOwnerRule(aOwnerRuleToUse)
   , mParsingMode(aCopy.mParsingMode)
   , mType(aCopy.mType)
   , mDisabled(aCopy.mDisabled)
-    // We only use this constructor during cloning.  It's the cloner's
-    // responsibility to notify us if we end up being owned by a document.
+  , mDirty(aCopy.mDirty)
+  // We only use this constructor during cloning.  It's the cloner's
+  // responsibility to notify us if we end up being owned by a document.
   , mDocumentAssociationMode(NotOwnedByDocument)
   , mInner(aCopy.mInner) // Shallow copy, but concrete subclasses will fix up.
 {
@@ -58,8 +65,22 @@ StyleSheet::StyleSheet(const StyleSheet& aCopy,
 
 StyleSheet::~StyleSheet()
 {
+  MOZ_ASSERT(!mInner, "Inner should have been dropped in LastRelease");
+}
+
+void
+StyleSheet::LastRelease()
+{
   MOZ_ASSERT(mInner, "Should have an mInner at time of destruction.");
   MOZ_ASSERT(mInner->mSheets.Contains(this), "Our mInner should include us.");
+
+  UnparentChildren();
+  if (IsGecko()) {
+    AsGecko()->LastRelease();
+  } else {
+    AsServo()->LastRelease();
+  }
+
   mInner->RemoveSheet(this);
   mInner = nullptr;
 
@@ -86,7 +107,12 @@ StyleSheet::UnlinkInner()
   while (child) {
     MOZ_ASSERT(child->mParent == this, "We have a unique inner!");
     child->mParent = nullptr;
-    child->mDocument = nullptr;
+    // We (and child) might still think we're owned by a document, because
+    // unlink order is non-deterministic, so the document's unlink, which would
+    // tell us it does't own us anymore, may not have happened yet.  But if
+    // we're being unlinked, clearly we're not owned by a document anymore
+    // conceptually!
+    child->SetAssociatedDocument(nullptr, NotOwnedByDocument);
 
     RefPtr<StyleSheet> next;
     // Null out child->mNext, but don't let it die yet
@@ -124,7 +150,12 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(StyleSheet)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(StyleSheet)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(StyleSheet)
+// We want to disconnect from our inner as soon as our refcount drops to zero,
+// without waiting for async deletion by the cycle collector.  Otherwise we
+// might end up cloning the inner if someone mutates another sheet that shares
+// it with us, even though there is only one such sheet and we're about to go
+// away.  This situation arises easily with sheet preloading.
+NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_LAST_RELEASE(StyleSheet, LastRelease())
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(StyleSheet)
 
@@ -166,8 +197,7 @@ StyleSheet::IsComplete() const
 void
 StyleSheet::SetComplete()
 {
-  NS_ASSERTION(!IsGecko() || !AsGecko()->mDirty,
-               "Can't set a dirty sheet complete!");
+  NS_ASSERTION(!mDirty, "Can't set a dirty sheet complete!");
   SheetInfo().mComplete = true;
   if (mDocument && !mDisabled) {
     // Let the document know
@@ -229,11 +259,16 @@ StyleSheetInfo::StyleSheetInfo(StyleSheetInfo& aCopy,
   , mComplete(aCopy.mComplete)
   , mFirstChild()  // We don't rebuild the child because we're making a copy
                    // without children.
+  , mSourceMapURL(aCopy.mSourceMapURL)
 #ifdef DEBUG
   , mPrincipalSet(aCopy.mPrincipalSet)
 #endif
 {
   AddSheet(aPrimarySheet);
+}
+
+StyleSheetInfo::~StyleSheetInfo()
+{
 }
 
 void
@@ -383,6 +418,77 @@ StyleSheet::DeleteRule(uint32_t aIndex)
   return rv.StealNSResult();
 }
 
+void
+StyleSheet::WillDirty()
+{
+  if (mInner->mComplete) {
+    EnsureUniqueInner();
+  }
+}
+
+void
+StyleSheet::AddStyleSet(const StyleSetHandle& aStyleSet)
+{
+  NS_ASSERTION(!mStyleSets.Contains(aStyleSet),
+               "style set already registered");
+  mStyleSets.AppendElement(aStyleSet);
+}
+
+void
+StyleSheet::DropStyleSet(const StyleSetHandle& aStyleSet)
+{
+  DebugOnly<bool> found = mStyleSets.RemoveElement(aStyleSet);
+  NS_ASSERTION(found, "didn't find style set");
+}
+
+void
+StyleSheet::EnsureUniqueInner()
+{
+  MOZ_ASSERT(mInner->mSheets.Length() != 0,
+             "unexpected number of outers");
+  mDirty = true;
+
+  if (mInner->mSheets.Length() == 1) {
+    // already unique
+    return;
+  }
+
+  StyleSheetInfo* clone = mInner->CloneFor(this);
+  MOZ_ASSERT(clone);
+  mInner->RemoveSheet(this);
+  mInner = clone;
+
+  if (CSSStyleSheet* geckoSheet = GetAsGecko()) {
+    // Ensure we're using the new rules.
+    //
+    // NOTE: In Servo, all kind of changes that change the set of selectors or
+    // rules we match are covered by the PresShell notifications. In Gecko
+    // that's true too, but this is probably needed because selectors are not
+    // refcounted and can become stale.
+    geckoSheet->ClearRuleCascades();
+  } else {
+    // Fixup the child lists and parent links in the Servo sheet. This is done
+    // here instead of in StyleSheetInner::CloneFor, because it's just more
+    // convenient to do so instead.
+    AsServo()->BuildChildListAfterInnerClone();
+  }
+
+  // let our containing style sets know that if we call
+  // nsPresContext::EnsureSafeToHandOutCSSRules we will need to restyle the
+  // document
+  for (StyleSetHandle& setHandle : mStyleSets) {
+    setHandle->SetNeedsRestyleAfterEnsureUniqueInner();
+  }
+}
+
+void
+StyleSheet::AppendAllChildSheets(nsTArray<StyleSheet*>& aArray)
+{
+  for (StyleSheet* child = GetFirstChild(); child; child = child->mNext) {
+    aArray.AppendElement(child);
+  }
+}
+
 // WebIDL CSSStyleSheet API
 
 #define FORWARD_INTERNAL(method_, args_) \
@@ -398,7 +504,25 @@ StyleSheet::GetCssRules(nsIPrincipal& aSubjectPrincipal,
   if (!AreRulesAvailable(aSubjectPrincipal, aRv)) {
     return nullptr;
   }
-  FORWARD_INTERNAL(GetCssRulesInternal, (aRv))
+  FORWARD_INTERNAL(GetCssRulesInternal, ())
+}
+
+void
+StyleSheet::GetSourceMapURL(nsAString& aSourceMapURL)
+{
+  aSourceMapURL = mInner->mSourceMapURL;
+}
+
+void
+StyleSheet::SetSourceMapURL(const nsAString& aSourceMapURL)
+{
+  mInner->mSourceMapURL = aSourceMapURL;
+}
+
+css::Rule*
+StyleSheet::GetDOMOwnerRule() const
+{
+  return mOwnerRule;
 }
 
 uint32_t
@@ -487,6 +611,33 @@ StyleSheet::InsertRuleIntoGroup(const nsAString& aRule,
   return NS_OK;
 }
 
+uint64_t
+StyleSheet::FindOwningWindowInnerID() const
+{
+  uint64_t windowID = 0;
+  if (mDocument) {
+    windowID = mDocument->InnerWindowID();
+  }
+
+  if (windowID == 0 && mOwningNode) {
+    windowID = mOwningNode->OwnerDoc()->InnerWindowID();
+  }
+
+  RefPtr<css::Rule> ownerRule;
+  if (windowID == 0 && (ownerRule = GetDOMOwnerRule())) {
+    RefPtr<StyleSheet> sheet = ownerRule->GetStyleSheet();
+    if (sheet) {
+      windowID = sheet->FindOwningWindowInnerID();
+    }
+  }
+
+  if (windowID == 0 && mParent) {
+    windowID = mParent->FindOwningWindowInnerID();
+  }
+
+  return windowID;
+}
+
 void
 StyleSheet::EnabledStateChanged()
 {
@@ -505,6 +656,9 @@ StyleSheet::UnparentChildren()
        child = child->mNext) {
     if (child->mParent == this) {
       child->mParent = nullptr;
+      MOZ_ASSERT(child->mDocumentAssociationMode == NotOwnedByDocument,
+                 "How did we get to the destructor, exactly, if we're owned "
+                 "by a document?");
       child->mDocument = nullptr;
     }
   }
@@ -520,8 +674,10 @@ StyleSheet::SubjectSubsumesInnerPrincipal(nsIPrincipal& aSubjectPrincipal,
     return;
   }
 
-  // Allow access only if CORS mode is not NONE
-  if (GetCORSMode() == CORS_NONE) {
+  // Allow access only if CORS mode is not NONE and the security flag
+  // is not turned off.
+  if (GetCORSMode() == CORS_NONE &&
+      !nsContentUtils::BypassCSSOMOriginCheck()) {
     aRv.Throw(NS_ERROR_DOM_SECURITY_ERR);
     return;
   }
@@ -577,7 +733,7 @@ void
 StyleSheet::SetAssociatedDocument(nsIDocument* aDocument,
                                   DocumentAssociationMode aAssociationMode)
 {
-  MOZ_ASSERT_IF(!aDocument, aAssociationMode == NotOwnedByDocument);
+  MOZ_ASSERT(aDocument || aAssociationMode == NotOwnedByDocument);
 
   // not ref counted
   mDocument = aDocument;
@@ -601,22 +757,25 @@ StyleSheet::ClearAssociatedDocument()
 }
 
 void
-StyleSheet::AppendStyleSheet(StyleSheet* aSheet)
+StyleSheet::PrependStyleSheet(StyleSheet* aSheet)
 {
-  NS_PRECONDITION(nullptr != aSheet, "null arg");
-
   WillDirty();
-  RefPtr<StyleSheet>* tail = &SheetInfo().mFirstChild;
-  while (*tail) {
-    tail = &(*tail)->mNext;
-  }
-  *tail = aSheet;
+  PrependStyleSheetSilently(aSheet);
+  DidDirty();
+}
+
+void
+StyleSheet::PrependStyleSheetSilently(StyleSheet* aSheet)
+{
+  MOZ_ASSERT(aSheet);
+
+  aSheet->mNext = SheetInfo().mFirstChild;
+  SheetInfo().mFirstChild = aSheet;
 
   // This is not reference counted. Our parent tells us when
   // it's going away.
   aSheet->mParent = this;
-  aSheet->mDocument = mDocument;
-  DidDirty();
+  aSheet->SetAssociatedDocument(mDocument, mDocumentAssociationMode);
 }
 
 size_t
@@ -631,6 +790,7 @@ StyleSheet::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
     // is worthwhile:
     // - s->mTitle
     // - s->mMedia
+    // - s->mStyleSets
 
     s = s->mNext;
   }
@@ -692,7 +852,7 @@ dom::MediaList*
 StyleSheet::Media()
 {
   if (!mMedia) {
-    mMedia = new nsMediaList();
+    mMedia = dom::MediaList::Create(mType, nsString());
     mMedia->SetStyleSheet(this);
   }
 
@@ -705,6 +865,17 @@ JSObject*
 StyleSheet::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto)
 {
   return dom::CSSStyleSheetBinding::Wrap(aCx, this, aGivenProto);
+}
+
+/* static */ bool
+StyleSheet::RuleHasPendingChildSheet(css::Rule* aRule)
+{
+  MOZ_ASSERT(aRule->GetType() == css::Rule::IMPORT_RULE);
+  auto rule = static_cast<dom::CSSImportRule*>(aRule);
+  if (StyleSheet* childSheet = rule->GetStyleSheet()) {
+    return !childSheet->IsComplete();
+  }
+  return false;
 }
 
 } // namespace mozilla

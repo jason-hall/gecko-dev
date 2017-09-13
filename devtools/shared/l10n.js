@@ -3,8 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const parsePropertiesFile = require("devtools/shared/node-properties/node-properties");
-const { sprintf } = require("devtools/shared/sprintfjs/sprintf");
+const parsePropertiesFile = require("./node-properties/node-properties");
+const { sprintf } = require("./sprintfjs/sprintf");
 
 const propertiesMap = {};
 
@@ -29,6 +29,8 @@ const propertiesMap = {};
 const reqShared = require.context("raw!devtools/shared/locales/",
                                   true, /^.*\.properties$/);
 const reqClient = require.context("raw!devtools/client/locales/",
+                                  true, /^.*\.properties$/);
+const reqShim = require.context("raw!devtools/shim/locales/",
                                   true, /^.*\.properties$/);
 const reqGlobal = require.context("raw!toolkit/locales/",
                                   true, /^.*\.properties$/);
@@ -56,6 +58,8 @@ function getProperties(url) {
       reqFn = reqGlobal;
     } else if (/^devtools\/shared/.test(url)) {
       reqFn = reqShared;
+    } else if (/^devtools\/shim/.test(url)) {
+      reqFn = reqShim;
     } else {
       reqFn = reqClient;
     }

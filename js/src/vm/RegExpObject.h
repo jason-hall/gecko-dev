@@ -34,8 +34,8 @@ namespace JS { struct Zone; }
  *   RegExpShared:
  *     The compiled representation of the regexp (lazily created, cleared
  *     during some forms of GC).
- *   RegExpCompartment:
- *     Owns all RegExpShared instances in a compartment.
+ *   RegExpZone:
+ *     Owns all RegExpShared instances in a zone.
  */
 namespace js {
 
@@ -46,11 +46,10 @@ class RegExpStatics;
 namespace frontend { class TokenStream; }
 
 extern RegExpObject*
-RegExpAlloc(JSContext* cx, HandleObject proto = nullptr);
+RegExpAlloc(JSContext* cx, NewObjectKind newKind, HandleObject proto = nullptr);
 
-// |regexp| is under-typed because this function's used in the JIT.
 extern JSObject*
-CloneRegExpObject(JSContext* cx, JSObject* regexp);
+CloneRegExpObject(JSContext* cx, Handle<RegExpObject*> regex);
 
 class RegExpObject : public NativeObject
 {
@@ -74,11 +73,13 @@ class RegExpObject : public NativeObject
 
     static RegExpObject*
     create(JSContext* cx, const char16_t* chars, size_t length, RegExpFlag flags,
-           frontend::TokenStream* ts, LifoAlloc& alloc);
+           const ReadOnlyCompileOptions* options, frontend::TokenStream* ts, LifoAlloc& alloc,
+           NewObjectKind newKind);
 
     static RegExpObject*
     create(JSContext* cx, HandleAtom atom, RegExpFlag flags,
-           frontend::TokenStream* ts, LifoAlloc& alloc);
+           const ReadOnlyCompileOptions* options, frontend::TokenStream* ts, LifoAlloc& alloc,
+           NewObjectKind newKind);
 
     /*
      * Compute the initial shape to associate with fresh RegExp objects,
@@ -141,8 +142,7 @@ class RegExpObject : public NativeObject
 
     static bool isOriginalFlagGetter(JSNative native, RegExpFlag* mask);
 
-    static MOZ_MUST_USE bool getShared(JSContext* cx, Handle<RegExpObject*> regexp,
-                                       MutableHandleRegExpShared shared);
+    static RegExpShared* getShared(JSContext* cx, Handle<RegExpObject*> regexp);
 
     bool hasShared() {
         return !!sharedRef();
@@ -150,18 +150,23 @@ class RegExpObject : public NativeObject
 
     void setShared(RegExpShared& shared) {
         MOZ_ASSERT(!hasShared());
-        sharedRef() = &shared;
+        sharedRef().init(&shared);
+    }
+
+    PreBarriered<RegExpShared*>& sharedRef() {
+        auto& ref = NativeObject::privateRef(PRIVATE_SLOT);
+        return reinterpret_cast<PreBarriered<RegExpShared*>&>(ref);
     }
 
     static void trace(JSTracer* trc, JSObject* obj);
     void trace(JSTracer* trc);
 
-    void initIgnoringLastIndex(HandleAtom source, RegExpFlag flags);
+    void initIgnoringLastIndex(JSAtom* source, RegExpFlag flags);
 
     // NOTE: This method is *only* safe to call on RegExps that haven't been
     //       exposed to script, because it requires that the "lastIndex"
     //       property be writable.
-    void initAndZeroLastIndex(HandleAtom source, RegExpFlag flags, JSContext* cx);
+    void initAndZeroLastIndex(JSAtom* source, RegExpFlag flags, JSContext* cx);
 
 #ifdef DEBUG
     static MOZ_MUST_USE bool dumpBytecode(JSContext* cx, Handle<RegExpObject*> regexp,
@@ -173,13 +178,7 @@ class RegExpObject : public NativeObject
      * Precondition: the syntax for |source| has already been validated.
      * Side effect: sets the private field.
      */
-    static MOZ_MUST_USE bool createShared(JSContext* cx, Handle<RegExpObject*> regexp,
-                                          MutableHandleRegExpShared shared);
-
-    ReadBarriered<RegExpShared*>& sharedRef() {
-        auto& ref = NativeObject::privateRef(PRIVATE_SLOT);
-        return reinterpret_cast<ReadBarriered<RegExpShared*>&>(ref);
-    }
+    static RegExpShared* createShared(JSContext* cx, Handle<RegExpObject*> regexp);
 
     /* Call setShared in preference to setPrivate. */
     void setPrivate(void* priv) = delete;
@@ -195,13 +194,13 @@ bool
 ParseRegExpFlags(JSContext* cx, JSString* flagStr, RegExpFlag* flagsOut);
 
 /* Assuming GetBuiltinClass(obj) is ESClass::RegExp, return a RegExpShared for obj. */
-inline bool
-RegExpToShared(JSContext* cx, HandleObject obj, MutableHandleRegExpShared shared)
+inline RegExpShared*
+RegExpToShared(JSContext* cx, HandleObject obj)
 {
     if (obj->is<RegExpObject>())
-        return RegExpObject::getShared(cx, obj.as<RegExpObject>(), shared);
+        return RegExpObject::getShared(cx, obj.as<RegExpObject>());
 
-    return Proxy::regexp_toShared(cx, obj, shared);
+    return Proxy::regexp_toShared(cx, obj);
 }
 
 template<XDRMode mode>

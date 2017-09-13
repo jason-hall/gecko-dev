@@ -100,12 +100,12 @@ HTMLFormControlsCollection::Clear()
 {
   // Null out childrens' pointer to me.  No refcounting here
   for (int32_t i = mElements.Length() - 1; i >= 0; i--) {
-    mElements[i]->ClearForm(false);
+    mElements[i]->ClearForm(false, false);
   }
   mElements.Clear();
 
   for (int32_t i = mNotInElements.Length() - 1; i >= 0; i--) {
-    mNotInElements[i]->ClearForm(false);
+    mNotInElements[i]->ClearForm(false, false);
   }
   mNotInElements.Clear();
 
@@ -176,7 +176,7 @@ HTMLFormControlsCollection::Item(uint32_t aIndex, nsIDOMNode** aReturn)
   return CallQueryInterface(item, aReturn);
 }
 
-NS_IMETHODIMP 
+NS_IMETHODIMP
 HTMLFormControlsCollection::NamedItem(const nsAString& aName,
                                       nsIDOMNode** aReturn)
 {
@@ -240,7 +240,7 @@ HTMLFormControlsCollection::IndexOfControl(nsIFormControl* aControl,
                                            int32_t* aIndex)
 {
   // Note -- not a DOM method; callers should handle flushing themselves
-  
+
   NS_ENSURE_ARG_POINTER(aIndex);
 
   *aIndex = mElements.IndexOf(aControl);
@@ -261,7 +261,7 @@ HTMLFormControlsCollection::RemoveElementFromTable(
 
 nsresult
 HTMLFormControlsCollection::GetSortedControls(
-  nsTArray<nsGenericHTMLFormElement*>& aControls) const
+  nsTArray<RefPtr<nsGenericHTMLFormElement>>& aControls) const
 {
 #ifdef DEBUG
   HTMLFormElement::AssertDocumentOrder(mElements, mForm);

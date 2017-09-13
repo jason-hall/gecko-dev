@@ -29,14 +29,19 @@ namespace mozilla {
         class CompositorBridgeChild;
         class LayerManager;
         class APZCTreeManager;
+        class UiCompositorControllerChild;
     }
 
     namespace widget {
         class GeckoEditableSupport;
     } // namespace widget
+
+    namespace ipc {
+        class Shmem;
+    } // namespace ipc
 }
 
-class nsWindow : public nsBaseWidget
+class nsWindow final : public nsBaseWidget
 {
 private:
     virtual ~nsWindow();
@@ -214,7 +219,6 @@ public:
 
     void UpdateOverscrollVelocity(const float aX, const float aY);
     void UpdateOverscrollOffset(const float aX, const float aY);
-    void SetScrollingRootContent(const bool isRootContent);
 
     //
     // nsIWidget
@@ -282,11 +286,6 @@ public:
                                   LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT) override;
 
     virtual bool NeedsPaint() override;
-    virtual bool PreRender(mozilla::widget::WidgetRenderingContext* aContext) override;
-    virtual void DrawWindowUnderlay(mozilla::widget::WidgetRenderingContext* aContext,
-                                    LayoutDeviceIntRect aRect) override;
-    virtual void DrawWindowOverlay(mozilla::widget::WidgetRenderingContext* aContext,
-                                   LayoutDeviceIntRect aRect) override;
 
     virtual bool WidgetPaintsBackground() override;
 
@@ -309,7 +308,7 @@ public:
     nsresult SynthesizeNativeMouseMove(LayoutDeviceIntPoint aPoint,
                                        nsIObserver* aObserver) override;
 
-    CompositorBridgeChild* GetCompositorBridgeChild() const;
+    mozilla::layers::CompositorBridgeChild* GetCompositorBridgeChild() const;
 
     mozilla::jni::DependentRef<mozilla::java::GeckoLayerClient> GetLayerClient();
 
@@ -319,6 +318,9 @@ public:
 
     mozilla::java::GeckoEditable::Ref& GetEditableParent() { return mEditable; }
 
+    void RecvToolbarAnimatorMessageFromCompositor(int32_t aMessage) override;
+    void UpdateRootFrameMetrics(const ScreenPoint& aScrollOffset, const CSSToScreenScale& aZoom) override;
+    void RecvScreenPixels(mozilla::ipc::Shmem&& aMem, const ScreenIntSize& aSize) override;
 protected:
     void BringToFront();
     nsWindow *FindTopLevel();
@@ -338,7 +340,6 @@ protected:
 
     nsCOMPtr<nsIIdleServiceInternal> mIdleService;
 
-    bool mAwaitingFullScreen;
     bool mIsFullScreen;
 
     bool UseExternalCompositingSurface() const override {
@@ -353,9 +354,8 @@ private:
     void CreateLayerManager(int aCompositorWidth, int aCompositorHeight);
     void RedrawAll();
 
-    mozilla::java::LayerRenderer::Frame::GlobalRef mLayerRendererFrame;
-
     int64_t GetRootLayerId() const;
+    RefPtr<mozilla::layers::UiCompositorControllerChild> GetUiCompositorControllerChild();
 };
 
 #endif /* NSWINDOW_H_ */

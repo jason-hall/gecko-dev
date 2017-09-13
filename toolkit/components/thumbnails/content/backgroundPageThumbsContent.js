@@ -4,13 +4,17 @@
 
 /* eslint-env mozilla/frame-script */
 
-var { classes: Cc, interfaces: Ci, utils: Cu } = Components;
+var { classes: Cc, interfaces: Ci, results: Cr, utils: Cu } = Components;
 
 Cu.importGlobalProperties(["Blob", "FileReader"]);
 
 Cu.import("resource://gre/modules/PageThumbUtils.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
+
+// Let the page settle for this amount of milliseconds before capturing to allow
+// for any in-page changes or redirects.
+const SETTLE_WAIT_TIME = 2500;
 
 const STATE_LOADING = 1;
 const STATE_CAPTURING = 2;
@@ -122,10 +126,23 @@ const backgroundPageThumbsContent = {
           this._startNextCapture();
         }
       } else if (this._state == STATE_LOADING &&
-               Components.isSuccessCode(status)) {
-        // The requested page has loaded.  Capture it.
-        this._state = STATE_CAPTURING;
-        this._captureCurrentPage();
+                 (Components.isSuccessCode(status) ||
+                  status === Cr.NS_BINDING_ABORTED)) {
+        // The requested page has loaded or stopped/aborted, so capture the page
+        // soon but first let it settle in case of in-page redirects
+        if (this._captureTimer) {
+          // There was additional activity, so restart the wait timer
+          this._captureTimer.delay = SETTLE_WAIT_TIME;
+        } else {
+          // Stay in LOADING until we're actually ready to be CAPTURING
+          this._captureTimer =
+            Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+          this._captureTimer.init(() => {
+            this._state = STATE_CAPTURING;
+            this._captureCurrentPage();
+            delete this._captureTimer;
+          }, SETTLE_WAIT_TIME, Ci.nsITimer.TYPE_ONE_SHOT);
+        }
       } else if (this._state != STATE_CANCELED) {
         // Something went wrong.  Cancel the capture.  Loading about:blank
         // while onStateChange is still on the stack does not actually stop
@@ -144,19 +161,25 @@ const backgroundPageThumbsContent = {
   },
 
   _captureCurrentPage() {
-    let capture = this._currentCapture;
-    capture.finalURL = this._webNav.currentURI.spec;
-    capture.pageLoadTime = new Date() - capture.pageLoadStartDate;
+    let win = docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                      .getInterface(Ci.nsIDOMWindow);
+    win.requestIdleCallback(() => {
+      let capture = this._currentCapture;
+      capture.finalURL = this._webNav.currentURI.spec;
+      capture.pageLoadTime = new Date() - capture.pageLoadStartDate;
 
-    let canvasDrawDate = new Date();
+      let canvasDrawDate = new Date();
 
-    let finalCanvas = PageThumbUtils.createSnapshotThumbnail(content, null);
-    capture.canvasDrawTime = new Date() - canvasDrawDate;
+      docShell.isActive = true;
+      let finalCanvas = PageThumbUtils.createSnapshotThumbnail(content, null);
+      docShell.isActive = false;
+      capture.canvasDrawTime = new Date() - canvasDrawDate;
 
-    finalCanvas.toBlob(blob => {
-      capture.imageBlob = new Blob([blob]);
-      // Load about:blank to finish the capture and wait for onStateChange.
-      this._loadAboutBlank();
+      finalCanvas.toBlob(blob => {
+        capture.imageBlob = new Blob([blob]);
+        // Load about:blank to finish the capture and wait for onStateChange.
+        this._loadAboutBlank();
+      });
     });
   },
 

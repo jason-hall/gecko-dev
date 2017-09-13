@@ -9,7 +9,6 @@
 #include "nsCOMPtr.h"
 #include "nsIObserver.h"
 #include "nsIPrefBranch.h"
-#include "nsIPrefBranchInternal.h"
 #include "nsIPrefLocalizedString.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
@@ -23,6 +22,7 @@
 #include "nsISupportsImpl.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/Variant.h"
 
 namespace mozilla {
 class PreferenceServiceReporter;
@@ -175,7 +175,7 @@ class PrefCallback : public PLDHashEntryHdr {
     }
 };
 
-class nsPrefBranch final : public nsIPrefBranchInternal,
+class nsPrefBranch final : public nsIPrefBranch,
                            public nsIObserver,
                            public nsSupportsWeakReference
 {
@@ -183,12 +183,12 @@ class nsPrefBranch final : public nsIPrefBranchInternal,
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIPREFBRANCH
-  NS_DECL_NSIPREFBRANCH2
   NS_DECL_NSIOBSERVER
 
   nsPrefBranch(const char *aPrefRoot, bool aDefaultBranch);
+  nsPrefBranch() = delete;
 
-  int32_t GetRootLength() { return mPrefRootLength; }
+  int32_t GetRootLength() const { return mPrefRoot.Length(); }
 
   nsresult RemoveObserverFromMap(const char *aDomain, nsISupports *aObserver);
 
@@ -199,15 +199,48 @@ public:
   static void ReportToConsole(const nsAString& aMessage);
 
 protected:
+  /**
+   * Helper class for either returning a raw cstring or nsCString.
+   */
+  typedef mozilla::Variant<const char*, const nsCString> PrefNameBase;
+  class PrefName : public PrefNameBase
+  {
+  public:
+    explicit PrefName(const char* aName) : PrefNameBase(aName) {}
+    explicit PrefName(const nsCString& aName) : PrefNameBase(aName) {}
+
+    /**
+     * Use default move constructors, disallow copy constructors.
+     */
+    PrefName(PrefName&& aOther) = default;
+    PrefName& operator=(PrefName&& aOther) = default;
+    PrefName(const PrefName&) = delete;
+    PrefName& operator=(const PrefName&) = delete;
+
+    struct PtrMatcher {
+      static const char* match(const char* aVal) { return aVal; }
+      static const char* match(const nsCString& aVal) { return aVal.get(); }
+    };
+
+    struct LenMatcher {
+      static size_t match(const char* aVal) { return strlen(aVal); }
+      static size_t match(const nsCString& aVal) { return aVal.Length(); }
+    };
+
+    const char* get() const {
+      static PtrMatcher m;
+      return match(m);
+    }
+
+    size_t Length() const {
+      static LenMatcher m;
+      return match(m);
+    }
+  };
+
   virtual ~nsPrefBranch();
 
-  nsPrefBranch()    /* disallow use of this constructer */
-    : mPrefRootLength(0)
-    , mIsDefault(false)
-    , mFreeingObserverList(false)
-  {}
-
-  nsresult   GetDefaultFromPropertiesFile(const char *aPrefName, char16_t **return_buf);
+  nsresult   GetDefaultFromPropertiesFile(const char *aPrefName, nsAString& aReturn);
   // As SetCharPref, but without any check on the length of |aValue|
   nsresult   SetCharPrefInternal(const char *aPrefName, const char *aValue);
   // Reject strings that are more than 1Mb, warn if strings are more than 16kb
@@ -216,12 +249,11 @@ protected:
   nsresult   CheckSanityOfStringLength(const char* aPrefName, const char* aValue);
   nsresult   CheckSanityOfStringLength(const char* aPrefName, const uint32_t aLength);
   void RemoveExpiredCallback(PrefCallback *aCallback);
-  const char *getPrefName(const char *aPrefName);
+  PrefName getPrefName(const char *aPrefName) const;
   void       freeObserverList(void);
 
 private:
-  int32_t               mPrefRootLength;
-  nsCString             mPrefRoot;
+  const nsCString mPrefRoot;
   bool                  mIsDefault;
 
   bool                  mFreeingObserverList;

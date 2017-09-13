@@ -94,17 +94,6 @@ nsWindowRoot::DispatchEvent(nsIDOMEvent* aEvt, bool *aRetVal)
   return rv;
 }
 
-nsresult
-nsWindowRoot::DispatchDOMEvent(WidgetEvent* aEvent,
-                               nsIDOMEvent* aDOMEvent,
-                               nsPresContext* aPresContext,
-                               nsEventStatus* aEventStatus)
-{
-  return EventDispatcher::DispatchDOMEvent(static_cast<EventTarget*>(this),
-                                           aEvent, aDOMEvent,
-                                           aPresContext, aEventStatus);
-}
-
 NS_IMETHODIMP
 nsWindowRoot::AddEventListener(const nsAString& aType,
                                nsIDOMEventListener *aListener,
@@ -324,9 +313,8 @@ nsWindowRoot::GetEnabledDisabledCommandsForControllers(nsIControllers* aControll
           // Use a hash to determine which commands have already been handled by
           // earlier controllers, as the earlier controller's result should get
           // priority.
-          if (!aCommandsHandled.Contains(commands[e])) {
-            aCommandsHandled.PutEntry(commands[e]);
-
+          if (aCommandsHandled.EnsureInserted(commands[e])) {
+            // We inserted a new entry into aCommandsHandled.
             bool enabled = false;
             controller->IsCommandEnabled(commands[e], &enabled);
 

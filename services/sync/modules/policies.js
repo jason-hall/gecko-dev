@@ -9,17 +9,22 @@ this.EXPORTED_SYMBOLS = [
 
 var {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
 
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Log.jsm");
 Cu.import("resource://services-sync/constants.js");
-Cu.import("resource://services-sync/engines.js");
 Cu.import("resource://services-sync/util.js");
 Cu.import("resource://services-common/logmanager.js");
 Cu.import("resource://services-common/async.js");
+Cu.import("resource://services-common/utils.js");
 
 XPCOMUtils.defineLazyModuleGetter(this, "Status",
                                   "resource://services-sync/status.js");
 XPCOMUtils.defineLazyModuleGetter(this, "AddonManager",
                                   "resource://gre/modules/AddonManager.jsm");
+XPCOMUtils.defineLazyServiceGetter(this, "IdleService",
+                                   "@mozilla.org/widget/idleservice;1",
+                                   "nsIIdleService");
 
 // Get the value for an interval that's stored in preferences. To save users
 // from themselves (and us from them!) the minimum time they can specify
@@ -62,6 +67,8 @@ SyncScheduler.prototype = {
     // by the clients engine) then we need to transition to and from
     // single and multi-device mode.
     this.numClientsLastSync = 0;
+
+    this._resyncs = 0;
 
     this.clearSyncTriggers();
   },
@@ -127,16 +134,17 @@ SyncScheduler.prototype = {
 
     if (Status.checkSetup() == STATUS_OK) {
       Svc.Obs.add("wake_notification", this);
-      Svc.Idle.addIdleObserver(this, Svc.Prefs.get("scheduler.idleTime"));
+      IdleService.addIdleObserver(this, Svc.Prefs.get("scheduler.idleTime"));
     }
   },
 
+  // eslint-disable-next-line complexity
   observe: function observe(subject, topic, data) {
     this._log.trace("Handling " + topic);
     switch (topic) {
       case "weave:engine:score:updated":
         if (Status.login == LOGIN_SUCCEEDED) {
-          Utils.namedTimer(this.calculateScore, SCORE_UPDATE_DELAY, this,
+          CommonUtils.namedTimer(this.calculateScore, SCORE_UPDATE_DELAY, this,
                            "_scoreTimer");
         }
         break;
@@ -166,8 +174,28 @@ SyncScheduler.prototype = {
         }
 
         let sync_interval;
+        this.updateGlobalScore();
+        if (this.globalScore > 0) {
+          // The global score should be 0 after a sync. If it's not, items were
+          // changed during the last sync, and we should schedule an immediate
+          // follow-up sync.
+          this._resyncs++;
+          if (this._resyncs <= this.maxResyncs) {
+            sync_interval = 0;
+          } else {
+            this._log.warn(`Resync attempt ${this._resyncs} exceeded ` +
+                           `maximum ${this.maxResyncs}`);
+            Svc.Obs.notify("weave:service:resyncs-finished");
+          }
+        } else {
+          this._resyncs = 0;
+          Svc.Obs.notify("weave:service:resyncs-finished");
+        }
+
         this._syncErrors = 0;
         if (Status.sync == NO_SYNC_NODE_FOUND) {
+          // If we don't have a Sync node, override the interval, even if we've
+          // scheduled a follow-up sync.
           this._log.trace("Scheduling a sync at interval NO_SYNC_NODE_FOUND.");
           sync_interval = NO_SYNC_NODE_INTERVAL;
         }
@@ -239,16 +267,19 @@ SyncScheduler.prototype = {
         if (numItems) {
           this.hasIncomingItems = true;
         }
+        if (subject.newFailed) {
+          this._log.error(`Engine ${data} found ${subject.newFailed} new records that failed to apply`);
+        }
         break;
       case "weave:service:setup-complete":
          Services.prefs.savePrefFile(null);
-         Svc.Idle.addIdleObserver(this, Svc.Prefs.get("scheduler.idleTime"));
+         IdleService.addIdleObserver(this, Svc.Prefs.get("scheduler.idleTime"));
          Svc.Obs.add("wake_notification", this);
          break;
       case "weave:service:start-over":
          this.setDefaults();
          try {
-           Svc.Idle.removeIdleObserver(this, Svc.Prefs.get("scheduler.idleTime"));
+           IdleService.removeIdleObserver(this, Svc.Prefs.get("scheduler.idleTime"));
          } catch (ex) {
            if (ex.result != Cr.NS_ERROR_FAILURE) {
              throw ex;
@@ -268,7 +299,7 @@ SyncScheduler.prototype = {
       case "active":
         this._log.trace("Received notification that we're back from idle.");
         this.idle = false;
-        Utils.namedTimer(function onBack() {
+        CommonUtils.namedTimer(function onBack() {
           if (this.idle) {
             this._log.trace("... and we're idle again. " +
                             "Ignoring spurious back notification.");
@@ -284,7 +315,7 @@ SyncScheduler.prototype = {
         break;
       case "wake_notification":
         this._log.debug("Woke from sleep.");
-        Utils.nextTick(() => {
+        CommonUtils.nextTick(() => {
           // Trigger a sync if we have multiple clients. We give it 5 seconds
           // incase the network is still in the process of coming back up.
           if (this.numClients > 1) {
@@ -327,7 +358,7 @@ SyncScheduler.prototype = {
     }
   },
 
-  calculateScore: function calculateScore() {
+  updateGlobalScore() {
     let engines = [this.service.clientsEngine].concat(this.service.engineManager.getEnabled());
     for (let i = 0;i < engines.length;i++) {
       this._log.trace(engines[i].name + ": score: " + engines[i].score);
@@ -336,6 +367,10 @@ SyncScheduler.prototype = {
     }
 
     this._log.trace("Global score updated: " + this.globalScore);
+  },
+
+  calculateScore() {
+    this.updateGlobalScore();
     this.checkSyncStatus();
   },
 
@@ -405,7 +440,7 @@ SyncScheduler.prototype = {
       this._log.debug("Not initiating sync: app is shutting down");
       return;
     }
-    Utils.nextTick(this.service.sync, this.service);
+    CommonUtils.nextTick(this.service.sync, this.service);
   },
 
   /**
@@ -447,7 +482,7 @@ SyncScheduler.prototype = {
     }
 
     this._log.debug("Next sync in " + interval + " ms.");
-    Utils.namedTimer(this.syncIfMPUnlocked, interval, this, "syncTimer");
+    CommonUtils.namedTimer(this.syncIfMPUnlocked, interval, this, "syncTimer");
 
     // Save the next sync time in-case sync is disabled (logout/offline/etc.)
     this.nextSync = Date.now() + interval;
@@ -481,7 +516,7 @@ SyncScheduler.prototype = {
   */
   delayedAutoConnect: function delayedAutoConnect(delay) {
     if (this.service._checkSetup() == STATUS_OK) {
-      Utils.namedTimer(this.autoConnect, delay * 1000, this, "_autoTimer");
+      CommonUtils.namedTimer(this.autoConnect, delay * 1000, this, "_autoTimer");
     }
   },
 
@@ -535,6 +570,9 @@ SyncScheduler.prototype = {
       this.syncTimer.clear();
   },
 
+  get maxResyncs() {
+    return Svc.Prefs.get("maxResyncs", 0);
+  },
 };
 
 this.ErrorHandler = function ErrorHandler(service) {
@@ -562,6 +600,7 @@ ErrorHandler.prototype = {
     Svc.Obs.add("weave:service:login:error", this);
     Svc.Obs.add("weave:service:sync:error", this);
     Svc.Obs.add("weave:service:sync:finish", this);
+    Svc.Obs.add("weave:service:start-over:finish", this);
 
     this.initLogs();
   },
@@ -576,7 +615,8 @@ ErrorHandler.prototype = {
     let logs = ["Sync", "FirefoxAccounts", "Hawk", "Common.TokenServerClient",
                 "Sync.SyncMigration", "browserwindow.syncui",
                 "Services.Common.RESTRequest", "Services.Common.RESTRequest",
-                "BookmarkSyncUtils"
+                "BookmarkSyncUtils",
+                "addons.xpi",
                ];
 
     this._logManager = new LogManager(Svc.Prefs, logs, "sync");
@@ -678,11 +718,15 @@ ErrorHandler.prototype = {
         this.dontIgnoreErrors = false;
         this.notifyOnNextTick("weave:ui:sync:finish");
         break;
+      case "weave:service:start-over:finish":
+        // ensure we capture any logs between the last sync and the reset completing.
+        this.resetFileLog();
+        break;
     }
   },
 
   notifyOnNextTick: function notifyOnNextTick(topic) {
-    Utils.nextTick(function() {
+    CommonUtils.nextTick(function() {
       this._log.trace("Notifying " + topic +
                       ". Status.login is " + Status.login +
                       ". Status.sync is " + Status.sync);
@@ -697,26 +741,24 @@ ErrorHandler.prototype = {
     this._log.debug("Beginning user-triggered sync.");
 
     this.dontIgnoreErrors = true;
-    Utils.nextTick(this.service.sync, this.service);
+    CommonUtils.nextTick(this.service.sync, this.service);
   },
 
-  _dumpAddons: function _dumpAddons() {
+  async _dumpAddons() {
     // Just dump the items that sync may be concerned with. Specifically,
     // active extensions that are not hidden.
-    let addonPromise = Promise.resolve([]);
+    let addons = [];
     try {
-      addonPromise = AddonManager.getAddonsByTypes(["extension"]);
+      addons = await AddonManager.getAddonsByTypes(["extension"]);
     } catch (e) {
       this._log.warn("Failed to dump addons", e)
     }
 
-    return addonPromise.then(addons => {
-      let relevantAddons = addons.filter(x => x.isActive && !x.hidden);
-      this._log.debug("Addons installed", relevantAddons.length);
-      for (let addon of relevantAddons) {
-        this._log.debug(" - ${name}, version ${version}, id ${id}", addon);
-      }
-    });
+    let relevantAddons = addons.filter(x => x.isActive && !x.hidden);
+    this._log.debug("Addons installed", relevantAddons.length);
+    for (let addon of relevantAddons) {
+      this._log.debug(" - ${name}, version ${version}, id ${id}", addon);
+    }
   },
 
   /**
@@ -876,7 +918,7 @@ ErrorHandler.prototype = {
         // in with your Firefox Account" storage alerts.
         if ((this.currentAlertMode != xwa.code) ||
             (this.earliestNextAlert < Date.now())) {
-          Utils.nextTick(function() {
+          CommonUtils.nextTick(function() {
             Svc.Obs.notify("weave:eol", xwa);
           }, this);
           this._log.error("X-Weave-Alert: " + xwa.code + ": " + xwa.message);

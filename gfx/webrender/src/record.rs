@@ -9,7 +9,7 @@ use std::any::TypeId;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
-use webrender_traits::ApiMsg;
+use api::ApiMsg;
 use byteorder::{LittleEndian, WriteBytesExt};
 
 pub static WEBRENDER_RECORDING_HEADER: u64 = 0xbeefbeefbeefbe01u64;
@@ -37,7 +37,7 @@ impl BinaryRecorder {
         file.write_u64::<LittleEndian>(apimsg_type_id).ok();
 
         BinaryRecorder {
-            file: file,
+            file,
         }
     }
 
@@ -63,19 +63,11 @@ impl ApiRecordingReceiver for BinaryRecorder {
 }
 
 pub fn should_record_msg(msg: &ApiMsg) -> bool {
-    match msg {
-        &ApiMsg::AddRawFont(..) |
-        &ApiMsg::AddNativeFont(..) |
-        &ApiMsg::DeleteFont(..) |
-        &ApiMsg::AddImage(..) |
-        &ApiMsg::GenerateFrame(..) |
-        &ApiMsg::UpdateImage(..) |
-        &ApiMsg::DeleteImage(..) |
-        &ApiMsg::SetDisplayList(..) |
-        &ApiMsg::SetRootPipeline(..) |
-        &ApiMsg::Scroll(..) |
-        &ApiMsg::TickScrollingBounce |
-        &ApiMsg::WebGLCommand(..) =>
+    match *msg {
+        ApiMsg::UpdateResources(..) |
+        ApiMsg::AddDocument{..} |
+        ApiMsg::UpdateDocument(..) |
+        ApiMsg::DeleteDocument(..) =>
             true,
         _ => false
     }

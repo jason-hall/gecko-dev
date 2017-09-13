@@ -7,13 +7,13 @@
 #ifndef vm_Debugger_h
 #define vm_Debugger_h
 
+#include "mozilla/DoublyLinkedList.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/Range.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Vector.h"
 
-#include "jsclist.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsweakmap.h"
@@ -162,9 +162,10 @@ class DebuggerWeakMap : private WeakMap<HeapPtr<UnbarrieredKey>, HeapPtr<JSObjec
   private:
     /* Override sweep method to also update our edge cache. */
     void sweep() {
+        MOZ_ASSERT(CurrentThreadIsPerformingGC());
         for (Enum e(*static_cast<Base*>(this)); !e.empty(); e.popFront()) {
             if (gc::IsAboutToBeFinalized(&e.front().mutableKey())) {
-                decZoneCount(e.front().key()->zone());
+                decZoneCount(e.front().key()->zoneFromAnyThread());
                 e.removeFront();
             }
         }
@@ -258,6 +259,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
 {
     friend class Breakpoint;
     friend class DebuggerMemory;
+    friend struct JSRuntime::GlobalObjectWatchersSiblingAccess<Debugger>;
     friend class SavedStacks;
     friend class ScriptedOnStepHandler;
     friend class ScriptedOnPopHandler;
@@ -268,6 +270,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     friend bool (::JS::dbg::GetDebuggeeGlobals)(JSContext*, JSObject&, AutoObjectVector&);
     friend void JS::dbg::onNewPromise(JSContext* cx, HandleObject promise);
     friend void JS::dbg::onPromiseSettled(JSContext* cx, HandleObject promise);
+    friend bool JS::dbg::FireOnGarbageCollectionHookRequired(JSContext* cx);
     friend bool JS::dbg::FireOnGarbageCollectionHook(JSContext* cx,
                                                      JS::dbg::GarbageCollectionEvent::Ptr&& data);
 
@@ -381,11 +384,32 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     js::GCPtrObject uncaughtExceptionHook; /* Strong reference. */
     bool enabled;
     bool allowUnobservedAsmJS;
+    bool allowWasmBinarySource;
 
     // Whether to enable code coverage on the Debuggee.
     bool collectCoverageInfo;
 
-    JSCList breakpoints;                /* Circular list of all js::Breakpoints in this debugger */
+    template<typename T>
+    struct DebuggerSiblingAccess {
+      static T* GetNext(T* elm) {
+        return elm->debuggerLink.mNext;
+      }
+      static void SetNext(T* elm, T* next) {
+        elm->debuggerLink.mNext = next;
+      }
+      static T* GetPrev(T* elm) {
+        return elm->debuggerLink.mPrev;
+      }
+      static void SetPrev(T* elm, T* prev) {
+        elm->debuggerLink.mPrev = prev;
+      }
+    };
+
+    // List of all js::Breakpoints in this debugger.
+    using BreakpointList =
+        mozilla::DoublyLinkedList<js::Breakpoint,
+                                  DebuggerSiblingAccess<js::Breakpoint>>;
+    BreakpointList breakpoints;
 
     // The set of GC numbers for which one or more of this Debugger's observed
     // debuggees participated in.
@@ -445,11 +469,10 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
 
     /*
      * If this Debugger is enabled, and has a onNewGlobalObject handler, then
-     * this link is inserted into the circular list headed by
-     * JSRuntime::onNewGlobalObjectWatchers. Otherwise, this is set to a
-     * singleton cycle.
+     * this link is inserted into the list headed by
+     * JSRuntime::onNewGlobalObjectWatchers.
      */
-    JSCList onNewGlobalObjectWatchersLink;
+    mozilla::DoublyLinkedListElement<Debugger> onNewGlobalObjectWatchersLink;
 
     /*
      * Map from stack frames that are currently on the stack to Debugger.Frame
@@ -587,9 +610,11 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     GlobalObject* unwrapDebuggeeArgument(JSContext* cx, const Value& v);
 
     static void traceObject(JSTracer* trc, JSObject* obj);
+
     void trace(JSTracer* trc);
+    friend struct js::GCManagedDeletePolicy<Debugger>;
+
     void traceForMovingGC(JSTracer* trc);
-    static void finalize(FreeOp* fop, JSObject* obj);
     void traceCrossCompartmentEdges(JSTracer* tracer);
 
     static const ClassOps classOps_;
@@ -621,6 +646,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     static bool setUncaughtExceptionHook(JSContext* cx, unsigned argc, Value* vp);
     static bool getAllowUnobservedAsmJS(JSContext* cx, unsigned argc, Value* vp);
     static bool setAllowUnobservedAsmJS(JSContext* cx, unsigned argc, Value* vp);
+    static bool getAllowWasmBinarySource(JSContext* cx, unsigned argc, Value* vp);
+    static bool setAllowWasmBinarySource(JSContext* cx, unsigned argc, Value* vp);
     static bool getCollectCoverageInfo(JSContext* cx, unsigned argc, Value* vp);
     static bool setCollectCoverageInfo(JSContext* cx, unsigned argc, Value* vp);
     static bool getMemory(JSContext* cx, unsigned argc, Value* vp);
@@ -690,6 +717,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     // execution.
     IsObserving observesCoverage() const;
 
+    IsObserving observesBinarySource() const;
+
   private:
     static MOZ_MUST_USE bool ensureExecutionObservabilityOfFrame(JSContext* cx,
                                                                  AbstractFramePtr frame);
@@ -701,6 +730,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     MOZ_MUST_USE bool updateObservesAllExecutionOnDebuggees(JSContext* cx, IsObserving observing);
     MOZ_MUST_USE bool updateObservesCoverageOnDebuggees(JSContext* cx, IsObserving observing);
     void updateObservesAsmJSOnDebuggees(IsObserving observing);
+    void updateObservesBinarySourceDebuggees(IsObserving observing);
 
     JSObject* getHook(Hook hook) const;
     bool hasAnyLiveHooks(JSRuntime* rt) const;
@@ -789,8 +819,6 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
                                              MutableHandleDebuggerFrame result);
 
     inline Breakpoint* firstBreakpoint() const;
-
-    static inline Debugger* fromOnNewGlobalObjectWatchersLink(JSCList* link);
 
     static MOZ_MUST_USE bool replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
                                               AbstractFramePtr to,
@@ -1452,6 +1480,8 @@ class DebuggerObject : public NativeObject
     bool isDebuggeeFunction() const;
     bool isBoundFunction() const;
     bool isArrowFunction() const;
+    bool isAsyncFunction() const;
+    bool isGeneratorFunction() const;
     bool isGlobal() const;
     bool isScriptedProxy() const;
     bool isPromise() const;
@@ -1491,6 +1521,8 @@ class DebuggerObject : public NativeObject
     static MOZ_MUST_USE bool callableGetter(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool isBoundFunctionGetter(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool isArrowFunctionGetter(JSContext* cx, unsigned argc, Value* vp);
+    static MOZ_MUST_USE bool isAsyncFunctionGetter(JSContext* cx, unsigned argc, Value* vp);
+    static MOZ_MUST_USE bool isGeneratorFunctionGetter(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool protoGetter(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool classGetter(JSContext* cx, unsigned argc, Value* vp);
     static MOZ_MUST_USE bool nameGetter(JSContext* cx, unsigned argc, Value* vp);
@@ -1563,7 +1595,27 @@ class BreakpointSite {
   private:
     Type type_;
 
-    JSCList breakpoints;  /* cyclic list of all js::Breakpoints at this instruction */
+    template<typename T>
+    struct SiteSiblingAccess {
+      static T* GetNext(T* elm) {
+        return elm->siteLink.mNext;
+      }
+      static void SetNext(T* elm, T* next) {
+        elm->siteLink.mNext = next;
+      }
+      static T* GetPrev(T* elm) {
+        return elm->siteLink.mPrev;
+      }
+      static void SetPrev(T* elm, T* prev) {
+        elm->siteLink.mPrev = prev;
+      }
+    };
+
+    // List of all js::Breakpoints at this instruction.
+    using BreakpointList =
+        mozilla::DoublyLinkedList<js::Breakpoint,
+                                  SiteSiblingAccess<js::Breakpoint>>;
+    BreakpointList breakpoints;
     size_t enabledCount;  /* number of breakpoints in the list that are enabled */
 
   protected:
@@ -1607,6 +1659,7 @@ class BreakpointSite {
 class Breakpoint {
     friend struct ::JSCompartment;
     friend class Debugger;
+    friend class BreakpointSite;
 
   public:
     Debugger * const debugger;
@@ -1614,12 +1667,14 @@ class Breakpoint {
   private:
     /* |handler| is marked unconditionally during minor GC. */
     js::PreBarrieredObject handler;
-    JSCList debuggerLinks;
-    JSCList siteLinks;
+
+    /**
+     * Link elements for each list this breakpoint can be in.
+     */
+    mozilla::DoublyLinkedListElement<Breakpoint> debuggerLink;
+    mozilla::DoublyLinkedListElement<Breakpoint> siteLink;
 
   public:
-    static Breakpoint* fromDebuggerLinks(JSCList* links);
-    static Breakpoint* fromSiteLinks(JSCList* links);
     Breakpoint(Debugger* debugger, BreakpointSite* site, JSObject* handler);
     void destroy(FreeOp* fop);
     Breakpoint* nextInDebugger();
@@ -1655,14 +1710,14 @@ BreakpointSite::asJS()
 class WasmBreakpointSite : public BreakpointSite
 {
   public:
-    wasm::Code* code;
+    wasm::DebugState* debug;
     uint32_t offset;
 
   protected:
     void recompile(FreeOp* fop) override;
 
   public:
-    WasmBreakpointSite(wasm::Code* code, uint32_t offset);
+    WasmBreakpointSite(wasm::DebugState* debug, uint32_t offset);
 
     void destroyIfEmpty(FreeOp* fop) override;
 };
@@ -1697,15 +1752,9 @@ Breakpoint::asWasm()
 Breakpoint*
 Debugger::firstBreakpoint() const
 {
-    if (JS_CLIST_IS_EMPTY(&breakpoints))
+    if (breakpoints.isEmpty())
         return nullptr;
-    return Breakpoint::fromDebuggerLinks(JS_NEXT_LINK(&breakpoints));
-}
-
-/* static */ Debugger*
-Debugger::fromOnNewGlobalObjectWatchersLink(JSCList* link) {
-    char* p = reinterpret_cast<char*>(link);
-    return reinterpret_cast<Debugger*>(p - offsetof(Debugger, onNewGlobalObjectWatchersLink));
+    return &(*breakpoints.begin());
 }
 
 const js::GCPtrNativeObject&
@@ -1766,7 +1815,7 @@ Debugger::onNewGlobalObject(JSContext* cx, Handle<GlobalObject*> global)
 #ifdef DEBUG
     global->compartment()->firedOnNewGlobalObject = true;
 #endif
-    if (!JS_CLIST_IS_EMPTY(&cx->runtime()->onNewGlobalObjectWatchers()))
+    if (!cx->runtime()->onNewGlobalObjectWatchers().isEmpty())
         Debugger::slowPathOnNewGlobalObject(cx, global);
 }
 

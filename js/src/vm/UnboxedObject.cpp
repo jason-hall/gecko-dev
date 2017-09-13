@@ -931,8 +931,8 @@ UnboxedPlainObject::obj_watch(JSContext* cx, HandleObject obj, HandleId id, Hand
 }
 
 /* static */ bool
-UnboxedPlainObject::obj_enumerate(JSContext* cx, HandleObject obj, AutoIdVector& properties,
-                                  bool enumerableOnly)
+UnboxedPlainObject::newEnumerate(JSContext* cx, HandleObject obj, AutoIdVector& properties,
+                                 bool enumerableOnly)
 {
     // Ignore expando properties here, they are special-cased by the property
     // enumeration code.
@@ -954,9 +954,8 @@ const Class UnboxedExpandoObject::class_ = {
 static const ClassOps UnboxedPlainObjectClassOps = {
     nullptr,        /* addProperty */
     nullptr,        /* delProperty */
-    nullptr,        /* getProperty */
-    nullptr,        /* setProperty */
     nullptr,        /* enumerate   */
+    UnboxedPlainObject::newEnumerate,
     nullptr,        /* resolve     */
     nullptr,        /* mayResolve  */
     nullptr,        /* finalize    */
@@ -977,7 +976,6 @@ static const ObjectOps UnboxedPlainObjectObjectOps = {
     UnboxedPlainObject::obj_watch,
     nullptr,   /* No unwatch needed, as watch() converts the object to native */
     nullptr,   /* getElements */
-    UnboxedPlainObject::obj_enumerate,
     nullptr    /* funToString */
 };
 
@@ -1633,8 +1631,8 @@ UnboxedArrayObject::obj_watch(JSContext* cx, HandleObject obj, HandleId id, Hand
 }
 
 /* static */ bool
-UnboxedArrayObject::obj_enumerate(JSContext* cx, HandleObject obj, AutoIdVector& properties,
-                                  bool enumerableOnly)
+UnboxedArrayObject::newEnumerate(JSContext* cx, HandleObject obj, AutoIdVector& properties,
+                                 bool enumerableOnly)
 {
     for (size_t i = 0; i < obj->as<UnboxedArrayObject>().initializedLength(); i++) {
         if (!properties.append(INT_TO_JSID(i)))
@@ -1650,9 +1648,8 @@ UnboxedArrayObject::obj_enumerate(JSContext* cx, HandleObject obj, AutoIdVector&
 static const ClassOps UnboxedArrayObjectClassOps = {
     nullptr,        /* addProperty */
     nullptr,        /* delProperty */
-    nullptr,        /* getProperty */
-    nullptr,        /* setProperty */
     nullptr,        /* enumerate   */
+    UnboxedArrayObject::newEnumerate,
     nullptr,        /* resolve     */
     nullptr,        /* mayResolve  */
     UnboxedArrayObject::finalize,
@@ -1678,7 +1675,6 @@ static const ObjectOps UnboxedArrayObjectObjectOps = {
     UnboxedArrayObject::obj_watch,
     nullptr,   /* No unwatch needed, as watch() converts the object to native */
     nullptr,   /* getElements */
-    UnboxedArrayObject::obj_enumerate,
     nullptr    /* funToString */
 };
 

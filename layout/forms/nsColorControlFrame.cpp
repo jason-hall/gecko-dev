@@ -6,7 +6,6 @@
 #include "nsColorControlFrame.h"
 
 #include "nsContentCreatorFunctions.h"
-#include "nsContentList.h"
 #include "nsContentUtils.h"
 #include "nsCSSPseudoElements.h"
 #include "nsFormControlFrame.h"
@@ -23,7 +22,7 @@ using mozilla::dom::HTMLInputElement;
 using mozilla::dom::CallerType;
 
 nsColorControlFrame::nsColorControlFrame(nsStyleContext* aContext)
-  : nsHTMLButtonControlFrame(aContext)
+  : nsHTMLButtonControlFrame(aContext, kClassID)
 {
 }
 
@@ -44,14 +43,8 @@ NS_QUERYFRAME_TAIL_INHERITING(nsHTMLButtonControlFrame)
 void nsColorControlFrame::DestroyFrom(nsIFrame* aDestructRoot)
 {
   nsFormControlFrame::RegUnRegAccessKey(static_cast<nsIFrame*>(this), false);
-  nsContentUtils::DestroyAnonymousContent(&mColorContent);
+  DestroyAnonymousContent(mColorContent.forget());
   nsHTMLButtonControlFrame::DestroyFrom(aDestructRoot);
-}
-
-nsIAtom*
-nsColorControlFrame::GetType() const
-{
-  return nsGkAtoms::colorControlFrame;
 }
 
 #ifdef DEBUG_FRAME_DUMP

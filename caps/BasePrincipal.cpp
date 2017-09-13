@@ -7,9 +7,6 @@
 #include "mozilla/BasePrincipal.h"
 
 #include "nsDocShell.h"
-#ifdef MOZ_CRASHREPORTER
-#include "nsExceptionHandler.h"
-#endif
 #include "nsIAddonPolicyService.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsIObjectInputStream.h"
@@ -160,7 +157,8 @@ BasePrincipal::CheckMayLoad(nsIURI* aURI, bool aReport, bool aAllowIfInheritsPri
     nsCOMPtr<nsIURI> prinURI;
     rv = GetURI(getter_AddRefs(prinURI));
     if (NS_SUCCEEDED(rv) && prinURI) {
-      nsScriptSecurityManager::ReportError(nullptr, NS_LITERAL_STRING("CheckSameOriginError"), prinURI, aURI);
+      nsScriptSecurityManager::ReportError(nullptr, "CheckSameOriginError",
+                                           prinURI, aURI);
     }
   }
 
@@ -300,14 +298,6 @@ BasePrincipal::GetOriginSuffix(nsACString& aOriginAttributes)
 }
 
 NS_IMETHODIMP
-BasePrincipal::GetAppStatus(uint16_t* aAppStatus)
-{
-  // TODO: Remove GetAppStatus.
-  *aAppStatus = nsIPrincipal::APP_STATUS_NOT_INSTALLED;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 BasePrincipal::GetAppId(uint32_t* aAppId)
 {
   if (AppId() == nsIScriptSecurityManager::UNKNOWN_APP_ID) {
@@ -341,13 +331,6 @@ BasePrincipal::GetIsInIsolatedMozBrowserElement(bool* aIsInIsolatedMozBrowserEle
   return NS_OK;
 }
 
-NS_IMETHODIMP
-BasePrincipal::GetUnknownAppId(bool* aUnknownAppId)
-{
-  *aUnknownAppId = AppId() == nsIScriptSecurityManager::UNKNOWN_APP_ID;
-  return NS_OK;
-}
-
 bool
 BasePrincipal::AddonHasPermission(const nsAString& aPerm)
 {
@@ -377,7 +360,7 @@ BasePrincipal::CreateCodebasePrincipal(nsIURI* aURI,
   nsAutoCString originNoSuffix;
   nsresult rv =
     ContentPrincipal::GenerateOriginNoSuffixFromURI(aURI, originNoSuffix);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
+  if (NS_FAILED(rv)) {
     // If the generation of the origin fails, we still want to have a valid
     // principal. Better to return a null principal here.
     return NullPrincipal::Create(aAttrs);

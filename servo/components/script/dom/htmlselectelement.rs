@@ -31,13 +31,13 @@ use dom::validation::Validatable;
 use dom::validitystate::{ValidityState, ValidationFlags};
 use dom::virtualmethods::VirtualMethods;
 use dom_struct::dom_struct;
-use html5ever_atoms::LocalName;
+use html5ever::{LocalName, Prefix};
 use std::default::Default;
 use std::iter;
 use style::attr::AttrValue;
 use style::element_state::*;
 
-#[derive(JSTraceable, HeapSizeOf)]
+#[derive(HeapSizeOf, JSTraceable)]
 struct OptionsFilter;
 impl CollectionFilter for OptionsFilter {
     fn filter<'a>(&self, elem: &'a Element, root: &'a Node) -> bool {
@@ -69,7 +69,7 @@ static DEFAULT_SELECT_SIZE: u32 = 0;
 
 impl HTMLSelectElement {
     fn new_inherited(local_name: LocalName,
-                     prefix: Option<DOMString>,
+                     prefix: Option<Prefix>,
                      document: &Document) -> HTMLSelectElement {
         HTMLSelectElement {
             htmlelement:
@@ -82,7 +82,7 @@ impl HTMLSelectElement {
 
     #[allow(unrooted_must_root)]
     pub fn new(local_name: LocalName,
-               prefix: Option<DOMString>,
+               prefix: Option<Prefix>,
                document: &Document) -> Root<HTMLSelectElement> {
         Node::reflect_node(box HTMLSelectElement::new_inherited(local_name, prefix, document),
                            document,
