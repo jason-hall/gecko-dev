@@ -142,8 +142,6 @@ struct Statistics
 
     typedef Vector<SliceData, 8, SystemAllocPolicy> SliceDataVector;
 
-    SliceRange sliceRange() const { return slices.all(); }
-
     /* Print total profile times on shutdown. */
     void printTotalProfileTimes() {}
 

@@ -211,6 +211,13 @@ FOR_EACH_ALLOCKIND(EXPAND_ELEMENT)
     return map[size_t(kind)];
 }
 
+/* Mark colors to pass to markIfUnmarked. */
+enum class MarkColor : uint32_t
+{
+    Black = 0,
+    Gray
+};
+
 class TenuredCell;
 
 // A GC cell is the base class for all GC things.
@@ -350,11 +357,11 @@ Cell::runtimeFromActiveCooperatingThread() const
     return reinterpret_cast<JS::shadow::Zone*>(zone())->runtimeFromActiveCooperatingThread();
 }
 
-inline JSRuntime*
+/*inline JSRuntime*
 Cell::runtimeFromActiveCooperatingThread() const
 {
     return reinterpret_cast<JS::shadow::Zone*>(zone())->runtimeFromAnyThread();
-}
+}*/
 
 inline JS::Zone*
 Cell::zoneFromAnyThread() const
@@ -442,8 +449,7 @@ TenuredCell::fromPointer(const void* ptr)
 bool
 TenuredCell::isMarkedAny() const
 {
-    MOZ_ASSERT(arena()->allocated());
-    return chunk()->bitmap.isMarkedAny(this);
+	return IsMarkedCell(this);
 }
 
 bool
@@ -455,8 +461,7 @@ TenuredCell::isMarkedBlack() const
 bool
 TenuredCell::isMarkedGray() const
 {
-    MOZ_ASSERT(arena()->allocated());
-    return chunk()->bitmap.isMarkedGray(this);
+    return false;
 }
 
 bool

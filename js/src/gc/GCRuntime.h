@@ -508,8 +508,6 @@ class GCRuntime
 	
 	bool isShrinkingGC() const { return false; }
 
-    bool isShrinkingGC() const { return invocationKind == GC_SHRINK; }
-
     bool initSweepActions();
 
     void setGrayRootsTracer(JSTraceDataOp traceOp, void* data);
@@ -610,7 +608,7 @@ class GCRuntime
      */
     ActiveThreadData<JS::Zone*> sweepGroups;
     ActiveThreadOrGCTaskData<JS::Zone*> currentSweepGroup;
-    ActiveThreadData<UniquePtr<SweepAction<GCRuntime*, FreeOp*, SliceBudget&>>> sweepActions;
+    //ActiveThreadData<UniquePtr<SweepAction<GCRuntime*, FreeOp*, SliceBudget&>>> sweepActions;
     ActiveThreadOrGCTaskData<JS::Zone*> sweepZone;
     ActiveThreadData<mozilla::Maybe<AtomSet::Enum>> maybeAtomsToSweep;
     ActiveThreadOrGCTaskData<JS::detail::WeakCacheBase*> sweepCache;
@@ -684,9 +682,10 @@ class GCRuntime
     }
 
     void minorGC(JS::gcreason::Reason reason,
-                 gcstats::Phase phase = gcstats::PHASE_MINOR_GC) JS_HAZ_GC_CALL;
-    void evictNursery(JS::gcreason::Reason reason = JS::gcreason::EVICT_NURSERY) {
-        minorGC(reason, gcstats::PHASE_EVICT_NURSERY);
+                 gcstats::Phase phase = gcstats::PhaseKind::MINOR_GC) JS_HAZ_GC_CALL {}
+
+    void evictNursery(JS::gcreason::Reason reason = JS::gcreason::PhaseKind::EVICT_NURSERY) {
+        minorGC(reason, gcstats::PhaseKind::EVICT_NURSERY);
     }
     void freeAllLifoBlocksAfterMinorGC(LifoAlloc* lifo);
 
@@ -710,12 +709,12 @@ class MOZ_RAII AutoEnterIteration {
 
   public:
     explicit AutoEnterIteration(GCRuntime* gc_) : gc(gc_) {
-        ++gc->numActiveZoneIters;
+        //++gc->numActiveZoneIters;
     }
 
     ~AutoEnterIteration() {
-        MOZ_ASSERT(gc->numActiveZoneIters);
-        --gc->numActiveZoneIters;
+        //MOZ_ASSERT(gc->numActiveZoneIters);
+        //--gc->numActiveZoneIters;
     }
 };
 

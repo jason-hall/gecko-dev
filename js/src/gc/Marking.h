@@ -70,7 +70,7 @@ using WeakKeyTable = OrderedHashMap<JS::GCCellPtr,
 class GCMarker : public JSTracer
 {
   public:
-    explicit GCMarker(JSRuntime* rt) {}
+    explicit GCMarker(JSRuntime* rt) : JSTracer(rt, JSTracer::TracerKindTag::Marking, ExpandWeakMaps) {}
     MOZ_MUST_USE bool init(JSGCMode gcMode) { return true; }
 
     static GCMarker* fromTracer(JSTracer* trc) {

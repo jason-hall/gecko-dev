@@ -89,7 +89,7 @@ class Nursery
     explicit Nursery(JSRuntime* rt) {}
     ~Nursery() {}
 
-    MOZ_MUST_USE bool init(uint32_t maxNurseryBytes, AutoLockGC& lock) { return cellsWithUid_.init(); }
+    MOZ_MUST_USE bool init(uint32_t maxNurseryBytes, AutoLockGC& lock) { return true; }
 
     bool exists() const { return false; }
     size_t nurserySize() const { return 0; }
@@ -158,7 +158,7 @@ class Nursery
         return cellsWithUid_.append(cell);
     }
 
-    MOZ_MUST_USE bool queueDictionaryModeObjectToSweep(NativeObject* obj) {}
+    MOZ_MUST_USE bool queueDictionaryModeObjectToSweep(NativeObject* obj) { return true; }
 
     size_t sizeOfHeapCommitted() const {
         return 0;
