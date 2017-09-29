@@ -291,10 +291,10 @@ struct StatsClosure
     }
 };
 
+#ifndef OMR
 static void
 DecommittedArenasChunkCallback(JSRuntime* rt, void* data, gc::Chunk* chunk)
 {
-#ifndef OMR
     // This case is common and fast to check.  Do it first.
     if (chunk->decommittedArenas.isAllClear())
         return;
@@ -306,8 +306,8 @@ DecommittedArenasChunkCallback(JSRuntime* rt, void* data, gc::Chunk* chunk)
     }
     MOZ_ASSERT(n > 0);
     *static_cast<size_t*>(data) += n;
-#endif
 }
+#endif
 
 static void
 StatsZoneCallback(JSRuntime* rt, void* data, Zone* zone)
@@ -368,7 +368,8 @@ StatsCompartmentCallback(JSContext* cx, void* data, JSCompartment* compartment)
                                         &cStats.privateData);
 }
 
-/*static void
+#ifndef OMR
+static void
 StatsArenaCallback(JSRuntime* rt, void* data, gc::Arena* arena,
                    JS::TraceKind traceKind, size_t thingSize)
 {
@@ -384,7 +385,8 @@ StatsArenaCallback(JSRuntime* rt, void* data, gc::Arena* arena,
     // We do this by setting arenaUnused to maxArenaUnused here, and then
     // subtracting thingSize for every used cell, in StatsCellCallback().
     rtStats->currZoneStats->unusedGCThings.addToKind(traceKind, allocationSpace);
-}*/
+}
+#endif
 
 // FineGrained is used for normal memory reporting.  CoarseGrained is used by
 // AddSizeOfTab(), which aggregates all the measurements into a handful of
@@ -749,6 +751,7 @@ FindNotableScriptSources(JS::RuntimeSizes& runtime)
     return true;
 }
 
+#ifndef OMR
 static bool
 CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats, ObjectPrivateVisitor* opv,
                           bool anonymize, IterateCellCallback statsCellCallback)
@@ -769,18 +772,18 @@ CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats, ObjectPrivateVis
     rtStats->gcHeapUnusedChunks =
         size_t(JS_GetGCParameter(cx, JSGC_UNUSED_CHUNKS)) * gc::ChunkSize;
 
-    //IterateChunks(cx, &rtStats->gcHeapDecommittedArenas,
-    //              DecommittedArenasChunkCallback);
+    IterateChunks(cx, &rtStats->gcHeapDecommittedArenas,
+                  DecommittedArenasChunkCallback);
 
     // Take the per-compartment measurements.
     StatsClosure closure(rtStats, opv, anonymize);
     if (!closure.init())
         return false;
-    /*IterateHeapUnbarriered(cx, &closure,
+    IterateHeapUnbarriered(cx, &closure,
                                                    StatsZoneCallback,
                                                    StatsCompartmentCallback,
                                                    StatsArenaCallback,
-                                                   statsCellCallback);*/
+                                                   statsCellCallback);
 
     // Take the "explicit/js/runtime/" measurements.
     rt->addSizeOfIncludingThis(rtStats->mallocSizeOf_, &rtStats->runtime);
@@ -823,18 +826,18 @@ CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats, ObjectPrivateVis
 
 #ifdef DEBUG
     // Check that the in-arena measurements look ok.
-    /*size_t totalArenaSize = rtStats->zTotals.gcHeapArenaAdmin +
+    size_t totalArenaSize = rtStats->zTotals.gcHeapArenaAdmin +
                             rtStats->zTotals.unusedGCThings.totalSize() +
                             rtStats->gcHeapGCThings;
-    MOZ_ASSERT(totalArenaSize % gc::ArenaSize == 0);*/
+    MOZ_ASSERT(totalArenaSize % gc::ArenaSize == 0);
 #endif
 
     for (CompartmentsIter comp(rt, WithAtoms); !comp.done(); comp.next())
         comp->nullCompartmentStats();
 
-    /*size_t numDirtyChunks =
+    size_t numDirtyChunks =
         (rtStats->gcHeapChunkTotal - rtStats->gcHeapUnusedChunks) / gc::ChunkSize;
-    size_t perChunkAdmin = 
+    size_t perChunkAdmin =
         sizeof(gc::Chunk) - (sizeof(gc::Arena) * gc::ArenasPerChunk);
     rtStats->gcHeapChunkAdmin = numDirtyChunks * perChunkAdmin;
 
@@ -846,15 +849,20 @@ CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats, ObjectPrivateVis
                                   rtStats->zTotals.unusedGCThings.totalSize() -
                                   rtStats->gcHeapChunkAdmin -
                                   rtStats->zTotals.gcHeapArenaAdmin -
-                                  rtStats->gcHeapGCThings;*/
+                                  rtStats->gcHeapGCThings;
     return true;
 }
+#endif
 
 JS_PUBLIC_API(bool)
 JS::CollectRuntimeStats(JSContext* cx, RuntimeStats *rtStats, ObjectPrivateVisitor *opv,
                         bool anonymize)
 {
+#ifdef OMR
+    return true;
+#else
     return CollectRuntimeStatsHelper(cx, rtStats, opv, anonymize, StatsCellCallback<FineGrained>);
+#endif
 }
 
 JS_PUBLIC_API(size_t)
@@ -931,11 +939,13 @@ AddSizeOfTab(JSContext* cx, HandleObject obj, MallocSizeOf mallocSizeOf, ObjectP
     StatsClosure closure(&rtStats, opv, /* anonymize = */ false);
     if (!closure.init())
         return false;
-    /*IterateHeapUnbarrieredForZone(cx, zone, &closure,
+#ifndef OMR
+    IterateHeapUnbarrieredForZone(cx, zone, &closure,
                                                   StatsZoneCallback,
                                                   StatsCompartmentCallback,
                                                   StatsArenaCallback,
-                                                  StatsCellCallback<CoarseGrained>);*/
+                                                  StatsCellCallback<CoarseGrained>);
+#endif
 
     MOZ_ASSERT(rtStats.zoneStatsVector.length() == 1);
     rtStats.zTotals.addSizes(rtStats.zoneStatsVector[0]);
@@ -958,10 +968,12 @@ AddServoSizeOf(JSContext* cx, MallocSizeOf mallocSizeOf, ObjectPrivateVisitor* o
 {
     SimpleJSRuntimeStats rtStats(mallocSizeOf);
 
+#ifndef OMR
     // No need to anonymize because the results will be aggregated.
     if (!CollectRuntimeStatsHelper(cx, &rtStats, opv, /* anonymize = */ false,
                                    StatsCellCallback<CoarseGrained>))
         return false;
+#endif
 
 #ifdef DEBUG
     size_t gcHeapTotalOriginal = sizes->gcHeapUsed +

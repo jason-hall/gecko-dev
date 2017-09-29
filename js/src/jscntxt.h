@@ -109,7 +109,9 @@ struct JSContext : public JS::RootingContext,
 
     js::ThreadLocalData<JS::ContextOptions> options_;
 
+#ifndef OMR
     js::ThreadLocalData<js::gc::ArenaLists*> arenas_;
+#endif
 
   public:
     // This is used by helper threads to change the runtime their context is
@@ -119,7 +121,9 @@ struct JSContext : public JS::RootingContext,
     bool isCooperativelyScheduled() const { return kind_ == js::ContextKind::Cooperative; }
     size_t threadNative() const { return threadNative_; }
 
-    inline js::gc::ArenaLists* arenas() const { return arenas_; }
+#ifndef OMR
+    inline js::gc::ArenaLists* arenas() const { return arenas_; 
+#endif
 
     template <typename T>
     bool isInsideCurrentZone(T thing) const {

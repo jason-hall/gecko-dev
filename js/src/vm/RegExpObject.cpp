@@ -1489,6 +1489,10 @@ js::RegExpToSharedNonInline(JSContext* cx, HandleObject obj)
 JS::ubi::Node::Size
 JS::ubi::Concrete<RegExpShared>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
+#ifdef OMR
+    return 0;
+#else
     return js::gc::Arena::thingSize(gc::AllocKind::REGEXP_SHARED) +
         get().sizeOfExcludingThis(mallocSizeOf);
+#endif
 }

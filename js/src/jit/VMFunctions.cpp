@@ -557,9 +557,11 @@ NewCallObject(JSContext* cx, HandleShape shape, HandleObjectGroup group)
     // The JIT creates call objects in the nursery, so elides barriers for
     // the initializing writes. The interpreter, however, may have allocated
     // the call object tenured, so barrier as needed before re-entering.
+#ifndef OMR
     // OMRTODO
-    //if (!IsInsideNursery(obj))
-        //cx->zone()->group()->storeBuffer().putWholeCell(obj);/
+    if (!IsInsideNursery(obj))
+        cx->zone()->group()->storeBuffer().putWholeCell(obj);
+#endif
 
     return obj;
 }
@@ -574,10 +576,12 @@ NewSingletonCallObject(JSContext* cx, HandleShape shape)
     // The JIT creates call objects in the nursery, so elides barriers for
     // the initializing writes. The interpreter, however, may have allocated
     // the call object tenured, so barrier as needed before re-entering.
+#ifndef OMR
     // OMRTODO
-    //MOZ_ASSERT(!IsInsideNursery(obj),
-    //           "singletons are created in the tenured heap");
-    //cx->zone()->group()->storeBuffer().putWholeCell(obj);
+    MOZ_ASSERT(!IsInsideNursery(obj),
+               "singletons are created in the tenured heap");
+    cx->zone()->group()->storeBuffer().putWholeCell(obj);
+#endif
 
     return obj;
 }
@@ -682,9 +686,11 @@ void
 PostWriteBarrier(JSRuntime* rt, JSObject* obj)
 {
     JS::AutoCheckCannotGC nogc;
+#ifndef OMR
     // OMRTODO
-    //MOZ_ASSERT(!IsInsideNursery(obj));
-    //rt->gc.storeBuffer().putWholeCell(obj);
+    MOZ_ASSERT(!IsInsideNursery(obj));
+    rt->gc.storeBuffer().putWholeCell(obj);
+#endif
 }
 
 static const size_t MAX_WHOLE_CELL_BUFFER_SIZE = 4096;
@@ -703,8 +709,10 @@ PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index)
         if (MOZ_UNLIKELY(!obj->is<NativeObject>()) ||
             uint32_t(index) >= obj->as<NativeObject>().getDenseInitializedLength())
         {
+#ifndef OMR
             // OMRTODO
-            //rt->gc.storeBuffer().putWholeCell(obj);
+            rt->gc.storeBuffer().putWholeCell(obj);
+#endif
             return;
         }
     }
@@ -719,13 +727,17 @@ PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index)
 #endif
         )
     {
-        //rt->gc.storeBuffer().putSlot(nobj, HeapSlot::Element,
-        //                             nobj->unshiftedIndex(index),
-        //                             1);
+#ifndef OMR
+        rt->gc.storeBuffer().putSlot(nobj, HeapSlot::Element,
+                                     nobj->unshiftedIndex(index),
+                                     1);
+#endif
         return;
     }
 
-    //rt->gc.storeBuffer().putWholeCell(obj);
+#ifndef OMR
+    rt->gc.storeBuffer().putWholeCell(obj);
+#endif
 }
 
 template void

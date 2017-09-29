@@ -560,18 +560,27 @@ GetAnyCompartmentInZone(JS::Zone* zone);
 namespace shadow {
 
 struct ObjectGroup {
+#ifdef OMR
+    void *omrPadding;
+#endif
     const Class* clasp;
     JSObject*   proto;
     JSCompartment* compartment;
 };
 
 struct BaseShape {
+#ifdef OMR
+    void *omrPadding;
+#endif
     const js::Class* clasp_;
     JSObject* parent;
 };
 
 class Shape {
 public:
+#ifdef OMR
+    void *omrPadding;
+#endif
     shadow::BaseShape* base;
     jsid              _1;
     uint32_t          slotInfo;
@@ -585,6 +594,9 @@ public:
  * depending on the object's specific layout.
  */
 struct Object {
+#ifdef OMR
+    void *omrPadding;
+#endif
     shadow::ObjectGroup* group;
     shadow::Shape*      shape;
     JS::Value*          slots;
@@ -622,6 +634,9 @@ struct String
     static const uint32_t ROPE_FLAGS       = 0;
     static const uint32_t EXTERNAL_FLAGS   = JS_BIT(5);
     static const uint32_t TYPE_FLAGS_MASK  = JS_BIT(6) - 1;
+#ifdef OMR
+    void *omrPadding;
+#endif
     uint32_t flags;
     uint32_t length;
     union {

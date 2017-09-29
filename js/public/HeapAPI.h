@@ -380,7 +380,18 @@ CellIsNotGray(const Cell* cell);
 MOZ_ALWAYS_INLINE bool
 IsInsideNursery(const js::gc::Cell* cell)
 {
+#ifdef OMR
     return true;
+#else
+    if (!cell)
+        return false;
+    uintptr_t addr = uintptr_t(cell);
+    addr &= ~js::gc::ChunkMask;
+    addr |= js::gc::ChunkLocationOffset;
+    auto location = *reinterpret_cast<ChunkLocation*>(addr);
+    MOZ_ASSERT(location == ChunkLocation::Nursery || location == ChunkLocation::TenuredHeap);
+    return location == ChunkLocation::Nursery;
+#endif
 }
 
 } /* namespace gc */

@@ -2132,8 +2132,10 @@ HeapTypeSetKey::constant(CompilerConstraintList* constraints, Value* valOut)
     Value val = obj->as<NativeObject>().getSlot(shape->slot());
 
     // If the value is a pointer to an object in the nursery, don't optimize.
-    //if (val.isGCThing() && IsInsideNursery(val.toGCThing()))
-    //    return false;
+#ifndef OMR
+    if (val.isGCThing() && IsInsideNursery(val.toGCThing()))
+        return false;
+#endif
 
     // If the value is a string that's not atomic, don't optimize.
     if (val.isString() && !val.toString()->isAtom())
@@ -3540,14 +3542,16 @@ PreliminaryObjectArrayWithTemplate::trace(JSTracer* trc)
 /* static */ void
 PreliminaryObjectArrayWithTemplate::writeBarrierPre(PreliminaryObjectArrayWithTemplate* objects)
 {
-    /*Shape* shape = objects->shape();
+#ifndef OMR
+    Shape* shape = objects->shape();
 
     if (!shape)
         return;
 
     JS::Zone* zone = shape->zoneFromAnyThread();
     if (zone->needsIncrementalBarrier())
-        objects->trace(zone->barrierTracer());*/
+        objects->trace(zone->barrierTracer());
+#endif
 }
 
 // Return whether shape consists entirely of plain data properties.
@@ -4104,12 +4108,14 @@ TypeNewScript::trace(JSTracer* trc)
 /* static */ void
 TypeNewScript::writeBarrierPre(TypeNewScript* newScript)
 {
-    /*if (JS::CurrentThreadIsHeapCollecting())
+#ifndef OMR
+    if (JS::CurrentThreadIsHeapCollecting())
         return;
 
     JS::Zone* zone = newScript->function()->zoneFromAnyThread();
     if (zone->needsIncrementalBarrier())
-        newScript->trace(zone->barrierTracer());*/
+        newScript->trace(zone->barrierTracer());
+#endif
 }
 
 void
@@ -4544,9 +4550,11 @@ TypeZone::beginSweep(FreeOp* fop, bool releaseTypes, AutoClearTypeInferenceState
 
     // Clear the analysis pool, but don't release its data yet. While sweeping
     // types any live data will be allocated into the pool.
-	// OMR TODO: Following line fails on asserting that sweepTypeLifoAlloc is empty.
-	// 			 Freeing it after sweeping causes crash.
-    //sweepTypeLifoAlloc.ref().steal(&typeLifoAlloc());
+#ifndef OMR
+    // OMR TODO: Following line fails on asserting that sweepTypeLifoAlloc is empty.
+    // 			 Freeing it after sweeping causes crash.
+    sweepTypeLifoAlloc.ref().steal(&typeLifoAlloc());
+#endif
 
     // Sweep any invalid or dead compiler outputs, and keep track of the new
     // index for remaining live outputs.

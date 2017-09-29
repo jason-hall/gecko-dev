@@ -201,48 +201,20 @@ class ZoneCellIter;
 template <>
 class ZoneCellIter<TenuredCell> {
 // OMRTODO: Delete this class. It was for arenas.
-    ArenaIter arenaIter;
-    ArenaCellIterImpl cellIter;
-    mozilla::Maybe<JS::AutoAssertNoGC> nogc;
 
   protected:
     // For use when a subclass wants to insert some setup before init().
     ZoneCellIter() {}
 
     void init(JS::Zone* zone, AllocKind kind) {
-        MOZ_ASSERT_IF(IsNurseryAllocable(kind),
-                      zone->isAtomsZone() || zone->group()->nursery().isEmpty());
         initForTenuredIteration(zone, kind);
     }
 
     void initForTenuredIteration(JS::Zone* zone, AllocKind kind) {
-        JSRuntime* rt = zone->runtimeFromAnyThread();
-
-        // If called from outside a GC, ensure that the heap is in a state
-        // that allows us to iterate.
-        if (!JS::CurrentThreadIsHeapBusy()) {
-            // Assert that no GCs can occur while a ZoneCellIter is live.
-            nogc.emplace();
-        }
-
-        // We have a single-threaded runtime, so there's no need to protect
-        // against other threads iterating or allocating. However, we do have
-        // background finalization; we may have to wait for this to finish if
-        // it's currently active.
-        if (IsBackgroundFinalized(kind) && zone->arenas.needBackgroundFinalizeWait(kind))
-            rt->gc.waitBackgroundSweepEnd();
-        arenaIter.init(zone, kind);
-        if (!arenaIter.done())
-            cellIter.init(arenaIter.get(), CellIterMayNeedBarrier);
     }
 
   public:
     ZoneCellIter(JS::Zone* zone, AllocKind kind) {
-        // If we are iterating a nursery-allocated kind then we need to
-        // evict first so that we can see all things.
-        if (IsNurseryAllocable(kind))
-            zone->runtimeFromActiveCooperatingThread()->gc.evictNursery();
-
         init(zone, kind);
     }
 
@@ -355,7 +327,7 @@ class GCZonesIter
   public:
     explicit GCZonesIter(JSRuntime* rt, ZoneSelector selector = WithAtoms) : zone(rt, selector) {
         MOZ_ASSERT(JS::CurrentThreadIsHeapBusy());
-        if (!zone->isCollectingFromAnyThread())
+        //if (!zone->isCollectingFromAnyThread())
             next();
     }
 
@@ -408,14 +380,6 @@ class GCSweepGroupIter {
 typedef CompartmentsIterT<GCSweepGroupIter> GCCompartmentGroupIter;
 
 template <typename T>
-inline void
-CheckGCThingAfterMovingGC(T* t)
-{
-    if (t)
-        MOZ_RELEASE_ASSERT(IsGCThingValidAfterMovingGC(t));
-}
-
-template <typename T>
 struct MightBeForwarded
 {
     static_assert(mozilla::IsBaseOf<Cell, T>::value,
@@ -433,67 +397,13 @@ struct MightBeForwarded
                               mozilla::IsBaseOf<js::RegExpShared, T>::value;
 };
 
-template <typename T>
-inline bool
-IsForwarded(T* t)
-{
-    RelocationOverlay* overlay = RelocationOverlay::fromCell(t);
-    if (!MightBeForwarded<T>::value) {
-        MOZ_ASSERT(!overlay->isForwarded());
-        return false;
-    }
-
-    return overlay->isForwarded();
-}
-
-struct IsForwardedFunctor : public BoolDefaultAdaptor<Value, false> {
-    template <typename T> bool operator()(T* t) { return IsForwarded(t); }
-};
-
-inline bool
-IsForwarded(const JS::Value& value)
-{
-    return DispatchTyped(IsForwardedFunctor(), value);
-}
-
-template <typename T>
-inline T*
-Forwarded(T* t)
-{
-    RelocationOverlay* overlay = RelocationOverlay::fromCell(t);
-    MOZ_ASSERT(overlay->isForwarded());
-    return reinterpret_cast<T*>(overlay->forwardingAddress());
-}
-
-struct ForwardedFunctor : public IdentityDefaultAdaptor<Value> {
-    template <typename T> inline Value operator()(T* t) {
-        return js::gc::RewrapTaggedPointer<Value, T>::wrap(Forwarded(t));
-    }
-};
-
-inline Value
-Forwarded(const JS::Value& value)
-{
-    return DispatchTyped(ForwardedFunctor(), value);
-}
-
-template <typename T>
-inline T
-MaybeForwarded(T t)
-{
-    if (IsForwarded(t))
-        t = Forwarded(t);
-    MakeAccessibleAfterMovingGC(t);
-    return t;
-}
-
 #ifdef JSGC_HASH_TABLE_CHECKS
 
 template <typename T>
 inline bool
 IsGCThingValidAfterMovingGC(T* t)
 {
-    return !IsInsideNursery(t) && !RelocationOverlay::isCellForwarded(t);
+    return true;
 }
 
 template <typename T>

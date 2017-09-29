@@ -14,6 +14,7 @@
 
 BEGIN_TEST(testGCChunkPool)
 {
+#ifndef OMR
     const int N = 10;
     js::gc::ChunkPool pool;
 
@@ -65,7 +66,7 @@ BEGIN_TEST(testGCChunkPool)
         pool.remove(chunk);
         js::gc::UnmapPages(chunk, js::gc::ChunkSize);
     }
-
+#endif
     return true;
 }
 END_TEST(testGCChunkPool)

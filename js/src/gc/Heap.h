@@ -230,9 +230,13 @@ struct Cell
     MOZ_ALWAYS_INLINE bool isTenured() const { return !IsInsideNursery(this); }
     MOZ_ALWAYS_INLINE const TenuredCell& asTenured() const;
     MOZ_ALWAYS_INLINE TenuredCell& asTenured();
-	
-	inline JS::Zone* zoneFromAnyThread() const;
-	inline JS::Zone* zone() const;
+
+    MOZ_ALWAYS_INLINE bool isMarkedAny() const { return false; }
+    MOZ_ALWAYS_INLINE bool isMarkedBlack() const { return false; }
+    MOZ_ALWAYS_INLINE bool isMarkedGray() const { return false; }
+
+    inline JS::Zone* zoneFromAnyThread() const;
+    inline JS::Zone* zone() const;
 
     inline JSRuntime* runtimeFromActiveCooperatingThread() const;
 
@@ -357,11 +361,11 @@ Cell::runtimeFromActiveCooperatingThread() const
     return reinterpret_cast<JS::shadow::Zone*>(zone())->runtimeFromActiveCooperatingThread();
 }
 
-/*inline JSRuntime*
-Cell::runtimeFromActiveCooperatingThread() const
+inline JSRuntime*
+Cell::runtimeFromAnyThread() const
 {
     return reinterpret_cast<JS::shadow::Zone*>(zone())->runtimeFromAnyThread();
-}*/
+}
 
 inline JS::Zone*
 Cell::zoneFromAnyThread() const

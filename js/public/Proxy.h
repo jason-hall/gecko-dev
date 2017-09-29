@@ -449,7 +449,11 @@ struct ProxyDataLayout
     }
 };
 
+#ifdef OMR
+const uint32_t ProxyDataOffset = 3 * sizeof(void*);
+#else
 const uint32_t ProxyDataOffset = 2 * sizeof(void*);
+#endif
 
 inline ProxyDataLayout*
 GetProxyDataLayout(JSObject* obj)

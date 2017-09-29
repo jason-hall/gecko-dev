@@ -153,34 +153,11 @@ IsThingPoisoned(T* thing)
 }
 #endif
 
-template <typename T> bool ThingIsPermanentAtomOrWellKnownSymbol(T* thing) { return false; }
-template <> bool ThingIsPermanentAtomOrWellKnownSymbol<JSString>(JSString* str) {
-    return str->isPermanentAtom();
-}
-template <> bool ThingIsPermanentAtomOrWellKnownSymbol<JSFlatString>(JSFlatString* str) {
-    return str->isPermanentAtom();
-}
-template <> bool ThingIsPermanentAtomOrWellKnownSymbol<JSLinearString>(JSLinearString* str) {
-    return str->isPermanentAtom();
-}
-template <> bool ThingIsPermanentAtomOrWellKnownSymbol<JSAtom>(JSAtom* atom) {
-    return atom->isPermanent();
-}
-template <> bool ThingIsPermanentAtomOrWellKnownSymbol<PropertyName>(PropertyName* name) {
-    return name->isPermanent();
-}
-template <> bool ThingIsPermanentAtomOrWellKnownSymbol<JS::Symbol>(JS::Symbol* sym) {
-    return sym->isWellKnownSymbol();
-}
-
 template <typename T>
 static inline bool
 IsOwnedByOtherRuntime(JSRuntime* rt, T thing)
 {
     bool other = thing->runtimeFromAnyThread() != rt;
-    MOZ_ASSERT_IF(other,
-                  ThingIsPermanentAtomOrWellKnownSymbol(thing) ||
-                  thing->zoneFromAnyThread()->isSelfHostingZone());
     return other;
 }
 
@@ -318,21 +295,10 @@ js::TraceNullableEdge(JSTracer* trc, ReadBarriered<T>* thingp, const char* name)
 
 template <typename T>
 JS_PUBLIC_API(void)
-JS::TraceEdge(JSTracer* trc, JS::Heap<T>* thingp, const char* name)
+js::gc::TraceExternalEdge(JSTracer* trc, T* thingp, const char* name)
 {
-    MOZ_ASSERT(thingp);
-    if (InternalBarrierMethods<T>::isMarkable(*thingp->unsafeGet()))
-        DispatchToTracer(trc, ConvertToBase(thingp->unsafeGet()), name);
-}
-
-JS_PUBLIC_API(void)
-JS::TraceEdge(JSTracer* trc, JS::TenuredHeap<JSObject*>* thingp, const char* name)
-{
-    MOZ_ASSERT(thingp);
-    if (JSObject* ptr = thingp->getPtr()) {
-        DispatchToTracer(trc, &ptr, name);
-        thingp->setPtr(ptr);
-    }
+    MOZ_ASSERT(InternalBarrierMethods<T>::isMarkable(*thingp));
+    DispatchToTracer(trc, ConvertToBase(thingp), name);
 }
 
 template <typename T>
@@ -474,20 +440,16 @@ template <typename T>
 void
 js::TraceProcessGlobalRoot(JSTracer* trc, T* thing, const char* name)
 {
-    MOZ_ASSERT(ThingIsPermanentAtomOrWellKnownSymbol(thing));
-
     // We have to mark permanent atoms and well-known symbols through a special
     // method because the default DoMarking implementation automatically skips
     // them. Fortunately, atoms (permanent and non) cannot refer to other GC
     // things so they do not need to go through the mark stack and may simply
     // be marked directly.  Moreover, well-known symbols can refer only to
     // permanent atoms, so likewise require no subsquent marking.
-	// OMRTODO: Delete original marking tracer
+    // OMRTODO: Delete original marking tracer
     CheckTracedThing(trc, *ConvertToBase(&thing));
-	if (trc->isOmrMarkingTracer())
+    if (trc->isOmrMarkingTracer())
 		return static_cast<omrjs::OMRGCMarker*>(trc)->traverse(ConvertToBase(&thing));
-    else if (trc->isMarkingTracer())
-        thing->markIfUnmarked(gc::BLACK);
     else if(trc->isCallbackTracer())
 		DoCallback(trc->asCallbackTracer(), ConvertToBase(&thing), name);
 }
@@ -545,14 +507,10 @@ DispatchToTracer(JSTracer* trc, T* thingp, const char* name)
             mozilla::IsSame<T, TaggedProto>::value,
             "Only the base cell layout types are allowed into marking/tracing internals");
 #undef IS_SAME_TYPE_OR
-	if (trc->isOmrMarkingTracer())
-		return static_cast<omrjs::OMRGCMarker*>(trc)->traverse(thingp);
-    else if (trc->isMarkingTracer())
-        return DoMarking(static_cast<GCMarker*>(trc), *thingp);
-    else if (trc->isTenuringTracer())
-        return static_cast<TenuringTracer*>(trc)->traverse(thingp);
-    else if(trc->isCallbackTracer())
-		DoCallback(trc->asCallbackTracer(), thingp, name);
+    if (trc->isOmrMarkingTracer())
+        return static_cast<omrjs::OMRGCMarker*>(trc)->traverse(thingp);
+    else if (trc->isCallbackTracer())
+        DoCallback(trc->asCallbackTracer(), thingp, name);
 }
 
 
@@ -594,27 +552,6 @@ bool
 MustSkipMarking<JSObject*>(GCMarker* gcmarker, JSObject* obj)
 {
 	return false;
-}
-
-
-template <typename S, typename T>
-static void
-CheckTraversedEdge(S source, T* target)
-{
-    // Atoms and Symbols do not have or mark their internal pointers, respectively.
-    MOZ_ASSERT(!ThingIsPermanentAtomOrWellKnownSymbol(source));
-
-    // The Zones must match, unless the target is an atom.
-    MOZ_ASSERT_IF(!ThingIsPermanentAtomOrWellKnownSymbol(target),
-                  target->zone()->isAtomsZone() || target->zone() == source->zone());
-
-    // Atoms and Symbols do not have access to a compartment pointer, or we'd need
-    // to adjust the subsequent check to catch that case.
-    MOZ_ASSERT_IF(ThingIsPermanentAtomOrWellKnownSymbol(target), !target->maybeCompartment());
-    MOZ_ASSERT_IF(target->zoneFromAnyThread()->isAtomsZone(), !target->maybeCompartment());
-    // If we have access to a compartment pointer for both things, they must match.
-    MOZ_ASSERT_IF(source->maybeCompartment() && target->maybeCompartment(),
-                  source->maybeCompartment() == target->maybeCompartment());
 }
 
 
@@ -748,9 +685,14 @@ ModuleScope::Data::trace(JSTracer* trc)
     TraceBindingNames(trc, names, length);
 }
 void
+WasmInstanceScope::Data::trace(JSTracer* trc)
+{
+    TraceNullableEdge(trc, &instance, "wasm instance");
+    TraceBindingNames(trc, names, length);
+}
+void
 WasmFunctionScope::Data::trace(JSTracer* trc)
 {
-    TraceNullableEdge(trc, &instance, "wasm function");
     TraceBindingNames(trc, names, length);
 }
 void
@@ -993,7 +935,7 @@ IsMarkedInternalCommon(void* thingp)
 bool
 js::gc::IsAboutToBeFinalizedDuringSweep(TenuredCell& tenured)
 {
-    return !tenured.isMarked();
+    return IsMarkedCell(&tenured);
 }
 
 template <typename T>
@@ -1093,3 +1035,10 @@ JS::UnmarkGrayGCThingRecursively(JS::GCCellPtr thing)
 {
     return true;
 }
+
+bool
+js::UnmarkGrayShapeRecursively(Shape* shape)
+{
+    return JS::UnmarkGrayGCThingRecursively(JS::GCCellPtr(shape));
+}
+

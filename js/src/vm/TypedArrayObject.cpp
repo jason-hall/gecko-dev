@@ -485,7 +485,9 @@ class TypedArrayObjectTemplate : public TypedArrayObject
             // may be in the nursery, so include a barrier to make sure this
             // object is updated if that typed object moves.
             auto ptr = buffer->dataPointerEither();
-            //if (!IsInsideNursery(obj) && cx->nursery().isInside(ptr)) {
+#ifndef OMR
+            if (!IsInsideNursery(obj) && cx->nursery().isInside(ptr)) {
+#endif
                 // Shared buffer data should never be nursery-allocated, so we
                 // need to fail here if isSharedMemory.  However, mmap() can
                 // place a SharedArrayRawBuffer up against the bottom end of a
@@ -500,6 +502,9 @@ class TypedArrayObjectTemplate : public TypedArrayObject
                     cx->zone()->group()->storeBuffer().putWholeCell(obj);
 #endif // ! OMR Writebarrier
                 }
+#ifndef OMR
+            }
+#endif
         } else {
             void* data = obj->fixedData(FIXED_DATA_START);
             obj->initPrivate(data);

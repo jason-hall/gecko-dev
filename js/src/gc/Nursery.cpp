@@ -75,3 +75,4 @@ js::Nursery::allocateObject(JSContext* cx, size_t size, size_t numDynamic, const
 	}
 	return obj;
 }
+

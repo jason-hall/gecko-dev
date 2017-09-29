@@ -611,7 +611,9 @@ struct VisitGrayCallbackFunctor {
 
     template <class T>
     void operator()(T tp) const {
+#ifndef OMR
         if ((*tp)->isMarkedGray())
+#endif
             callback_(closure_, JS::GCCellPtr(*tp));
     }
 };
@@ -1457,7 +1459,11 @@ js::IsWindowProxy(JSObject* obj)
     // Note: simply checking `obj == obj->global().windowProxy()` is not
     // sufficient: we may have transplanted the window proxy with a CCW.
     // Check the Class to ensure we really have a window proxy.
-    return false; //obj->getClass() == obj->runtimeFromAnyThread()->maybeWindowProxyClass();
+#ifdef OMR
+    return false;
+#else
+    return obj->getClass() == obj->runtimeFromAnyThread()->maybeWindowProxyClass();
+#endif
 }
 
 JS_FRIEND_API(bool)

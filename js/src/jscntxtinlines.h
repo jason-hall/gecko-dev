@@ -454,7 +454,7 @@ JSContext::enterNonAtomsCompartment(JSCompartment* c)
 {
     enterCompartmentDepth_++;
 
-    MOZ_ASSERT(!c->zone()->isAtomsZone());
+    //MOZ_ASSERT(!c->zone()->isAtomsZone());
     enterZoneGroup(c->zone()->group());
 
     c->enter();
@@ -516,7 +516,11 @@ JSContext::setCompartment(JSCompartment* comp,
     MOZ_ASSERT_IF(runtime_->isAtomsCompartment(comp) || runtime_->isAtomsCompartment(compartment_),
                   runtime_->currentThreadHasExclusiveAccess());
 
+#ifndef OMR
     // Make sure that the atoms compartment has its own zone.
+    MOZ_ASSERT_IF(comp && !runtime_->isAtomsCompartment(comp),
+                  !comp->zone()->isAtomsZone());
+#endif
 
     // Both the current and the new compartment should be properly marked as
     // entered at this point.
@@ -529,6 +533,9 @@ JSContext::setCompartment(JSCompartment* comp,
 
     compartment_ = comp;
     zone_ = comp ? comp->zone() : nullptr;
+#ifndef OMR
+    arenas_ = zone_ ? &zone_->arenas : nullptr;
+#endif
 }
 
 inline void

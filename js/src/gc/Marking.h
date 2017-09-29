@@ -77,6 +77,16 @@ class GCMarker : public JSTracer
         MOZ_ASSERT(trc->isMarkingTracer());
         return static_cast<GCMarker*>(trc);
     }
+
+    void abortLinearWeakMarking() {}
+
+#ifdef DEBUG
+
+    bool shouldCheckCompartments() { return false; }
+
+#endif
+
+    size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const { return 0; }
 };
 
 #ifdef DEBUG

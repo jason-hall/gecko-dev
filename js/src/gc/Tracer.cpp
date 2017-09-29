@@ -114,10 +114,6 @@ struct TraceChildrenFunctor {
     template <typename T>
     void operator()(JSTracer* trc, void* thingArg) {
         T* thing = static_cast<T*>(thingArg);
-        MOZ_ASSERT_IF(thing->runtimeFromAnyThread() != trc->runtime(),
-            ThingIsPermanentAtomOrWellKnownSymbol(thing) ||
-            thing->zoneFromAnyThread()->isSelfHostingZone());
-
         thing->traceChildren(trc);
     }
 };

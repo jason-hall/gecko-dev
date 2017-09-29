@@ -91,6 +91,28 @@ class ZoneGroup
     ZoneGroupData<mozilla::LinkedList<js::Debugger>> debuggerList_;
   public:
     mozilla::LinkedList<js::Debugger>& debuggerList() { return debuggerList_.ref(); }
+
+    // Number of Ion compilations which were finished off thread and are
+    // waiting to be lazily linked. This is only set while holding the helper
+    // thread state lock, but may be read from at other times.
+    mozilla::Atomic<size_t> numFinishedBuilders;
+
+  private:
+    /* List of Ion compilation waiting to get linked. */
+    typedef mozilla::LinkedList<js::jit::IonBuilder> IonBuilderList;
+
+    js::HelperThreadLockData<IonBuilderList> ionLazyLinkList_;
+    js::HelperThreadLockData<size_t> ionLazyLinkListSize_;
+
+  public:
+    IonBuilderList& ionLazyLinkList();
+
+    size_t ionLazyLinkListSize() {
+        return ionLazyLinkListSize_;
+    }
+
+    void ionLazyLinkListRemove(js::jit::IonBuilder* builder);
+    void ionLazyLinkListAdd(js::jit::IonBuilder* builder);
 };
 
 } // namespace js

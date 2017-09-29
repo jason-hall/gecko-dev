@@ -471,6 +471,7 @@ class NativeObject : public ShapedObject
     }
 
   public:
+#ifdef OMR
 	// Added for OMR:
 	void deleteAllSlots() {
 		if (slots_ != 0) {
@@ -478,6 +479,7 @@ class NativeObject : public ShapedObject
 			slots_ = nullptr;
 		}
 	}
+#endif
 
     Shape* lastProperty() const {
         MOZ_ASSERT(shape_);
@@ -1328,8 +1330,8 @@ class NativeObject : public ShapedObject
     }
 
     void setPrivateGCThing(gc::Cell* cell) {
-        MOZ_ASSERT_IF(IsMarkedBlack(this),
-                      !JS::GCThingIsMarkedGray(JS::GCCellPtr(cell, cell->getTraceKind())));
+        //MOZ_ASSERT_IF(IsMarkedBlack(this),
+        //              !JS::GCThingIsMarkedGray(JS::GCCellPtr(cell, cell->getTraceKind())));
         void** pprivate = &privateRef(numFixedSlots());
         privateWriteBarrierPre(pprivate);
         *pprivate = reinterpret_cast<void*>(cell);

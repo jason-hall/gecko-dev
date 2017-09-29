@@ -88,7 +88,7 @@ struct StructGCPolicy
     }
 
     static void sweep(T* tp) {
-        return tp->sweep();
+        tp->sweep();
     }
 
     static bool needsSweep(T* tp) {

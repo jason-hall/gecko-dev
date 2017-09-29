@@ -2687,7 +2687,9 @@ JSScript::Create(JSContext* cx, const ReadOnlyCompileOptions& options,
         return nullptr;
 
     PodZero(script.get());
-	script->setAllocKind(js::gc::AllocKind::SCRIPT);
+#ifdef OMR
+    script->setAllocKind(js::gc::AllocKind::SCRIPT);
+#endif
 
     script->initCompartment(cx);
 

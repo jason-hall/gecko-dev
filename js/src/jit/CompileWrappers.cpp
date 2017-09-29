@@ -170,8 +170,12 @@ CompileZone::addressOfNeedsIncrementalBarrier()
 const void*
 CompileZone::addressOfFreeList(gc::AllocKind allocKind)
 {
+#ifdef OMR
+    return nullptr;
 	// OMRTODO: Arena stuff
-    return nullptr; //zone()->arenas.addressOfFreeList(allocKind);
+#else
+    return zone()->arenas.addressOfFreeList(allocKind);
+#endif
 }
 
 const void*
@@ -196,8 +200,11 @@ CompileZone::nurseryExists()
 void
 CompileZone::setMinorGCShouldCancelIonCompilations()
 {
-    MOZ_ASSERT(CurrentThreadCanAccessZone(zone()));
-    zone()->group()->storeBuffer().setShouldCancelIonCompilations();
+#ifndef OMR
+    // OMRTODO
+    //MOZ_ASSERT(CurrentThreadCanAccessZone(zone()));
+    //zone()->group()->storeBuffer().setShouldCancelIonCompilations();
+#endif
 }
 
 JSCompartment*

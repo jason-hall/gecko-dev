@@ -73,6 +73,31 @@ class MOZ_NON_TEMPORARY_CLASS ExternalStringCache
     MOZ_ALWAYS_INLINE void put(JSString* s);
 };
 
+class MOZ_NON_TEMPORARY_CLASS FunctionToStringCache
+{
+    struct Entry {
+        JSScript* script;
+        JSString* string;
+
+        void set(JSScript* scriptArg, JSString* stringArg) {
+            script = scriptArg;
+            string = stringArg;
+        }
+    };
+    static const size_t NumEntries = 2;
+    mozilla::Array<Entry, NumEntries> entries_;
+
+    FunctionToStringCache(const FunctionToStringCache&) = delete;
+    void operator=(const FunctionToStringCache&) = delete;
+
+  public:
+    FunctionToStringCache() { purge(); }
+    void purge() { mozilla::PodArrayZero(entries_); }
+
+    MOZ_ALWAYS_INLINE JSString* lookup(JSScript* script) const;
+    MOZ_ALWAYS_INLINE void put(JSScript* script, JSString* string);
+};
+
 } // namespace js
 
 namespace JS {
@@ -142,18 +167,6 @@ struct Zone : public JS::shadow::Zone,
         return offsetof(Zone, group_);
     }
 
-  private:
-    js::ZoneGroup* const group_;
-  public:
-    js::ZoneGroup* group() const {
-        return group_;
-    }
-
-    // For JIT use.
-    static size_t offsetOfGroup() {
-        return offsetof(Zone, group_);
-    }
-
     void discardJitCode(js::FreeOp* fop, bool discardBaselineCode = true);
 
     void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
@@ -207,13 +220,6 @@ struct Zone : public JS::shadow::Zone,
         return false;
     }
 
-    GCState gcState() const { return NoGC; }
-    bool wasGCStarted() const { return false; }
-    bool isGCSweeping() { return false; }
-    bool isGCFinished() { return true; }
-    bool isGCCompacting() { return false; }
-    bool isGCSweepingOrCompacting() { return false; }
-
     // Get a number that is incremented whenever this zone is collected, and
     // possibly at other times too.
     uint64_t gcNumber() { return runtimeFromActiveCooperatingThread()->gc.gcNumber(); }
@@ -252,11 +258,11 @@ struct Zone : public JS::shadow::Zone,
     js::gc::UniqueIdMap& uniqueIds() { return uniqueIds_.ref(); }
 
   public:
+    using DebuggerVector = js::Vector<js::Debugger*, 0, js::SystemAllocPolicy>;
+
     bool hasDebuggers() const { return true; }
     DebuggerVector* getDebuggers() const { return nullptr; }
     DebuggerVector* getOrCreateDebuggers(JSContext* cx);
-
-    void notifyObservingDebuggers();
 
     void clearTables();
 
@@ -344,6 +350,8 @@ struct Zone : public JS::shadow::Zone,
     js::ZoneGroupData<JS::WeakCache<TypeDescrObjectSet>> typeDescrObjects_;
 
   public:
+    js::RegExpZone regExps;
+
     JS::WeakCache<TypeDescrObjectSet>& typeDescrObjects() { return typeDescrObjects_.ref(); }
 
     bool addTypeDescrObject(JSContext* cx, HandleObject obj);
@@ -377,12 +385,17 @@ struct Zone : public JS::shadow::Zone,
     // Cache storing allocated external strings. Purged on GC.
     js::ZoneGroupOrGCTaskData<js::ExternalStringCache> externalStringCache_;
 
+    // Cache for Function.prototype.toString. Purged on GC.
+    js::ZoneGroupOrGCTaskData<js::FunctionToStringCache> functionToStringCache_;
+
   public:
     js::SparseBitmap& markedAtoms() { return markedAtoms_.ref(); }
 
     js::AtomSet& atomCache() { return atomCache_.ref(); }
 
     js::ExternalStringCache& externalStringCache() { return externalStringCache_.ref(); };
+
+    js::FunctionToStringCache& functionToStringCache() { return functionToStringCache_.ref(); }
 
     // Amount of data to allocate before triggering a new incremental slice for
     // the current GC.
@@ -409,6 +422,12 @@ struct Zone : public JS::shadow::Zone,
   public:
     js::InitialShapeSet& initialShapes() { return initialShapes_.ref(); }
 
+  private:
+    // List of shapes that may contain nursery pointers.
+    using NurseryShapeVector = js::Vector<js::AccessorShape*, 0, js::SystemAllocPolicy>;
+    js::ZoneGroupData<NurseryShapeVector> nurseryShapes_;
+  public:
+    NurseryShapeVector& nurseryShapes() { return nurseryShapes_.ref(); }
 
 #ifdef JSGC_HASH_TABLE_CHECKS
     void checkInitialShapesTableAfterMovingGC();
@@ -851,6 +870,34 @@ class ZoneAllocPolicy
 template <typename T>
 struct GCManagedDeletePolicy
 {
+    struct ClearEdgesTracer : public JS::CallbackTracer
+    {
+        explicit ClearEdgesTracer(JSContext* cx) : CallbackTracer(cx, TraceWeakMapKeysValues) {}
+#ifdef DEBUG
+        TracerKind getTracerKind() const override { return TracerKind::ClearEdges; }
+#endif
+
+        template <typename S>
+        void clearEdge(S** thingp) {
+            InternalBarrierMethods<S*>::preBarrier(*thingp);
+            InternalBarrierMethods<S*>::postBarrier(thingp, *thingp, nullptr);
+            *thingp = nullptr;
+        }
+
+        void onObjectEdge(JSObject** objp) override { clearEdge(objp); }
+        void onStringEdge(JSString** strp) override { clearEdge(strp); }
+        void onSymbolEdge(JS::Symbol** symp) override { clearEdge(symp); }
+        void onScriptEdge(JSScript** scriptp) override { clearEdge(scriptp); }
+        void onShapeEdge(js::Shape** shapep) override { clearEdge(shapep); }
+        void onObjectGroupEdge(js::ObjectGroup** groupp) override { clearEdge(groupp); }
+        void onBaseShapeEdge(js::BaseShape** basep) override { clearEdge(basep); }
+        void onJitCodeEdge(js::jit::JitCode** codep) override { clearEdge(codep); }
+        void onLazyScriptEdge(js::LazyScript** lazyp) override { clearEdge(lazyp); }
+        void onScopeEdge(js::Scope** scopep) override { clearEdge(scopep); }
+        void onRegExpSharedEdge(js::RegExpShared** sharedp) override { clearEdge(sharedp); }
+        void onChild(const JS::GCCellPtr& thing) override { MOZ_CRASH(); }
+    };
+
     void operator()(const T* constPtr) {
         if (constPtr) {
             auto ptr = const_cast<T*>(constPtr);

@@ -81,7 +81,11 @@ class WeakMapBase : public mozilla::LinkedListElement<WeakMapBase>
     // Restore information about which weak maps are marked for many zones.
     static void restoreMarkedWeakMaps(WeakMapSet& markedWeakMaps);
 
+#ifdef OMR
   public:
+#else
+  protected:
+#endif
     // Instance member functions called by the above. Instantiations of WeakMap override
     // these with definitions appropriate for their Key and Value types.
     virtual void trace(JSTracer* tracer) = 0;
@@ -232,8 +236,12 @@ class WeakMap : public HashMap<Key, Value, HashPolicy, RuntimeAllocPolicy>,
   protected:
     static void addWeakEntry(GCMarker* marker, JS::GCCellPtr key, gc::WeakMarkable markable)
     {
+#ifdef OMR
         // OMRTODO: Get a real zone from a context passed through.
         Zone* zone = gc::OmrGcHelper::zone; // use a single global zone
+#else
+        Zone* zone = key.asCell()->asTenured().zone();
+#endif
 
         auto p = zone->gcWeakKeys().get(key);
         if (p) {
@@ -300,7 +308,11 @@ class WeakMap : public HashMap<Key, Value, HashPolicy, RuntimeAllocPolicy>,
         return nullptr;
     }
 
+#ifdef OMR
   public:
+#else
+  private:
+#endif
     void exposeGCThingToActiveJS(const JS::Value& v) const { JS::ExposeValueToActiveJS(v); }
     void exposeGCThingToActiveJS(JSObject* obj) const { JS::ExposeObjectToActiveJS(obj); }
 

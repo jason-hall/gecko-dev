@@ -147,32 +147,21 @@ struct Statistics
 
     const SliceDataVector& slices() const { return slices_; }
 
-
-    // Return JSON for a whole major GC, optionally including detailed
-    // per-slice data.
-    UniqueChars renderJsonMessage(uint64_t timestamp, bool includeSlices = true) const;
-
-    // Return JSON for the timings of just the given slice.
-    UniqueChars renderJsonSlice(size_t sliceNum) const;
-
-    // Return JSON for the previous nursery collection.
-    UniqueChars renderNurseryJson(JSRuntime* rt) const;
-
   private:
     SliceDataVector slices_;
 };
 
 struct MOZ_RAII AutoPhase
 {
-    AutoPhase(Statistics& stats, Phase phase)
+    AutoPhase(Statistics& stats, PhaseKind phase)
     {
     }
 
-    AutoPhase(Statistics& stats, bool condition, Phase phase)
+    AutoPhase(Statistics& stats, bool condition, PhaseKind phase)
     {
     }
 
-    AutoPhase(Statistics& stats, const GCParallelTask& task, Phase phase)
+    AutoPhase(Statistics& stats, const GCParallelTask& task, PhaseKind phase)
     {
     }
 

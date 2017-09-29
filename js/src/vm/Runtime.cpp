@@ -492,8 +492,10 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
 
     rtSizes->gc.nurseryCommitted += gc.nursery().sizeOfHeapCommitted();
     rtSizes->gc.nurseryMallocedBuffers += gc.nursery().sizeOfMallocedBuffers(mallocSizeOf);
-	// OMRTODO: Fix
-    //gc.storeBuffer().addSizeOfExcludingThis(mallocSizeOf, &rtSizes->gc);
+#ifndef OMR
+    // OMRTODO: Fix
+    gc.storeBuffer().addSizeOfExcludingThis(mallocSizeOf, &rtSizes->gc);
+#endif
 
     if (sharedImmutableStrings_) {
         rtSizes->sharedImmutableStringsCache +=

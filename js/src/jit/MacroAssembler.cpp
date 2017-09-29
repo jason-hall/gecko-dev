@@ -785,8 +785,11 @@ MacroAssembler::nurseryAllocate(Register result, Register temp, gc::AllocKind al
     // No explicit check for nursery.isEnabled() is needed, as the comparison
     // with the nursery's end will always fail in such cases.
     CompileZone* zone = GetJitContext()->compartment->zone();
-    // OMRTODO
-    int thingSize = 0;//int(gc::Arena::thingSize(allocKind));
+#ifdef OMR
+    int thingSize = js::gc::OmrGcHelper::thingSize(allocKind);
+#else
+    int thingSize = int(gc::Arena::thingSize(allocKind));
+#endif
     int totalSize = thingSize + nDynamicSlots * sizeof(HeapSlot);
     MOZ_ASSERT(totalSize % gc::CellAlignBytes == 0);
     loadPtr(AbsoluteAddress(zone->addressOfNurseryPosition()), result);

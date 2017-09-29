@@ -1533,20 +1533,27 @@ CopyProxyValuesBeforeSwap(ProxyObject* proxy, Vector<Value>& values)
 {
     MOZ_ASSERT(values.empty());
 
+#ifndef OMR
     // Remove the GCPtrValues we're about to swap from the store buffer, to
     // ensure we don't trace bogus values.
+    //OMRTODO: 
     StoreBuffer& sb = proxy->zone()->group()->storeBuffer();
+#endif
 
     // Reserve space for the private slot and the reserved slots.
     if (!values.reserve(1 + proxy->numReservedSlots()))
         return false;
 
     js::detail::ProxyValueArray* valArray = js::detail::GetProxyDataLayout(proxy)->values();
+#ifndef OMR
     sb.unputValue(&valArray->privateSlot);
+#endif
     values.infallibleAppend(valArray->privateSlot);
 
     for (size_t i = 0; i < proxy->numReservedSlots(); i++) {
+#ifndef OMR
         sb.unputValue(&valArray->reservedSlots.slots[i]);
+#endif
         values.infallibleAppend(valArray->reservedSlots.slots[i]);
     }
 
@@ -3733,14 +3740,16 @@ js::DumpBacktrace(JSContext* cx)
     DumpBacktrace(cx, stdout);
 }
 
+/* * */
+
 js::gc::AllocKind
 JSObject::allocKindForTenure(const js::Nursery& nursery) const
 {
+#if defined(OMR)
     return getAllocKind();
 
     // OMRTODO: Check that alloc kind matches the store one
-
-#if !defined(OMR)
+#else
     if (is<ArrayObject>()) {
         const ArrayObject& aobj = as<ArrayObject>();
         MOZ_ASSERT(aobj.numFixedSlots() == 0);

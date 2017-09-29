@@ -3680,7 +3680,7 @@ static void
 EmitStoreBufferCheckForConstant(MacroAssembler& masm, JSObject* object,
                                 AllocatableGeneralRegisterSet& regs, Label* exit, Label* callVM)
 {
-#if 0 // OMRTODO: Arena related
+#ifndef OMR // OMRTODO: Arena related
     Register temp = regs.takeAny();
 
     const gc::TenuredCell* cell = &object->asTenured();
@@ -10099,8 +10099,10 @@ CodeGenerator::link(JSContext* cx, CompilerConstraintList* constraints)
         for (size_t i = 0; i < graph.numConstants(); i++) {
             const Value& v = vp[i];
             if (v.isObject() && IsInsideNursery(&v.toObject())) {
+#ifndef OMR
                 // OMRTODO: Arena stuff
-                //cx->zone()->group()->storeBuffer().putWholeCell(script);
+                cx->zone()->group()->storeBuffer().putWholeCell(script);
+#endif
                 break;
             }
         }

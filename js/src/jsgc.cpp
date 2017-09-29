@@ -446,12 +446,6 @@ struct SweepAction
 using SweepActionVector = Vector<SweepAction, 0, SystemAllocPolicy>;
 using SweepPhaseVector = Vector<SweepActionVector, 0, SystemAllocPolicy>;
 
-bool
-js::gc::InitializeStaticData()
-{
-    return GCRuntime::initializeSweepActions();
-}
-
 GCRuntime::GCRuntime(JSRuntime* rt) :
     rt(rt),
     systemZone(nullptr),
@@ -460,7 +454,6 @@ GCRuntime::GCRuntime(JSRuntime* rt) :
     stats_(rt),
     marker(rt),
     nextCellUniqueId_(LargestTaggedNullCellPointer + 1), // Ensure disjoint from null tagged pointers.
-    numActiveZoneIters(0),
     number(0),
     isFull(false),
     incrementalState(gc::State::NotActive),
@@ -534,23 +527,6 @@ bool
 GCRuntime::parseAndSetZeal(const char* str)
 {
     return true;
-}
-
-static const char*
-AllocKindName(AllocKind kind)
-{
-    static const char* names[] = {
-#define EXPAND_THING_NAME(allocKind, _1, _2, _3) \
-        #allocKind,
-FOR_EACH_ALLOCKIND(EXPAND_THING_NAME)
-#undef EXPAND_THING_NAME
-    };
-    static_assert(ArrayLength(names) == size_t(AllocKind::LIMIT),
-                  "names array should have an entry for every AllocKind");
-
-    size_t i = size_t(kind);
-    MOZ_ASSERT(i < ArrayLength(names));
-    return names[i];
 }
 
 #endif // JS_GC_ZEAL
@@ -722,17 +698,6 @@ GCRuntime::updateMallocCounter(JS::Zone* zone, size_t nbytes)
 {
 }
 
-// OMRTODO: Delete
-void
-GCMarker::delayMarkingArena()
-{
-}
-
-void
-GCMarker::delayMarkingChildren(const void* thing)
-{
-}
-
 /* Compacting GC */
 
 AutoDisableCompactingGC::AutoDisableCompactingGC(JSContext* cx)
@@ -774,12 +739,6 @@ static const AllocKind AllocKindsToRelocate[] = {
     AllocKind::SCOPE,
     AllocKind::REGEXP_SHARED
 };
-
-static bool
-ShouldRelocateAllArenas(JS::gcreason::Reason reason)
-{
-    return false;
-}
 
 #ifdef DEBUG
 inline bool
@@ -864,17 +823,8 @@ GCHelperState::work()
 {
 }
 
+void
 GCHelperState::waitBackgroundSweepEnd()
-{
-}
-
-void
-Zone::prepareForCompacting()
-{
-}
-
-void
-GCRuntime::sweepTypesAfterCompacting(Zone* zone)
 {
 }
 
@@ -888,27 +838,6 @@ struct IsAboutToBeFinalizedFunctor {
         return result;
     }
 };
-
-#ifdef DEBUG
-static const char*
-AllocKindToAscii(AllocKind kind)
-{
-    switch(kind) {
-#define MAKE_CASE(allocKind, traceKind, type, sizedType) \
-      case AllocKind:: allocKind: return #allocKind;
-FOR_EACH_ALLOCKIND(MAKE_CASE)
-#undef MAKE_CASE
-
-      default:
-        MOZ_CRASH("Unknown AllocKind in AllocKindToAscii");
-    }
-}
-#endif // DEBUG
-
-void
-GCRuntime::maybeGC(Zone* zone)
-{
-}
 
 void
 GCRuntime::triggerFullGCForAtoms(JSContext* cx)
@@ -929,20 +858,6 @@ void
 GCRuntime::freeAllLifoBlocksAfterMinorGC(LifoAlloc* lifo)
 {
 }
-
-void
-GCHelperState::doSweep(AutoLockGC& lock)
-{
-}
-
-#ifdef DEBUG
-
-bool
-GCHelperState::onBackgroundThread()
-{
-}
-
-#endif // DEBUG
 
 /* static */ bool
 UniqueIdGCPolicy::needsSweep(Cell** cell, uint64_t*)
@@ -974,6 +889,7 @@ js::NotifyGCNukeWrapper(JSObject* obj)
 unsigned
 js::NotifyGCPreSwap(JSObject* a, JSObject* b)
 {
+    return 0;
 }
 
 void
@@ -981,23 +897,10 @@ js::NotifyGCPostSwap(JSObject* a, JSObject* b, unsigned removedFlags)
 {
 }
 
-class js::gc::WeakCacheSweepIterator
-{
-};
-
 class IncrementalSweepWeakCacheTask : public GCParallelTask
 {
 };
 
-/* Start a new heap session. */
-AutoTraceSession::AutoTraceSession(JSRuntime* rt, JS::HeapState heapState)
-  : lock(rt),
-    runtime(rt),
-    prevState(TlsContext.get()->heapState),
-    pseudoFrame(TlsContext.get(), HeapStateToLabel(heapState), ProfileEntry::Category::GC)
-{
-    //TlsContext.get()->heapState = heapState;
-}
 
 JS_PUBLIC_API(JS::HeapState)
 JS::CurrentThreadHeapState()
@@ -1008,26 +911,10 @@ JS::CurrentThreadHeapState()
 bool
 GCRuntime::canChangeActiveContext(JSContext* cx)
 {
-}
-
-bool
-GCRuntime::checkIfGCAllowedInCurrentState(JS::gcreason::Reason reason)
-{
-    return true;
-}
-
-bool
-GCRuntime::shouldRepeatForDeadZone(JS::gcreason::Reason reason)
-{
     return true;
 }
 
 js::AutoEnqueuePendingParseTasksAfterGC::~AutoEnqueuePendingParseTasksAfterGC()
-{
-}
-
-void
-GCRuntime::gc(JSGCInvocationKind gckind, JS::gcreason::Reason reason)
 {
 }
 
@@ -1054,11 +941,6 @@ js::PrepareForDebugGC(JSRuntime* rt)
 
 void
 GCRuntime::onOutOfMallocMemory()
-{
-}
-
-void
-GCRuntime::minorGC(JS::gcreason::Reason reason, gcstats::PhaseKind phase)
 {
 }
 
@@ -1139,21 +1021,20 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
             group->nursery().disable();
     }
 
-    if (!zone) {
+    /*if (!zone) {
         zone = cx->new_<Zone>(cx->runtime(), group);
         if (!zone)
             return nullptr;
 
-        groupHolder.reset(group);
+        zoneHolder.reset(zone);
 
-        if (!group->init()) {
+        const JSPrincipals* trusted = rt->trustedPrincipals();
+        bool isSystem = principals && principals == trusted;
+        if (!zone->init(isSystem)) {
             ReportOutOfMemory(cx);
             return nullptr;
         }
-
-        if (cx->generationalDisabled)
-            group->nursery().disable();
-    }
+    }*/
 
     if (!zone) {
         // OMRTODO: Use multiple zones from a context correctly.
@@ -1162,7 +1043,7 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
             zone = cx->new_<Zone>(cx->runtime(), group);
             zone->init(false);
             OmrGcHelper::zone = zone;
-		}
+	}
     }
 
     ScopedJSDeletePtr<JSCompartment> compartment(cx->new_<JSCompartment>(zone, options));
@@ -1194,10 +1075,11 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
     }
 
     if (groupHolder) {
-        if (!rt->gc.groups.ref().append(group)) {
+        // OMRTODO: Is this needed?
+        /*if (!rt->gc.groups.ref().append(group)) {
             ReportOutOfMemory(cx);
             return nullptr;
-        }
+        }*/
 
         // Lazily set the runtime's system zone group.
         if (zoneSpec == JS::SystemZone || zoneSpec == JS::NewZoneInSystemZoneGroup) {
@@ -1214,11 +1096,6 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
 
 void
 gc::MergeCompartments(JSCompartment* source, JSCompartment* target)
-{
-}
-
-void
-GCRuntime::mergeCompartments(JSCompartment* source, JSCompartment* target)
 {
 }
 
@@ -1268,11 +1145,6 @@ AutoSuppressGC::~AutoSuppressGC()
     gc.enable();
 }
 
-bool
-js::UninlinedIsInsideNursery(const gc::Cell* cell)
-{
-}
-
 #ifdef DEBUG
 AutoDisableProxyCheck::AutoDisableProxyCheck()
 {
@@ -1286,6 +1158,12 @@ JS_FRIEND_API(void)
 js::gc::AssertGCThingHasType(js::gc::Cell* cell, JS::TraceKind kind)
 {
 }
+
+JS_FRIEND_API(void)
+JS::AssertGCThingMustBeTenured(JSObject* obj)
+{
+}
+
 #endif
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
@@ -1344,6 +1222,22 @@ JS::GCCellPtr::GCCellPtr(const Value& v)
         ptr = checkedCast(v.toGCThing(), v.toGCThing()->getTraceKind());
     else
         ptr = checkedCast(nullptr, JS::TraceKind::Null);
+}
+
+JS::TraceKind
+JS::GCCellPtr::outOfLineKind() const
+{
+    MOZ_ASSERT((ptr & OutOfLineTraceKindMask) == OutOfLineTraceKindMask);
+    MOZ_ASSERT(asCell()->isTenured());
+    return MapAllocToTraceKind(asCell()->asTenured().getAllocKind());
+}
+
+bool
+JS::GCCellPtr::mayBeOwnedByOtherRuntimeSlow() const
+{
+    if (is<JSString>())
+        return as<JSString>().isPermanentAtom();
+    return as<Symbol>().isWellKnownSymbol();
 }
 
 JS_PUBLIC_API(void)
@@ -1420,46 +1314,43 @@ JS::GCDescription::formatJSON(JSContext* cx, uint64_t timestamp) const
 TimeStamp
 JS::GCDescription::startTime(JSContext* cx) const
 {
-    return cx->runtime()->gc.stats().start();
+    return TimeStamp();
 }
 
 TimeStamp
 JS::GCDescription::endTime(JSContext* cx) const
 {
-    return cx->runtime()->gc.stats().end();
+    return TimeStamp();
 }
 
 TimeStamp
 JS::GCDescription::lastSliceStart(JSContext* cx) const
 {
-    return cx->runtime()->gc.stats().slices().back().start;
+    return TimeStamp();
 }
 
 TimeStamp
 JS::GCDescription::lastSliceEnd(JSContext* cx) const
 {
-    return cx->runtime()->gc.stats().slices().back().end;
+    return TimeStamp();
 }
 
 JS::UniqueChars
 JS::GCDescription::sliceToJSON(JSContext* cx) const
 {
-    size_t slices = cx->runtime()->gc.stats().slices().length();
-    MOZ_ASSERT(slices > 0);
-    return cx->runtime()->gc.stats().renderJsonSlice(slices - 1);
+    return nullptr;
 }
 
 JS::UniqueChars
 JS::GCDescription::summaryToJSON(JSContext* cx) const
 {
-    return cx->runtime()->gc.stats().renderJsonMessage(0, false);
+    return nullptr;
 }
 
 JS_PUBLIC_API(JS::UniqueChars)
 JS::MinorGcToJSON(JSContext* cx)
 {
-    JSRuntime* rt = cx->runtime();
-    return rt->gc.stats().renderNurseryJson(rt);
+    return nullptr;
 }
 
 JS_PUBLIC_API(JS::GCSliceCallback)

@@ -796,7 +796,6 @@ GetPageFaultCount()
     return usage.ru_majflt;
 }
 
->>>>>>> a17af05f6f9f79dd18cb2721cc8d0a0dfa1d04de
 void*
 AllocateMappedContent(int fd, size_t offset, size_t length, size_t alignment)
 {

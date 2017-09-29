@@ -2189,8 +2189,10 @@ InlineTransparentTypedObject::getOrCreateBuffer(JSContext* cx)
     if (IsInsideNursery(this)) {
         // Make sure the buffer is traced by the next generational collection,
         // so that its data pointer is updated after this typed object moves.
+#ifndef OMR
         // OMRTODO
-        //zone()->group()->storeBuffer().putWholeCell(buffer);
+        zone()->group()->storeBuffer().putWholeCell(buffer);
+#endif
     }
 
     return buffer;

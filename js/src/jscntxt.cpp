@@ -151,22 +151,6 @@ js::NewContext(uint32_t maxBytes, uint32_t maxNurseryBytes, JSRuntime* parentRun
     JSRuntime* runtime = js_new<JSRuntime>(parentRuntime);
     if (!runtime)
         return nullptr;
-    }
-
-    if (!cx->init(ContextKind::Cooperative)) {
-        runtime->destroyRuntime();
-        js_delete(cx);
-        js_delete(runtime);
-        return nullptr;
-    }
-
-    return cx;
-}
-
-JSContext*
-js::NewCooperativeContext(JSContext* siblingContext)
-{
-    MOZ_RELEASE_ASSERT(!TlsContext.get());
 
     JSContext* cx = js_new<JSContext>(runtime, JS::ContextOptions());
     if (!cx) {
@@ -1295,7 +1279,9 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
     threadNative_(0),
     helperThread_(nullptr),
     options_(options),
-    arenas_(nullptr),
+#ifndef OMR
+    arenas(nullptr_),
+#endif
     enterCompartmentDepth_(0),
     jitActivation(nullptr),
     activation_(nullptr),

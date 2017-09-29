@@ -428,7 +428,7 @@ class GCRuntime
     void removeRoot(Value* vp);
 
     MOZ_MUST_USE bool setParameter(JSGCParamKey key, uint32_t value, AutoLockGC& lock);
-    void resetParameter(JSGCParamKey key, AutoLockGC& lock);
+    void resetParameter(JSGCParamKey key, AutoLockGC& lock) {}
     uint32_t getParameter(JSGCParamKey key, const AutoLockGC& lock);
 
     void maybeGC(Zone* zone);
@@ -441,6 +441,8 @@ class GCRuntime
     bool canChangeActiveContext(JSContext* cx);
 
     void triggerFullGCForAtoms(JSContext* cx);
+
+    void notifyRootsRemoved();
 
     enum TraceOrMarkRuntime {
         TraceRuntime,
@@ -682,9 +684,9 @@ class GCRuntime
     }
 
     void minorGC(JS::gcreason::Reason reason,
-                 gcstats::Phase phase = gcstats::PhaseKind::MINOR_GC) JS_HAZ_GC_CALL {}
+                 gcstats::PhaseKind phase = gcstats::PhaseKind::MINOR_GC) JS_HAZ_GC_CALL {}
 
-    void evictNursery(JS::gcreason::Reason reason = JS::gcreason::PhaseKind::EVICT_NURSERY) {
+    void evictNursery(JS::gcreason::Reason reason = JS::gcreason::EVICT_NURSERY) {
         minorGC(reason, gcstats::PhaseKind::EVICT_NURSERY);
     }
     void freeAllLifoBlocksAfterMinorGC(LifoAlloc* lifo);

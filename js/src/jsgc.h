@@ -434,6 +434,17 @@ class GCHelperState
 // override |run|.
 class GCParallelTask
 {
+    // The state of the parallel computation.
+    enum TaskState {
+        NotStarted,
+        Dispatched,
+        Finished,
+    };
+    UnprotectedData<TaskState> state;
+
+    // Amount of time this task took to execute.
+    ActiveThreadOrGCTaskData<mozilla::TimeDuration> duration_;
+
   protected:
     // A flag to signal a request for early completion of the off-thread task.
     mozilla::Atomic<bool> cancel_;

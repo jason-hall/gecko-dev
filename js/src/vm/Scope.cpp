@@ -663,7 +663,7 @@ FunctionScope::createWithData(JSContext* cx, MutableHandle<UniquePtr<Data>> data
                               HandleFunction fun, HandleScope enclosing)
 {
     MOZ_ASSERT(data);
-    MOZ_ASSERT(fun->isTenured());
+    //MOZ_ASSERT(fun->isTenured());
 
     // FunctionScope::Data has GCManagedDeletePolicy because it contains a
     // GCPtr. Destruction of |data| below may trigger calls into the GC.

@@ -1400,11 +1400,13 @@ ZoneGroup::nursery()
     return runtime->gc.nursery();
 }
 
+#ifndef OMR
 inline gc::StoreBuffer&
 ZoneGroup::storeBuffer()
 {
     return runtime->gc.storeBuffer();
 }
+#endif
 
 // This callback is set by JS::SetProcessLargeAllocationFailureCallback
 // and may be null. See comment in jsapi.h.

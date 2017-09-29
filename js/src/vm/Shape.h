@@ -559,14 +559,18 @@ class BaseShape : public gc::TenuredCell
     }
 
     uint32_t slotSpan() const {
-		//MOZ_ASSERT(isOwned());
-		return slotSpan_;
-	}
+#ifndef OMR
+        MOZ_ASSERT(isOwned());
+#endif
+        return slotSpan_;
+    }
 
     void setSlotSpan(uint32_t slotSpan) {
-		//MOZ_ASSERT(isOwned());
-		slotSpan_ = slotSpan;
-	}
+#ifndef OMR
+        MOZ_ASSERT(isOwned());
+#endif
+        slotSpan_ = slotSpan;
+    }
 
     /*
      * Lookup base shapes from the zone's baseShapes table, adding if not

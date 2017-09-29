@@ -147,6 +147,8 @@ GetterSetterWriteBarrierPost(AccessorShape* shape)
         return;
     }
 
+#ifndef OMR
+    // OMRTODO
     auto& nurseryShapes = shape->zone()->nurseryShapes();
 
     {
@@ -161,6 +163,7 @@ GetterSetterWriteBarrierPost(AccessorShape* shape)
     } else if (nurseryShapes.length() == MaxShapeVectorLength) {
         storeBuffer.setAboutToOverflow(JS::gcreason::FULL_SHAPE_BUFFER);
     }
+#endif
 }
 
 inline

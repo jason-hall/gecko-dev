@@ -537,7 +537,6 @@ WasmIsSupported(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     args.rval().setBoolean(wasm::HasSupport(cx));
-
     return true;
 }
 
@@ -1565,6 +1564,7 @@ OOMTest(JSContext* cx, unsigned argc, Value* vp)
 
     unsigned threadStart = THREAD_TYPE_COOPERATING;
     unsigned threadEnd = THREAD_TYPE_MAX;
+
     // Test a single thread type if specified by the OOM_THREAD environment variable.
     int threadOption = 0;
     if (EnvVarAsInt("OOM_THREAD", &threadOption)) {

@@ -129,6 +129,10 @@ class NurseryAwareHashMap
     void sweep() {
         map.sweep();
     }
+
+    bool hasNurseryEntries() const {
+        return false;
+    }
 };
 
 } // namespace js

@@ -116,6 +116,8 @@ DataViewObject::create(JSContext* cx, uint32_t byteOffset, uint32_t byteLength,
 
     // Include a barrier if the data view's data pointer is in the nursery, as
     // is done for typed arrays.
+#ifndef OMR
+    // OMRTODO
     if (!IsInsideNursery(obj) && cx->nursery().isInside(ptr)) {
         // Shared buffer data should never be nursery-allocated, so we
         // need to fail here if isSharedMemory.  However, mmap() can
@@ -129,6 +131,7 @@ DataViewObject::create(JSContext* cx, uint32_t byteOffset, uint32_t byteLength,
             cx->zone()->group()->storeBuffer().putWholeCell(obj);
         }
     }
+#endif
 
     // Verify that the private slot is at the expected place
     MOZ_ASSERT(dvobj.numFixedSlots() == TypedArrayObject::DATA_SLOT);
