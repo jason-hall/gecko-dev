@@ -419,8 +419,10 @@ Cell::getTraceKind() const
 		case AllocKind::OBJECT_GROUP:
 			return JS::TraceKind::ObjectGroup;
 		case AllocKind::FAT_INLINE_STRING:
+                case AllocKind::FAT_INLINE_ATOM:
 		case AllocKind::STRING:
 		case AllocKind::EXTERNAL_STRING:
+                case AllocKind::ATOM:
 			return JS::TraceKind::String;
 		case AllocKind::SYMBOL:
 			return JS::TraceKind::Symbol;
@@ -428,6 +430,8 @@ Cell::getTraceKind() const
 			return JS::TraceKind::JitCode;
 		case AllocKind::SCOPE:
 			return JS::TraceKind::Scope;
+                case AllocKind::REGEXP_SHARED:
+                        return JS::TraceKind::RegExpShared;
 		default:
 			return JS::TraceKind::Null;
 	}

@@ -277,7 +277,7 @@ js::NativeObject::numFixedSlotsForCompilation() const
     // thread is mutating the VM.
 
     // The compiler does not have access to nursery things.
-    MOZ_ASSERT(!IsInsideNursery(this));
+    //MOZ_ASSERT(!IsInsideNursery(this));
 
     if (this->is<ArrayObject>())
         return 0;

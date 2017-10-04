@@ -160,12 +160,23 @@ Allocate<js::NormalAtom, NoGC>(JSContext* cx) {
 template <>
 js::FatInlineAtom*
 Allocate<js::FatInlineAtom, CanGC>(JSContext* cx) {
-	return Allocate<js::FatInlineAtom, CanGC>(cx, gc::AllocKind::ATOM);
+	return Allocate<js::FatInlineAtom, CanGC>(cx, gc::AllocKind::FAT_INLINE_ATOM);
 }
 template <>
 js::FatInlineAtom*
 Allocate<js::FatInlineAtom, NoGC>(JSContext* cx) {
-	return Allocate<js::FatInlineAtom, NoGC>(cx, gc::AllocKind::ATOM);
+	return Allocate<js::FatInlineAtom, NoGC>(cx, gc::AllocKind::FAT_INLINE_ATOM);
+}
+
+template <>
+RegExpShared*
+Allocate<RegExpShared, CanGC>(JSContext* cx) {
+	return Allocate<RegExpShared, CanGC>(cx, gc::AllocKind::REGEXP_SHARED);
+}
+template <>
+RegExpShared*
+Allocate<RegExpShared, NoGC>(JSContext* cx) {
+	return Allocate<RegExpShared, NoGC>(cx, gc::AllocKind::REGEXP_SHARED);
 }
 
 template <typename T, AllowGC allowGC /* = CanGC */>
