@@ -1,0 +1,446 @@
+/home/jason/spidermonkey/gecko-dev/js/src/glue/ObjectModel.o: \
+ /home/jason/spidermonkey/gecko-dev/js/src/glue/ObjectModel.cpp \
+ /home/jason/spidermonkey/gecko-dev/js/src/glue/ObjectModel.hpp \
+ /home/jason/spidermonkey/gecko-dev/js/src/glue/GeckoConfig.hpp \
+ ../gc/include/ModronAssertions.h ../include_core/omrcfg.h \
+ ../include_core/omrcomp.h ../include_core/omrcfg.h ../gc/base/ut_j9mm.h \
+ ../include_core/ute_module.h ../include_core/omrcomp.h \
+ ../gc/base/modronbase.h ../include_core/omrgcconsts.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/glue/objectdescription.h \
+ ../include_core/omr.h ../include_core/omrport.h \
+ ../include_core/omrthread.h ../include_core/omrthread_generated.h \
+ ../include_core/thread_api.h ../include_core/omrmemcategories.h \
+ ../include_core/omrporterror.h ../gc/base/Bits.hpp \
+ ../gc/base/modronbase.h ../gc/base/HeapLinkedFreeHeader.hpp \
+ ../gc/base/AtomicOperations.hpp ../include_core/AtomicSupport.hpp \
+ ../include_core/omrutilbase.h ../gc/base/Math.hpp \
+ ../include_core/omrutil.h ../include_core/omr.h \
+ ../include_core/pool_api.h ../include_core/omrsrp.h \
+ ../include_core/omrpool.h ../include_core/j9pool.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/gc/Heap.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/ArrayUtils.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Assertions.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Attributes.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Compiler.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Likely.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/MacroArgs.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/StaticAnalysisFunctions.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Types.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/TypeTraits.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Alignment.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Array.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Move.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/ReverseIterator.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/EnumeratedArray.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Atomics.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/DebugOnly.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/EnumeratedRange.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/PodOperations.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsfriendapi.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Atomics.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Casting.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Maybe.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/OperatorNewExtensions.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/MemoryReporting.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/UniquePtr.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Pair.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsapi.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/AlreadyAddRefed.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/FloatingPoint.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Casting.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/MathAlgorithms.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Range.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RangedPtr.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Span.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/IntegerTypeTraits.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/UniquePtr.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RangedPtr.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RefPtr.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/AlreadyAddRefed.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Variant.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/TemplateLib.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsalloc.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TypeDecls.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js-config.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Utility.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Scoped.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/GuardObjects.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jstypes.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Attributes.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Types.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js-config.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsversion.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jscpucfg.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/EndianUtils.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jspubtd.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Assertions.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/EnumeratedArray.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/LinkedList.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/MemoryReporting.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RefPtr.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/PodOperations.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsprototypes.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jstypes.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Result.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Result.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Variant.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TraceKind.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TypeDecls.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/CallArgs.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/RootingAPI.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/LinkedList.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jspubtd.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/GCAnnotations.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/GCAPI.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/TimeStamp.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/FloatingPoint.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Vector.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/AllocPolicy.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/ReentrancyGuard.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/HeapAPI.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TraceKind.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Utility.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/UniquePtr.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/GCPolicyAPI.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Maybe.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TracingAPI.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsalloc.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/HashTable.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/HashFunctions.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Char16.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Opaque.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Value.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/CharacterEncoding.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Range.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Class.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/CallArgs.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Id.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/GCVector.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Vector.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/HashTable.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Id.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Principals.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/StructuredClone.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/BufferList.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/ScopeExit.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Realm.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/RefCounted.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RefCountType.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/RootingAPI.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Stream.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TracingAPI.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/UniquePtr.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Value.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Vector.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsbytecode.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/CallNonGenericMethod.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js.msg \
+ /home/jason/spidermonkey/gecko-dev/js/src/jsutil.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/ds/BitArray.h \
+ /home/jason/spidermonkey/gecko-dev/js/src/gc/Memory.h
+
+/home/jason/spidermonkey/gecko-dev/js/src/glue/ObjectModel.hpp:
+
+/home/jason/spidermonkey/gecko-dev/js/src/glue/GeckoConfig.hpp:
+
+../gc/include/ModronAssertions.h:
+
+../include_core/omrcfg.h:
+
+../include_core/omrcomp.h:
+
+../include_core/omrcfg.h:
+
+../gc/base/ut_j9mm.h:
+
+../include_core/ute_module.h:
+
+../include_core/omrcomp.h:
+
+../gc/base/modronbase.h:
+
+../include_core/omrgcconsts.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/glue/objectdescription.h:
+
+../include_core/omr.h:
+
+../include_core/omrport.h:
+
+../include_core/omrthread.h:
+
+../include_core/omrthread_generated.h:
+
+../include_core/thread_api.h:
+
+../include_core/omrmemcategories.h:
+
+../include_core/omrporterror.h:
+
+../gc/base/Bits.hpp:
+
+../gc/base/modronbase.h:
+
+../gc/base/HeapLinkedFreeHeader.hpp:
+
+../gc/base/AtomicOperations.hpp:
+
+../include_core/AtomicSupport.hpp:
+
+../include_core/omrutilbase.h:
+
+../gc/base/Math.hpp:
+
+../include_core/omrutil.h:
+
+../include_core/omr.h:
+
+../include_core/pool_api.h:
+
+../include_core/omrsrp.h:
+
+../include_core/omrpool.h:
+
+../include_core/j9pool.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/gc/Heap.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/ArrayUtils.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Assertions.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Attributes.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Compiler.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Likely.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/MacroArgs.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/StaticAnalysisFunctions.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Types.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/TypeTraits.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Alignment.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Array.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Move.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/ReverseIterator.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/EnumeratedArray.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Atomics.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/DebugOnly.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/EnumeratedRange.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/PodOperations.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsfriendapi.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Atomics.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Casting.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Maybe.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/OperatorNewExtensions.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/MemoryReporting.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/UniquePtr.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Pair.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsapi.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/AlreadyAddRefed.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/FloatingPoint.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Casting.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/MathAlgorithms.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Range.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RangedPtr.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Span.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/IntegerTypeTraits.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/UniquePtr.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RangedPtr.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RefPtr.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/AlreadyAddRefed.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Variant.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/TemplateLib.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsalloc.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TypeDecls.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js-config.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Utility.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Scoped.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/GuardObjects.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jstypes.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Attributes.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Types.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js-config.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsversion.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jscpucfg.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/EndianUtils.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jspubtd.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Assertions.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/EnumeratedArray.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/LinkedList.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/MemoryReporting.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RefPtr.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/PodOperations.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsprototypes.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jstypes.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Result.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Result.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Variant.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TraceKind.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TypeDecls.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/CallArgs.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/RootingAPI.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/LinkedList.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jspubtd.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/GCAnnotations.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/GCAPI.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/TimeStamp.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/FloatingPoint.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Vector.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/AllocPolicy.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/ReentrancyGuard.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/HeapAPI.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TraceKind.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Utility.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/UniquePtr.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/GCPolicyAPI.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Maybe.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TracingAPI.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsalloc.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/HashTable.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/HashFunctions.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Char16.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Opaque.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Value.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/CharacterEncoding.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/Range.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Class.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/CallArgs.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Id.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/GCVector.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Vector.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/HashTable.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Id.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Principals.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/StructuredClone.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/BufferList.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/ScopeExit.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Realm.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/RefCounted.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/mozilla/RefCountType.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/RootingAPI.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Stream.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/TracingAPI.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/UniquePtr.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Value.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/Vector.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/jsbytecode.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js/CallNonGenericMethod.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/build_DBG.OBJ/dist/include/js.msg:
+
+/home/jason/spidermonkey/gecko-dev/js/src/jsutil.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/ds/BitArray.h:
+
+/home/jason/spidermonkey/gecko-dev/js/src/gc/Memory.h:
