@@ -1075,11 +1075,10 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
     }
 
     if (groupHolder) {
-        // OMRTODO: Is this needed?
-        /*if (!rt->gc.groups.ref().append(group)) {
+        if (!rt->gc.groups().append(group)) {
             ReportOutOfMemory(cx);
             return nullptr;
-        }*/
+        }
 
         // Lazily set the runtime's system zone group.
         if (zoneSpec == JS::SystemZone || zoneSpec == JS::NewZoneInSystemZoneGroup) {

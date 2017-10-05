@@ -345,7 +345,7 @@ js::gc::GCRuntime::traceRuntimeCommon(JSTracer* trc, TraceOrMarkRuntime traceOrM
     // Trace all compartment roots, but not the compartment itself; it is
     // traced via the parent pointer if traceRoots actually traces anything.
     for (CompartmentsIter c(rt, SkipAtoms); !c.done(); c.next())
-        c->traceRoots(trc, traceOrMark);
+        c->traceRoots(trc, js::gc::GCRuntime::TraceOrMarkRuntime::MarkRuntime);
 
     // Trace helper thread roots.
     HelperThreadState().trace(trc);

@@ -328,7 +328,7 @@ class GCZonesIter
     explicit GCZonesIter(JSRuntime* rt, ZoneSelector selector = WithAtoms) : zone(rt, selector) {
         //MOZ_ASSERT(JS::CurrentThreadIsHeapBusy());
         //if (!zone->isCollectingFromAnyThread())
-            next();
+            //next();
     }
 
     bool done() const { return zone.done(); }
