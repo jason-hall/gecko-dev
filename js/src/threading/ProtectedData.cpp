@@ -98,9 +98,11 @@ CheckZoneGroup<Helper>::check() const
 #endif
         }
     } else {
+#ifndef OMR
         // |group| will be null for data in the atoms zone. This is protected
         // by the exclusive access lock.
         MOZ_ASSERT(cx->runtime()->currentThreadHasExclusiveAccess());
+#endif
     }
 }
 
