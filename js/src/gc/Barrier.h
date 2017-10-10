@@ -256,11 +256,11 @@ struct InternalBarrierMethods<T*>
 {
     static bool isMarkable(T* v) { return v != nullptr; }
 
-    static void preBarrier(T* v) { T::writeBarrierPre(v); }
+    static void preBarrier(T* v) { /*T::writeBarrierPre(v);*/ }
 
-    static void postBarrier(T** vp, T* prev, T* next) { T::writeBarrierPost(vp, prev, next); }
+    static void postBarrier(T** vp, T* prev, T* next) { /*T::writeBarrierPost(vp, prev, next);*/ }
 
-    static void readBarrier(T* v) { T::readBarrier(v); }
+    static void readBarrier(T* v) { /*T::readBarrier(v);*/ }
 };
 
 template <typename S> struct PreBarrierFunctor : public VoidDefaultAdaptor<S> {
@@ -277,7 +277,9 @@ struct InternalBarrierMethods<Value>
     static bool isMarkable(const Value& v) { return v.isGCThing(); }
 
     static void preBarrier(const Value& v) {
+#if !defined(OMR)
         DispatchTyped(PreBarrierFunctor<Value>(), v);
+#endif
     }
 
     static void postBarrier(Value* vp, const Value& prev, const Value& next) {
@@ -304,7 +306,9 @@ struct InternalBarrierMethods<Value>
     }
 
     static void readBarrier(const Value& v) {
+#if !defined(OMR)
         DispatchTyped(ReadBarrierFunctor<Value>(), v);
+#endif
     }
 };
 
@@ -312,7 +316,7 @@ template <>
 struct InternalBarrierMethods<jsid>
 {
     static bool isMarkable(jsid id) { return JSID_IS_GCTHING(id); }
-    static void preBarrier(jsid id) { DispatchTyped(PreBarrierFunctor<jsid>(), id); }
+    static void preBarrier(jsid id) { /*DispatchTyped(PreBarrierFunctor<jsid>(), id);*/ }
     static void postBarrier(jsid* idp, jsid prev, jsid next) {}
 };
 
