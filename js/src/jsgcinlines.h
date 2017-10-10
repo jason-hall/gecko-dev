@@ -335,9 +335,7 @@ class GCZonesIter
 
     void next() {
         MOZ_ASSERT(!done());
-        do {
-            zone.next();
-        } while (!zone.done());
+        zone.next();
     }
 
     JS::Zone* get() const {
