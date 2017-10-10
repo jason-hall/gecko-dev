@@ -191,7 +191,10 @@ T*
 Allocate(JSContext* cx, gc::AllocKind kind) {
 	JSRuntime* rt = cx->runtime();
 	Cell* obj = rt->gc.nursery().allocateObject(cx, sizeof(T), 0, nullptr, (allowGC == CanGC) && (rt->gc.enabled == 0));
-	obj->setAllocKind(kind);
+	if (obj != NULL) {
+		obj->setAllocKind(kind);
+	}
+
 	return (T*)obj;
 }
 
