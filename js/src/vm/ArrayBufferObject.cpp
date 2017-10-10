@@ -1398,7 +1398,11 @@ InnerViewTable::sweepEntry(JSObject** pkey, ViewVector& views)
 void
 InnerViewTable::sweep()
 {
+#ifdef OMR
+    nurseryKeys.clear();
+#else
     MOZ_ASSERT(nurseryKeys.empty());
+#endif
     map.sweep();
 }
 
