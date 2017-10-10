@@ -65,6 +65,8 @@
 #include "vm/EnvironmentObject.h"
 #include "vm/Scope.h"
 #include "vm/Shape.h"
+#include "vm/Stack.h"
+#include "vm/Stack-inl.h"
 #include "vm/Symbol.h"
 #include "vm/TypedArrayObject.h"
 #include "vm/UnboxedObject.h"
@@ -218,6 +220,39 @@ MM_CollectorLanguageInterfaceImpl::markingScheme_scanRoots(MM_EnvironmentBase *e
 	if (J9MODRON_HANDLE_NEXT_WORK_UNIT(env)) {
 		OMR_VM *omrVM = env->getOmrVM();
 		JSRuntime *rt = (JSRuntime *)omrVM->_language_vm;
+
+		// NOTE: The following code is from purgeRuntimes()
+		gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::PURGE);
+
+		for (GCCompartmentsIter comp(rt); !comp.done(); comp.next())
+			comp->purge();
+
+		for (GCZonesIter zone(rt); !zone.done(); zone.next()) {
+			zone->atomCache().clearAndShrink();
+			zone->externalStringCache().purge();
+			zone->functionToStringCache().purge();
+		}
+
+		for (const CooperatingContext& target : rt->cooperatingContexts()) {
+			rt->gc.freeUnusedLifoBlocksAfterSweeping(&target.context()->tempLifoAlloc());
+			target.context()->interpreterStack().purge(rt);
+			target.context()->frontendCollectionPool().purge();
+		}
+
+		rt->caches().gsnCache.purge();
+		rt->caches().envCoordinateNameCache.purge();
+		rt->caches().newObjectCache.purge();
+		rt->caches().uncompressedSourceCache.purge();
+		if (rt->caches().evalCache.initialized())
+			rt->caches().evalCache.clear();
+
+		if (auto cache = rt->maybeThisRuntimeSharedImmutableStrings())
+			cache->purge();
+
+		//MOZ_ASSERT(rt->gc.unmarkGrayStack.empty());
+		//rt->gc.unmarkGrayStack.clearAndFree();
+		// End code from purgeRuntimes()
+
 		if (NULL == _omrGCMarker) {
 			MM_GCExtensionsBase *extensions = MM_GCExtensionsBase::getExtensions(omrVM);
 
@@ -225,7 +260,7 @@ MM_CollectorLanguageInterfaceImpl::markingScheme_scanRoots(MM_EnvironmentBase *e
 			new (_omrGCMarker) omrjs::OMRGCMarker(rt, env, _markingScheme);
 		}
 
-		gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::MARK_ROOTS);
+		gcstats::AutoPhase ap2(rt->gc.stats(), gcstats::PhaseKind::MARK_ROOTS);
 		js::gc::AutoTraceSession session(rt);
 		rt->gc.traceRuntimeAtoms(_omrGCMarker, session.lock);
 		// JSCompartment::traceIncomingCrossCompartmentEdgesForZoneGC(trc);
@@ -578,6 +613,7 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 	rt->symbolRegistry(lock).sweep();
 	
 	// rt->sweepAtoms(); TODO: What has this changed to?
+	// Jun 2 "Sweep the atoms table incrementally r=sfink" replaced sweepAtoms() with sweepAtomsTable() in jsgc.cpp... need to re-add sweepAtomsTable!!
 
 	for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
 		c->sweepCrossCompartmentWrappers();
@@ -594,6 +630,10 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 		c->sweepSelfHostingScriptSource();
 		c->sweepNativeIterators();
 	}
+
+	// NOTE: This wasn't in the original sweep code, but stopped a crash on using a freed object from iteratorCache
+	for (GCCompartmentsIter c(rt); !c.done(); c.next())
+		c->purge();
 
 	rt->gc.callFinalizeCallbacks(&fop, JSFINALIZE_GROUP_END);
 
