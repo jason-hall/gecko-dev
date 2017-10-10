@@ -811,37 +811,31 @@ class ZoneAllocPolicy
 
     template <typename T>
     T* maybe_pod_malloc(size_t numElems) {
-		MOZ_ASSERT(false);
         return zone->maybe_pod_malloc<T>(numElems);
     }
 
     template <typename T>
     T* maybe_pod_calloc(size_t numElems) {
-		MOZ_ASSERT(false);
         return zone->maybe_pod_calloc<T>(numElems);
     }
 
     template <typename T>
     T* maybe_pod_realloc(T* p, size_t oldSize, size_t newSize) {
-		MOZ_ASSERT(false);
         return zone->maybe_pod_realloc<T>(p, oldSize, newSize);
     }
 
     template <typename T>
     T* pod_malloc(size_t numElems) {
-		MOZ_ASSERT(false);
         return zone->pod_malloc<T>(numElems);
     }
 
     template <typename T>
     T* pod_calloc(size_t numElems) {
-		MOZ_ASSERT(false);
         return zone->pod_calloc<T>(numElems);
     }
 
     template <typename T>
     T* pod_realloc(T* p, size_t oldSize, size_t newSize) {
-		MOZ_ASSERT(false);
         return zone->pod_realloc<T>(p, oldSize, newSize);
     }
 
@@ -849,7 +843,6 @@ class ZoneAllocPolicy
     void reportAllocOverflow() const {}
 
     MOZ_MUST_USE bool checkSimulatedOOM() const {
-		MOZ_ASSERT(false);
         return !js::oom::ShouldFailWithOOM();
     }
 };
