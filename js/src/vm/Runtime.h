@@ -854,7 +854,9 @@ struct JSRuntime : public js::MallocProvider<JSRuntime>
     bool atomsAreFinished() const { return !atoms_; }
 
     js::AtomSet* atomsForSweeping() {
+#ifndef OMR
         MOZ_ASSERT(JS::CurrentThreadIsHeapCollecting());
+#endif
         return atoms_;
     }
 

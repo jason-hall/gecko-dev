@@ -607,13 +607,15 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 	jit::JitRuntime::SweepJitcodeGlobalTable(rt);
 	//zone->discardJitCode(&fop);
 
-	zone->beginSweepTypes(&fop, !zone->isPreservingCode());
-	zone->sweepBreakpoints(&fop);
-	zone->sweepUniqueIds(&fop);
+	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
+		z->beginSweepTypes(&fop, !zone->isPreservingCode());
+		z->sweepBreakpoints(&fop);
+		z->sweepUniqueIds(&fop);
+	}
 	rt->symbolRegistry(lock).sweep();
 	
-	// rt->sweepAtoms(); TODO: What has this changed to?
-	// Jun 2 "Sweep the atoms table incrementally r=sfink" replaced sweepAtoms() with sweepAtomsTable() in jsgc.cpp... need to re-add sweepAtomsTable!!
+	// Sweep atoms
+	rt->atomsForSweeping()->sweep();
 
 	for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
 		c->sweepCrossCompartmentWrappers();
