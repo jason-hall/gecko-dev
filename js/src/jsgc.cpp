@@ -1048,8 +1048,8 @@ js::NewCompartment(JSContext* cx, JSPrincipals* principals,
                 return nullptr;
             }
             OmrGcHelper::zone = zone;
+            zoneHolder.reset(zone);
 	}
-        zoneHolder.reset(zone);
     }
 
     ScopedJSDeletePtr<JSCompartment> compartment(cx->new_<JSCompartment>(zone, options));
