@@ -945,11 +945,21 @@ IsAboutToBeFinalizedInternal(T** thingp)
     return !IsMarkedInternalCommon((void*)(*thingp));
 }
 
+template <typename S>
+struct IsAboutToBeFinalizedFunctor : public IdentityDefaultAdaptor<S> {
+    template <typename T> S operator()(T* t, bool* rv) {
+        *rv = IsAboutToBeFinalizedInternal(&t);
+        return js::gc::RewrapTaggedPointer<S, T>::wrap(t);
+    }
+};
+
 template <typename T>
 static bool
 IsAboutToBeFinalizedInternal(T* thingp)
 {
-    return !IsMarkedInternalCommon((void*)thingp);
+    bool rv = false;
+    *thingp = DispatchTyped(IsAboutToBeFinalizedFunctor<T>(), *thingp, &rv);
+    return rv;
 }
 
 namespace js {

@@ -960,9 +960,11 @@ IsOptimizedPlaceholderMagicValue(const Value& v)
 static MOZ_ALWAYS_INLINE void
 ExposeValueToActiveJS(const Value& v)
 {
+#ifndef OMR
 #ifdef DEBUG
     Value tmp = v;
     MOZ_ASSERT(!js::gc::EdgeNeedsSweepUnbarrieredSlow(&tmp));
+#endif
 #endif
     if (v.isGCThing())
         js::gc::ExposeGCThingToActiveJS(GCCellPtr(v));
