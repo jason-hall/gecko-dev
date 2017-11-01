@@ -12123,7 +12123,9 @@ IonBuilder::jsop_delelem()
 AbortReasonOr<Ok>
 IonBuilder::jsop_regexp(RegExpObject* reobj)
 {
+#ifndef OMR
     MOZ_ASSERT(!IsInsideNursery(reobj));
+#endif
 
     // Determine this while we're still on the main thread to avoid races.
     bool hasShared = reobj->hasShared();

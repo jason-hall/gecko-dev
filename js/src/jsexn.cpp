@@ -395,7 +395,9 @@ js::ComputeStackString(JSContext* cx)
 static void
 exn_finalize(FreeOp* fop, JSObject* obj)
 {
+#ifndef OMR
     MOZ_ASSERT(fop->maybeOnHelperThread());
+#endif
     if (JSErrorReport* report = obj->as<ErrorObject>().getErrorReport())
         fop->delete_(report);
 }

@@ -631,9 +631,11 @@ InitFromBailout(JSContext* cx, HandleScript caller, jsbytecode* callerPC,
                 MutableHandle<GCVector<Value>> startFrameFormals, MutableHandleFunction nextCallee,
                 jsbytecode** callPC, const ExceptionBailoutInfo* excInfo)
 {
+#ifndef OMR
     // The Baseline frames we will reconstruct on the heap are not rooted, so GC
     // must be suppressed here.
     MOZ_ASSERT(cx->suppressGC);
+#endif
 
     MOZ_ASSERT(script->hasBaselineScript());
 

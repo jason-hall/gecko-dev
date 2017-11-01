@@ -237,11 +237,12 @@ class ImmGCPtr
 
     explicit ImmGCPtr(const gc::Cell* ptr) : value(ptr)
     {
+#ifndef OMR
         // Nursery pointers can't be used if the main thread might be currently
         // performing a minor GC.
         MOZ_ASSERT_IF(ptr && !ptr->isTenured(),
                       !CurrentThreadIsIonCompilingSafeForMinorGC());
-
+#endif
         // wasm shouldn't be creating GC things
         MOZ_ASSERT(!IsCompilingWasm());
     }

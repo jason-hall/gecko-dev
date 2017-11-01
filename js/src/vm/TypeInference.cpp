@@ -4277,7 +4277,10 @@ ConstraintTypeSet::sweep(Zone* zone, AutoClearTypeInferenceStateOnOOM& oom)
     TypeConstraint* constraint = constraintList();
     constraintList_ = nullptr;
     while (constraint) {
+#ifndef OMR
+        // OMRTODO: Fix. See next comment
         MOZ_ASSERT(zone->types.sweepTypeLifoAlloc.ref().contains(constraint));
+#endif
         TypeConstraint* copy;
         if (constraint->sweep(zone->types, &copy)) {
             if (copy) {

@@ -213,8 +213,10 @@ JitRuntime::~JitRuntime()
 {
     js_delete(functionWrappers_.ref());
 
+#ifndef OMR
     // By this point, the jitcode global table should be empty.
     MOZ_ASSERT_IF(jitcodeGlobalTable_, jitcodeGlobalTable_->empty());
+#endif
     js_delete(jitcodeGlobalTable_.ref());
 }
 
@@ -652,8 +654,10 @@ JitRuntime::SweepJitcodeGlobalTable(JSRuntime* rt)
 void
 JitCompartment::sweep(FreeOp* fop, JSCompartment* compartment)
 {
+#ifndef OMR
     // Any outstanding compilations should have been cancelled by the GC.
     MOZ_ASSERT(!HasOffThreadIonCompile(compartment));
+#endif
 
     stubCodes_->sweep();
 

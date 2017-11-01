@@ -51,9 +51,11 @@ PCMappingSlotInfo::ToSlotLocation(const StackValue* stackVal)
 void
 ICStubSpace::freeAllAfterMinorGC(Zone* zone)
 {
+#ifndef OMR
     if (zone->isAtomsZone())
         MOZ_ASSERT(allocator_.isEmpty());
     else
+#endif
         zone->runtimeFromActiveCooperatingThread()->gc.freeAllLifoBlocksAfterMinorGC(&allocator_);
 }
 

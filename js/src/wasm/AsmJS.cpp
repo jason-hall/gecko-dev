@@ -1904,7 +1904,9 @@ class MOZ_STACK_CLASS ModuleValidator
         moduleFunctionName_ = name;
     }
     MOZ_MUST_USE bool initGlobalArgumentName(PropertyName* n) {
+#ifndef OMR
         MOZ_ASSERT(n->isTenured());
+#endif
         globalArgumentName_ = n;
         if (n) {
             asmJSMetadata_->globalArgumentName = StringToNewUTF8CharsZ(cx_, *n);
@@ -1914,7 +1916,9 @@ class MOZ_STACK_CLASS ModuleValidator
         return true;
     }
     MOZ_MUST_USE bool initImportArgumentName(PropertyName* n) {
+#ifndef OMR
         MOZ_ASSERT(n->isTenured());
+#endif
         importArgumentName_ = n;
         if (n) {
             asmJSMetadata_->importArgumentName = StringToNewUTF8CharsZ(cx_, *n);
@@ -1924,7 +1928,9 @@ class MOZ_STACK_CLASS ModuleValidator
         return true;
     }
     MOZ_MUST_USE bool initBufferArgumentName(PropertyName* n) {
+#ifndef OMR
         MOZ_ASSERT(n->isTenured());
+#endif
         bufferArgumentName_ = n;
         if (n) {
             asmJSMetadata_->bufferArgumentName = StringToNewUTF8CharsZ(cx_, *n);

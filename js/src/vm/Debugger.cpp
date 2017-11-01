@@ -8129,7 +8129,9 @@ DebuggerFrame_maybeDecrementFrameScriptStepModeCount(FreeOp* fop, AbstractFrameP
 static void
 DebuggerFrame_finalize(FreeOp* fop, JSObject* obj)
 {
+#ifndef OMR
     MOZ_ASSERT(fop->maybeOnHelperThread());
+#endif
     DebuggerFrame_freeScriptFrameIterData(fop, obj);
     OnStepHandler* onStepHandler = obj->as<DebuggerFrame>().onStepHandler();
     if (onStepHandler)

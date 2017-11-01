@@ -1083,8 +1083,10 @@ class CompilerGCPointer
     explicit CompilerGCPointer(T ptr)
       : ptr_(ptr)
     {
+#ifndef OMR
         MOZ_ASSERT_IF(IsInsideNursery(ptr), IonCompilationCanUseNurseryPointers());
         MOZ_ASSERT_IF(!CurrentThreadIsIonCompiling(), TlsContext.get()->suppressGC);
+#endif
     }
 
     operator T() const { return static_cast<T>(ptr_); }
