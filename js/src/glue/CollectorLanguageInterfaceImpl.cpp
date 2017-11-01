@@ -58,6 +58,7 @@
 #include "gc/GCInternals.h"
 #include "gc/Policy.h"
 #include "jit/IonCode.h"
+#include "jit/JitcodeMap.h"
 #include "js/SliceBudget.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayObject.h"
@@ -214,6 +215,18 @@ MM_CollectorLanguageInterfaceImpl::markingScheme_masterSetupForGC(MM_Environment
 	zone->runtimeFromActiveCooperatingThread()->gc.incGcNumber();
 }
 
+struct IfUnmarked
+{
+    template <typename T>
+    static bool ShouldTrace(JSRuntime* rt, T* thingp) { return !IsMarkedUnbarriered(rt, thingp); }
+};
+
+template <>
+bool IfUnmarked::ShouldTrace<TypeSet::Type>(JSRuntime* rt, TypeSet::Type* type)
+{
+    return !TypeSet::IsTypeMarked(rt, type);
+}
+
 void
 MM_CollectorLanguageInterfaceImpl::markingScheme_scanRoots(MM_EnvironmentBase *env)
 {
@@ -266,11 +279,40 @@ MM_CollectorLanguageInterfaceImpl::markingScheme_scanRoots(MM_EnvironmentBase *e
 		// JSCompartment::traceIncomingCrossCompartmentEdgesForZoneGC(trc);
 		rt->gc.traceRuntimeCommon(_omrGCMarker, js::gc::GCRuntime::TraceOrMarkRuntime::TraceRuntime, session.lock);
 
-		//for (GCZoneGroupIter zone(rt); !zone.done(); zone.next()) {
-		Zone *zone = OmrGcHelper::zone;
-		if (!zone->gcWeakMapList().isEmpty()) {
-			for (WeakMapBase* m : zone->gcWeakMapList()) {
-				m->trace(_omrGCMarker);
+		for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
+			//Zone *zone = OmrGcHelper::zone;
+			if (!z->gcWeakMapList().isEmpty()) {
+				for (WeakMapBase* m : z->gcWeakMapList()) {
+					m->trace(_omrGCMarker);
+				}
+			}
+		}
+
+		if (_omrGCMarker->runtime()->hasJitRuntime() && _omrGCMarker->runtime()->jitRuntime()->hasJitcodeGlobalTable()) {
+			_omrGCMarker->runtime()->jitRuntime()->getJitcodeGlobalTable()->markIteratively(_omrGCMarker);
+		}
+
+		/* Mark Jitcode */
+		{
+			/* Note: Original code used cell iter on trc->runtime()->atomsCompartment(lock)->zone(); */
+			MM_HeapRegionManager *regionManager = _extensions->getHeap()->getHeapRegionManager();
+			GC_HeapRegionIterator regionIterator(regionManager);
+
+			MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
+			//AutoClearTypeInferenceStateOnOOM oom(zone);
+			while (NULL != hrd) {
+				GC_ObjectHeapIteratorAddressOrderedList objectIterator(_extensions, hrd, false);
+				omrobjectptr_t omrobjPtr = objectIterator.nextObject();
+				while (NULL != omrobjPtr) {
+					js::gc::Cell *thing = (js::gc::Cell *)omrobjPtr;
+					js::gc::AllocKind kind = thing->getAllocKind();
+					if (kind == js::gc::AllocKind::JITCODE) {
+						js::jit::JitCode* code = (js::jit::JitCode *)thing;
+						TraceRoot(_omrGCMarker, &code, "wrapper");
+					}
+					omrobjPtr = objectIterator.nextObject();
+				}
+				hrd = regionIterator.nextRegion();
 			}
 		}
 	}
@@ -547,39 +589,40 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 	/* Clear new object cache. Its entries may point to dead objects. */
 	rt->activeContext()->caches().newObjectCache.clearNurseryObjects(rt);
 
-	for (WeakMapBase* m : zone->gcWeakMapList()) {
-		m->sweep();
+	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
+		for (WeakMapBase* m : z->gcWeakMapList()) {
+			m->sweep();
+		}
+		for (auto* cache : z->weakCaches()) {
+			cache->sweep();
+		}
+
+		for (auto edge : z->gcWeakRefs()) {
+			/* Edges may be present multiple times, so may already be nulled. */
+			if (*edge && IsAboutToBeFinalizedDuringSweep(**edge)) {
+				*edge = nullptr;
+			}
+		}
+		z->gcWeakRefs().clear();
+
+		/* No need to look up any more weakmap keys from this zone group. */
+		AutoEnterOOMUnsafeRegion oomUnsafe;
+		if (!z->gcWeakKeys().clear()) {
+			oomUnsafe.crash("clearing weak keys in beginSweepingZoneGroup()");
+		}
 	}
-	for (auto* cache : zone->weakCaches()) {
+	for (JS::detail::WeakCacheBase* cache : rt->weakCaches()) {
 		cache->sweep();
 	}
 
-	for (auto edge : zone->gcWeakRefs()) {
-		/* Edges may be present multiple times, so may already be nulled. */
-		if (*edge && IsAboutToBeFinalizedDuringSweep(**edge)) {
-			*edge = nullptr;
-		}
-	}
-	zone->gcWeakRefs().clear();
-
-	/* No need to look up any more weakmap keys from this zone group. */
-	AutoEnterOOMUnsafeRegion oomUnsafe;
-	if (!zone->gcWeakKeys().clear()) {
-		oomUnsafe.crash("clearing weak keys in beginSweepingZoneGroup()");
-	}
-
 	FreeOp fop(rt);
-    
+
 	// callFinalizeCallbacks(&fop, JSFINALIZE_GROUP_START);
     // callWeakPointerZoneGroupCallbacks();
 
     // for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next())
     //         callWeakPointerCompartmentCallbacks(comp);
     // }
-
-	// for (auto& task : sweepCacheTasks) {
-	// 	startTask(task, gcstats::PHASE_SWEEP_MISC, helperLock);
-	// }
 
 	// Cancel any active or pending off thread compilations.
 	js::CancelOffThreadIonCompile(rt, JS::Zone::Sweep);
@@ -605,15 +648,24 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 	// Sweep entries containing about-to-be-finalized JitCode and
 	// update relocated TypeSet::Types inside the JitcodeGlobalTable.
 	jit::JitRuntime::SweepJitcodeGlobalTable(rt);
-	//zone->discardJitCode(&fop);
+
+	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
+		if (jit::JitZone* jitZone = z->jitZone())
+			jitZone->sweep(&fop);
+	}
+
+	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
+		z->discardJitCode(&fop);
+	}
 
 	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
 		z->beginSweepTypes(&fop, !zone->isPreservingCode());
 		z->sweepBreakpoints(&fop);
 		z->sweepUniqueIds(&fop);
 	}
+
 	rt->symbolRegistry(lock).sweep();
-	
+
 	// Sweep atoms
 	rt->atomsForSweeping()->sweep();
 
@@ -677,6 +729,34 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 			hrd = regionIterator.nextRegion();
 		}
 	}
+	// Finalize unmarked objects.
+	{
+		GC_HeapRegionIterator regionIterator(regionManager);
+
+		MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
+		AutoClearTypeInferenceStateOnOOM oom(zone);
+		while (NULL != hrd) {
+			GC_ObjectHeapIteratorAddressOrderedList objectIterator(_extensions, hrd, false);
+			omrobjectptr_t omrobjPtr = objectIterator.nextObject();
+			while (NULL != omrobjPtr) {
+				if (!_markingScheme->isMarked(omrobjPtr)) {
+					js::gc::Cell *thing = (js::gc::Cell *)omrobjPtr;
+					js::gc::AllocKind kind = thing->getAllocKind();
+					if ((int)js::gc::AllocKind::OBJECT_LAST > (int)kind) {
+						((JSObject *)thing)->finalize(&fop);
+					} else if (js::gc::AllocKind::OBJECT_LIMIT == kind) {
+						((JSScript *)thing)->finalize(&fop);
+					} else if (js::gc::AllocKind::LAZY_SCRIPT == kind) {
+						((js::LazyScript *)thing)->finalize(&fop);
+					} else if (js::gc::AllocKind::JITCODE == kind) {
+						((js::jit::JitCode *)thing)->finalize(&fop);
+					}
+				}
+				omrobjPtr = objectIterator.nextObject();
+			}
+			hrd = regionIterator.nextRegion();
+		}
+	}
 	{
 		GC_HeapRegionIterator regionIterator(regionManager);
 
@@ -701,5 +781,6 @@ MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_Enviro
 			hrd = regionIterator.nextRegion();
 		}
 	}
+	rt->gc.incGcNumber();
 }
 
