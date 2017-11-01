@@ -510,12 +510,12 @@ JS_NewContext(uint32_t maxbytes, uint32_t maxNurseryBytes, JSRuntime* parentRunt
     while (parentRuntime && parentRuntime->parentRuntime)
         parentRuntime = parentRuntime->parentRuntime;
 
-	JS_PUBLIC_API(JSContext*) cx = NewContext(maxbytes, maxNurseryBytes, parentRuntime);
+    JS_PUBLIC_API(JSContext*) cx = NewContext(maxbytes, maxNurseryBytes, parentRuntime);
 #if defined(OMR)
-	omr_error_t rc = InitializeOMR();
-	Nursery::omrVM->_language_vm = cx->runtime();
+    omr_error_t rc = InitializeOMR();
+    Nursery::omrVM->_language_vm = cx->runtime();
 #endif /* defined(OMR) */
-	return cx;
+    return cx;
 }
 
 #if defined(OMR)
@@ -546,10 +546,10 @@ JS_ResumeCooperativeContext(JSContext* cx)
 JS_PUBLIC_API(void)
 JS_DestroyContext(JSContext* cx)
 {
+    DestroyContext(cx);
 #if defined(OMR)
     TearDownOMR();
 #endif /* defined(OMR) */
-    DestroyContext(cx);
 }
 
 JS_PUBLIC_API(void*)
