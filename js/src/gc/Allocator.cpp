@@ -179,6 +179,17 @@ Allocate<RegExpShared, NoGC>(JSContext* cx) {
 	return Allocate<RegExpShared, NoGC>(cx, gc::AllocKind::REGEXP_SHARED);
 }
 
+template <>
+js::jit::JitCode*
+Allocate<js::jit::JitCode, CanGC>(JSContext* cx) {
+	return Allocate<js::jit::JitCode, CanGC>(cx, gc::AllocKind::JITCODE);
+}
+template <>
+js::jit::JitCode*
+Allocate<js::jit::JitCode, NoGC>(JSContext* cx) {
+	return Allocate<js::jit::JitCode, NoGC>(cx, gc::AllocKind::JITCODE);
+}
+
 template <typename T, AllowGC allowGC /* = CanGC */>
 T*
 Allocate(JSContext* cx) {
