@@ -1073,7 +1073,7 @@ class JitcodeGlobalTable
 
     void setAllEntriesAsExpired(JSRuntime* rt);
     void traceForMinorGC(JSTracer* trc);
-    MOZ_MUST_USE bool markIteratively(GCMarker* marker);
+    MOZ_MUST_USE bool markIteratively(JSTracer* marker);
     void sweep(JSRuntime* rt);
 
   private:

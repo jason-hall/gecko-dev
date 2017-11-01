@@ -768,7 +768,7 @@ bool IfUnmarked::ShouldTrace<TypeSet::Type>(JSRuntime* rt, TypeSet::Type* type)
 }
 
 bool
-JitcodeGlobalTable::markIteratively(GCMarker* marker)
+JitcodeGlobalTable::markIteratively(JSTracer* marker)
 {
     // JitcodeGlobalTable must keep entries that are in the sampler buffer
     // alive. This conditionality is akin to holding the entries weakly.
