@@ -609,6 +609,7 @@ MacroAssembler::moveValue(const Value& src, const ValueOperand& dest)
 void
 MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr, Register temp, Label* label)
 {
+#ifndef OMR // TODO: FIX
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
 
     ScratchRegisterScope scratch(*this);
@@ -619,6 +620,7 @@ MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr, Register t
     orPtr(Imm32(gc::ChunkMask), scratch);
     branch32(cond, Address(scratch, gc::ChunkLocationOffsetFromLastByte),
              Imm32(int32_t(gc::ChunkLocation::Nursery)), label);
+#endif
 }
 
 void
@@ -640,6 +642,7 @@ void
 MacroAssembler::branchValueIsNurseryObjectImpl(Condition cond, const T& value, Register temp,
                                                Label* label)
 {
+#ifndef OMR // TODO: FIX
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
     MOZ_ASSERT(temp != InvalidReg);
 
@@ -652,6 +655,7 @@ MacroAssembler::branchValueIsNurseryObjectImpl(Condition cond, const T& value, R
              Imm32(int32_t(gc::ChunkLocation::Nursery)), label);
 
     bind(&done);
+#endif
 }
 
 void
