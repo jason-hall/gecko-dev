@@ -342,7 +342,9 @@ SharedArrayBufferObject::rawBufferObject() const
 void
 SharedArrayBufferObject::Finalize(FreeOp* fop, JSObject* obj)
 {
+#ifndef USE_OMR
     MOZ_ASSERT(fop->maybeOnHelperThread());
+#endif
 
     SharedArrayBufferObject& buf = obj->as<SharedArrayBufferObject>();
 

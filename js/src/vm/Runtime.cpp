@@ -776,7 +776,9 @@ JSRuntime::removeUnhandledRejectedPromise(JSContext* cx, js::HandleObject promis
 mozilla::non_crypto::XorShift128PlusRNG&
 JSRuntime::randomKeyGenerator()
 {
+#ifndef USE_OMR
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(this));
+#endif
     if (randomKeyGenerator_.isNothing()) {
         mozilla::Array<uint64_t, 2> seed;
         GenerateXorShift128PlusSeed(seed);

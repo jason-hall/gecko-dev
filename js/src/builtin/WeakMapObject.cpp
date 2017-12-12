@@ -181,7 +181,9 @@ WeakCollection_trace(JSTracer* trc, JSObject* obj)
 static void
 WeakCollection_finalize(FreeOp* fop, JSObject* obj)
 {
+#ifndef USE_OMR
     MOZ_ASSERT(fop->maybeOnHelperThread());
+#endif
     if (ObjectValueMap* map = obj->as<WeakCollectionObject>().getMap()) {
 #ifdef DEBUG
         map->~ObjectValueMap();

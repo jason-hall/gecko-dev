@@ -1257,7 +1257,9 @@ JSContext::alreadyReportedOOM()
         if (ParseTask* task = helperThread()->parseTask())
             MOZ_ASSERT(task->outOfMemory);
     } else {
+#ifndef USE_OMR
         MOZ_ASSERT(isThrowingOutOfMemory());
+#endif
     }
 #endif
     return mozilla::Err(reportedOOM);
