@@ -145,7 +145,7 @@ template <> inline void OMRGCMarker::traverse(JS::Value* thing) {
 		traverse(sym);
 	} else if (v.isPrivateGCThing()) {
 		js::gc::Cell *cell = v.toGCCellPtr().asCell();
-		_markingScheme->markObject(_env, (omrobjectptr_t)cell, false);
+		_markingScheme->markObject(_env, (omrobjectptr_t)cell, true);
 	}
 }
 
