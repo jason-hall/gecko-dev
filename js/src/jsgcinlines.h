@@ -39,7 +39,7 @@ GetGCObjectKind(const Class* clasp)
     return GetGCObjectKind(nslots);
 }
 
-#ifndef OMR // Arenas
+#ifndef USE_OMR // Arenas
 
 class ArenaIter
 {

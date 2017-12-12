@@ -34,7 +34,7 @@ using namespace js::jit;
 
 ExecutablePool::~ExecutablePool()
 {
-#ifndef OMR
+#ifndef USE_OMR
     MOZ_ASSERT(m_ionCodeBytes == 0);
     MOZ_ASSERT(m_baselineCodeBytes == 0);
     MOZ_ASSERT(m_regexpCodeBytes == 0);
@@ -50,7 +50,7 @@ void
 ExecutablePool::release(bool willDestroy)
 {
     MOZ_ASSERT(m_refCount != 0);
-#ifndef OMR
+#ifndef USE_OMR
     /* OMR does not GC on shutdown so finalization is not executed. */
     MOZ_ASSERT_IF(willDestroy, m_refCount == 1);
 #endif

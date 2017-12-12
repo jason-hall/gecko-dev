@@ -46,39 +46,58 @@ namespace omrjs {
 using namespace js;
 using namespace JS;
 
+struct TraceChildrenFunctor {
+	OMRGCMarker *marker;
+
+	template <typename T>
+	void operator()(T* thing) {
+		static_cast<T*>(thing)->traceChildren(marker);
+	}
+};
+
 class OMRGCMarker : public JSTracer
 {
 public:
-    explicit OMRGCMarker(JSRuntime* rt, MM_EnvironmentBase* env, MM_MarkingScheme* ms);
+	explicit OMRGCMarker(JSRuntime* rt, MM_EnvironmentBase* env, MM_MarkingScheme* ms);
 
-    // Mark the given GC thing and traverse its children at some point.
-    template <typename T> inline void traverse(T *thing);
-    template <typename T> inline void traverse(T **thing);
+	// Mark the given GC thing and traverse its children at some point.
+	template <typename T> inline void traverse(T *thing);
+	template <typename T> inline void traverse(T **thing);
 
-    // Calls traverse on target after making additional assertions.
-    template <typename S, typename T> void traverseEdge(S source, T* target);
-    template <typename S, typename T> void traverseEdge(S source, const T& target);
+	// Calls traverse on target after making additional assertions.
+	template <typename S, typename T> void traverseEdge(S source, T* target);
+	template <typename S, typename T> void traverseEdge(S source, const T& target);
 
-    // Notes a weak graph edge for later sweeping.
-    template <typename T> void noteWeakEdge(T* edge);
+	// Notes a weak graph edge for later sweeping.
+	template <typename T> void noteWeakEdge(T* edge);
 
-    static OMRGCMarker* fromTracer(JSTracer* trc) {
-        return static_cast<OMRGCMarker*>(trc);
-    }
+	static OMRGCMarker* fromTracer(JSTracer* trc) {
+		return static_cast<OMRGCMarker*>(trc);
+	}
 
 private:
-    MM_EnvironmentBase* _env;
-    MM_MarkingScheme* _markingScheme;
+	MM_EnvironmentBase* _env;
+	MM_MarkingScheme* _markingScheme;
 
-    // We may not have concrete types yet, so this has to be outside the header.
-    template <typename T>
-    void dispatchToTraceChildren(T* thing);
+	// We may not have concrete types yet, so this has to be outside the header.
+	template <typename T>
+	void dispatchToTraceChildren(T* thing);
 
-    // Mark the given GC thing, but do not trace its children. Return true
-    // if the thing became marked.
-    template <typename T>
-    bool mark(T* thing) {
-		_markingScheme->markObject(_env, (omrobjectptr_t)thing, false);
+	// Mark the given GC thing. Return true
+	// if the thing became marked.
+	template <typename T>
+	bool mark(T* thing) {
+		_markingScheme->assertSaneObjectPtr(_env, (omrobjectptr_t)(thing));
+		if (!_markingScheme->isMarked((omrobjectptr_t)(thing))) {
+			_markingScheme->markObject(_env, (omrobjectptr_t)thing, true);
+
+			// TODO: Move to a ObjectScanner somehow? But its designed for contiguous slots only..
+			// Scan children
+			TraceChildrenFunctor traceChildren = {this};
+			if (JS::TraceKind::Null != ((js::gc::Cell *)thing)->getTraceKind()) {
+				DispatchTraceKindTyped(traceChildren, (js::gc::Cell *)thing, ((js::gc::Cell *)thing)->getTraceKind());
+			}
+		}
 		return true;
 	}
 };

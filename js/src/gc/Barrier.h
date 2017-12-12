@@ -258,7 +258,10 @@ struct InternalBarrierMethods<T*>
 
     static void preBarrier(T* v) { /*T::writeBarrierPre(v);*/ }
 
-    static void postBarrier(T** vp, T* prev, T* next) { /*T::writeBarrierPost(vp, prev, next);*/ }
+    static void postBarrier(T** vp, T* prev, T* next) {
+        /*T::writeBarrierPost(vp, prev, next);*/
+        standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)vp, (omrobjectptr_t)next);
+    }
 
     static void readBarrier(T* v) { /*T::readBarrier(v);*/ }
 };
@@ -277,13 +280,15 @@ struct InternalBarrierMethods<Value>
     static bool isMarkable(const Value& v) { return v.isGCThing(); }
 
     static void preBarrier(const Value& v) {
-#if !defined(OMR)
+#if !defined(USE_OMR)
         DispatchTyped(PreBarrierFunctor<Value>(), v);
 #endif
     }
 
     static void postBarrier(Value* vp, const Value& prev, const Value& next) {
-#if !defined(OMR) // Writebarriers
+#ifdef USE_OMR // Writebarriers
+        standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)vp, (omrobjectptr_t)&next);
+#else
         MOZ_ASSERT(!CurrentThreadIsIonCompiling());
         MOZ_ASSERT(vp);
 
@@ -306,7 +311,7 @@ struct InternalBarrierMethods<Value>
     }
 
     static void readBarrier(const Value& v) {
-#if !defined(OMR)
+#if !defined(USE_OMR)
         DispatchTyped(ReadBarrierFunctor<Value>(), v);
 #endif
     }
@@ -702,7 +707,13 @@ class HeapSlot : public WriteBarrieredBase<Value>
 
   private:
     void post(NativeObject* owner, Kind kind, uint32_t slot, const Value& target) {
-        // OMRTODO: writebarrier
+        if (this->value.isObject()) {
+            gc::Cell* cell = reinterpret_cast<gc::Cell*>(&this->value.toObject());
+            // OMRTODO: OMR writebarrier
+            //standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)vp, (omrobjectptr_t)next);
+
+            //cell->storeBuffer()->putSlot(owner, kind, slot, 1);
+        }
     }
 };
 

@@ -609,7 +609,7 @@ MacroAssembler::moveValue(const Value& src, const ValueOperand& dest)
 void
 MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr, Register temp, Label* label)
 {
-#ifndef OMR // TODO: FIX
+#ifndef USE_OMR // TODO: FIX
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
 
     ScratchRegisterScope scratch(*this);
@@ -642,7 +642,7 @@ void
 MacroAssembler::branchValueIsNurseryObjectImpl(Condition cond, const T& value, Register temp,
                                                Label* label)
 {
-#ifndef OMR // TODO: FIX
+#ifndef USE_OMR // TODO: FIX
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
     MOZ_ASSERT(temp != InvalidReg);
 

@@ -234,7 +234,7 @@ class NewObjectCache
         entry->key = key;
         entry->kind = kind;
 
-#ifdef OMR
+#ifdef USE_OMR
         entry->nbytes = gc::OmrGcHelper::thingSize(kind);
 #else
         entry->nbytes = gc::Arena::thingSize(kind);
@@ -243,7 +243,7 @@ class NewObjectCache
     }
 
     static void copyCachedToObject(NativeObject* dst, NativeObject* src, gc::AllocKind kind) {
-#ifdef OMR
+#ifdef USE_OMR
         js_memcpy(dst, src, gc::OmrGcHelper::thingSize(kind));
 #else
         js_memcpy(dst, src, gc::Arena::thingSize(kind));

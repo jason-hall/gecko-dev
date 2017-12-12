@@ -485,7 +485,7 @@ class TypedArrayObjectTemplate : public TypedArrayObject
             // may be in the nursery, so include a barrier to make sure this
             // object is updated if that typed object moves.
             auto ptr = buffer->dataPointerEither();
-#ifndef OMR
+#ifndef USE_OMR
             if (!IsInsideNursery(obj) && cx->nursery().isInside(ptr)) {
 #endif
                 // Shared buffer data should never be nursery-allocated, so we
@@ -497,12 +497,12 @@ class TypedArrayObjectTemplate : public TypedArrayObject
                     //MOZ_ASSERT(buffer->byteLength() == 0 &&
                     //           (uintptr_t(ptr.unwrapValue()) & gc::ChunkMask) == 0);
                 } else {
-#ifndef OMR // Writebarrier
+#ifndef USE_OMR // Writebarrier
                     // OMRTODO: Writebarrier here
                     cx->zone()->group()->storeBuffer().putWholeCell(obj);
 #endif // ! OMR Writebarrier
                 }
-#ifndef OMR
+#ifndef USE_OMR
             }
 #endif
         } else {

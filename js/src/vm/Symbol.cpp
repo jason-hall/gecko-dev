@@ -149,7 +149,7 @@ JS::ubi::Concrete<JS::Symbol>::size(mozilla::MallocSizeOf mallocSizeOf) const
     // If we start allocating symbols in the nursery, we will need to update
     // this method.
     MOZ_ASSERT(get().isTenured()); // OMRTODO: Tenured check unneeded in OMR
-#ifdef OMR
+#ifdef USE_OMR
     return js::gc::OmrGcHelper::thingSize(get().getAllocKind());
 #else
     return js::gc::Arena::thingSize(get().asTenured().getAllocKind());

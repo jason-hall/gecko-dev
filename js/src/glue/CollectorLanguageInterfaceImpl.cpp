@@ -41,59 +41,6 @@
 #include "Scavenger.hpp"
 #include "SlotObject.hpp"
 
-/// Spidermonkey Headers
-#include "js/TracingAPI.h"
-
-// JS
-#include "mozilla/DebugOnly.h"
-#include "mozilla/IntegerRange.h"
-#include "mozilla/ReentrancyGuard.h"
-#include "mozilla/ScopeExit.h"
-#include "mozilla/TypeTraits.h"
-
-#include "jsgc.h"
-#include "jsprf.h"
-
-#include "builtin/ModuleObject.h"
-#include "gc/GCInternals.h"
-#include "gc/Policy.h"
-#include "jit/IonCode.h"
-#include "jit/JitcodeMap.h"
-#include "js/SliceBudget.h"
-#include "vm/ArgumentsObject.h"
-#include "vm/ArrayObject.h"
-#include "vm/Debugger.h"
-#include "vm/EnvironmentObject.h"
-#include "vm/Scope.h"
-#include "vm/Shape.h"
-#include "vm/Stack.h"
-#include "vm/Stack-inl.h"
-#include "vm/Symbol.h"
-#include "vm/TypedArrayObject.h"
-#include "vm/UnboxedObject.h"
-// #include "wasm/WasmJS.h"
-
-#include "jscompartmentinlines.h"
-#include "jsgcinlines.h"
-#include "jsobjinlines.h"
-
-// Spidermonkey Headers
-
-#include "gc/Nursery-inl.h"
-#include "vm/String-inl.h"
-#include "vm/UnboxedObject-inl.h"
-
-#include "gc/Barrier.h"
-#include "gc/Marking.h"
-
-#include "js/TracingAPI.h"
-#include "js/GCPolicyAPI.h"
-
-#include "jswatchpoint.h"
-
-// OMR
-#include "omrglue.hpp"
-
 #include "CollectorLanguageInterfaceImpl.hpp"
 #include "Dispatcher.hpp"
 #include "Heap.hpp"
@@ -103,28 +50,6 @@
 #include "ObjectMap.hpp"
 #include "OMRVMInterface.hpp"
 #include "Task.hpp"
-
-using namespace js;
-using namespace JS;
-using namespace js::gc;
-
-namespace omrjs {
-
-using JS::MapTypeToTraceKind;
-
-using mozilla::ArrayLength;
-using mozilla::DebugOnly;
-using mozilla::IsBaseOf;
-using mozilla::IsSame;
-using mozilla::PodCopy;
-
-OMRGCMarker::OMRGCMarker(JSRuntime* rt, MM_EnvironmentBase* env, MM_MarkingScheme* ms)
-	: JSTracer(rt, JSTracer::TracerKindTag::OMR_SCAN, ExpandWeakMaps),
-	  _env(env),
-	  _markingScheme(ms) {
-}
-
-} // namespace omrjs
 
 /* This enum extends ConcurrentStatus with values > CONCURRENT_ROOT_TRACING. Values from this
  * and from ConcurrentStatus are treated as uintptr_t values everywhere except when used as
@@ -182,203 +107,7 @@ MM_CollectorLanguageInterfaceImpl::initialize(OMR_VM *omrVM)
 	return true;
 }
 
-void
-MM_CollectorLanguageInterfaceImpl::flushNonAllocationCaches(MM_EnvironmentBase *env)
-{
-}
-
-OMR_VMThread *
-MM_CollectorLanguageInterfaceImpl::attachVMThread(OMR_VM *omrVM, const char *threadName, uintptr_t reason)
-{
-	OMR_VMThread *omrVMThread = NULL;
-	omr_error_t rc = OMR_ERROR_NONE;
-
-	rc = OMR_Glue_BindCurrentThread(omrVM, threadName, &omrVMThread);
-	if (OMR_ERROR_NONE != rc) {
-		return NULL;
-	}
-	return omrVMThread;
-}
-
-void
-MM_CollectorLanguageInterfaceImpl::detachVMThread(OMR_VM *omrVM, OMR_VMThread *omrVMThread, uintptr_t reason)
-{
-	if (NULL != omrVMThread) {
-		OMR_Glue_UnbindCurrentThread(omrVMThread);
-	}
-}
-
-void
-MM_CollectorLanguageInterfaceImpl::markingScheme_masterSetupForGC(MM_EnvironmentBase *env)
-{
-	Zone *zone = OmrGcHelper::zone;
-	zone->runtimeFromActiveCooperatingThread()->gc.incGcNumber();
-}
-
-struct IfUnmarked
-{
-    template <typename T>
-    static bool ShouldTrace(JSRuntime* rt, T* thingp) { return !IsMarkedUnbarriered(rt, thingp); }
-};
-
-template <>
-bool IfUnmarked::ShouldTrace<TypeSet::Type>(JSRuntime* rt, TypeSet::Type* type)
-{
-    return !TypeSet::IsTypeMarked(rt, type);
-}
-
-void
-MM_CollectorLanguageInterfaceImpl::markingScheme_scanRoots(MM_EnvironmentBase *env)
-{
-	if (J9MODRON_HANDLE_NEXT_WORK_UNIT(env)) {
-		OMR_VM *omrVM = env->getOmrVM();
-		JSRuntime *rt = (JSRuntime *)omrVM->_language_vm;
-
-		// NOTE: The following code is from purgeRuntimes()
-		gcstats::AutoPhase ap(rt->gc.stats(), gcstats::PhaseKind::PURGE);
-
-		for (GCCompartmentsIter comp(rt); !comp.done(); comp.next())
-			comp->purge();
-
-		for (GCZonesIter zone(rt); !zone.done(); zone.next()) {
-			zone->atomCache().clearAndShrink();
-			zone->externalStringCache().purge();
-			zone->functionToStringCache().purge();
-		}
-
-		for (const CooperatingContext& target : rt->cooperatingContexts()) {
-			rt->gc.freeUnusedLifoBlocksAfterSweeping(&target.context()->tempLifoAlloc());
-			target.context()->interpreterStack().purge(rt);
-			target.context()->frontendCollectionPool().purge();
-		}
-
-		rt->caches().gsnCache.purge();
-		rt->caches().envCoordinateNameCache.purge();
-		rt->caches().newObjectCache.purge();
-		rt->caches().uncompressedSourceCache.purge();
-		if (rt->caches().evalCache.initialized())
-			rt->caches().evalCache.clear();
-
-		if (auto cache = rt->maybeThisRuntimeSharedImmutableStrings())
-			cache->purge();
-
-		//MOZ_ASSERT(rt->gc.unmarkGrayStack.empty());
-		//rt->gc.unmarkGrayStack.clearAndFree();
-		// End code from purgeRuntimes()
-
-		if (NULL == _omrGCMarker) {
-			MM_GCExtensionsBase *extensions = MM_GCExtensionsBase::getExtensions(omrVM);
-
-			_omrGCMarker = (omrjs::OMRGCMarker *)extensions->getForge()->allocate(sizeof(omrjs::OMRGCMarker), MM_AllocationCategory::FIXED, OMR_GET_CALLSITE());
-			new (_omrGCMarker) omrjs::OMRGCMarker(rt, env, _markingScheme);
-		}
-
-		gcstats::AutoPhase ap2(rt->gc.stats(), gcstats::PhaseKind::MARK_ROOTS);
-		js::gc::AutoTraceSession session(rt);
-		rt->gc.traceRuntimeAtoms(_omrGCMarker, session.lock);
-		// JSCompartment::traceIncomingCrossCompartmentEdgesForZoneGC(trc);
-		rt->gc.traceRuntimeCommon(_omrGCMarker, js::gc::GCRuntime::TraceOrMarkRuntime::TraceRuntime, session.lock);
-
-		for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
-			//Zone *zone = OmrGcHelper::zone;
-			if (!z->gcWeakMapList().isEmpty()) {
-				for (WeakMapBase* m : z->gcWeakMapList()) {
-					m->trace(_omrGCMarker);
-				}
-			}
-		}
-
-		if (_omrGCMarker->runtime()->hasJitRuntime() && _omrGCMarker->runtime()->jitRuntime()->hasJitcodeGlobalTable()) {
-			_omrGCMarker->runtime()->jitRuntime()->getJitcodeGlobalTable()->markIteratively(_omrGCMarker);
-		}
-
-		/* Mark Jitcode */
-		{
-			/* Note: Original code used cell iter on trc->runtime()->atomsCompartment(lock)->zone(); */
-			MM_HeapRegionManager *regionManager = _extensions->getHeap()->getHeapRegionManager();
-			GC_HeapRegionIterator regionIterator(regionManager);
-
-			MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
-			//AutoClearTypeInferenceStateOnOOM oom(zone);
-			while (NULL != hrd) {
-				GC_ObjectHeapIteratorAddressOrderedList objectIterator(_extensions, hrd, false);
-				omrobjectptr_t omrobjPtr = objectIterator.nextObject();
-				while (NULL != omrobjPtr) {
-					js::gc::Cell *thing = (js::gc::Cell *)omrobjPtr;
-					js::gc::AllocKind kind = thing->getAllocKind();
-					if (kind == js::gc::AllocKind::JITCODE) {
-						js::jit::JitCode* code = (js::jit::JitCode *)thing;
-						TraceRoot(_omrGCMarker, &code, "wrapper");
-					}
-					omrobjPtr = objectIterator.nextObject();
-				}
-				hrd = regionIterator.nextRegion();
-			}
-		}
-	}
-}
-
-void
-MM_CollectorLanguageInterfaceImpl::markingScheme_completeMarking(MM_EnvironmentBase *env)
-{
-}
-
-void
-MM_CollectorLanguageInterfaceImpl::markingScheme_markLiveObjectsComplete(MM_EnvironmentBase *env)
-{
-}
-
-void
-MM_CollectorLanguageInterfaceImpl::markingScheme_masterSetupForWalk(MM_EnvironmentBase *env)
-{
-}
-
-void
-MM_CollectorLanguageInterfaceImpl::markingScheme_masterCleanupAfterGC(MM_EnvironmentBase *env)
-{
-}
-
-struct TraceChildrenFunctor {
-	MM_CollectorLanguageInterfaceImpl *cli;
-
-	template <typename T>
-	void operator()(T* thing) {
-		static_cast<T*>(thing)->traceChildren(cli->_omrGCMarker);
-	}
-};
-
-
-uintptr_t
-MM_CollectorLanguageInterfaceImpl::markingScheme_scanObject(MM_EnvironmentBase *env, omrobjectptr_t objectPtr, MarkingSchemeScanReason reason)
-{
-	TraceChildrenFunctor traceChildren = {this};
-	if (JS::TraceKind::Null != ((Cell *)objectPtr)->getTraceKind()) {
-		DispatchTraceKindTyped(traceChildren, (Cell *)objectPtr, ((Cell *)objectPtr)->getTraceKind());
-	}
-	return 0;
-}
-
-#if defined(OMR_GC_MODRON_CONCURRENT_MARK)
-uintptr_t
-MM_CollectorLanguageInterfaceImpl::markingScheme_scanObjectWithSize(MM_EnvironmentBase *env, omrobjectptr_t objectPtr, MarkingSchemeScanReason reason, uintptr_t sizeToDo)
-{
-#error implement an object scanner which scans up to sizeToDo bytes
-}
-#endif /* OMR_GC_MODRON_CONCURRENT_MARK */
-
-void
-MM_CollectorLanguageInterfaceImpl::parallelDispatcher_handleMasterThread(OMR_VMThread *omrVMThread)
-{
-	/* Do nothing for now.  only required for SRT */
-}
-
 #if defined(OMR_GC_MODRON_SCAVENGER)
-void
-MM_CollectorLanguageInterfaceImpl::scavenger_reportObjectEvents(MM_EnvironmentBase *env)
-{
-	/* Do nothing for now */
-}
-
 void
 MM_CollectorLanguageInterfaceImpl::scavenger_masterSetupForGC(MM_EnvironmentBase *env)
 {
@@ -418,13 +147,19 @@ MM_CollectorLanguageInterfaceImpl::scavenger_masterThreadGarbageCollect_scavenge
 bool
 MM_CollectorLanguageInterfaceImpl::scavenger_internalGarbageCollect_shouldPercolateGarbageCollect(MM_EnvironmentBase *envBase, PercolateReason *reason, uint32_t *gcCode)
 {
-#error Return true if scavenge cycle should be forgone and GC cycle percolated up to another collector
+	/* Do nothing for now */
+	return false;
 }
 
 GC_ObjectScanner *
 MM_CollectorLanguageInterfaceImpl::scavenger_getObjectScanner(MM_EnvironmentStandard *env, omrobjectptr_t objectPtr, void *allocSpace, uintptr_t flags)
 {
-#error Implement a GC_ObjectScanner subclass for each distinct kind of objects (eg scanner for scalar objects and scanner for indexable objects)
+#if defined(OMR_GC_MODRON_SCAVENGER_STRICT)
+	Assert_MM_true((GC_ObjectScanner::scanHeap == flags) ^ (GC_ObjectScanner::scanRoots == flags));
+#endif /* defined(OMR_GC_MODRON_SCAVENGER_STRICT) */
+	GC_ObjectScanner *objectScanner = NULL;
+	objectScanner = GC_MixedObjectScanner::newInstance(env, objectPtr, allocSpace, flags);
+	return objectScanner;
 }
 
 void
@@ -481,12 +216,21 @@ MM_CollectorLanguageInterfaceImpl::scavenger_backOutIndirectObjects(MM_Environme
 void
 MM_CollectorLanguageInterfaceImpl::scavenger_reverseForwardedObject(MM_EnvironmentBase *env, MM_ForwardedHeader *forwardedHeader)
 {
-	/* This method must restore the object header slot (and overlapped slot, if header is compressed)
-	 * in the original object and install a reverse forwarded object in the forwarding location. 
-	 * A reverse forwarded object is a hole (MM_HeapLinkedFreeHeader) whose 'next' pointer actually 
-	 * points at the original object. This keeps tenure space walkable once the reverse forwarded 
-	 * objects are abandoned.
-	 */
+	if (forwardedHeader->isForwardedPointer()) {
+		omrobjectptr_t originalObject = forwardedHeader->getObject();
+		omrobjectptr_t forwardedObject = forwardedHeader->getForwardedObject();
+
+		/* Restore the original object header from the forwarded object */
+		GC_ObjectModel *objectModel = &(env->getExtensions()->objectModel);
+		objectModel->setObjectSizeAndFlags(originalObject, objectModel->getConsumedSizeInBytesWithHeader(forwardedObject), objectModel->getObjectFlags(forwardedObject));
+
+#if defined (OMR_INTERP_COMPRESSED_OBJECT_HEADER)
+		/* Restore destroyed overlapped slot in the original object. This slot might need to be reversed
+		 * as well or it may be already reversed - such fixup will be completed at in a later pass.
+		 */
+		forwardedHeader->restoreDestroyedOverlap();
+#endif /* defined (OMR_INTERP_COMPRESSED_OBJECT_HEADER) */
+}
 }
 
 #if defined (OMR_INTERP_COMPRESSED_OBJECT_HEADER)
@@ -497,7 +241,30 @@ MM_CollectorLanguageInterfaceImpl::scavenger_fixupDestroyedSlot(MM_EnvironmentBa
 	 * case the other half of the full (omrobjectptr_t sized) slot may hold a compressed object reference that
 	 * must be restored by this method.
 	 */
-	Assert_MM_unimplemented();
+	/* This assumes that all slots are object slots, including the slot adjacent to the header slot */
+	if ((0 != forwardedHeader->getPreservedOverlap()) && !_extensions->objectModel.isIndexable(forwardedHeader)) {
+		MM_GCExtensionsBase *extensions = MM_GCExtensionsBase::getExtensions(_omrVM);
+		/* Get the uncompressed reference from the slot */
+		fomrobject_t preservedOverlap = (fomrobject_t)forwardedHeader->getPreservedOverlap();
+		GC_SlotObject preservedSlotObject(_omrVM, &preservedOverlap);
+		omrobjectptr_t survivingCopyAddress = preservedSlotObject.readReferenceFromSlot();
+		/* Check if the address we want to read is aligned (since mis-aligned reads may still be less than a top address but extend beyond it) */
+		if (0 == ((uintptr_t)survivingCopyAddress & (extensions->getObjectAlignmentInBytes() - 1))) {
+			/* Ensure that the address we want to read is within part of the heap which could contain copied objects (tenure or survivor) */
+			void *topOfObject = (void *)((uintptr_t *)survivingCopyAddress + 1);
+			if (subSpaceNew->isObjectInNewSpace(survivingCopyAddress, topOfObject) || extensions->isOld(survivingCopyAddress, topOfObject)) {
+				/* if the slot points to a reverse-forwarded object, restore the original location (in evacuate space) */
+				MM_ForwardedHeader reverseForwardedHeader(survivingCopyAddress);
+				if (reverseForwardedHeader.isReverseForwardedPointer()) {
+					/* overlapped slot must be fixed up */
+					fomrobject_t fixupSlot = 0;
+					GC_SlotObject fixupSlotObject(_omrVM, &fixupSlot);
+					fixupSlotObject.writeReferenceToSlot(reverseForwardedHeader.getReverseForwardedPointer());
+					forwardedHeader->restoreDestroyedOverlap((uint32_t)fixupSlot);
+				}
+			}
+		}
+	}
 }
 #endif /* OMR_INTERP_COMPRESSED_OBJECT_HEADER */
 #endif /* OMR_GC_MODRON_SCAVENGER */
@@ -557,13 +324,15 @@ MM_CollectorLanguageInterfaceImpl::concurrentGC_getNextTracingMode(uintptr_t exe
 uintptr_t
 MM_CollectorLanguageInterfaceImpl::concurrentGC_collectRoots(MM_EnvironmentStandard *env, uintptr_t concurrentStatus, bool *collectedRoots, bool *paidTax)
 {
+	MM_ParallelGlobalGC *globalCollector = (MM_ParallelGlobalGC *)_extensions->getGlobalCollector();
+	MM_MarkingScheme *markingScheme = globalCollector->getMarkingScheme();
 	uintptr_t bytesScanned = 0;
 	*collectedRoots = true;
 	*paidTax = true;
 
 	switch (concurrentStatus) {
 	case CONCURRENT_ROOT_TRACING1:
-		markingScheme_scanRoots(env);
+		markingScheme->markLiveObjectsRoots(env);
 		break;
 	default:
 		Assert_MM_unreachable();
@@ -572,215 +341,4 @@ MM_CollectorLanguageInterfaceImpl::concurrentGC_collectRoots(MM_EnvironmentStand
 	return bytesScanned;
 }
 #endif /* OMR_GC_MODRON_CONCURRENT_MARK */
-
-omrobjectptr_t
-MM_CollectorLanguageInterfaceImpl::heapWalker_heapWalkerObjectSlotDo(omrobjectptr_t object)
-{
-	return NULL;
-}
-void
-MM_CollectorLanguageInterfaceImpl::parallelGlobalGC_postMarkProcessing(MM_EnvironmentBase *env)
-{
-	OMR_VM *omrVM = env->getOmrVM();
-	JSRuntime *rt = (JSRuntime *)omrVM->_language_vm;
-	Zone *zone = OmrGcHelper::zone;
-	js::AutoLockForExclusiveAccess lock(rt);
-
-	/* Clear new object cache. Its entries may point to dead objects. */
-	rt->activeContext()->caches().newObjectCache.clearNurseryObjects(rt);
-
-	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
-		for (WeakMapBase* m : z->gcWeakMapList()) {
-			m->sweep();
-		}
-		for (auto* cache : z->weakCaches()) {
-			cache->sweep();
-		}
-
-		for (auto edge : z->gcWeakRefs()) {
-			/* Edges may be present multiple times, so may already be nulled. */
-			if (*edge && IsAboutToBeFinalizedDuringSweep(**edge)) {
-				*edge = nullptr;
-			}
-		}
-		z->gcWeakRefs().clear();
-
-		/* No need to look up any more weakmap keys from this zone group. */
-		AutoEnterOOMUnsafeRegion oomUnsafe;
-		if (!z->gcWeakKeys().clear()) {
-			oomUnsafe.crash("clearing weak keys in beginSweepingZoneGroup()");
-		}
-	}
-	for (JS::detail::WeakCacheBase* cache : rt->weakCaches()) {
-		cache->sweep();
-	}
-
-	FreeOp fop(rt);
-
-	// callFinalizeCallbacks(&fop, JSFINALIZE_GROUP_START);
-    // callWeakPointerZoneGroupCallbacks();
-
-    // for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next())
-    //         callWeakPointerCompartmentCallbacks(comp);
-    // }
-
-	// Cancel any active or pending off thread compilations.
-	js::CancelOffThreadIonCompile(rt, JS::Zone::Sweep);
-
-	for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
-		c->sweepTemplateLiteralMap();
-		c->sweepVarNames();
-		c->sweepGlobalObject();
-		c->sweepDebugEnvironments();
-		c->sweepJitCompartment(&fop);
-		c->sweepTemplateObjects();
-	}
-
-	// Bug 1071218: the following two methods have not yet been
-	// refactored to work on a single zone-group at once.
-
-	// Collect watch points associated with unreachable objects.
-	WatchpointMap::sweepAll(rt);
-
-	// Detach unreachable debuggers and global objects from each other.
-	Debugger::sweepAll(&fop);
-
-	// Sweep entries containing about-to-be-finalized JitCode and
-	// update relocated TypeSet::Types inside the JitcodeGlobalTable.
-	jit::JitRuntime::SweepJitcodeGlobalTable(rt);
-
-	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
-		if (jit::JitZone* jitZone = z->jitZone())
-			jitZone->sweep(&fop);
-	}
-
-	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
-		z->discardJitCode(&fop);
-	}
-
-	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
-		z->beginSweepTypes(&fop, !zone->isPreservingCode());
-		z->sweepBreakpoints(&fop);
-		z->sweepUniqueIds(&fop);
-	}
-
-	rt->symbolRegistry(lock).sweep();
-
-	// Sweep atoms
-	rt->atomsForSweeping()->sweep();
-
-	for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
-		c->sweepCrossCompartmentWrappers();
-	}
-
-	for (GCCompartmentsIter c(rt); !c.done(); c.next())
-		c->sweepRegExps();
-
-	for (GCCompartmentsIter c(rt); !c.done(); c.next())
-		c->objectGroups.sweep(rt->defaultFreeOp());
-
-	for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
-		c->sweepSavedStacks();
-		c->sweepSelfHostingScriptSource();
-		c->sweepNativeIterators();
-	}
-
-	// NOTE: This wasn't in the original sweep code, but stopped a crash on using a freed object from iteratorCache
-	for (GCCompartmentsIter c(rt); !c.done(); c.next())
-		c->purge();
-
-	rt->gc.callFinalizeCallbacks(&fop, JSFINALIZE_GROUP_END);
-
-	zone->types.endSweep(rt);
-
-	/* This puts the heap into the state required to walk it */
-	GC_OMRVMInterface::flushCachesForGC(env);
-
-	MM_HeapRegionManager *regionManager = _extensions->getHeap()->getHeapRegionManager();
-	{
-		GC_HeapRegionIterator regionIterator(regionManager);
-
-		/* Walk the heap for sweeping. */
-		MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
-		AutoClearTypeInferenceStateOnOOM oom(zone);
-		while (NULL != hrd) {
-			GC_ObjectHeapIteratorAddressOrderedList objectIterator(_extensions, hrd, false);
-			omrobjectptr_t omrobjPtr = objectIterator.nextObject();
-			while (NULL != omrobjPtr) {
-				/* Sweep scripts, object groups, and shapes. */
-				js::gc::Cell *thing = (js::gc::Cell *)omrobjPtr;
-				js::gc::AllocKind kind = thing->getAllocKind();
-				if (kind == js::gc::AllocKind::SHAPE || kind == js::gc::AllocKind::ACCESSOR_SHAPE /*|| kind == js::gc::AllocKind::BASE_SHAPE*/) {
-					if (!((Shape *)thing)->isMarkedAny()) {
-						((Shape *)thing)->sweep();
-					}
-				} else if (kind == js::gc::AllocKind::OBJECT_GROUP) {
-					((ObjectGroup *)thing)->maybeSweep(&oom);
-				} else if (kind == js::gc::AllocKind::SCRIPT /*|| kind == js::gc::AllocKind::LAZY_SCRIPT*/) {
-					((JSScript *)thing)->maybeSweepTypes(&oom);
-				} else if (((int)kind) >= (int)js::gc::AllocKind::OBJECT0 && ((int)kind) <= (int)js::gc::AllocKind::OBJECT16_BACKGROUND) {
-					JSObject *obj = (JSObject *)thing;
-					if (obj->is<js::NativeObject>() && !_markingScheme->isMarked(omrobjPtr)) {
-						obj->as<js::NativeObject>().deleteAllSlots();
-					}
-				}
-				omrobjPtr = objectIterator.nextObject();
-			}
-			hrd = regionIterator.nextRegion();
-		}
-	}
-	// Finalize unmarked objects.
-	{
-		GC_HeapRegionIterator regionIterator(regionManager);
-
-		MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
-		AutoClearTypeInferenceStateOnOOM oom(zone);
-		while (NULL != hrd) {
-			GC_ObjectHeapIteratorAddressOrderedList objectIterator(_extensions, hrd, false);
-			omrobjectptr_t omrobjPtr = objectIterator.nextObject();
-			while (NULL != omrobjPtr) {
-				if (!_markingScheme->isMarked(omrobjPtr)) {
-					js::gc::Cell *thing = (js::gc::Cell *)omrobjPtr;
-					js::gc::AllocKind kind = thing->getAllocKind();
-					if ((int)js::gc::AllocKind::OBJECT_LAST > (int)kind) {
-						((JSObject *)thing)->finalize(&fop);
-					} else if (js::gc::AllocKind::OBJECT_LIMIT == kind) {
-						((JSScript *)thing)->finalize(&fop);
-					} else if (js::gc::AllocKind::LAZY_SCRIPT == kind) {
-						((js::LazyScript *)thing)->finalize(&fop);
-					} else if (js::gc::AllocKind::JITCODE == kind) {
-						((js::jit::JitCode *)thing)->finalize(&fop);
-					}
-				}
-				omrobjPtr = objectIterator.nextObject();
-			}
-			hrd = regionIterator.nextRegion();
-		}
-	}
-	{
-		GC_HeapRegionIterator regionIterator(regionManager);
-
-		/* Walk the heap, for objects that are not marked we corrupt them to maximize the chance we will crash immediately
-		if they are used. For live objects validate that they have the expected eyecatcher */
-		MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
-		AutoClearTypeInferenceStateOnOOM oom(zone);
-		while (NULL != hrd) {
-			/* Walk all of the objects, making sure that those that were not marked are no longer
-			usable. If they are later used we will know this and optimally crash */
-			GC_ObjectHeapIteratorAddressOrderedList objectIterator(_extensions, hrd, false);
-			omrobjectptr_t omrobjPtr = objectIterator.nextObject();
-			while (NULL != omrobjPtr) {
-				if (!_markingScheme->isMarked(omrobjPtr)) {
-					/* object will be collected. We write the full contents of the object with a known value. */
-					uintptr_t objsize = _extensions->objectModel.getConsumedSizeInBytesWithHeader(omrobjPtr);
-					memset(omrobjPtr, 0x5E, (size_t)objsize);
-					MM_HeapLinkedFreeHeader::fillWithHoles(omrobjPtr, objsize);
-				}
-				omrobjPtr = objectIterator.nextObject();
-			}
-			hrd = regionIterator.nextRegion();
-		}
-	}
-	rt->gc.incGcNumber();
-}
 

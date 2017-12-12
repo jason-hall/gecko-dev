@@ -783,7 +783,7 @@ class Concrete<js::jit::JitCode> : TracerConcrete<js::jit::JitCode> {
     CoarseType coarseType() const final { return CoarseType::Script; }
 
     Size size(mozilla::MallocSizeOf mallocSizeOf) const override {
-#ifdef OMR
+#ifdef USE_OMR
         Size size = js::gc::OmrGcHelper::thingSize(get().asTenured().getAllocKind());
 #else
         Size size = js::gc::Arena::thingSize(get().asTenured().getAllocKind());

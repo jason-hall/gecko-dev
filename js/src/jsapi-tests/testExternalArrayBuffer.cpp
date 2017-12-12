@@ -8,7 +8,7 @@
 
 char test_data[] = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-static void GC(JSContext* cx)
+static void GC2(JSContext* cx)
 {
     JS_GC(cx);
     // Trigger another to wait for background finalization to end.
@@ -19,11 +19,11 @@ BEGIN_TEST(testExternalArrayBuffer)
 {
     size_t length = sizeof(test_data);
     JS::RootedObject obj(cx, JS_NewArrayBufferWithExternalContents(cx, length, test_data));
-    GC(cx);
+    GC2(cx);
     CHECK(VerifyObject(obj, length));
-    GC(cx);
+    GC2(cx);
     JS_DetachArrayBuffer(cx, obj);
-    GC(cx);
+    GC2(cx);
     CHECK(VerifyObject(obj, 0));
 
     return true;

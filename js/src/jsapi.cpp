@@ -102,7 +102,7 @@
 #include "vm/SavedStacks-inl.h"
 #include "vm/String-inl.h"
 
-#if defined(OMR)
+#ifdef USE_OMR
 
 #include <stdlib.h>
 
@@ -492,17 +492,12 @@ JS::isGCEnabled()
 JS_FRIEND_API(bool) JS::isGCEnabled() { return true; }
 #endif
 
-#if defined(OMR)
-
-static omr_error_t InitializeOMR()
-{
-    return OMR_Initialize_VM(&Nursery::omrVM, &Nursery::omrVMThread, NULL, NULL);
-}
-#endif /* defined(OMR) */
-
 JS_PUBLIC_API(JSContext*)
 JS_NewContext(uint32_t maxbytes, uint32_t maxNurseryBytes, JSRuntime* parentRuntime)
 {
+#ifdef USE_OMR
+    omr_error_t rc = OMR_Initialize_VM(&omrjs::omrVM, &omrjs::omrVMThread, NULL, NULL);
+#endif /* defined(OMR) */
     MOZ_ASSERT(JS::detail::libraryInitState == JS::detail::InitState::Running,
                "must call JS_Init prior to creating any JSContexts");
 
@@ -511,19 +506,11 @@ JS_NewContext(uint32_t maxbytes, uint32_t maxNurseryBytes, JSRuntime* parentRunt
         parentRuntime = parentRuntime->parentRuntime;
 
     JS_PUBLIC_API(JSContext*) cx = NewContext(maxbytes, maxNurseryBytes, parentRuntime);
-#if defined(OMR)
-    omr_error_t rc = InitializeOMR();
-    Nursery::omrVM->_language_vm = cx->runtime();
+#ifdef USE_OMR
+    omrjs::omrVM->_language_vm = cx->runtime();
 #endif /* defined(OMR) */
     return cx;
 }
-
-#if defined(OMR)
-static omr_error_t TearDownOMR()
-{
-    OMR_Shutdown_VM(Nursery::omrVM, Nursery::omrVMThread);
-}
-#endif /* defined(OMR) */
 
 JS_PUBLIC_API(JSContext*)
 JS_NewCooperativeContext(JSContext* siblingContext)
@@ -547,8 +534,8 @@ JS_PUBLIC_API(void)
 JS_DestroyContext(JSContext* cx)
 {
     DestroyContext(cx);
-#if defined(OMR)
-    TearDownOMR();
+#ifdef USE_OMR
+    //OMR_Shutdown_VM(omrjs::omrVM, omrjs::omrVMThread);
 #endif /* defined(OMR) */
 }
 

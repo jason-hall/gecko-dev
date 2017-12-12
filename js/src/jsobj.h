@@ -304,7 +304,7 @@ class JSObject : public js::gc::Cell
     static const JS::TraceKind TraceKind = JS::TraceKind::Object;
     static const size_t MaxTagBits = 3;
 
-#ifndef OMR // Zones
+#ifndef USE_OMR // Zones
     MOZ_ALWAYS_INLINE JS::Zone* zone() const {
         return group_->zone();
     }
@@ -327,7 +327,7 @@ class JSObject : public js::gc::Cell
     js::gc::AllocKind allocKindForTenure(const js::Nursery& nursery) const;
 
     size_t tenuredSizeOfThis() const {
-#ifdef OMR // Arenas
+#ifdef USE_OMR // Arenas
         // OMRTODO: Obtain size correctly
         return js::gc::OmrGcHelper::thingSize(getAllocKind());
 #else // OMR Arenas
@@ -600,7 +600,7 @@ class JSObject : public js::gc::Cell
     static size_t offsetOfGroup() { return offsetof(JSObject, group_); }
 
     // Maximum size in bytes of a JSObject.
-#ifdef OMR
+#ifdef USE_OMR
     static const size_t MAX_BYTE_SIZE = 5 * sizeof(void*) + 16 * sizeof(JS::Value);
 #else
     static const size_t MAX_BYTE_SIZE = 4 * sizeof(void*) + 16 * sizeof(JS::Value);
@@ -660,7 +660,7 @@ struct JSObject_Slots16 : JSObject { void* data[3]; js::Value fslots[16]; };
 /* static */ MOZ_ALWAYS_INLINE void
 JSObject::readBarrier(JSObject* obj)
 {
-#ifndef OMR
+#ifndef USE_OMR
     if (obj && obj->isTenured())
         obj->asTenured().readBarrier(&obj->asTenured());
 #endif // !OMR
@@ -669,7 +669,7 @@ JSObject::readBarrier(JSObject* obj)
 /* static */ MOZ_ALWAYS_INLINE void
 JSObject::writeBarrierPre(JSObject* obj)
 {
-#ifndef OMR
+#ifndef USE_OMR
     if (obj && obj->isTenured())
         obj->asTenured().writeBarrierPre(&obj->asTenured());
 #endif // OMR
@@ -678,7 +678,7 @@ JSObject::writeBarrierPre(JSObject* obj)
 /* static */ MOZ_ALWAYS_INLINE void
 JSObject::writeBarrierPost(void* cellp, JSObject* prev, JSObject* next)
 {
-#ifndef OMR
+#ifndef USE_OMR
     MOZ_ASSERT(cellp);
 
     // If the target needs an entry, add it.

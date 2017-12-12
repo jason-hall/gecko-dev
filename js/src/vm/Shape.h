@@ -559,14 +559,14 @@ class BaseShape : public gc::TenuredCell
     }
 
     uint32_t slotSpan() const {
-#ifndef OMR
+#ifndef USE_OMR
         MOZ_ASSERT(isOwned());
 #endif
         return slotSpan_;
     }
 
     void setSlotSpan(uint32_t slotSpan) {
-#ifndef OMR
+#ifndef USE_OMR
         MOZ_ASSERT(isOwned());
 #endif
         slotSpan_ = slotSpan;

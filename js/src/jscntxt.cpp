@@ -1279,7 +1279,7 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
     threadNative_(0),
     helperThread_(nullptr),
     options_(options),
-#ifndef OMR
+#ifndef USE_OMR
     arenas(nullptr_),
 #endif
     enterCompartmentDepth_(0),

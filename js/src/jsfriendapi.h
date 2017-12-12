@@ -21,6 +21,7 @@
 #include "js/CallNonGenericMethod.h"
 #include "js/Class.h"
 #include "js/Utility.h"
+#include "GeckoConfig.hpp"
 
 #if JS_STACK_GROWTH_DIRECTION > 0
 # define JS_CHECK_STACK_SIZE(limit, sp) (MOZ_LIKELY((uintptr_t)(sp) < (limit)))
@@ -560,7 +561,7 @@ GetAnyCompartmentInZone(JS::Zone* zone);
 namespace shadow {
 
 struct ObjectGroup {
-#ifdef OMR
+#ifdef USE_OMR
     void *omrPadding;
 #endif
     const Class* clasp;
@@ -569,7 +570,7 @@ struct ObjectGroup {
 };
 
 struct BaseShape {
-#ifdef OMR
+#ifdef USE_OMR
     void *omrPadding;
 #endif
     const js::Class* clasp_;
@@ -578,7 +579,7 @@ struct BaseShape {
 
 class Shape {
 public:
-#ifdef OMR
+#ifdef USE_OMR
     void *omrPadding;
 #endif
     shadow::BaseShape* base;
@@ -594,7 +595,7 @@ public:
  * depending on the object's specific layout.
  */
 struct Object {
-#ifdef OMR
+#ifdef USE_OMR
     void *omrPadding;
 #endif
     shadow::ObjectGroup* group;
@@ -634,7 +635,7 @@ struct String
     static const uint32_t ROPE_FLAGS       = 0;
     static const uint32_t EXTERNAL_FLAGS   = JS_BIT(5);
     static const uint32_t TYPE_FLAGS_MASK  = JS_BIT(6) - 1;
-#ifdef OMR
+#ifdef USE_OMR
     void *omrPadding;
 #endif
     uint32_t flags;

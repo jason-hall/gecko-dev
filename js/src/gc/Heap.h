@@ -30,7 +30,20 @@
 #include "js/RootingAPI.h"
 #include "js/TracingAPI.h"
 
+/*#include "omrglue.hpp"*/
+#include "CollectorLanguageInterfaceImpl.hpp"
+#include "EnvironmentStandard.hpp"
+#include "StandardWriteBarrier.hpp"
+
 struct JSRuntime;
+
+namespace omrjs {
+
+// OMRTODO: Fix this hack.
+extern OMR_VMThread *omrVMThread;
+extern OMR_VM *omrVM;
+
+}
 
 namespace js {
 
@@ -326,21 +339,6 @@ class FreeSpan
     }
 };
 
-//#ifdef OMR // Arena replacement helpers
-// OMRTODO: Move to object model
-class OmrGcHelper {
-public:
-    static JS_FRIEND_DATA(const uint32_t) thingSizes[];
-
-    static size_t thingSize(AllocKind kind) {
-        return thingSizes[size_t(kind)];
-    }
-
-    static JS::Zone* zone;
-    static GCRuntime* runtime;
-};
-//#endif // ! OMR Arena replacemnt helpers
-
 MOZ_ALWAYS_INLINE const TenuredCell&
 Cell::asTenured() const
 {
@@ -500,7 +498,6 @@ TenuredCell::getTraceKind() const
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::readBarrier(TenuredCell* thing)
 {
-    // OMRTODO: Writebarriers
 }
 
 void
@@ -509,17 +506,17 @@ AssertSafeToSkipBarrier(TenuredCell* thing);
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::writeBarrierPre(TenuredCell* thing)
 {
-    // OMRTODO: Writebarriers
 }
 
 static MOZ_ALWAYS_INLINE void
 AssertValidToSkipBarrier(TenuredCell* thing)
 {
 }
-
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::writeBarrierPost(void* cellp, TenuredCell* prior, TenuredCell* next)
 {
+    // OMR Writebarriers
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)cellp, (omrobjectptr_t)next);
 }
 
 #ifdef DEBUG

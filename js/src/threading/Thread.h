@@ -7,7 +7,7 @@
 #ifndef threading_Thread_h
 #define threading_Thread_h
 
-#if defined(OMR)
+#ifdef USE_OMR
 #include "thread_api.h"
 #endif /* defined(OMR) */
 
@@ -227,14 +227,14 @@ public:
   }
 
   static THREAD_RETURN_TYPE THREAD_CALL_API Start(void* aPack) {
-#if defined(OMR)
+#ifdef USE_OMR
     omrthread_t thread;
     omrthread_attach(&thread);
 #endif /* defined(OMR) */
     auto* pack = static_cast<ThreadTrampoline<F, Args...>*>(aPack);
     pack->callMain(typename mozilla::IndexSequenceFor<Args...>::Type());
     js_delete(pack);
-#if defined(OMR)
+#ifdef USE_OMR
     omrthread_detach(thread);
 #endif /* defined(OMR) */
     return 0;

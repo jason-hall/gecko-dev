@@ -291,7 +291,7 @@ struct StatsClosure
     }
 };
 
-#ifndef OMR
+#ifndef USE_OMR
 static void
 DecommittedArenasChunkCallback(JSRuntime* rt, void* data, gc::Chunk* chunk)
 {
@@ -368,7 +368,7 @@ StatsCompartmentCallback(JSContext* cx, void* data, JSCompartment* compartment)
                                         &cStats.privateData);
 }
 
-#ifndef OMR
+#ifndef USE_OMR
 static void
 StatsArenaCallback(JSRuntime* rt, void* data, gc::Arena* arena,
                    JS::TraceKind traceKind, size_t thingSize)
@@ -751,7 +751,7 @@ FindNotableScriptSources(JS::RuntimeSizes& runtime)
     return true;
 }
 
-#ifndef OMR
+#ifndef USE_OMR
 static bool
 CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats, ObjectPrivateVisitor* opv,
                           bool anonymize, IterateCellCallback statsCellCallback)
@@ -858,7 +858,7 @@ JS_PUBLIC_API(bool)
 JS::CollectRuntimeStats(JSContext* cx, RuntimeStats *rtStats, ObjectPrivateVisitor *opv,
                         bool anonymize)
 {
-#ifdef OMR
+#ifdef USE_OMR
     return true;
 #else
     return CollectRuntimeStatsHelper(cx, rtStats, opv, anonymize, StatsCellCallback<FineGrained>);
@@ -939,7 +939,7 @@ AddSizeOfTab(JSContext* cx, HandleObject obj, MallocSizeOf mallocSizeOf, ObjectP
     StatsClosure closure(&rtStats, opv, /* anonymize = */ false);
     if (!closure.init())
         return false;
-#ifndef OMR
+#ifndef USE_OMR
     IterateHeapUnbarrieredForZone(cx, zone, &closure,
                                                   StatsZoneCallback,
                                                   StatsCompartmentCallback,
@@ -968,7 +968,7 @@ AddServoSizeOf(JSContext* cx, MallocSizeOf mallocSizeOf, ObjectPrivateVisitor* o
 {
     SimpleJSRuntimeStats rtStats(mallocSizeOf);
 
-#ifndef OMR
+#ifndef USE_OMR
     // No need to anonymize because the results will be aggregated.
     if (!CollectRuntimeStatsHelper(cx, &rtStats, opv, /* anonymize = */ false,
                                    StatsCellCallback<CoarseGrained>))

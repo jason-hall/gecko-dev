@@ -53,7 +53,7 @@ Linker::newCode(JSContext* cx, CodeKind kind, bool hasPatchableBackedges /* = fa
     awjc.emplace(result, bytesNeeded);
     code->copyFrom(masm);
     masm.link(code);
-#ifndef OMR
+#ifndef USE_OMR
     // OMRTODO
     if (masm.embedsNurseryPointers())
         cx->zone()->group()->storeBuffer().putWholeCell(code);

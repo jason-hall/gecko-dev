@@ -120,19 +120,22 @@ NativeObject::markDenseElementsNotPacked(JSContext* cx)
 inline void
 NativeObject::elementsRangeWriteBarrierPost(uint32_t start, uint32_t count)
 {
-#ifdef OMR // OMRTODO: Writebarrier
-        return;
-#else // OMR Writebarrier
     for (size_t i = 0; i < count; i++) {
         const Value& v = elements_[start + i];
+#ifdef USE_OMR // OMRTODO : Fix Writebarrier
+        if (v.isObject()) {
+            standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)this, (omrobjectptr_t)NULL);
+            return;
+        }
+#else
         if (v.isObject() && IsInsideNursery(&v.toObject())) {
             zone()->group()->storeBuffer().putSlot(this, HeapSlot::Element,
                                                    unshiftedIndex(start + i),
                                                    count - i);
             return;
         }
-    }
 #endif
+    }
 }
 
 inline void
@@ -145,10 +148,10 @@ NativeObject::copyDenseElements(uint32_t dstStart, const Value* src, uint32_t co
     for (uint32_t i = 0; i < count; ++i)
         checkStoredValue(src[i]);
 #endif
-#ifdef OMR // Writebarriers
-        // OMRTODO: Add write barrier calls here
+#ifdef USE_OMR
         memcpy(&elements_[dstStart], src, count * sizeof(HeapSlot));
-#else // OMR Writebarriers
+        elementsRangeWriteBarrierPost(dstStart, count);
+#else
     if (JS::shadow::Zone::asShadowZone(zone())->needsIncrementalBarrier()) {
         uint32_t numShifted = getElementsHeader()->numShiftedElements();
         for (uint32_t i = 0; i < count; ++i) {
@@ -160,7 +163,7 @@ NativeObject::copyDenseElements(uint32_t dstStart, const Value* src, uint32_t co
         memcpy(&elements_[dstStart], src, count * sizeof(HeapSlot));
         elementsRangeWriteBarrierPost(dstStart, count);
     }
-#endif // Writebarriers
+#endif
 }
 
 inline void
@@ -234,10 +237,9 @@ NativeObject::moveDenseElements(uint32_t dstStart, uint32_t srcStart, uint32_t c
      * write barrier is invoked here on B, despite the fact that it exists in
      * the array before and after the move.
      */
-#if defined OMR // Writebarriers
-        // OMRTODO: Pull the zone from a context
-        // OMRTODO: Write barriers
+#if defined OMR
         memmove(elements_ + dstStart, elements_ + srcStart, count * sizeof(HeapSlot));
+        elementsRangeWriteBarrierPost(dstStart, count);
 #else // OMR
     if (JS::shadow::Zone::asShadowZone(zone())->needsIncrementalBarrier()) {
         uint32_t numShifted = getElementsHeader()->numShiftedElements();
@@ -262,7 +264,7 @@ NativeObject::moveDenseElements(uint32_t dstStart, uint32_t srcStart, uint32_t c
 inline void
 NativeObject::moveDenseElementsNoPreBarrier(uint32_t dstStart, uint32_t srcStart, uint32_t count)
 {
-#ifndef OMR // OMRTODO: Zone from context
+#ifndef USE_OMR // OMRTODO: Zone from context
     MOZ_ASSERT(!shadowZone()->needsIncrementalBarrier());
 #endif
 
@@ -460,7 +462,7 @@ NativeObject::updateShapeAfterMovingGC()
 inline bool
 NativeObject::isInWholeCellBuffer() const
 {
-#ifdef OMR // Writebarriers
+#ifdef USE_OMR // Writebarriers
         // OMRTODO: What are cell buffers and why are they tied to an arena?
         // I think they are just used to 
         return true;

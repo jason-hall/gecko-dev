@@ -60,7 +60,7 @@ public:
 	void
 	scanAllSlots(MM_EnvironmentBase *env)
 	{
-#error provide implementation
+//TODO #error provide implementation
 	}
 
 	/* TODO remove this function as it is Java specific */

@@ -1533,7 +1533,7 @@ CopyProxyValuesBeforeSwap(ProxyObject* proxy, Vector<Value>& values)
 {
     MOZ_ASSERT(values.empty());
 
-#ifndef OMR
+#ifndef USE_OMR
     // Remove the GCPtrValues we're about to swap from the store buffer, to
     // ensure we don't trace bogus values.
     //OMRTODO: 
@@ -1545,13 +1545,13 @@ CopyProxyValuesBeforeSwap(ProxyObject* proxy, Vector<Value>& values)
         return false;
 
     js::detail::ProxyValueArray* valArray = js::detail::GetProxyDataLayout(proxy)->values();
-#ifndef OMR
+#ifndef USE_OMR
     sb.unputValue(&valArray->privateSlot);
 #endif
     values.infallibleAppend(valArray->privateSlot);
 
     for (size_t i = 0; i < proxy->numReservedSlots(); i++) {
-#ifndef OMR
+#ifndef USE_OMR
         sb.unputValue(&valArray->reservedSlots.slots[i]);
 #endif
         values.infallibleAppend(valArray->reservedSlots.slots[i]);
@@ -1612,12 +1612,14 @@ JSObject::swap(JSContext* cx, HandleObject a, HandleObject b)
      * Neither object may be in the nursery, but ensure we update any embedded
      * nursery pointers in either object.
      */
-#ifndef OMR // Writebarrier
-    // OMRTODO: Writebarriers here
+#ifdef USE_OMR // OMR Writebarrier
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)a->address(), (omrobjectptr_t)NULL);
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)b->address(), (omrobjectptr_t)NULL);
+#else
     MOZ_ASSERT(!IsInsideNursery(a) && !IsInsideNursery(b));
     cx->zone()->group()->storeBuffer().putWholeCell(a);
     cx->zone()->group()->storeBuffer().putWholeCell(b);
-#endif // ! OMR Writebarrier
+#endif
 
     unsigned r = NotifyGCPreSwap(a, b);
 
@@ -3745,7 +3747,7 @@ js::DumpBacktrace(JSContext* cx)
 js::gc::AllocKind
 JSObject::allocKindForTenure(const js::Nursery& nursery) const
 {
-#if defined(OMR)
+#ifdef USE_OMR
     return getAllocKind();
 
     // OMRTODO: Check that alloc kind matches the store one
@@ -3887,7 +3889,7 @@ JSObject::sizeOfIncludingThisInNursery() const
     MOZ_ASSERT(!isTenured());
 
     const Nursery& nursery = zone()->group()->nursery();
-#ifdef OMR
+#ifdef USE_OMR
     // OMRTODO: Allockind from nursery? What?
     size_t size = OmrGcHelper::thingSize(allocKindForTenure(nursery));
 #else

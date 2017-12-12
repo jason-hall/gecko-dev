@@ -3052,7 +3052,7 @@ CloneObject(JSContext* cx, HandleNativeObject selfHostedObject)
         detect.emplace(cx, selfHostedObject);
         if (!detect->init())
             return nullptr;
-#ifndef OMR
+#ifndef USE_OMR
         if (detect->foundCycle())
             MOZ_CRASH("SelfHosted cloning cannot handle cyclic object graphs.");
 #endif

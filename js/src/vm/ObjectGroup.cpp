@@ -44,7 +44,7 @@ ObjectGroup::ObjectGroup(const Class* clasp, TaggedProto proto, JSCompartment* c
     MOZ_ASSERT_IF(proto.isObject(), !IsWindow(proto.toObject()));
     MOZ_ASSERT(JS::StringIsASCII(clasp->name));
 
-#ifdef OMR
+#ifdef USE_OMR
     this->setAllocKind(js::gc::AllocKind::OBJECT_GROUP);
 #endif
     this->clasp_ = clasp;

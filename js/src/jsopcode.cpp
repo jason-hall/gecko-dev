@@ -2894,7 +2894,7 @@ GenerateLcovInfo(JSContext* cx, JSCompartment* comp, GenericPrinter& out)
 
     // Collect the list of scripts which are part of the current compartment.
     {
-#ifndef OMR // OMROTODO
+#ifndef USE_OMR // OMROTODO
         js::gc::AutoPrepareForTracing apft(cx, SkipAtoms);
 #endif
     }

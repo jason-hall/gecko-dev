@@ -1398,7 +1398,7 @@ InnerViewTable::sweepEntry(JSObject** pkey, ViewVector& views)
 void
 InnerViewTable::sweep()
 {
-#ifdef OMR
+#ifdef USE_OMR
     nurseryKeys.clear();
 #else
     MOZ_ASSERT(nurseryKeys.empty());

@@ -301,7 +301,7 @@ GetGCKindBytes(AllocKind thingKind)
     return sizeof(JSObject_Slots0) + GetGCKindSlots(thingKind) * sizeof(Value);
 }
 
-#ifndef OMR // Arenas and segments
+#ifndef USE_OMR // Arenas and segments
 
 // Class to assist in triggering background chunk allocation. This cannot be done
 // while holding the GC or worker thread state lock due to lock ordering issues.
@@ -493,7 +493,7 @@ class GCParallelTask
     void runFromHelperThread(AutoLockHelperThreadState& locked);
 };
 
-#ifndef OMR // GC Iterators
+#ifndef USE_OMR // GC Iterators
 
 typedef void (*IterateChunkCallback)(JSRuntime* rt, void* data, gc::Chunk* chunk);
 typedef void (*IterateZoneCallback)(JSRuntime* rt, void* data, JS::Zone* zone);

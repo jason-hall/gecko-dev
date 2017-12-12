@@ -14,6 +14,8 @@
 #include "js/TraceKind.h"
 #include "js/Utility.h"
 
+#include "GeckoConfig.hpp"
+
 /* These values are private to the JS engine. */
 namespace js {
 
@@ -380,7 +382,7 @@ CellIsNotGray(const Cell* cell);
 MOZ_ALWAYS_INLINE bool
 IsInsideNursery(const js::gc::Cell* cell)
 {
-#ifdef OMR
+#ifdef USE_OMR
     return true;
 #else
     if (!cell)

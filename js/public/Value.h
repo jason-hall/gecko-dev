@@ -960,7 +960,7 @@ IsOptimizedPlaceholderMagicValue(const Value& v)
 static MOZ_ALWAYS_INLINE void
 ExposeValueToActiveJS(const Value& v)
 {
-#ifndef OMR
+#ifndef USE_OMR
 #ifdef DEBUG
     Value tmp = v;
     MOZ_ASSERT(!js::gc::EdgeNeedsSweepUnbarrieredSlow(&tmp));

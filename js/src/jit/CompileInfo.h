@@ -214,7 +214,7 @@ class CompileInfo
         // guaranteed to be non-lazy. Hence, don't access its script!
         if (fun_) {
             fun_ = fun_->nonLazyScript()->functionNonDelazifying();
-#ifndef OMR
+#ifndef USE_OMR
             MOZ_ASSERT(fun_->isTenured());
 #endif
         }

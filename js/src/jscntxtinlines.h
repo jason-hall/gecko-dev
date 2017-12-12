@@ -516,7 +516,7 @@ JSContext::setCompartment(JSCompartment* comp,
     MOZ_ASSERT_IF(runtime_->isAtomsCompartment(comp) || runtime_->isAtomsCompartment(compartment_),
                   runtime_->currentThreadHasExclusiveAccess());
 
-#ifndef OMR
+#ifndef USE_OMR
     // Make sure that the atoms compartment has its own zone.
     MOZ_ASSERT_IF(comp && !runtime_->isAtomsCompartment(comp),
                   !comp->zone()->isAtomsZone());
@@ -533,7 +533,7 @@ JSContext::setCompartment(JSCompartment* comp,
 
     compartment_ = comp;
     zone_ = comp ? comp->zone() : nullptr;
-#ifndef OMR
+#ifndef USE_OMR
     arenas_ = zone_ ? &zone_->arenas : nullptr;
 #endif
 }

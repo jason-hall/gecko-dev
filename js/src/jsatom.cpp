@@ -175,14 +175,14 @@ TracePinnedAtoms(JSTracer* trc, const AtomSet& atoms)
 {
     for (auto r = atoms.all(); !r.empty(); r.popFront()) {
         const AtomStateEntry& entry = r.front();
-#ifndef OMR
+#ifndef USE_OMR
         // OMRTODO: We always collect every zone (there is only one zone)
         if (entry.isPinned()) {
 #endif
             JSAtom* atom = entry.asPtrUnbarriered();
             TraceRoot(trc, &atom, "interned_atom");
             MOZ_ASSERT(entry.asPtrUnbarriered() == atom);
-#ifndef OMR
+#ifndef USE_OMR
         }
 #endif
     }

@@ -785,7 +785,7 @@ MacroAssembler::nurseryAllocate(Register result, Register temp, gc::AllocKind al
     // No explicit check for nursery.isEnabled() is needed, as the comparison
     // with the nursery's end will always fail in such cases.
     CompileZone* zone = GetJitContext()->compartment->zone();
-#ifdef OMR
+#ifdef USE_OMR
     int thingSize = js::gc::OmrGcHelper::thingSize(allocKind);
 #else
     int thingSize = int(gc::Arena::thingSize(allocKind));

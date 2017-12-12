@@ -14,7 +14,7 @@
 
 BEGIN_TEST(testGCChunkPool)
 {
-#ifndef OMR
+#ifndef USE_OMR
     const int N = 10;
     js::gc::ChunkPool pool;
 

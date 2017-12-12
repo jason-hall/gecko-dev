@@ -353,11 +353,12 @@ UnboxedPlainObject::ensureExpando(JSContext* cx, Handle<UnboxedPlainObject*> obj
     // whole object. If we treat the field as a GCPtrObject and later
     // convert the object to its native representation, we will end up with a
     // corrupted store buffer entry.
-#ifndef OMR
-    // OMRTODO: Writebarrier here
+#ifdef USE_OMR // OMR Writebarrier
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)obj->address(), (omrobjectptr_t)NULL);
+#else
     if (IsInsideNursery(expando) && !IsInsideNursery(obj))
         cx->zone()->group()->storeBuffer().putWholeCell(obj);
-#endif // OMR
+#endif
 
     obj->expando_ = expando;
     return expando;
@@ -583,8 +584,11 @@ UnboxedPlainObject::convertToNative(JSContext* cx, JSObject* obj)
     // store buffer entries can be added on the original unboxed object for
     // writes to the expando (see WholeCellEdges::trace), so after conversion
     // we need to make sure the expando itself will still be traced.
-#ifndef OMR
-    // OMRTODO: Writebarrier here
+#ifdef USE_OMR // OMR Writebarrier
+    if (expando) {
+        standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)expando, (omrobjectptr_t)NULL);
+    }
+#else
     if (expando && !IsInsideNursery(expando))
         cx->zone()->group()->storeBuffer().putWholeCell(expando);
 #endif // OMR

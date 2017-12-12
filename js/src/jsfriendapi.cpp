@@ -611,7 +611,7 @@ struct VisitGrayCallbackFunctor {
 
     template <class T>
     void operator()(T tp) const {
-#ifndef OMR
+#ifndef USE_OMR
         if ((*tp)->isMarkedGray())
 #endif
             callback_(closure_, JS::GCCellPtr(*tp));
@@ -1130,7 +1130,7 @@ DumpHeapVisitCompartment(JSContext* cx, void* data, JSCompartment* comp)
     fprintf(dtrc->output, "# compartment %s [in zone %p]\n", name, (void*)comp->zone());
 }
 
-#ifndef OMR // Arena
+#ifndef USE_OMR // Arena
 static void
 DumpHeapVisitArena(JSRuntime* rt, void* data, gc::Arena* arena,
                    JS::TraceKind traceKind, size_t thingSize)
@@ -1166,7 +1166,7 @@ DumpHeapTracer::onChild(const JS::GCCellPtr& thing)
 void
 js::DumpHeap(JSContext* cx, FILE* fp, js::DumpHeapNurseryBehaviour nurseryBehaviour)
 {
-#ifndef OMR
+#ifndef USE_OMR
     // OMRTODO: Dump Heap
     if (nurseryBehaviour == js::CollectNurseryBeforeDump)
         EvictAllNurseries(cx->runtime(), JS::gcreason::API);
@@ -1459,7 +1459,7 @@ js::IsWindowProxy(JSObject* obj)
     // Note: simply checking `obj == obj->global().windowProxy()` is not
     // sufficient: we may have transplanted the window proxy with a CCW.
     // Check the Class to ensure we really have a window proxy.
-#ifdef OMR
+#ifdef USE_OMR
     return false;
 #else
     return obj->getClass() == obj->runtimeFromAnyThread()->maybeWindowProxyClass();

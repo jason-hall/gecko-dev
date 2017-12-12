@@ -147,7 +147,7 @@ GetterSetterWriteBarrierPost(AccessorShape* shape)
         return;
     }
 
-#ifndef OMR
+#ifndef USE_OMR
     // OMRTODO
     auto& nurseryShapes = shape->zone()->nurseryShapes();
 

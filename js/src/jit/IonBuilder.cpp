@@ -12123,7 +12123,7 @@ IonBuilder::jsop_delelem()
 AbortReasonOr<Ok>
 IonBuilder::jsop_regexp(RegExpObject* reobj)
 {
-#ifndef OMR
+#ifndef USE_OMR
     MOZ_ASSERT(!IsInsideNursery(reobj));
 #endif
 

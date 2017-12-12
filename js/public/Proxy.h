@@ -449,7 +449,7 @@ struct ProxyDataLayout
     }
 };
 
-#ifdef OMR
+#ifdef USE_OMR
 const uint32_t ProxyDataOffset = 3 * sizeof(void*);
 #else
 const uint32_t ProxyDataOffset = 2 * sizeof(void*);

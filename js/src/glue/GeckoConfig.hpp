@@ -62,15 +62,14 @@
 #define JS_POSIX_NSPR 1 
 #define JS_PUNBOX64 1 
 #define JS_TRACE_LOGGING 1 
-//#define MALLOC_H '<malloc/malloc.h>' 
-#define MALLOC_USABLE_SIZE_CONST_PTR const 
-#define MOZILLA_UAVERSION '"52.0"' 
-#define MOZILLA_VERSION '"52.0a1"' 
+//#define MALLOC_H <malloc> 
+#define MALLOC_USABLE_SIZE_CONST_PTR 
+#define MOZILLA_UAVERSION "52.0"
+#define MOZILLA_VERSION "52.0a1"
 #define MOZILLA_VERSION_U 52.0a1 
 #define MOZ_BUILD_APP js 
-#define MOZ_DLL_SUFFIX '".dylib"' 
+#define MOZ_DLL_SUFFIX ".so"
 #define MOZ_MEMORY 1 
-#define MOZ_MEMORY_DARWIN 1 
 #define MOZ_MEMORY_DEBUG 1 
 #define MOZ_REFLOW_PERF 1 
 #define MOZ_REFLOW_PERF_DSP 1 
@@ -82,13 +81,13 @@
 #define U_STATIC_IMPLEMENTATION 1 
 #define U_USING_ICU_NAMESPACE 0 
 #define VA_COPY va_copy 
-//#define XP_DARWIN 1 
-//#define XP_MACOSX 1 
+#define XP_LINUX 1
+#define XP_UNIX 1
 #define XP_UNIX 1 
 #define X_DISPLAY_MISSING 1 
 
 #define DEBUG 1
 #define JS_CODEGEN_X64 1
-#define OMR 1
+#define USE_OMR 1
 
-#endif // OMRGLUE_GECKO_CONFIG
+#endif // OMRGLUE_GECKO_CONFIG*/

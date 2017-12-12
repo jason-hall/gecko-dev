@@ -66,7 +66,9 @@ SetUnboxedValueNoTypeChange(JSObject* unboxedObject,
         return;
 
       case JSVAL_TYPE_STRING: {
-        //MOZ_ASSERT(!IsInsideNursery(v.toString()));
+#ifndef USE_OMR
+        MOZ_ASSERT(!IsInsideNursery(v.toString()));
+#endif
         JSString** np = reinterpret_cast<JSString**>(p);
         if (preBarrier)
             JSString::writeBarrierPre(*np);
@@ -81,7 +83,9 @@ SetUnboxedValueNoTypeChange(JSObject* unboxedObject,
         // the pointer as a HeapPtrObject we will get confused later if the
         // object is converted to its native representation.
         JSObject* obj = v.toObjectOrNull();
-#ifndef OMR // OMRTODO: Writebarriers
+#ifdef USE_OMR // OMR Writebarriers
+        standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)unboxedObject, (omrobjectptr_t)NULL);
+#else
         if (IsInsideNursery(obj) && !IsInsideNursery(unboxedObject))
             unboxedObject->zone()->group()->storeBuffer().putWholeCell(unboxedObject);
 
@@ -146,7 +150,9 @@ SetUnboxedValue(JSContext* cx, JSObject* unboxedObject, jsid id,
 
             // As above, trigger post barriers on the whole object.
             JSObject* obj = v.toObjectOrNull();
-#ifndef OMR // OMRTODO: Writebarriers
+#ifdef USE_OMR // OMR Writebarriers
+            standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)unboxedObject, (omrobjectptr_t)NULL);
+#else
             if (IsInsideNursery(v.toObjectOrNull()) && !IsInsideNursery(unboxedObject))
                 unboxedObject->zone()->group()->storeBuffer().putWholeCell(unboxedObject);
 
@@ -627,7 +633,11 @@ CopyBoxedOrUnboxedDenseElements(JSContext* cx, JSObject* dst, JSObject* src,
                length * elementSize);
 
         // Add a store buffer entry if we might have copied a nursery pointer to dst.
-#ifndef OMR // OMRTODO: Writebarriers
+#ifdef USE_OMR // OMR Writebarriers
+        if (UnboxedTypeNeedsPostBarrier(DstType)) {
+            standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)dst, (omrobjectptr_t)NULL);
+        }
+#else
         if (UnboxedTypeNeedsPostBarrier(DstType) && !IsInsideNursery(dst))
             dst->zone()->group()->storeBuffer().putWholeCell(dst);
 #endif // ! OMR Writebarriers

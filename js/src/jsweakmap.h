@@ -81,7 +81,7 @@ class WeakMapBase : public mozilla::LinkedListElement<WeakMapBase>
     // Restore information about which weak maps are marked for many zones.
     static void restoreMarkedWeakMaps(WeakMapSet& markedWeakMaps);
 
-#ifdef OMR
+#ifdef USE_OMR
   public:
 #else
   protected:
@@ -236,7 +236,7 @@ class WeakMap : public HashMap<Key, Value, HashPolicy, RuntimeAllocPolicy>,
   protected:
     static void addWeakEntry(GCMarker* marker, JS::GCCellPtr key, gc::WeakMarkable markable)
     {
-#ifdef OMR
+#ifdef USE_OMR
         // OMRTODO: Get a real zone from a context passed through.
         Zone* zone = gc::OmrGcHelper::zone; // use a single global zone
 #else
@@ -308,7 +308,7 @@ class WeakMap : public HashMap<Key, Value, HashPolicy, RuntimeAllocPolicy>,
         return nullptr;
     }
 
-#ifdef OMR
+#ifdef USE_OMR
   public:
 #else
   private:

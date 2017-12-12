@@ -11,7 +11,7 @@
 using namespace JS;
 using namespace js;
 
-#ifndef OMR
+#ifndef USE_OMR
 struct AutoIgnoreRootingHazards {
     // Force a nontrivial destructor so the compiler sees the whole RAII scope
     static volatile int depth;
@@ -23,7 +23,7 @@ volatile int AutoIgnoreRootingHazards::depth = 0;
 
 BEGIN_TEST(testGCStoreBufferRemoval)
 {
-#ifndef OMR
+#ifndef USE_OMR
     // Sanity check - objects start in the nursery and then become tenured.
     JS_GC(cx);
     JS::RootedObject obj(cx, NurseryObject());
@@ -117,7 +117,7 @@ BEGIN_TEST(testGCStoreBufferRemoval)
     return true;
 }
 
-#ifndef OMR
+#ifndef USE_OMR
 JSObject* NurseryObject()
 {
     return JS_NewPlainObject(cx);

@@ -109,7 +109,7 @@ struct JSContext : public JS::RootingContext,
 
     js::ThreadLocalData<JS::ContextOptions> options_;
 
-#ifndef OMR
+#ifndef USE_OMR
     js::ThreadLocalData<js::gc::ArenaLists*> arenas_;
 #endif
 
@@ -121,7 +121,7 @@ struct JSContext : public JS::RootingContext,
     bool isCooperativelyScheduled() const { return kind_ == js::ContextKind::Cooperative; }
     size_t threadNative() const { return threadNative_; }
 
-#ifndef OMR
+#ifndef USE_OMR
     inline js::gc::ArenaLists* arenas() const { return arenas_; 
 #endif
 

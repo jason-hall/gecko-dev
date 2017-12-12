@@ -471,7 +471,7 @@ class NativeObject : public ShapedObject
     }
 
   public:
-#ifdef OMR
+#ifdef USE_OMR
 	// Added for OMR:
 	void deleteAllSlots() {
 		if (slots_ != 0) {
@@ -1292,15 +1292,16 @@ class NativeObject : public ShapedObject
     inline void privateWriteBarrierPre(void** oldval);
 
     void privateWriteBarrierPost(void** pprivate) {
-#ifndef OMR // Writebarrier
-        // OMRTODO: Writebarrier
         gc::Cell** cellp = reinterpret_cast<gc::Cell**>(pprivate);
+#ifdef USE_OMR // OMR Writebarrier
+        standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)cellp, (omrobjectptr_t)NULL);
+#else
         MOZ_ASSERT(cellp);
         MOZ_ASSERT(*cellp);
         gc::StoreBuffer* storeBuffer = (*cellp)->storeBuffer();
         if (storeBuffer)
             storeBuffer->putCell(cellp);
-#endif // OMR
+#endif
     }
 
     /* Private data accessors. */
@@ -1382,7 +1383,7 @@ class PlainObject : public NativeObject
 inline void
 NativeObject::privateWriteBarrierPre(void** oldval)
 {
-#ifndef OMR // Writebarrier
+#ifndef USE_OMR // Writebarrier
     // OMRTODO: Writebarrier
     JS::shadow::Zone* shadowZone = this->shadowZoneFromAnyThread();
     if (shadowZone->needsIncrementalBarrier() && *oldval && getClass()->hasTrace())

@@ -678,7 +678,11 @@ class TypeSetRef : public BufferableRef
 void
 ConstraintTypeSet::postWriteBarrier(JSContext* cx, Type type)
 {
-#ifndef OMR // Writebarrier
+#ifdef USE_OMR // OMR Writebarrier
+    if (type.isSingletonUnchecked()) {
+        standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)this, (omrobjectptr_t)NULL);
+    }
+#else
     // OMRTODO: Writebarrier here
     if (type.isSingletonUnchecked() && IsInsideNursery(type.singletonNoBarrier())) {
         cx->zone()->group()->storeBuffer().putGeneric(TypeSetRef(cx->zone(), this));
@@ -2132,7 +2136,7 @@ HeapTypeSetKey::constant(CompilerConstraintList* constraints, Value* valOut)
     Value val = obj->as<NativeObject>().getSlot(shape->slot());
 
     // If the value is a pointer to an object in the nursery, don't optimize.
-#ifndef OMR
+#ifndef USE_OMR
     if (val.isGCThing() && IsInsideNursery(val.toGCThing()))
         return false;
 #endif
@@ -3542,7 +3546,7 @@ PreliminaryObjectArrayWithTemplate::trace(JSTracer* trc)
 /* static */ void
 PreliminaryObjectArrayWithTemplate::writeBarrierPre(PreliminaryObjectArrayWithTemplate* objects)
 {
-#ifndef OMR
+#ifndef USE_OMR
     Shape* shape = objects->shape();
 
     if (!shape)
@@ -4108,7 +4112,7 @@ TypeNewScript::trace(JSTracer* trc)
 /* static */ void
 TypeNewScript::writeBarrierPre(TypeNewScript* newScript)
 {
-#ifndef OMR
+#ifndef USE_OMR
     if (JS::CurrentThreadIsHeapCollecting())
         return;
 
@@ -4277,7 +4281,7 @@ ConstraintTypeSet::sweep(Zone* zone, AutoClearTypeInferenceStateOnOOM& oom)
     TypeConstraint* constraint = constraintList();
     constraintList_ = nullptr;
     while (constraint) {
-#ifndef OMR
+#ifndef USE_OMR
         // OMRTODO: Fix. See next comment
         MOZ_ASSERT(zone->types.sweepTypeLifoAlloc.ref().contains(constraint));
 #endif
@@ -4553,7 +4557,7 @@ TypeZone::beginSweep(FreeOp* fop, bool releaseTypes, AutoClearTypeInferenceState
 
     // Clear the analysis pool, but don't release its data yet. While sweeping
     // types any live data will be allocated into the pool.
-#ifndef OMR
+#ifndef USE_OMR
     // OMR TODO: Following line fails on asserting that sweepTypeLifoAlloc is empty.
     // 			 Freeing it after sweeping causes crash.
     sweepTypeLifoAlloc.ref().steal(&typeLifoAlloc());
@@ -4701,7 +4705,7 @@ TypeScript::printTypes(JSContext* cx, HandleScript script) const
 JS::ubi::Node::Size
 JS::ubi::Concrete<js::ObjectGroup>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
-#ifdef OMR
+#ifdef USE_OMR
     Size size = js::gc::OmrGcHelper::thingSize(get().getAllocKind());
 #else
     Size size = js::gc::Arena::thingSize(get().asTenured().getAllocKind());

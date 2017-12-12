@@ -170,7 +170,7 @@ CompileZone::addressOfNeedsIncrementalBarrier()
 const void*
 CompileZone::addressOfFreeList(gc::AllocKind allocKind)
 {
-#ifdef OMR
+#ifdef USE_OMR
     return nullptr;
 	// OMRTODO: Arena stuff
 #else
@@ -200,7 +200,7 @@ CompileZone::nurseryExists()
 void
 CompileZone::setMinorGCShouldCancelIonCompilations()
 {
-#ifndef OMR
+#ifndef USE_OMR
     // OMRTODO
     //MOZ_ASSERT(CurrentThreadCanAccessZone(zone()));
     //zone()->group()->storeBuffer().setShouldCancelIonCompilations();

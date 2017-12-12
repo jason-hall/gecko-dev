@@ -213,7 +213,7 @@ JitRuntime::~JitRuntime()
 {
     js_delete(functionWrappers_.ref());
 
-#ifndef OMR
+#ifndef USE_OMR
     // By this point, the jitcode global table should be empty.
     MOZ_ASSERT_IF(jitcodeGlobalTable_, jitcodeGlobalTable_->empty());
 #endif
@@ -654,7 +654,7 @@ JitRuntime::SweepJitcodeGlobalTable(JSRuntime* rt)
 void
 JitCompartment::sweep(FreeOp* fop, JSCompartment* compartment)
 {
-#ifndef OMR
+#ifndef USE_OMR
     // Any outstanding compilations should have been cancelled by the GC.
     MOZ_ASSERT(!HasOffThreadIonCompile(compartment));
 #endif
@@ -2169,7 +2169,7 @@ IonCompile(JSContext* cx, JSScript* script,
     if (!builder)
         return AbortReason::Alloc;
 
-#ifndef OMR
+#ifndef USE_OMR
 	// OMRTODO?
     if (cx->zone()->group()->storeBuffer().cancelIonCompilations())
         builder->setNotSafeForMinorGC();

@@ -1539,7 +1539,7 @@ AutoEmptyNursery::AutoEmptyNursery(JSContext* cx)
 }
 
 // OMR GC Helper
-#ifdef OMR
+#ifdef USE_OMR
 Zone* OmrGcHelper::zone;
 GCRuntime* OmrGcHelper::runtime;
 #endif // OMR

@@ -13,6 +13,8 @@
 #include "js/HeapAPI.h"
 #include "js/TraceKind.h"
 
+#include "GeckoConfig.hpp"
+
 class JS_PUBLIC_API(JSTracer);
 
 namespace JS {
@@ -80,11 +82,11 @@ class JS_PUBLIC_API(JSTracer)
         // General-purpose traversal that invokes a callback on each cell.
         // Traversing children is the responsibility of the callback.
         Callback,
-#ifdef OMR
+#ifdef USE_OMR
         OMR_SCAN
 #endif
     };
-#ifdef OMR
+#ifdef USE_OMR
     bool isOmrMarkingTracer() const { return tag_ == TracerKindTag::OMR_SCAN; }
 #endif
     bool isMarkingTracer() const { return tag_ == TracerKindTag::Marking || tag_ == TracerKindTag::WeakMarking; }

@@ -940,7 +940,7 @@ jit::IonCompilationCanUseNurseryPointers()
     // Otherwise, we must be on the active thread during MIR construction. The
     // store buffer must have been notified that minor GCs must cancel pending
     // or in progress Ion compilations.
-#ifdef OMR
+#ifdef USE_OMR
     // OMRTODO
     return true;
 #else

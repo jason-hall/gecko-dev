@@ -35,6 +35,7 @@
 #include "vm/NativeObject-inl.h"
 
 #include "omrgc.h"
+#include "AllocateInitialization.hpp"
 
 using namespace js;
 using namespace gc;
@@ -44,9 +45,10 @@ using mozilla::DebugOnly;
 using mozilla::PodCopy;
 using mozilla::PodZero;
 
-
-OMR_VMThread* js::Nursery::omrVMThread = nullptr;
-OMR_VM* js::Nursery::omrVM = nullptr;
+namespace omrjs {
+    OMR_VMThread *omrVMThread = nullptr;
+    OMR_VM *omrVM = nullptr;
+}
 
 void
 js::Nursery::disable()
@@ -59,13 +61,15 @@ js::Nursery::allocateObject(JSContext* cx, size_t size, size_t numDynamic, const
 {
 	JSObject* obj = nullptr;
 	if (canGC) {
-		obj = (JSObject *)OMR_GC_Allocate(Nursery::omrVMThread, 0, size, 0);
+                //OMR_GC_SystemCollect(omrVMThread, 0);
+                //cx->runtime()->gc.incGcNumber();
+		obj = (JSObject *)OMR_GC_AllocateObject(omrjs::omrVMThread, 0, size, MM_AllocateInitialization ::selectObjectAllocationFlags(false, false, false, false));
 	} else {
-		obj = (JSObject *)OMR_GC_AllocateNoGC(Nursery::omrVMThread, 0, size, 0);
+		obj = (JSObject *)OMR_GC_AllocateObject(omrjs::omrVMThread, 0, size, MM_AllocateInitialization ::selectObjectAllocationFlags(false, false, false, true));
 	}
 	if (obj) {
 		if (numDynamic > 0) {
-			HeapSlot* slots = (HeapSlot *)malloc(numDynamic * sizeof(HeapSlot *));//OMR_GC_AllocateNoGC(Nursery::omrVMThread, 0, numDynamic * sizeof(HeapSlot *), 0);
+			HeapSlot* slots = (HeapSlot *)malloc(numDynamic * sizeof(HeapSlot *));//OMR_GC_AllocateNoGC(omrjs::omrVMThread, 0, numDynamic * sizeof(HeapSlot *), 0);
 			if (!slots)
 				return nullptr;
 			obj->setInitialSlotsMaybeNonNative(slots);

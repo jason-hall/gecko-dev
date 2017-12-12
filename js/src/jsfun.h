@@ -476,7 +476,7 @@ class JSFunction : public js::NativeObject
     JSScript* existingScript() {
         MOZ_ASSERT(isInterpreted());
         if (isInterpretedLazy()) {
-#ifndef OMR // Zone from context, Writebarrier
+#ifndef USE_OMR // Zone from context, Writebarrier
             // OMRTODO: Writebarriers
             if (shadowZone()->needsIncrementalBarrier())
                 js::LazyScript::writeBarrierPre(lazyScript());

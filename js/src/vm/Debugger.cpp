@@ -8129,7 +8129,7 @@ DebuggerFrame_maybeDecrementFrameScriptStepModeCount(FreeOp* fop, AbstractFrameP
 static void
 DebuggerFrame_finalize(FreeOp* fop, JSObject* obj)
 {
-#ifndef OMR
+#ifndef USE_OMR
     MOZ_ASSERT(fop->maybeOnHelperThread());
 #endif
     DebuggerFrame_freeScriptFrameIterData(fop, obj);

@@ -2687,7 +2687,7 @@ JSScript::Create(JSContext* cx, const ReadOnlyCompileOptions& options,
         return nullptr;
 
     PodZero(script.get());
-#ifdef OMR
+#ifdef USE_OMR
     script->setAllocKind(js::gc::AllocKind::SCRIPT);
 #endif
 
@@ -4620,7 +4620,7 @@ JSScript::AutoDelazify::dropScript()
 JS::ubi::Node::Size
 JS::ubi::Concrete<JSScript>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
-#ifdef OMR
+#ifdef USE_OMR
     Size size = OmrGcHelper::thingSize(get().getAllocKind());
 #else
     Size size = Arena::thingSize(get().asTenured().getAllocKind());
@@ -4650,7 +4650,7 @@ JS::ubi::Concrete<JSScript>::scriptFilename() const
 JS::ubi::Node::Size
 JS::ubi::Concrete<js::LazyScript>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
-#ifdef OMR
+#ifdef USE_OMR
     Size size = js::gc::OmrGcHelper::thingSize(get().getAllocKind());
 #else
     Size size = js::gc::Arena::thingSize(get().asTenured().getAllocKind());

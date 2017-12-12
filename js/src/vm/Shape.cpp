@@ -2104,7 +2104,7 @@ AutoRooterGetterSetter::Inner::trace(JSTracer* trc)
 JS::ubi::Node::Size
 JS::ubi::Concrete<js::Shape>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
-#ifdef OMR
+#ifdef USE_OMR
     Size size = js::gc::OmrGcHelper::thingSize(get().getAllocKind());
 #else
     Size size = js::gc::Arena::thingSize(get().asTenured().getAllocKind());
@@ -2123,7 +2123,7 @@ JS::ubi::Concrete<js::Shape>::size(mozilla::MallocSizeOf mallocSizeOf) const
 JS::ubi::Node::Size
 JS::ubi::Concrete<js::BaseShape>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
-#ifdef OMR
+#ifdef USE_OMR
     return js::gc::OmrGcHelper::thingSize(get().getAllocKind());
 #else
     return js::gc::Arena::thingSize(get().asTenured().getAllocKind());

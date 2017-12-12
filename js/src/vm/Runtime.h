@@ -854,7 +854,7 @@ struct JSRuntime : public js::MallocProvider<JSRuntime>
     bool atomsAreFinished() const { return !atoms_; }
 
     js::AtomSet* atomsForSweeping() {
-#ifndef OMR
+#ifndef USE_OMR
         MOZ_ASSERT(JS::CurrentThreadIsHeapCollecting());
 #endif
         return atoms_;
@@ -1402,7 +1402,7 @@ ZoneGroup::nursery()
     return runtime->gc.nursery();
 }
 
-#ifndef OMR
+#ifndef USE_OMR
 inline gc::StoreBuffer&
 ZoneGroup::storeBuffer()
 {

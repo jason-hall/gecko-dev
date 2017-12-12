@@ -254,7 +254,8 @@ INCLUDES = \
   -I$(topsrcdir)/js/src/omr/include_core \
   -I$(topsrcdir)/js/src/omr/gc/startup \
   -I$(topsrcdir)/js/src/omr/gc/base \
-  -I$(topsrcdir)/js/src/omr/example/glue \
+  -I$(topsrcdir)/js/src/omr/gc/base/standard \
+  -I$(topsrcdir)/js/src/glue \
   -I$(topsrcdir)/js/src/omr/gc/stats \
   -I$(topsrcdir)/js/src/omr/gc/include \
   -I$(topsrcdir)/js/src/omr/gc/structs \
