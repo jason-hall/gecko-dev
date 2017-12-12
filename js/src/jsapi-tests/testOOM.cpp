@@ -19,6 +19,9 @@ BEGIN_TEST(testOOM)
 
 virtual JSContext* createContext() override
 {
+#ifdef USE_OMR
+    OMR_Initialize_VM(&omrjs::omrVM, &omrjs::omrVMThread, NULL, NULL);
+#endif /* USE_OMR */
     JSContext* cx = JS_NewContext(0);
     if (!cx)
         return nullptr;

@@ -108,6 +108,11 @@
 #include "vm/Interpreter-inl.h"
 #include "vm/Stack-inl.h"
 
+#ifdef USE_OMR
+#include "omr.h"
+#include "omrvm.h"
+#endif /* USE_OMR */
+
 using namespace js;
 using namespace js::cli;
 using namespace js::shell;
@@ -8524,6 +8529,11 @@ main(int argc, char** argv, char** envp)
     size_t nurseryBytes = JS::DefaultNurseryBytes;
     nurseryBytes = op.getIntOption("nursery-size") * 1024L * 1024L;
 
+	
+#ifdef USE_OMR
+    OMR_Initialize_VM(&omrjs::omrVM, &omrjs::omrVMThread, NULL, NULL);
+#endif /* USE_OMR */
+
     /* Use the same parameters as the browser in xpcjsruntime.cpp. */
     JSContext* cx = JS_NewContext(JS::DefaultHeapMaxBytes, nurseryBytes);
     if (!cx)
@@ -8608,5 +8618,8 @@ main(int argc, char** argv, char** envp)
 
     JS_DestroyContext(cx);
     JS_ShutDown();
+#ifdef USE_OMR
+    OMR_Shutdown_VM(omrjs::omrVM, omrjs::omrVMThread);
+#endif /* USE_OMR */
     return result;
 }

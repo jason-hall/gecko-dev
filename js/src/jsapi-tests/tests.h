@@ -21,6 +21,11 @@
 
 #include "js/Vector.h"
 
+#ifdef USE_OMR
+#include "omr.h"
+#include "omrvm.h"
+#endif /* USE_OMR */
+
 /* Note: Aborts on OOM. */
 class JSAPITestString {
     js::Vector<char, 0, js::SystemAllocPolicy> chars;
@@ -311,6 +316,9 @@ class JSAPITest
     }
 
     virtual JSContext* createContext() {
+#ifdef USE_OMR
+        OMR_Initialize_VM(&omrjs::omrVM, &omrjs::omrVMThread, NULL, NULL);
+#endif /* USE_OMR */
         JSContext* cx = JS_NewContext(8L * 1024 * 1024);
         if (!cx)
             return nullptr;
@@ -322,6 +330,9 @@ class JSAPITest
     virtual void destroyContext() {
         MOZ_RELEASE_ASSERT(cx);
         JS_DestroyContext(cx);
+#ifdef USE_OMR
+        OMR_Shutdown_VM(omrjs::omrVM, omrjs::omrVMThread);
+#endif /* USE_OMR */
         cx = nullptr;
     }
 

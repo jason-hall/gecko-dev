@@ -48,6 +48,9 @@ BEGIN_TEST(testGCOutOfMemory)
 }
 
 virtual JSContext* createContext() override {
+#ifdef USE_OMR
+    OMR_Initialize_VM(&omrjs::omrVM, &omrjs::omrVMThread, NULL, NULL);
+#endif /* USE_OMR */
     // Note that the max nursery size must be less than the whole heap size, or
     // the test will fail because 'max' (the number of allocations required for
     // OOM) will be based on the nursery size, and that will overflow the
