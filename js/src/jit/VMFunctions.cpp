@@ -1369,10 +1369,13 @@ AssertValidStringPtr(JSContext* cx, JSString* str)
         return;
     }
 
+#ifndef USE_OMR
+    // OMRTODO: Fix this when changing OMR to more than one static zone
     if (str->isAtom())
         MOZ_ASSERT(str->zone()->isAtomsZone());
     else
         MOZ_ASSERT(str->zone() == cx->zone());
+#endif
 
     MOZ_ASSERT(str->isAligned());
     MOZ_ASSERT(str->length() <= JSString::MAX_LENGTH);

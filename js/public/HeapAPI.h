@@ -151,7 +151,10 @@ struct Zone
     }
 
     JSRuntime* runtimeFromActiveCooperatingThread() const {
+#ifndef USE_OMR
+        // OMRTODO: Fix this once multiple zones are implemented
         MOZ_ASSERT(js::CurrentThreadCanAccessRuntime(runtime_));
+#endif
         return runtime_;
     }
 

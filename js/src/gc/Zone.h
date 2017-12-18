@@ -234,8 +234,8 @@ struct Zone : public JS::shadow::Zone,
     js::jit::JitZone* getJitZone(JSContext* cx) { return jitZone_ ? jitZone_ : createJitZone(cx); }
     js::jit::JitZone* jitZone() { return jitZone_; }
 
-    bool isAtomsZone() const { return true; }
-    bool isSelfHostingZone() const { return true; }
+    bool isAtomsZone() const { return runtimeFromAnyThread()->isAtomsZone(this); }
+    bool isSelfHostingZone() const { return runtimeFromAnyThread()->isSelfHostingZone(this); }
 
 #ifdef DEBUG
     // For testing purposes, return the index of the sweep group which this zone
@@ -465,7 +465,9 @@ struct Zone : public JS::shadow::Zone,
     // Gets an existing UID in |uidp| if one exists.
     MOZ_MUST_USE bool maybeGetUniqueId(js::gc::Cell* cell, uint64_t* uidp) {
         MOZ_ASSERT(uidp);
-        MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
+        
+        // OMRTODO: Fix this once multiple zones are implemented
+        //MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
 
         // Get an existing uid, if one has been set.
         auto p = uniqueIds().lookup(cell);
@@ -479,7 +481,9 @@ struct Zone : public JS::shadow::Zone,
     // puts that into |uidp|. Returns false on OOM.
     MOZ_MUST_USE bool getOrCreateUniqueId(js::gc::Cell* cell, uint64_t* uidp) {
         MOZ_ASSERT(uidp);
-        MOZ_ASSERT(js::CurrentThreadCanAccessZone(this) || js::CurrentThreadIsPerformingGC());
+
+        // OMRTODO: Fix this once multiple zones are implemented
+        //MOZ_ASSERT(js::CurrentThreadCanAccessZone(this) || js::CurrentThreadIsPerformingGC());
 
         // Get an existing uid, if one has been set.
         auto p = uniqueIds().lookupForAdd(cell);
@@ -488,7 +492,8 @@ struct Zone : public JS::shadow::Zone,
             return true;
         }
 
-        MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
+        // OMRTODO: Fix this once multiple zones are implemented
+        //MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
 
         // Set a new uid on the cell.
         *uidp = js::gc::NextCellUniqueId(runtimeFromAnyThread());
@@ -520,7 +525,9 @@ struct Zone : public JS::shadow::Zone,
 
     // Return true if this cell has a UID associated with it.
     MOZ_MUST_USE bool hasUniqueId(js::gc::Cell* cell) {
-        MOZ_ASSERT(js::CurrentThreadCanAccessZone(this) || js::CurrentThreadIsPerformingGC());
+        // OMRTODO: Fix this once multiple zones are implemented
+        //MOZ_ASSERT(js::CurrentThreadCanAccessZone(this) || js::CurrentThreadIsPerformingGC());
+
         return uniqueIds().has(cell);
     }
 
@@ -528,15 +535,18 @@ struct Zone : public JS::shadow::Zone,
     // moving GC. This method is infallible.
     void transferUniqueId(js::gc::Cell* tgt, js::gc::Cell* src) {
         MOZ_ASSERT(src != tgt);
-        //MOZ_ASSERT(!IsInsideNursery(tgt));
         MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtimeFromActiveCooperatingThread()));
-        MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
+
+        // OMRTODO: Fix this once multiple zones are implemented
+        //MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
+
         uniqueIds().rekeyIfMoved(src, tgt);
     }
 
     // Remove any unique id associated with this Cell.
     void removeUniqueId(js::gc::Cell* cell) {
-        MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
+        // OMRTODO: Fix this once multiple zones are implemented
+        //MOZ_ASSERT(js::CurrentThreadCanAccessZone(this));
         uniqueIds().remove(cell);
     }
 

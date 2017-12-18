@@ -40,6 +40,8 @@ CheckThreadLocal::check() const
     JSContext* cx = TlsContext.get();
     MOZ_ASSERT(cx);
 
+#ifndef USE_OMR
+    // OMRTODO: Fix this once multiple zones are implemented
     // As for CheckZoneGroup, in a cooperatively scheduled runtime the active
     // thread is permitted access to thread local state for other suspended
     // threads in the same runtime.
@@ -47,6 +49,7 @@ CheckThreadLocal::check() const
         MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
     else
         MOZ_ASSERT(id == ThisThread::GetId());
+#endif
 }
 
 template <AllowedHelperThread Helper>
@@ -99,6 +102,7 @@ CheckZoneGroup<Helper>::check() const
         }
     } else {
 #ifndef USE_OMR
+        // OMRTODO: Fix this once multiple zones are implemented
         // |group| will be null for data in the atoms zone. This is protected
         // by the exclusive access lock.
         MOZ_ASSERT(cx->runtime()->currentThreadHasExclusiveAccess());
@@ -123,7 +127,10 @@ CheckGlobalLock<Lock, Helper>::check() const
         MOZ_ASSERT(TlsContext.get()->runtime()->gc.currentThreadHasLockedGC());
         break;
       case GlobalLock::ExclusiveAccessLock:
+#ifndef USE_OMR
+        // OMRTODO: Fix this once multiple zones are implemented
         MOZ_ASSERT(TlsContext.get()->runtime()->currentThreadHasExclusiveAccess());
+#endif
         break;
       case GlobalLock::HelperThreadLock:
         MOZ_ASSERT(HelperThreadState().isLockedByCurrentThread());

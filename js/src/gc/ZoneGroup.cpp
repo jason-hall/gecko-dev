@@ -55,15 +55,19 @@ ZoneGroup::enter(JSContext* cx)
     if (ownerContext().context() == cx) {
         MOZ_ASSERT(enterCount);
     } else {
-        // OMRTODO:
-        /*if (useExclusiveLocking) {
+#ifndef USE_OMR
+        // OMRTODO: Worker threads do not need to yield because they have their own context,
+        // but they try to for now because OMR prevents them from having their own Zone.
+        if (useExclusiveLocking()) {
             MOZ_ASSERT(!usedByHelperThread);
             while (ownerContext().context() != nullptr) {
                 cx->yieldToEmbedding();
             }
-        }*/
+        }
+
         MOZ_RELEASE_ASSERT(ownerContext().context() == nullptr);
         MOZ_ASSERT(enterCount == 0);
+#endif
         ownerContext_ = CooperatingContext(cx);
         if (cx->generationalDisabled)
             nursery().disable();

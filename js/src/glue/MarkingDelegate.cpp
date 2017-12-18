@@ -32,8 +32,7 @@
 
 #include "MarkingDelegate.hpp"
 
-/// Spidermonkey Headers
-#include "js/TracingAPI.h"
+// Spidermonkey Headers
 
 // JS
 #include "mozilla/DebugOnly.h"
@@ -156,7 +155,6 @@ MM_MarkingDelegate::scanRoots(MM_EnvironmentBase *env)
 	rt->gc.traceRuntimeCommon(_omrGCMarker, js::gc::GCRuntime::TraceOrMarkRuntime::TraceRuntime, session.lock);
 
 	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
-		//Zone *zone = OmrGcHelper::zone;
 		if (!z->gcWeakMapList().isEmpty()) {
 			for (WeakMapBase* m : z->gcWeakMapList()) {
 				m->trace(_omrGCMarker);
@@ -196,7 +194,6 @@ MM_MarkingDelegate::masterCleanupAfterGC(MM_EnvironmentBase *env)
 {
 	OMR_VM *omrVM = env->getOmrVM();
 	JSRuntime *rt = (JSRuntime *)omrVM->_language_vm;
-	Zone *zone = OmrGcHelper::zone;
 	js::AutoLockForExclusiveAccess lock(rt);
 
 	/* Clear new object cache. Its entries may point to dead objects. */
@@ -229,13 +226,6 @@ MM_MarkingDelegate::masterCleanupAfterGC(MM_EnvironmentBase *env)
 	}
 
 	FreeOp fop(rt);
-
-	// callFinalizeCallbacks(&fop, JSFINALIZE_GROUP_START);
-    // callWeakPointerZoneGroupCallbacks();
-
-    // for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next())
-    //         callWeakPointerCompartmentCallbacks(comp);
-    // }
 
 	// Cancel any active or pending off thread compilations.
 	js::CancelOffThreadIonCompile(rt, JS::Zone::Sweep);
@@ -272,7 +262,7 @@ MM_MarkingDelegate::masterCleanupAfterGC(MM_EnvironmentBase *env)
 	}
 
 	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
-		z->beginSweepTypes(&fop, !zone->isPreservingCode());
+		z->beginSweepTypes(&fop, !z->isPreservingCode());
 		z->sweepBreakpoints(&fop);
 		z->sweepUniqueIds(&fop);
 	}
@@ -304,7 +294,9 @@ MM_MarkingDelegate::masterCleanupAfterGC(MM_EnvironmentBase *env)
 
 	rt->gc.callFinalizeCallbacks(&fop, JSFINALIZE_GROUP_END);
 
-	zone->types.endSweep(rt);
+	for (ZonesIter z(rt, WithAtoms); !z.done(); z.next()) {
+		z->types.endSweep(rt);
+	}
 
 	/* This puts the heap into the state required to walk it */
 	GC_OMRVMInterface::flushCachesForGC(env);
@@ -315,7 +307,7 @@ MM_MarkingDelegate::masterCleanupAfterGC(MM_EnvironmentBase *env)
 
 		/* Walk the heap for sweeping. */
 		MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
-		AutoClearTypeInferenceStateOnOOM oom(zone);
+		AutoClearTypeInferenceStateOnOOM oom(OmrGcHelper::zone); // OMRTODO: Use zone object is in instead
 		while (NULL != hrd) {
 			GC_ObjectHeapIteratorAddressOrderedList objectIterator(env->getExtensions(), hrd, false);
 			omrobjectptr_t omrobjPtr = objectIterator.nextObject();
@@ -347,7 +339,6 @@ MM_MarkingDelegate::masterCleanupAfterGC(MM_EnvironmentBase *env)
 		GC_HeapRegionIterator regionIterator(regionManager);
 
 		MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
-		AutoClearTypeInferenceStateOnOOM oom(zone);
 		while (NULL != hrd) {
 			GC_ObjectHeapIteratorAddressOrderedList objectIterator(env->getExtensions(), hrd, false);
 			omrobjectptr_t omrobjPtr = objectIterator.nextObject();
@@ -376,7 +367,6 @@ MM_MarkingDelegate::masterCleanupAfterGC(MM_EnvironmentBase *env)
 		/* Walk the heap, for objects that are not marked we corrupt them to maximize the chance we will crash immediately
 		if they are used. For live objects validate that they have the expected eyecatcher */
 		MM_HeapRegionDescriptor *hrd = regionIterator.nextRegion();
-		AutoClearTypeInferenceStateOnOOM oom(zone);
 		while (NULL != hrd) {
 			/* Walk all of the objects, making sure that those that were not marked are no longer
 			usable. If they are later used we will know this and optimally crash */

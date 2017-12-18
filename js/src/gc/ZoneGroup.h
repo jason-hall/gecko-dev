@@ -41,6 +41,10 @@ class ZoneGroup
     // The number of times the context has entered this zone group.
     UnprotectedData<size_t> enterCount;
 
+    // If this flag is true, then we may need to block before entering this zone
+    // group. Blocking happens using JSContext::yieldToEmbedding.
+    UnprotectedData<bool> useExclusiveLocking_;
+
   public:
     CooperatingContext& ownerContext() { return ownerContext_.ref(); }
     void* addressOfOwnerContext() { return &ownerContext_.ref().cx; }
@@ -67,6 +71,10 @@ class ZoneGroup
 
     inline bool isCollecting();
     inline bool isGCScheduled();
+
+    // See the useExclusiveLocking_ field above.
+    void setUseExclusiveLocking() { useExclusiveLocking_ = true; }
+    bool useExclusiveLocking() { return useExclusiveLocking_; }
 
 #ifdef DEBUG
   private:
