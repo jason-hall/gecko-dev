@@ -2170,7 +2170,7 @@ IonCompile(JSContext* cx, JSScript* script,
         return AbortReason::Alloc;
 
 #ifndef USE_OMR
-	// OMRTODO?
+    // OMRTODO?
     if (cx->zone()->group()->storeBuffer().cancelIonCompilations())
         builder->setNotSafeForMinorGC();
 #endif

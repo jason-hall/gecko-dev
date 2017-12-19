@@ -1384,7 +1384,7 @@ inline void
 NativeObject::privateWriteBarrierPre(void** oldval)
 {
 #ifndef USE_OMR // Writebarrier
-    // OMRTODO: Writebarrier
+    // OMRTODO: What is barrierTracer?
     JS::shadow::Zone* shadowZone = this->shadowZoneFromAnyThread();
     if (shadowZone->needsIncrementalBarrier() && *oldval && getClass()->hasTrace())
         getClass()->doTrace(shadowZone->barrierTracer(), this);

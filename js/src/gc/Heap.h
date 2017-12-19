@@ -493,8 +493,6 @@ TenuredCell::getTraceKind() const
     return Cell::getTraceKind();
 }
 
-// OMRTODO: Implement write barriers
-
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::readBarrier(TenuredCell* thing)
 {

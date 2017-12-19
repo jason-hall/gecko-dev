@@ -172,7 +172,7 @@ CompileZone::addressOfFreeList(gc::AllocKind allocKind)
 {
 #ifdef USE_OMR
     return nullptr;
-	// OMRTODO: Arena stuff
+    // OMRTODO: Arena stuff
 #else
     return zone()->arenas.addressOfFreeList(allocKind);
 #endif
@@ -202,8 +202,8 @@ CompileZone::setMinorGCShouldCancelIonCompilations()
 {
 #ifndef USE_OMR
     // OMRTODO
-    //MOZ_ASSERT(CurrentThreadCanAccessZone(zone()));
-    //zone()->group()->storeBuffer().setShouldCancelIonCompilations();
+    MOZ_ASSERT(CurrentThreadCanAccessZone(zone()));
+    zone()->group()->storeBuffer().setShouldCancelIonCompilations();
 #endif
 }
 

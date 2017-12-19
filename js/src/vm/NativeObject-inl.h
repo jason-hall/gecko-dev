@@ -122,7 +122,8 @@ NativeObject::elementsRangeWriteBarrierPost(uint32_t start, uint32_t count)
 {
     for (size_t i = 0; i < count; i++) {
         const Value& v = elements_[start + i];
-#ifdef USE_OMR // OMRTODO : Fix Writebarrier
+#ifdef USE_OMR
+        // OMRTODO : Fix Writebarrier. Needs to be on slot rather than this.
         if (v.isObject()) {
             standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)this, (omrobjectptr_t)NULL);
             return;
@@ -264,7 +265,7 @@ NativeObject::moveDenseElements(uint32_t dstStart, uint32_t srcStart, uint32_t c
 inline void
 NativeObject::moveDenseElementsNoPreBarrier(uint32_t dstStart, uint32_t srcStart, uint32_t count)
 {
-#ifndef USE_OMR // OMRTODO: Zone from context
+#ifndef USE_OMR
     MOZ_ASSERT(!shadowZone()->needsIncrementalBarrier());
 #endif
 
@@ -463,9 +464,8 @@ inline bool
 NativeObject::isInWholeCellBuffer() const
 {
 #ifdef USE_OMR // Writebarriers
-        // OMRTODO: What are cell buffers and why are they tied to an arena?
-        // I think they are just used to 
-        return true;
+    // OMRTODO: Is this used or necessary? Implement a check if barriered if so
+    return true;
 #else // OMR Writebarriers
     const gc::TenuredCell* cell = &asTenured();
     gc::ArenaCellSet* cells = cell->arena()->bufferedCells();

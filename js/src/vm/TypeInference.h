@@ -1396,7 +1396,7 @@ class TypeZone
 
     LifoAlloc& typeLifoAlloc() {
 #ifndef USE_OMR    
-        // OMRTODO: Fix this once multiple zones are implemented
+        // OMRTODO: Re-enable this assert once multiple zones are implemented
 #ifdef JS_CRASH_DIAGNOSTICS
         MOZ_RELEASE_ASSERT(CurrentThreadCanAccessZone(zone_));
 #endif

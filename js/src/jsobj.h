@@ -328,7 +328,6 @@ class JSObject : public js::gc::Cell
 
     size_t tenuredSizeOfThis() const {
 #ifdef USE_OMR // Arenas
-        // OMRTODO: Obtain size correctly
         return js::gc::OmrGcHelper::thingSize(getAllocKind());
 #else // OMR Arenas
         MOZ_ASSERT(isTenured());

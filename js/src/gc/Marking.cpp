@@ -447,7 +447,6 @@ js::TraceProcessGlobalRoot(JSTracer* trc, T* thing, const char* name)
     // things so they do not need to go through the mark stack and may simply
     // be marked directly.  Moreover, well-known symbols can refer only to
     // permanent atoms, so likewise require no subsquent marking.
-    // OMRTODO: Delete original marking tracer
     CheckTracedThing(trc, *ConvertToBase(&thing));
     if (trc->isOmrMarkingTracer())
 		return static_cast<omrjs::OMRGCMarker*>(trc)->traverse(ConvertToBase(&thing));

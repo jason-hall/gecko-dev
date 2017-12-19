@@ -343,7 +343,6 @@ GC(JSContext* cx, unsigned argc, Value* vp)
 static bool
 MinorGC(JSContext* cx, unsigned argc, Value* vp)
 {
-    // OMRTODO: What does the store buffer overflow mean?
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifndef USE_OMR
     if (args.get(0) == BooleanValue(true))

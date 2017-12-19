@@ -558,7 +558,7 @@ NewCallObject(JSContext* cx, HandleShape shape, HandleObjectGroup group)
     // the initializing writes. The interpreter, however, may have allocated
     // the call object tenured, so barrier as needed before re-entering.
 #ifndef USE_OMR
-    // OMRTODO
+    // OMRTODO: Barrier here?
     if (!IsInsideNursery(obj))
         cx->zone()->group()->storeBuffer().putWholeCell(obj);
 #endif
@@ -577,7 +577,7 @@ NewSingletonCallObject(JSContext* cx, HandleShape shape)
     // the initializing writes. The interpreter, however, may have allocated
     // the call object tenured, so barrier as needed before re-entering.
 #ifndef USE_OMR
-    // OMRTODO
+    // OMRTODO: Barrier here?
     MOZ_ASSERT(!IsInsideNursery(obj),
                "singletons are created in the tenured heap");
     cx->zone()->group()->storeBuffer().putWholeCell(obj);
@@ -687,7 +687,7 @@ PostWriteBarrier(JSRuntime* rt, JSObject* obj)
 {
     JS::AutoCheckCannotGC nogc;
 #ifndef USE_OMR
-    // OMRTODO
+    // OMRTODO: Barrier here?
     MOZ_ASSERT(!IsInsideNursery(obj));
     rt->gc.storeBuffer().putWholeCell(obj);
 #endif
@@ -710,7 +710,7 @@ PostWriteElementBarrier(JSRuntime* rt, JSObject* obj, int32_t index)
             uint32_t(index) >= obj->as<NativeObject>().getDenseInitializedLength())
         {
 #ifndef USE_OMR
-            // OMRTODO
+            // OMRTODO: Barrier here?
             rt->gc.storeBuffer().putWholeCell(obj);
 #endif
             return;

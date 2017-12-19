@@ -1687,7 +1687,6 @@ JS::ubi::Node::Size
 JS::ubi::Concrete<Scope>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
 #ifdef USE_OMR
-    // OMRTODO: What is sizeOfExcludingThis
     return js::gc::OmrGcHelper::thingSize(get().getAllocKind()) +
            get().sizeOfExcludingThis(mallocSizeOf);
 #else

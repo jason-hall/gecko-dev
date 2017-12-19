@@ -1536,7 +1536,6 @@ CopyProxyValuesBeforeSwap(ProxyObject* proxy, Vector<Value>& values)
 #ifndef USE_OMR
     // Remove the GCPtrValues we're about to swap from the store buffer, to
     // ensure we don't trace bogus values.
-    //OMRTODO: 
     StoreBuffer& sb = proxy->zone()->group()->storeBuffer();
 #endif
 
@@ -3749,8 +3748,6 @@ JSObject::allocKindForTenure(const js::Nursery& nursery) const
 {
 #ifdef USE_OMR
     return getAllocKind();
-
-    // OMRTODO: Check that alloc kind matches the store one
 #else
     if (is<ArrayObject>()) {
         const ArrayObject& aobj = as<ArrayObject>();
@@ -3890,7 +3887,6 @@ JSObject::sizeOfIncludingThisInNursery() const
 
     const Nursery& nursery = zone()->group()->nursery();
 #ifdef USE_OMR
-    // OMRTODO: Allockind from nursery? What?
     size_t size = OmrGcHelper::thingSize(allocKindForTenure(nursery));
 #else
     size_t size = Arena::thingSize(allocKindForTenure(nursery));

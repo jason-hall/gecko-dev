@@ -54,7 +54,7 @@ Linker::newCode(JSContext* cx, CodeKind kind, bool hasPatchableBackedges /* = fa
     code->copyFrom(masm);
     masm.link(code);
 #ifndef USE_OMR
-    // OMRTODO
+    // OMRTODO: Barrier here?
     if (masm.embedsNurseryPointers())
         cx->zone()->group()->storeBuffer().putWholeCell(code);
 #endif

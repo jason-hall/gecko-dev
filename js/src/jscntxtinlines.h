@@ -90,7 +90,7 @@ class CompartmentChecker
         check(handle.get());
     }
 
- // OMRTODO: str->isAtom is probably broken, also checkAtom, or anything referring to arenas.
+    // OMRTODO: str->isAtom is probably broken, also checkAtom. See AtomMarking
     template <typename T>
     void checkAtom(T* thing) {
         static_assert(mozilla::IsSame<T, JSAtom>::value ||
@@ -108,7 +108,9 @@ class CompartmentChecker
     }
 
     void check(JSString* str) {
-        //MOZ_ASSERT(JS::CellIsNotGray(str));
+#ifndef USE_OMR
+        MOZ_ASSERT(JS::CellIsNotGray(str));
+#endif
         if (str->isAtom()) {
             checkAtom(&str->asAtom());
         } else {
@@ -173,7 +175,9 @@ class CompartmentChecker
     }
 
     void check(JSScript* script) {
+#ifndef USE_OMR
         //MOZ_ASSERT(JS::CellIsNotGray(script));
+#endif
         if (script)
             check(script->compartment());
     }
@@ -477,7 +481,9 @@ template <typename T>
 inline void
 JSContext::enterCompartmentOf(const T& target)
 {
-    //MOZ_ASSERT(JS::CellIsNotGray(target));
+#ifndef USE_OMR
+    MOZ_ASSERT(JS::CellIsNotGray(target));
+#endif
     enterNonAtomsCompartment(target->compartment());
 }
 

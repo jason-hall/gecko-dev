@@ -116,8 +116,9 @@ DataViewObject::create(JSContext* cx, uint32_t byteOffset, uint32_t byteLength,
 
     // Include a barrier if the data view's data pointer is in the nursery, as
     // is done for typed arrays.
-#ifndef USE_OMR
-    // OMRTODO
+#ifdef USE_OMR
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)obj, (omrobjectptr_t)NULL);
+#else
     if (!IsInsideNursery(obj) && cx->nursery().isInside(ptr)) {
         // Shared buffer data should never be nursery-allocated, so we
         // need to fail here if isSharedMemory.  However, mmap() can

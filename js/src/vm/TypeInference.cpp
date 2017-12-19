@@ -683,7 +683,6 @@ ConstraintTypeSet::postWriteBarrier(JSContext* cx, Type type)
         standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)this, (omrobjectptr_t)NULL);
     }
 #else
-    // OMRTODO: Writebarrier here
     if (type.isSingletonUnchecked() && IsInsideNursery(type.singletonNoBarrier())) {
         cx->zone()->group()->storeBuffer().putGeneric(TypeSetRef(cx->zone(), this));
         cx->zone()->group()->storeBuffer().setShouldCancelIonCompilations();
@@ -4198,11 +4197,13 @@ ConstraintTypeSet::trace(Zone* zone, JSTracer* trc)
 static inline void
 AssertGCStateForSweep(Zone* zone)
 {
-    //MOZ_ASSERT(zone->isGCSweepingOrCompacting());
+#ifndef USE_OMR
+    MOZ_ASSERT(zone->isGCSweepingOrCompacting());
 
     // IsAboutToBeFinalized doesn't work right on tenured objects when called
     // during a minor collection.
-    //MOZ_ASSERT(!JS::CurrentThreadIsHeapMinorCollecting());
+    MOZ_ASSERT(!JS::CurrentThreadIsHeapMinorCollecting());
+#endif
 }
 
 void
@@ -4282,7 +4283,6 @@ ConstraintTypeSet::sweep(Zone* zone, AutoClearTypeInferenceStateOnOOM& oom)
     constraintList_ = nullptr;
     while (constraint) {
 #ifndef USE_OMR
-        // OMRTODO: Fix. See next comment
         MOZ_ASSERT(zone->types.sweepTypeLifoAlloc.ref().contains(constraint));
 #endif
         TypeConstraint* copy;

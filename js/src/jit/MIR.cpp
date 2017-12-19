@@ -931,6 +931,9 @@ MakeUnknownTypeSet(TempAllocator& tempAlloc)
 bool
 jit::IonCompilationCanUseNurseryPointers()
 {
+#ifdef USE_OMR
+    return true;
+#else
     // If we are doing backend compilation, which could occur on a helper
     // thread but might actually be on the active thread, check the flag set on
     // the JSContext by AutoEnterIonCompilation.
@@ -940,10 +943,6 @@ jit::IonCompilationCanUseNurseryPointers()
     // Otherwise, we must be on the active thread during MIR construction. The
     // store buffer must have been notified that minor GCs must cancel pending
     // or in progress Ion compilations.
-#ifdef USE_OMR
-    // OMRTODO
-    return true;
-#else
     JSContext* cx = TlsContext.get();
     return cx->zone()->group()->storeBuffer().cancelIonCompilations();
 #endif

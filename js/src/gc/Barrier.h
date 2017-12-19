@@ -709,7 +709,7 @@ class HeapSlot : public WriteBarrieredBase<Value>
     void post(NativeObject* owner, Kind kind, uint32_t slot, const Value& target) {
         if (this->value.isObject()) {
             gc::Cell* cell = reinterpret_cast<gc::Cell*>(&this->value.toObject());
-            // OMRTODO: OMR writebarrier
+            // OMRTODO: OMR writebarrier for slot
             //standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)vp, (omrobjectptr_t)next);
 
             //cell->storeBuffer()->putSlot(owner, kind, slot, 1);

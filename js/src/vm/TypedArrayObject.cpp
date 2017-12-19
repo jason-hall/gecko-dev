@@ -481,26 +481,25 @@ class TypedArrayObjectTemplate : public TypedArrayObject
         if (buffer) {
             obj->initViewData(buffer->dataPointerEither() + byteOffset);
 
+#ifdef USE_OMR
+            standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)obj, (omrobjectptr_t)NULL);
+#else
             // If the buffer is for an inline typed object, the data pointer
             // may be in the nursery, so include a barrier to make sure this
             // object is updated if that typed object moves.
             auto ptr = buffer->dataPointerEither();
-#ifndef USE_OMR
             if (!IsInsideNursery(obj) && cx->nursery().isInside(ptr)) {
-#endif
                 // Shared buffer data should never be nursery-allocated, so we
                 // need to fail here if isSharedMemory.  However, mmap() can
                 // place a SharedArrayRawBuffer up against the bottom end of a
                 // nursery chunk, and a zero-length buffer will erroneously be
                 // perceived as being inside the nursery; sidestep that.
                 if (isSharedMemory) {
-                    //MOZ_ASSERT(buffer->byteLength() == 0 &&
-                    //           (uintptr_t(ptr.unwrapValue()) & gc::ChunkMask) == 0);
+                    MOZ_ASSERT(buffer->byteLength() == 0 &&
+                               (uintptr_t(ptr.unwrapValue()) & gc::ChunkMask) == 0);
                 } else {
-#ifndef USE_OMR // Writebarrier
-                    // OMRTODO: Writebarrier here
                     cx->zone()->group()->storeBuffer().putWholeCell(obj);
-#endif // ! OMR Writebarrier
+#endif
                 }
 #ifndef USE_OMR
             }

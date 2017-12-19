@@ -23,7 +23,9 @@ Symbol*
 Symbol::newInternal(JSContext* cx, JS::SymbolCode code, uint32_t hash, JSAtom* description,
                     AutoLockForExclusiveAccess& lock)
 {
-    //MOZ_ASSERT(cx->compartment() == cx->atomsCompartment(lock));
+#ifndef OMR
+    MOZ_ASSERT(cx->compartment() == cx->atomsCompartment(lock));
+#endif
 
     // Following js::AtomizeString, we grudgingly forgo last-ditch GC here.
     Symbol* p = Allocate<JS::Symbol, NoGC>(cx);
@@ -146,12 +148,12 @@ js::SymbolDescriptiveString(JSContext* cx, Symbol* sym, MutableHandleValue resul
 JS::ubi::Node::Size
 JS::ubi::Concrete<JS::Symbol>::size(mozilla::MallocSizeOf mallocSizeOf) const
 {
-    // If we start allocating symbols in the nursery, we will need to update
-    // this method.
-    MOZ_ASSERT(get().isTenured()); // OMRTODO: Tenured check unneeded in OMR
 #ifdef USE_OMR
     return js::gc::OmrGcHelper::thingSize(get().getAllocKind());
 #else
+    // If we start allocating symbols in the nursery, we will need to update
+    // this method.
+    MOZ_ASSERT(get().isTenured());
     return js::gc::Arena::thingSize(get().asTenured().getAllocKind());
 #endif
 }

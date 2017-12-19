@@ -476,11 +476,11 @@ class JSFunction : public js::NativeObject
     JSScript* existingScript() {
         MOZ_ASSERT(isInterpreted());
         if (isInterpretedLazy()) {
-#ifndef USE_OMR // Zone from context, Writebarrier
-            // OMRTODO: Writebarriers
+#ifndef USE_OMR
+            // OMR only does post write barriers, not pre write
             if (shadowZone()->needsIncrementalBarrier())
                 js::LazyScript::writeBarrierPre(lazyScript());
-#endif // ! OMR
+#endif
             JSScript* script = existingScriptNonDelazifying();
             flags_ &= ~INTERPRETED_LAZY;
             flags_ |= INTERPRETED;

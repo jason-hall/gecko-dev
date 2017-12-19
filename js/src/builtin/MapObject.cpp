@@ -449,8 +449,10 @@ template <typename ObjectT>
 inline static MOZ_MUST_USE bool
 WriteBarrierPostImpl(JSRuntime* rt, ObjectT* obj, const Value& keyValue)
 {
-#ifndef USE_OMR
-    // OMRTODO: Writebarrier here
+#ifdef USE_OMR
+    // OMR: Writebarrier
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)obj, (omrobjectptr_t)NULL);
+#else
     if (MOZ_LIKELY(!keyValue.isObject()))
         return true;
 

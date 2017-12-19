@@ -147,8 +147,9 @@ GetterSetterWriteBarrierPost(AccessorShape* shape)
         return;
     }
 
-#ifndef USE_OMR
-    // OMRTODO
+#ifdef USE_OMR
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)shape, (omrobjectptr_t)NULL);
+#else
     auto& nurseryShapes = shape->zone()->nurseryShapes();
 
     {

@@ -1563,7 +1563,6 @@ Shape::Shape(const StackShape& other, uint32_t nfixed)
 // This class is used to update any shapes in a zone that have nursery objects
 // as getters/setters.  It updates the pointers and the shapes' entries in the
 // parents' KidsHash tables.
-// OMRTODO: Bufferable Ref and Write barrier implementation
 class NurseryShapesRef : public gc::BufferableRef
 {
     Zone* zone_;

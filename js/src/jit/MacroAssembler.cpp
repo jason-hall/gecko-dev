@@ -808,8 +808,12 @@ void
 MacroAssembler::freeListAllocate(Register result, Register temp, gc::AllocKind allocKind, Label* fail)
 {
     CompileZone* zone = GetJitContext()->compartment->zone();
-    // OMRTODO
-    int thingSize = 0;//int(gc::Arena::thingSize(allocKind));
+#ifdef USE_OMR
+    // OMRTODO: Fix me
+    int thingSize = 0;
+#else
+    int thingSize = int(gc::Arena::thingSize(allocKind));
+#endif
 
     Label fallback;
     Label success;

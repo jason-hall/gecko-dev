@@ -1060,7 +1060,7 @@ CodeGeneratorShared::verifyCompactTrackedOptimizationsMap(JitCode* code, uint32_
             // contain nursery pointers, in which case the types might not
             // match, see bug 1175761.
 #ifndef USE_OMR
-			// OMRTODO: ?
+            // OMRTODO: ?
             if (!code->zone()->group()->storeBuffer().cancelIonCompilations()) {
                 IonTrackedOptimizationsTypeInfo typeInfo = typesTable->entry(index);
                 TempOptimizationTypeInfoVector tvec(alloc());

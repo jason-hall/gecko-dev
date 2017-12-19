@@ -1434,9 +1434,13 @@ OutlineTypedObject::setOwnerAndData(JSObject* owner, uint8_t* data)
 
     // Trigger a post barrier when attaching an object outside the nursery to
     // one that is inside it.
-    // OMRTODO
-    //if (owner && !IsInsideNursery(this) && IsInsideNursery(owner))
-        //zone()->group()->storeBuffer().putWholeCell(this);
+#ifdef USE_OMR
+    // OMR write buffer
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)this, (omrobjectptr_t)NULL);
+#else
+    if (owner && !IsInsideNursery(this) && IsInsideNursery(owner))
+        zone()->group()->storeBuffer().putWholeCell(this);
+#endif
 }
 
 /*static*/ OutlineTypedObject*
@@ -2186,10 +2190,12 @@ InlineTransparentTypedObject::getOrCreateBuffer(JSContext* cx)
     if (!table->add(cx, this, buffer))
         return nullptr;
 
+#ifdef USE_OMR
+    standardWriteBarrier(omrjs::omrVMThread, (omrobjectptr_t)buffer, (omrobjectptr_t)NULL);
+#else
     if (IsInsideNursery(this)) {
         // Make sure the buffer is traced by the next generational collection,
         // so that its data pointer is updated after this typed object moves.
-#ifndef USE_OMR
         // OMRTODO
         zone()->group()->storeBuffer().putWholeCell(buffer);
 #endif
